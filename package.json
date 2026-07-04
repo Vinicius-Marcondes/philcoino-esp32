@@ -16,6 +16,9 @@
     "typecheck": "bun run --cwd apps/mobile typecheck",
     "test:protocol": "bun run --cwd packages/protocol test",
     "typecheck:protocol": "bun run --cwd packages/protocol typecheck",
-    "validate:openapi": "bun run --cwd packages/protocol validate:openapi"
+    "validate:openapi": "bun run --cwd packages/protocol validate:openapi",
+    "simulator": "bun run --cwd tools/device-simulator dev",
+    "test:simulator": "bun run --cwd tools/device-simulator test",
+    "typecheck:simulator": "bun run --cwd tools/device-simulator typecheck"
   }
 }

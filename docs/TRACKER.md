@@ -1,7 +1,7 @@
 # PRD-001 Tracker
 
 PRD Status: Active
-Current Task: PHIL-001
+Current Task: PHIL-003
 
 ## Summary
 
@@ -20,8 +20,8 @@ PRD: `docs/prds/PRD-001/PRD-001.md`
 | Task | Review | Status | Evidence | Decision Log | Commit | Blocked Reason | Requested Decision |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | [PHIL-001](prds/PRD-001/tasks/PHIL-001.md) | Agent | Review | `bun run lint`, `bun run typecheck`, Expo SDK 54 config, and 7-route web export passed | Mobile isolated in `apps/mobile`; root delegates scripts; workspace globs reserve apps/packages/tools; firmware stays outside Bun and empty reserved directories are deferred per architecture | Pending | None | None |
-| [PHIL-002](prds/PRD-001/tasks/PHIL-002.md) | Agent | Review | 35 protocol tests, protocol/mobile typechecks, mobile lint, and OpenAPI validation passed | OpenAPI 3.1.1 JSON-compatible YAML is authoritative; Zod 4.4.3 schemas are strict; snapshots expose brew/steam temperatures and require heater off on faults; mutations return acknowledged persisted state | Pending | None | None |
-| [PHIL-003](prds/PRD-001/tasks/PHIL-003.md) | Agent | Todo | Pending | Pending | Pending | None | None |
+| [PHIL-002](prds/PRD-001/tasks/PHIL-002.md) | Agent | Done | 35 protocol tests, protocol/mobile typechecks, mobile lint, and OpenAPI validation passed | OpenAPI 3.1.1 JSON-compatible YAML is authoritative; Zod 4.4.3 schemas are strict; snapshots expose brew/steam temperatures and require heater off on faults; mutations return acknowledged persisted state | Pending | None | None |
+| [PHIL-003](prds/PRD-001/tasks/PHIL-003.md) | Agent | Done | 20 simulator tests, simulator/protocol/mobile typechecks, 35 protocol tests, mobile lint, OpenAPI validation, and localhost health smoke test passed | Hono 4.12.27 is pinned; manual time drives deterministic readiness and steam timeout; power-cycle preserves targets while full reset restores defaults; simulator-only controls remain outside `/api/v1` | This commit | None | None |
 | [PHIL-004](prds/PRD-001/tasks/PHIL-004.md) | Human | Todo | Pending | Pending | Pending | None | None |
 | [PHIL-005](prds/PRD-001/tasks/PHIL-005.md) | Agent | Todo | Pending | Pending | Pending | None | None |
 | [PHIL-006](prds/PRD-001/tasks/PHIL-006.md) | Agent | Todo | Pending | Pending | Pending | None | None |
