@@ -1,8 +1,8 @@
 # PhilcoINO ESP32-C3 firmware
 
 This is the ESP-IDF C++ firmware project for the ESP32-C3 Super Mini. PHIL-004
-contains only the build foundation, configuration, boot logging, and host-testable
-configuration boundary. Peripheral drivers, control logic, networking, and HTTP
+contains the build foundation plus host-testable MAX6675, SSD1306, NVS target,
+and fail-off SSR peripheral boundaries. Control logic, networking, and HTTP
 handlers belong to later tasks.
 
 ## Toolchain
@@ -40,5 +40,14 @@ cmake --build /tmp/philcoino-host-tests
 ctest --test-dir /tmp/philcoino-host-tests --output-on-failure
 ```
 
-Future hardware components should depend inward on host-testable interfaces and
-keep ESP-IDF calls at the platform boundary.
+The host suite verifies sequential dual-MAX6675 reads and frame faults, target
+persistence across simulated restart, SSR fail-off ordering and error behavior,
+and the 128×32 OLED render path. ESP-IDF calls remain at the platform boundary.
+
+## Low-voltage peripheral check
+
+Keep the mains heater disconnected. Power only the ESP32 and 3.3 V peripherals,
+then confirm both thermocouples report independently, an open probe produces the
+fault display, the OLED shows both temperatures and targets, and GPIO20 remains
+low through reset, initialization, and induced peripheral failures. This check
+does not authorize mains-powered heater operation.
