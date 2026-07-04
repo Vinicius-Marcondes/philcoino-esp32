@@ -1,50 +1,25 @@
-# Welcome to your Expo app 👋
+# Philcoino
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+Philcoino is a Bun monorepo for an Expo mobile application and the planned ESP32 espresso-machine integration.
 
-## Get started
+## Repository layout
 
-1. Install dependencies
+- `apps/mobile`: Expo 54 / React Native mobile application.
+- `firmware/espresso-machine`: reserved for the ESP-IDF firmware project.
+- `packages/protocol`: reserved for the shared OpenAPI contract and runtime schemas.
+- `tools/device-simulator`: reserved for the local device simulator.
+- `docs`: product, architecture, protocol, hardware, and delivery documentation.
 
-   ```bash
-   npm install
-   ```
+Reserved paths are created when their first implementation files are introduced.
 
-2. Start the app
+## Mobile development
 
-   ```bash
-   npx expo start
-   ```
-
-In the output, you'll find options to open the app in a
-
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
-
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
-
-## Get a fresh project
-
-When you're ready, run:
+Run commands from the repository root:
 
 ```bash
-npm run reset-project
+bun run start
+bun run lint
+bun run typecheck
 ```
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
-
-## Learn more
-
-To learn more about developing your project with Expo, look at the following resources:
-
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
-
-## Join the community
-
-Join our community of developers creating universal apps.
-
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+The root scripts delegate to the package in `apps/mobile`.
