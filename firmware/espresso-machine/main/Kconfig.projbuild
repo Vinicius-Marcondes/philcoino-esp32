@@ -1,0 +1,22 @@
+menu "PhilcoINO"
+
+    config PHILCOINO_WIFI_SSID
+        string "Wi-Fi SSID"
+        default ""
+        help
+            Stored only in the generated, ignored sdkconfig file. Never add the
+            actual value to sdkconfig.defaults or source files.
+
+    config PHILCOINO_WIFI_PASSWORD
+        string "Wi-Fi password"
+        default ""
+        help
+            Stored only in the generated, ignored sdkconfig file. Never log it.
+
+    config PHILCOINO_BEARER_TOKEN
+        string "HTTP bearer token"
+        default ""
+        help
+            Stored only in the generated, ignored sdkconfig file. Never log it.
+
+endmenu
