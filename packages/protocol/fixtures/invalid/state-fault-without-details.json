@@ -1,0 +1,12 @@
+{
+  "status": "fault",
+  "activeMode": "brew",
+  "brewTemperatureC": 87.4,
+  "steamTemperatureC": 103.8,
+  "brewTargetC": 93,
+  "steamTargetC": 115,
+  "heaterActive": false,
+  "fault": null,
+  "steamTimeoutRemainingMs": null,
+  "uptimeMs": 184220
+}

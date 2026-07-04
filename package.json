@@ -13,6 +13,9 @@
     "ios": "bun run --cwd apps/mobile ios",
     "web": "bun run --cwd apps/mobile web",
     "lint": "bun run --cwd apps/mobile lint",
-    "typecheck": "bun run --cwd apps/mobile typecheck"
+    "typecheck": "bun run --cwd apps/mobile typecheck",
+    "test:protocol": "bun run --cwd packages/protocol test",
+    "typecheck:protocol": "bun run --cwd packages/protocol typecheck",
+    "validate:openapi": "bun run --cwd packages/protocol validate:openapi"
   }
 }

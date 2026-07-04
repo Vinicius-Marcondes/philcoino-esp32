@@ -1,0 +1,15 @@
+{
+  "status": "fault",
+  "activeMode": "brew",
+  "brewTemperatureC": 87.4,
+  "steamTemperatureC": 103.8,
+  "brewTargetC": 93,
+  "steamTargetC": 115,
+  "heaterActive": true,
+  "fault": {
+    "code": "internal_error",
+    "message": "Temperature control entered a safe fault state."
+  },
+  "steamTimeoutRemainingMs": null,
+  "uptimeMs": 184220
+}
