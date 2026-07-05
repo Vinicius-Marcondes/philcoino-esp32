@@ -1,9 +1,9 @@
 # PhilcoINO ESP32-C3 firmware
 
 This is the ESP-IDF C++ firmware project for the ESP32-C3 Super Mini. PHIL-004
-contains the build foundation plus host-testable MAX6675, SSD1306, NVS target,
-and fail-off SSR peripheral boundaries. Control logic, networking, and HTTP
-handlers belong to later tasks.
+contains host-testable MAX6675, SSD1306, NVS target, fail-off SSR, control-state,
+and HTTP API boundaries. The ESP-IDF adapter connects Wi-Fi, serves the local
+API on port 80, and advertises `_philcoino._tcp` through mDNS.
 
 ## Toolchain
 
@@ -41,8 +41,9 @@ ctest --test-dir /tmp/philcoino-host-tests --output-on-failure
 ```
 
 The host suite verifies sequential dual-MAX6675 reads and frame faults, target
-persistence across simulated restart, SSR fail-off ordering and error behavior,
-and the 128×32 OLED render path. ESP-IDF calls remain at the platform boundary.
+persistence, SSR fail-off behavior, the control state machine, strict API
+parsing/authentication, and contract response serialization. ESP-IDF calls
+remain at the platform boundary.
 
 ## Low-voltage peripheral check
 

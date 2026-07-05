@@ -4,8 +4,12 @@
 #include "esp_mac.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include "freertos/task.h"
+#include "philcoino/api.hpp"
 #include "philcoino/config.hpp"
+#include "philcoino/control.hpp"
+#include "philcoino/esp_networking.hpp"
 #include "philcoino/esp_peripherals.hpp"
 #include "sdkconfig.h"
 
@@ -21,6 +25,50 @@ bool secrets_are_configured() {
 
 std::uint32_t uptime_ms() {
   return static_cast<std::uint32_t>(esp_timer_get_time() / 1000);
+}
+
+philcoino::peripherals::DisplaySnapshot display_snapshot(
+    const philcoino::control::ControlSnapshot& control) {
+  using philcoino::control::ControlMode;
+  using philcoino::control::ControlStatus;
+  using philcoino::peripherals::DisplayMode;
+  using philcoino::peripherals::DisplayStatus;
+  using philcoino::peripherals::ThermocoupleStatus;
+
+  philcoino::peripherals::DisplaySnapshot display{};
+  display.brew = {
+      control.readings.brew.status == ThermocoupleStatus::kOk,
+      control.readings.brew.temperature_c,
+  };
+  display.steam = {
+      control.readings.steam.status == ThermocoupleStatus::kOk,
+      control.readings.steam.temperature_c,
+  };
+  display.targets = control.targets;
+  display.mode = control.mode == ControlMode::kBrew ? DisplayMode::kBrew
+                                                     : DisplayMode::kSteam;
+  switch (control.status) {
+    case ControlStatus::kHeating: display.status = DisplayStatus::kHeating; break;
+    case ControlStatus::kReady: display.status = DisplayStatus::kReady; break;
+    case ControlStatus::kFault: display.status = DisplayStatus::kFault; break;
+  }
+  display.heater_enabled = control.heater_enabled;
+  return display;
+}
+
+struct NetworkStartContext {
+  philcoino::networking::EspNetworkServer* server;
+  const char* ssid;
+  const char* password;
+};
+
+void network_start_task(void* argument) {
+  const auto* context = static_cast<const NetworkStartContext*>(argument);
+  if (!context->server->start(context->ssid, context->password)) {
+    ESP_LOGE(kLogTag,
+             "Network API startup failed; temperature control remains active");
+  }
+  vTaskDelete(nullptr);
 }
 
 }  // namespace
@@ -85,28 +133,72 @@ extern "C" void app_main() {
     return;
   }
 
-  DisplaySnapshot snapshot{};
-  snapshot.targets = targets;
-  if (!display.render(snapshot)) {
+  DisplaySnapshot boot_display{};
+  boot_display.targets = targets;
+  if (!display.render(boot_display)) {
     ESP_LOGE(kLogTag, "SSD1306 boot-state render failed");
     ssr.force_off();
     return;
   }
 
+  static philcoino::control::TemperatureController controller(targets, ssr);
   vTaskDelay(pdMS_TO_TICKS(kMax6675ConversionMs + 10U));
-  const auto readings = thermocouples.read(uptime_ms());
-  snapshot.brew = {readings.brew.status == ThermocoupleStatus::kOk,
-                   readings.brew.temperature_c};
-  snapshot.steam = {readings.steam.status == ThermocoupleStatus::kOk,
-                    readings.steam.temperature_c};
-  if (!snapshot.brew.valid || !snapshot.steam.valid) {
-    ESP_LOGE(kLogTag,
-             "Thermocouple startup reading is open, invalid, or unavailable");
-    snapshot.status = DisplayStatus::kFault;
-    ssr.force_off();
-  }
-  if (!display.render(snapshot)) {
+  auto snapshot = controller.update(thermocouples.read(uptime_ms()), uptime_ms());
+  if (!display.render(display_snapshot(snapshot))) {
     ESP_LOGE(kLogTag, "SSD1306 sensor-state render failed");
     ssr.force_off();
+    return;
+  }
+
+  const auto api_mutex = xSemaphoreCreateMutex();
+  if (api_mutex == nullptr) {
+    ESP_LOGE(kLogTag, "API synchronization initialization failed");
+    ssr.force_off();
+    return;
+  }
+  const philcoino::networking::DeviceIdentity identity{
+      device_id,
+      philcoino::config::kFriendlyName,
+      philcoino::config::kDeviceModel,
+      philcoino::config::kFirmwareVersion,
+  };
+  static philcoino::networking::FirmwareApi api(
+      identity, CONFIG_PHILCOINO_BEARER_TOKEN, controller, target_storage);
+  static philcoino::networking::EspNetworkServer network(api, api_mutex,
+                                                          identity);
+  static const NetworkStartContext network_context{
+      &network,
+      CONFIG_PHILCOINO_WIFI_SSID,
+      CONFIG_PHILCOINO_WIFI_PASSWORD,
+  };
+  if (secrets_are_configured() &&
+      xTaskCreate(network_start_task, "philcoino-network", 6144,
+                  const_cast<NetworkStartContext*>(&network_context), 5,
+                  nullptr) != pdPASS) {
+    ESP_LOGE(kLogTag,
+             "Network startup task creation failed; temperature control remains active");
+  }
+
+  while (true) {
+    vTaskDelay(pdMS_TO_TICKS(kMax6675ConversionMs + 10U));
+    const auto readings = thermocouples.read(uptime_ms());
+    if (xSemaphoreTake(api_mutex, portMAX_DELAY) != pdTRUE) {
+      ssr.force_off();
+      ESP_LOGE(kLogTag, "Temperature controller synchronization failed");
+      return;
+    }
+    snapshot = controller.update(readings, uptime_ms());
+    xSemaphoreGive(api_mutex);
+    if (!display.render(display_snapshot(snapshot))) {
+      ESP_LOGE(kLogTag, "SSD1306 state render failed");
+      if (xSemaphoreTake(api_mutex, portMAX_DELAY) == pdTRUE) {
+        controller.latch_fault(
+            philcoino::control::FaultCode::kInternalError);
+        xSemaphoreGive(api_mutex);
+      } else {
+        ssr.force_off();
+      }
+      return;
+    }
   }
 }

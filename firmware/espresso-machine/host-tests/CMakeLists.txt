@@ -53,3 +53,24 @@ target_compile_features(control_test PRIVATE cxx_std_17)
 target_compile_options(control_test PRIVATE -Wall -Wextra -Werror)
 
 add_test(NAME control_test COMMAND control_test)
+
+add_executable(
+  firmware_api_test
+  firmware_api_test.cpp
+  ../components/networking/src/api.cpp
+  ../components/control/src/control.cpp
+  ../components/peripherals/src/peripherals.cpp
+)
+
+target_include_directories(
+  firmware_api_test
+  PRIVATE
+    ../components/networking/include
+    ../components/control/include
+    ../components/peripherals/include
+    ../components/firmware_config/include
+)
+target_compile_features(firmware_api_test PRIVATE cxx_std_17)
+target_compile_options(firmware_api_test PRIVATE -Wall -Wextra -Werror)
+
+add_test(NAME firmware_api_test COMMAND firmware_api_test)
