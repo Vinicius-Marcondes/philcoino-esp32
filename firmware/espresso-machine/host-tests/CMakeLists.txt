@@ -34,3 +34,22 @@ target_compile_features(peripherals_test PRIVATE cxx_std_17)
 target_compile_options(peripherals_test PRIVATE -Wall -Wextra -Werror)
 
 add_test(NAME peripherals_test COMMAND peripherals_test)
+
+add_executable(
+  control_test
+  control_test.cpp
+  ../components/control/src/control.cpp
+  ../components/peripherals/src/peripherals.cpp
+)
+
+target_include_directories(
+  control_test
+  PRIVATE
+    ../components/control/include
+    ../components/peripherals/include
+    ../components/firmware_config/include
+)
+target_compile_features(control_test PRIVATE cxx_std_17)
+target_compile_options(control_test PRIVATE -Wall -Wextra -Werror)
+
+add_test(NAME control_test COMMAND control_test)
