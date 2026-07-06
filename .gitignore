@@ -3,11 +3,41 @@
 # dependencies
 node_modules/
 
+# local editor and agent state
+.vscode/
+.clangd
+.commandcode/
+
+# generated caches and output
+.cache/
+.angular/
+.next/
+.nuxt/
+.svelte-kit/
+.vite/
+.turbo/
+build/
+coverage/
+out/
+target/
+.gradle/
+.m2/
+.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+.parcel-cache/
+.prisma/
+*.db
+*.sqlite
+*.sqlite3
+
 # Expo
 .expo/
 dist/
 web-build/
 expo-env.d.ts
+/apps/mobile/.gitignore
 
 # Native
 .kotlin/
