@@ -42,3 +42,28 @@ be derived from a symmetric ±5°C tolerance, so firmware records the owner's
 assertion without treating it as independent electrical validation. The software
 steam over-temperature threshold is 130°C. Energized testing still requires
 observing the actual thermostat trip behavior and safe heater interruption.
+
+## PHIL-009 physical iPhone review
+
+Status: DEFERRED — SOFTWARE APPROVED 2026-07-05
+
+The project owner approved PHIL-009 without the physical-iPhone review because
+the device is not currently available. The automated discovery parsing,
+authentication, secure persistence, cached-address, stable-ID recovery,
+simulator integration, type, lint, protocol, configuration, and export checks
+passed. This approval closes the software task but does not claim that Bonjour
+or iOS local-network behavior has been observed on hardware.
+
+When an iPhone and local device are available, complete these deferred checks
+with an iOS development build:
+
+- verify that the local-network permission appears only when discovery is
+  needed, and that denial produces actionable Settings guidance;
+- verify `_philcoino._tcp.local` discovery and presentation of name, stable
+  device ID, model, API version, firmware version, and resolved address before
+  token entry;
+- verify an invalid token is not persisted, manual IPv4 entry completes the
+  same pairing flow, and valid credentials survive an app restart;
+- verify startup tries the cached address first and recovers a changed DHCP
+  address by rediscovering and re-verifying the stable device ID; and
+- verify no-device messaging and retry behavior on the physical local network.
