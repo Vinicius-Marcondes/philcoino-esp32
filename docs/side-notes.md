@@ -67,3 +67,31 @@ with an iOS development build:
 - verify startup tries the cached address first and recovers a changed DHCP
   address by rediscovering and re-verifying the stable device ID; and
 - verify no-device messaging and retry behavior on the physical local network.
+
+## PHIL-010 physical iPhone dashboard review
+
+Status: DEFERRED — SOFTWARE APPROVED 2026-07-05
+
+The project owner approved PHIL-010 after the automated polling, lifecycle,
+protocol, simulator, type, lint, configuration, and export checks passed. The
+physical-iPhone visual and lifecycle review is deferred until the device is
+available. This approval closes the software task but does not claim that the
+dashboard hierarchy, accessibility, or one-second updates have been observed
+on iPhone hardware.
+
+When an iPhone and local device or simulator are available, complete these
+deferred checks with an iOS development build:
+
+- approve the dashboard hierarchy, readability, temperature emphasis, and
+  accessibility, including VoiceOver labels and Dynamic Type behavior;
+- confirm foreground updates occur approximately once per second and that both
+  temperatures and targets, active mode, firmware status, heater activity,
+  steam countdown, and uptime context remain readable;
+- background and foreground the app, then navigate away from and back to the
+  dashboard, confirming polling stops while inactive, resumes immediately, and
+  never overlaps requests;
+- verify offline, unauthorized, and malformed-response protocol states are
+  distinct from firmware-reported heating, ready, and fault states, and that
+  unavailable data is not presented as a current live snapshot; and
+- inject a firmware fault and recover connectivity to verify the fault code,
+  message, heater-off state, and automatic polling recovery are clear.

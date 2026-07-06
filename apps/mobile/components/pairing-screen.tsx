@@ -9,6 +9,7 @@ import {
   View,
 } from "react-native";
 
+import { DashboardScreen } from "@/components/dashboard-screen";
 import type { DiscoveredDevice } from "@/src/discovery/device-discovery";
 import { findDiscoveredDevice } from "@/src/discovery/device-discovery";
 import { nativeDeviceDiscovery } from "@/src/discovery/native-device-discovery";
@@ -22,6 +23,7 @@ import {
   type PairingClientFactory,
 } from "@/src/pairing/pairing-service";
 import { selectedDeviceRepository } from "@/src/storage/secure-selected-device-repository";
+import type { SelectedDevice } from "@/src/storage/selected-device-repository";
 
 const DISCOVERY_TIMEOUT_MS = 8_000;
 const createPairingClient: PairingClientFactory = (options) =>
@@ -30,6 +32,7 @@ const createPairingClient: PairingClientFactory = (options) =>
 type PairedDevice = {
   candidate: PairingCandidate;
   message: string;
+  selectedDevice: SelectedDevice;
 };
 
 export function PairingScreen() {
@@ -118,6 +121,7 @@ export function PairingScreen() {
             message: result.recoveredAddress
               ? "The saved machine was found at its new address and the secure record was updated."
               : "The saved machine was authenticated at its cached address.",
+            selectedDevice: result.selected,
           });
           setMessage("");
           return;
@@ -194,7 +198,7 @@ export function PairingScreen() {
     setMessage("Verifying the token with the machine…");
 
     try {
-      await authenticateAndSave(
+      const selectedDevice = await authenticateAndSave(
         selected,
         token,
         {
@@ -206,6 +210,7 @@ export function PairingScreen() {
       setPaired({
         candidate: selected,
         message: "Authentication succeeded and this machine was saved securely.",
+        selectedDevice,
       });
       setToken("");
       setMessage("");
@@ -238,6 +243,17 @@ export function PairingScreen() {
     startBrowsing();
   };
 
+  if (paired !== null) {
+    return (
+      <DashboardScreen
+        deviceName={paired.candidate.name}
+        initialNote={paired.message}
+        onForget={() => void forgetDevice()}
+        selectedDevice={paired.selectedDevice}
+      />
+    );
+  }
+
   return (
     <ScrollView
       contentInsetAdjustmentBehavior="automatic"
@@ -250,19 +266,7 @@ export function PairingScreen() {
         </Text>
       </View>
 
-      {paired !== null ? (
-        <View style={styles.card}>
-          <Text selectable style={styles.sectionTitle}>Machine connected</Text>
-          <IdentityDetails candidate={paired.candidate} />
-          <Text selectable style={styles.success}>{paired.message}</Text>
-          <ActionButton
-            disabled={busy}
-            label={busy ? "Removing…" : "Forget this machine"}
-            onPress={() => void forgetDevice()}
-            secondary
-          />
-        </View>
-      ) : selected !== null ? (
+      {selected !== null ? (
         <View style={styles.card}>
           <Text selectable style={styles.sectionTitle}>Confirm machine identity</Text>
           <IdentityDetails candidate={selected} />
@@ -495,7 +499,6 @@ const styles = StyleSheet.create({
   detailRow: { gap: 3 },
   detailLabel: { color: "#76675D", fontSize: 12, fontWeight: "700", letterSpacing: 0.4, textTransform: "uppercase" },
   detailValue: { color: "#241B17", fontSize: 15, lineHeight: 21 },
-  success: { color: "#25633B", fontSize: 14, fontWeight: "600", lineHeight: 20 },
   notice: {
     alignItems: "flex-start",
     backgroundColor: "#E9E0D4",
