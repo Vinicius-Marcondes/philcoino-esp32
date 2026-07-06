@@ -41,7 +41,8 @@ class Max6675Transport {
 class DualMax6675 {
  public:
   explicit DualMax6675(Max6675Transport& transport,
-                       std::uint32_t started_at_ms = 0);
+                       std::uint32_t started_at_ms = 0,
+                       bool dual_thermocouples_enabled = true);
 
   ThermocoupleReadings read(std::uint32_t now_ms);
 
@@ -50,6 +51,7 @@ class DualMax6675 {
 
   Max6675Transport& transport_;
   std::uint32_t ready_at_ms_;
+  bool dual_thermocouples_enabled_;
 };
 
 struct TemperatureTargets {

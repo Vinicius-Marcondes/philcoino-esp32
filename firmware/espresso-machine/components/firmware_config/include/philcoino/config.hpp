@@ -10,6 +10,8 @@ inline constexpr char kFirmwareVersion[] = "0.1.0";
 inline constexpr char kFriendlyName[] = "PhilcoINO";
 inline constexpr char kDeviceModel[] = "ESP32-C3 Super Mini";
 inline constexpr char kDeviceIdPrefix[] = "philcoino-";
+inline constexpr bool kWifiEnabled = true;
+inline constexpr bool kDualThermocouplesEnabled = false;
 
 inline constexpr std::int32_t kBrewTargetMinimumC = 85;
 inline constexpr std::int32_t kBrewTargetMaximumC = 95;
@@ -34,8 +36,9 @@ inline constexpr std::int32_t kOledHeight = 32;
 
 inline constexpr std::int32_t kThermocoupleClockGpio = 4;
 inline constexpr std::int32_t kThermocoupleDataGpio = 6;
-inline constexpr std::int32_t kBrewThermocoupleChipSelectGpio = 5;
-inline constexpr std::int32_t kSteamThermocoupleChipSelectGpio = 10;
+inline constexpr std::int32_t kBrewThermocoupleChipSelectGpio = 7;
+inline constexpr std::int32_t kSteamThermocoupleChipSelectGpio = 5;
+inline constexpr std::uint32_t kThermocoupleInterReadDelayMs = 500;
 
 inline constexpr std::int32_t kSsrGpio = 20;
 inline constexpr bool kSsrActiveHigh = true;

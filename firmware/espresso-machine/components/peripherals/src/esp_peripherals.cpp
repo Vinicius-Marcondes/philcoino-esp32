@@ -1,11 +1,15 @@
 #include "philcoino/esp_peripherals.hpp"
 
 #include <array>
+#include <cinttypes>
 
 #include "driver/gpio.h"
 #include "driver/i2c_master.h"
-#include "driver/spi_master.h"
 #include "esp_err.h"
+#include "esp_log.h"
+#include "esp_rom_sys.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "nvs.h"
 #include "nvs_flash.h"
 #include "philcoino/config.hpp"
@@ -13,73 +17,77 @@
 namespace philcoino::peripherals {
 namespace {
 
-constexpr spi_host_device_t kThermocoupleSpiHost = SPI2_HOST;
+constexpr char kThermocoupleLogTag[] = "max6675";
 constexpr char kNvsNamespace[] = "targets";
 constexpr char kTargetsKey[] = "values";
-
-spi_device_handle_t as_spi_device(void* handle) {
-  return static_cast<spi_device_handle_t>(handle);
-}
 
 i2c_master_dev_handle_t as_i2c_device(void* handle) {
   return static_cast<i2c_master_dev_handle_t>(handle);
 }
 
+std::int32_t chip_select_gpio(ThermocoupleChannel channel) {
+  return channel == ThermocoupleChannel::kBrew
+             ? config::kBrewThermocoupleChipSelectGpio
+             : config::kSteamThermocoupleChipSelectGpio;
+}
+
+const char* channel_name(ThermocoupleChannel channel) {
+  return channel == ThermocoupleChannel::kBrew ? "brew" : "steam";
+}
+
+const char* frame_status(std::uint16_t frame) {
+  if ((frame & 0x0004U) != 0U) {
+    return "open_circuit";
+  }
+  if ((frame & 0x8002U) != 0U) {
+    return "invalid_frame";
+  }
+  return "ok";
+}
+
 }  // namespace
 
 bool EspMax6675Transport::initialize() {
-  const auto chip_select_mask =
+  const auto output_mask =
       (1ULL << config::kBrewThermocoupleChipSelectGpio) |
-      (1ULL << config::kSteamThermocoupleChipSelectGpio);
+      (1ULL << config::kSteamThermocoupleChipSelectGpio) |
+      (1ULL << config::kThermocoupleClockGpio);
   gpio_set_level(
       static_cast<gpio_num_t>(config::kBrewThermocoupleChipSelectGpio), 1);
   gpio_set_level(
       static_cast<gpio_num_t>(config::kSteamThermocoupleChipSelectGpio), 1);
-  gpio_config_t chip_selects{};
-  chip_selects.pin_bit_mask = chip_select_mask;
-  chip_selects.mode = GPIO_MODE_OUTPUT;
-  chip_selects.pull_up_en = GPIO_PULLUP_DISABLE;
-  chip_selects.pull_down_en = GPIO_PULLDOWN_DISABLE;
-  chip_selects.intr_type = GPIO_INTR_DISABLE;
-  if (gpio_config(&chip_selects) != ESP_OK ||
+  gpio_set_level(
+      static_cast<gpio_num_t>(config::kThermocoupleClockGpio), 0);
+
+  gpio_config_t outputs{};
+  outputs.pin_bit_mask = output_mask;
+  outputs.mode = GPIO_MODE_INPUT_OUTPUT;
+  outputs.pull_up_en = GPIO_PULLUP_DISABLE;
+  outputs.pull_down_en = GPIO_PULLDOWN_DISABLE;
+  outputs.intr_type = GPIO_INTR_DISABLE;
+  if (gpio_config(&outputs) != ESP_OK ||
       gpio_set_level(
           static_cast<gpio_num_t>(config::kBrewThermocoupleChipSelectGpio),
           1) != ESP_OK ||
       gpio_set_level(
           static_cast<gpio_num_t>(config::kSteamThermocoupleChipSelectGpio),
-          1) != ESP_OK) {
+          1) != ESP_OK ||
+      gpio_set_level(
+          static_cast<gpio_num_t>(config::kThermocoupleClockGpio), 0) !=
+          ESP_OK) {
     return false;
   }
 
-  spi_bus_config_t bus{};
-  bus.mosi_io_num = -1;
-  bus.miso_io_num = config::kThermocoupleDataGpio;
-  bus.sclk_io_num = config::kThermocoupleClockGpio;
-  bus.quadwp_io_num = -1;
-  bus.quadhd_io_num = -1;
-  bus.max_transfer_sz = 2;
-  if (spi_bus_initialize(kThermocoupleSpiHost, &bus, SPI_DMA_DISABLED) != ESP_OK) {
+  gpio_config_t inputs{};
+  inputs.pin_bit_mask = 1ULL << config::kThermocoupleDataGpio;
+  inputs.mode = GPIO_MODE_INPUT;
+  inputs.pull_up_en = GPIO_PULLUP_DISABLE;
+  inputs.pull_down_en = GPIO_PULLDOWN_DISABLE;
+  inputs.intr_type = GPIO_INTR_DISABLE;
+  if (gpio_config(&inputs) != ESP_OK) {
     return false;
   }
 
-  spi_device_interface_config_t device{};
-  device.mode = 0;
-  device.clock_speed_hz = 1000000;
-  device.queue_size = 1;
-  device.spics_io_num = config::kBrewThermocoupleChipSelectGpio;
-  spi_device_handle_t brew = nullptr;
-  if (spi_bus_add_device(kThermocoupleSpiHost, &device, &brew) != ESP_OK) {
-    return false;
-  }
-
-  device.spics_io_num = config::kSteamThermocoupleChipSelectGpio;
-  spi_device_handle_t steam = nullptr;
-  if (spi_bus_add_device(kThermocoupleSpiHost, &device, &steam) != ESP_OK) {
-    return false;
-  }
-
-  brew_device_ = brew;
-  steam_device_ = steam;
   initialized_ = true;
   return true;
 }
@@ -89,19 +97,98 @@ bool EspMax6675Transport::read_frame(ThermocoupleChannel channel,
   if (!initialized_) {
     return false;
   }
-  std::array<std::uint8_t, 2> received{};
-  spi_transaction_t transaction{};
-  transaction.length = 16;
-  transaction.rxlength = 16;
-  transaction.rx_buffer = received.data();
-  const auto device = channel == ThermocoupleChannel::kBrew
-                          ? as_spi_device(brew_device_)
-                          : as_spi_device(steam_device_);
-  if (spi_device_transmit(device, &transaction) != ESP_OK) {
+  const auto selected_gpio = chip_select_gpio(channel);
+  const auto other_gpio = chip_select_gpio(
+      channel == ThermocoupleChannel::kBrew ? ThermocoupleChannel::kSteam
+                                             : ThermocoupleChannel::kBrew);
+  if (gpio_set_level(
+          static_cast<gpio_num_t>(config::kBrewThermocoupleChipSelectGpio),
+          1) != ESP_OK ||
+      gpio_set_level(
+          static_cast<gpio_num_t>(config::kSteamThermocoupleChipSelectGpio),
+          1) != ESP_OK ||
+      gpio_set_level(
+          static_cast<gpio_num_t>(config::kThermocoupleClockGpio), 0) !=
+          ESP_OK) {
+    ESP_LOGE(kThermocoupleLogTag, "%s idle setup failed",
+             channel_name(channel));
     return false;
   }
-  frame = static_cast<std::uint16_t>(
-      (static_cast<std::uint16_t>(received[0]) << 8U) | received[1]);
+
+  if (channel == ThermocoupleChannel::kSteam) {
+    vTaskDelay(pdMS_TO_TICKS(config::kThermocoupleInterReadDelayMs));
+  }
+
+  if (gpio_set_level(static_cast<gpio_num_t>(other_gpio), 1) != ESP_OK ||
+      gpio_set_level(static_cast<gpio_num_t>(selected_gpio), 0) != ESP_OK) {
+    gpio_set_level(static_cast<gpio_num_t>(selected_gpio), 1);
+    ESP_LOGE(kThermocoupleLogTag,
+             "%s CS setup failed on GPIO%" PRId32,
+             channel_name(channel), selected_gpio);
+    return false;
+  }
+
+  esp_rom_delay_us(1);
+  const auto selected_level =
+      gpio_get_level(static_cast<gpio_num_t>(selected_gpio));
+  const auto other_level =
+      gpio_get_level(static_cast<gpio_num_t>(other_gpio));
+  if (selected_level != 0 || other_level != 1) {
+    gpio_set_level(static_cast<gpio_num_t>(selected_gpio), 1);
+    ESP_LOGE(kThermocoupleLogTag,
+             "%s CS verification failed: GPIO%" PRId32
+             "=%d GPIO%" PRId32 "=%d",
+             channel_name(channel), selected_gpio, selected_level, other_gpio,
+             other_level);
+    return false;
+  }
+
+  frame = 0;
+  for (std::uint32_t bit = 0; bit < 16U; ++bit) {
+    if (gpio_set_level(
+            static_cast<gpio_num_t>(config::kThermocoupleClockGpio), 1) !=
+        ESP_OK) {
+      gpio_set_level(
+          static_cast<gpio_num_t>(config::kThermocoupleClockGpio), 0);
+      gpio_set_level(static_cast<gpio_num_t>(selected_gpio), 1);
+      ESP_LOGE(kThermocoupleLogTag,
+               "%s clock-high failed on GPIO%" PRId32,
+               channel_name(channel), config::kThermocoupleClockGpio);
+      return false;
+    }
+    esp_rom_delay_us(1);
+    frame = static_cast<std::uint16_t>(
+        (frame << 1U) |
+        static_cast<std::uint16_t>(gpio_get_level(
+            static_cast<gpio_num_t>(config::kThermocoupleDataGpio)) != 0));
+    if (gpio_set_level(
+            static_cast<gpio_num_t>(config::kThermocoupleClockGpio), 0) !=
+        ESP_OK) {
+      gpio_set_level(static_cast<gpio_num_t>(selected_gpio), 1);
+      ESP_LOGE(kThermocoupleLogTag,
+               "%s clock-low failed on GPIO%" PRId32,
+               channel_name(channel), config::kThermocoupleClockGpio);
+      return false;
+    }
+    esp_rom_delay_us(1);
+  }
+
+  const auto deselect_result =
+      gpio_set_level(static_cast<gpio_num_t>(selected_gpio), 1);
+  if (deselect_result != ESP_OK) {
+    ESP_LOGE(kThermocoupleLogTag,
+             "%s deselect failed on GPIO%" PRId32 ": %s",
+             channel_name(channel), selected_gpio,
+             esp_err_to_name(deselect_result));
+    return false;
+  }
+
+  ESP_LOGI(kThermocoupleLogTag,
+           "%s CS=GPIO%" PRId32 " SO=GPIO%" PRId32
+           " raw=0x%04X status=%s cs_verified=1",
+           channel_name(channel), selected_gpio,
+           config::kThermocoupleDataGpio,
+           static_cast<unsigned>(frame), frame_status(frame));
   return true;
 }
 

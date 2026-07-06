@@ -17,7 +17,14 @@ bool reading_ok(const peripherals::ThermocoupleReading& reading) {
          std::isfinite(reading.temperature_c);
 }
 
-bool over_temperature(const peripherals::ThermocoupleReadings& readings) {
+bool over_temperature(const peripherals::ThermocoupleReadings& readings,
+                      ControlMode mode, bool dual_thermocouples_enabled) {
+  if (!dual_thermocouples_enabled) {
+    const auto limit = mode == ControlMode::kBrew
+                           ? config::kBrewOverTemperatureC
+                           : config::kSteamOverTemperatureC;
+    return readings.brew.temperature_c >= static_cast<float>(limit);
+  }
   return readings.brew.temperature_c >= config::kBrewOverTemperatureC ||
          readings.steam.temperature_c >= config::kSteamOverTemperatureC;
 }
@@ -49,8 +56,11 @@ const char* fault_message(FaultCode code) {
 }
 
 TemperatureController::TemperatureController(
-    peripherals::TemperatureTargets targets, peripherals::FailOffSsr& heater)
-    : heater_(heater), targets_(targets) {
+    peripherals::TemperatureTargets targets, peripherals::FailOffSsr& heater,
+    bool dual_thermocouples_enabled)
+    : heater_(heater),
+      targets_(targets),
+      dual_thermocouples_enabled_(dual_thermocouples_enabled) {
   if (!peripherals::targets_are_valid(targets_)) {
     targets_ = {};
     latch_fault(FaultCode::kInternalError);
@@ -199,6 +209,9 @@ std::int32_t TemperatureController::active_target() const {
 }
 
 float TemperatureController::active_temperature() const {
+  if (!dual_thermocouples_enabled_) {
+    return readings_.brew.temperature_c;
+  }
   return mode_ == ControlMode::kBrew ? readings_.brew.temperature_c
                                      : readings_.steam.temperature_c;
 }
@@ -226,12 +239,13 @@ void TemperatureController::return_to_brew(std::uint32_t now_ms) {
 }
 
 bool TemperatureController::validate_readings(std::uint32_t) {
-  if (!reading_ok(readings_.brew) || !reading_ok(readings_.steam)) {
+  if (!reading_ok(readings_.brew) ||
+      (dual_thermocouples_enabled_ && !reading_ok(readings_.steam))) {
     latch_fault(FaultCode::kSensorFailure);
     return false;
   }
 
-  if (over_temperature(readings_)) {
+  if (over_temperature(readings_, mode_, dual_thermocouples_enabled_)) {
     latch_fault(FaultCode::kOverTemperature);
     return false;
   }

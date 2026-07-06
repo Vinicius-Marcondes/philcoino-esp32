@@ -85,9 +85,11 @@ void format_temperature_line(char* output, std::size_t length,
 }  // namespace
 
 DualMax6675::DualMax6675(Max6675Transport& transport,
-                         std::uint32_t started_at_ms)
+                         std::uint32_t started_at_ms,
+                         bool dual_thermocouples_enabled)
     : transport_(transport),
-      ready_at_ms_(started_at_ms + kMax6675ConversionMs) {}
+      ready_at_ms_(started_at_ms + kMax6675ConversionMs),
+      dual_thermocouples_enabled_(dual_thermocouples_enabled) {}
 
 ThermocoupleReadings DualMax6675::read(std::uint32_t now_ms) {
   if (!deadline_reached(now_ms, ready_at_ms_)) {
@@ -100,6 +102,12 @@ ThermocoupleReadings DualMax6675::read(std::uint32_t now_ms) {
     readings.brew = decode(frame);
   } else {
     readings.brew.status = ThermocoupleStatus::kTransportError;
+  }
+
+  if (!dual_thermocouples_enabled_) {
+    readings.steam = readings.brew;
+    ready_at_ms_ = now_ms + kMax6675ConversionMs;
+    return readings;
   }
 
   frame = 0;

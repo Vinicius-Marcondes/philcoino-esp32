@@ -14,8 +14,6 @@ class EspMax6675Transport final : public Max6675Transport {
                   std::uint16_t& frame) override;
 
  private:
-  void* brew_device_{nullptr};
-  void* steam_device_{nullptr};
   bool initialized_{false};
 };
 

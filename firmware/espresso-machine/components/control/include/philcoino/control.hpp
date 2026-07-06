@@ -43,7 +43,8 @@ const char* fault_message(FaultCode code);
 class TemperatureController {
  public:
   TemperatureController(peripherals::TemperatureTargets targets,
-                        peripherals::FailOffSsr& heater);
+                        peripherals::FailOffSsr& heater,
+                        bool dual_thermocouples_enabled = true);
 
   ControlMode mode() const;
   ControlStatus status() const;
@@ -83,6 +84,7 @@ class TemperatureController {
   peripherals::FailOffSsr& heater_;
   peripherals::TemperatureTargets targets_{};
   peripherals::ThermocoupleReadings readings_{};
+  bool dual_thermocouples_enabled_{true};
   ControlMode mode_{ControlMode::kBrew};
   ControlStatus status_{ControlStatus::kHeating};
   FaultCode fault_code_{FaultCode::kInternalError};

@@ -96,9 +96,15 @@ extern "C" void app_main() {
            philcoino::config::kFriendlyName,
            philcoino::config::kFirmwareVersion, device_id.c_str());
 
-  if (!secrets_are_configured()) {
+  if (!philcoino::config::kWifiEnabled) {
+    ESP_LOGW(kLogTag, "Wi-Fi disabled for low-voltage sensor diagnosis");
+  } else if (!secrets_are_configured()) {
     ESP_LOGW(kLogTag,
              "Wi-Fi and bearer-token secrets are not configured; values are never logged");
+  }
+  if (!philcoino::config::kDualThermocouplesEnabled) {
+    ESP_LOGW(kLogTag,
+             "Single-thermocouple mode enabled; brew sensor controls brew and steam");
   }
 
   static EspNvsTargetBackend nvs_backend;
@@ -123,7 +129,9 @@ extern "C" void app_main() {
     ssr.force_off();
     return;
   }
-  static DualMax6675 thermocouples(max6675_transport, uptime_ms());
+  static DualMax6675 thermocouples(
+      max6675_transport, uptime_ms(),
+      philcoino::config::kDualThermocouplesEnabled);
 
   static EspOledTransport oled_transport;
   static Ssd1306Display display(oled_transport);
@@ -141,7 +149,8 @@ extern "C" void app_main() {
     return;
   }
 
-  static philcoino::control::TemperatureController controller(targets, ssr);
+  static philcoino::control::TemperatureController controller(
+      targets, ssr, philcoino::config::kDualThermocouplesEnabled);
   vTaskDelay(pdMS_TO_TICKS(kMax6675ConversionMs + 10U));
   auto snapshot = controller.update(thermocouples.read(uptime_ms()), uptime_ms());
   if (!display.render(display_snapshot(snapshot))) {
@@ -171,7 +180,7 @@ extern "C" void app_main() {
       CONFIG_PHILCOINO_WIFI_SSID,
       CONFIG_PHILCOINO_WIFI_PASSWORD,
   };
-  if (secrets_are_configured() &&
+  if (philcoino::config::kWifiEnabled && secrets_are_configured() &&
       xTaskCreate(network_start_task, "philcoino-network", 6144,
                   const_cast<NetworkStartContext*>(&network_context), 5,
                   nullptr) != pdPASS) {
