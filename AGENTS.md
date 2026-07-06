@@ -4,16 +4,18 @@ Always use dev-mind whenever documentation is needed and it can help, if you can
 
 ## 1. Overview
 
-Philcoino is a local espresso-machine monitoring and temperature-control system spanning a phone client, a shared wire contract, a deterministic simulator, and device firmware. The firmware remains the authority for real-time control, validation, persistence, heater safety, and fault handling.
+Philcoino is a local espresso-machine monitoring and temperature-control system spanning a phone client, a language-neutral wire contract, a deterministic simulator, and device firmware. Firmware remains authoritative for real-time control, validation, persistence, heater safety, and fault handling.
 
 ## 2. Folder Structure
 
 - `apps/mobile`: Expo 54 and React Native client.
   - `app`: Expo Router route tree and layouts; keep screen and navigation work here.
   - `components`, `hooks`, and `constants`: reusable UI, platform hooks, and theme primitives.
+  - `src/dashboard`: polling and mutation sessions plus presentation view models; acknowledged device responses, not requested values, drive live state.
+  - `src/discovery` and `src/pairing`: mDNS adapter boundaries, identity verification, authentication, and cached-address recovery.
   - `src/networking`: typed local-device client, strict protocol parsing, timeout/cancellation handling, and connection-state mapping.
   - `src/storage`: single-device persistence boundary backed by Expo SecureStore.
-  - `test`: Bun unit coverage for mobile networking and persistence behavior.
+  - `test`: Bun coverage for networking, persistence, discovery, polling, mutation races, simulator integration, and view-model behavior.
   - `assets`: application icons and static images.
 - `packages/protocol`: language-neutral API boundary shared by clients and simulators.
   - `openapi.yaml`: authoritative HTTP v1 paths, payloads, limits, and errors.
@@ -32,22 +34,23 @@ Philcoino is a local espresso-machine monitoring and temperature-control system 
 - `docs`: source of truth for delivery scope and approved decisions.
   - `prds`: approved requirements, supervised task files, and acceptance criteria.
   - `architecture`, `decisions`, and `protocol`: repository boundaries, durable decisions, and API design.
-  - `hardware`, `references`, and `side-notes.md`: wiring status, exact-version documentation, and unresolved physical-safety risks.
+  - `hardware` and `references`: wiring status and exact-version implementation sources.
+  - `side-notes.md`: deferred human checks and unresolved physical-safety risks that must remain visible after software approval.
   - `TRACKER.md`: current task status, evidence, decisions, and branch/merge guidance.
 - Root workspace files coordinate packages under `apps/*`, `packages/*`, and `tools/*`; firmware tooling and generated output remain outside that workspace.
 
 ## 3. Working Agreements
 
 - Respond in the user's preferred language; if unspecified, infer it from the repository. Keep technical terms in English and never translate fenced code blocks.
-- Build context before editing by reviewing related usages, flows, shared abstractions, recurring patterns, approved PRD scope, and likely impact.
-- Fix the underlying cause, not only the visible symptom; use the narrowest complete change that resolves affected flows without broadening the active task.
-- Treat `packages/protocol/openapi.yaml` as the wire-contract source of truth. Keep Zod, simulator, mobile, and firmware behavior aligned without coupling firmware to TypeScript.
-- Keep safety rules in firmware even when the mobile app duplicates validation for feedback. Never move heater control, timeouts, sensor validation, or fault ownership to the phone.
-- Ask actively when a human decision affects scope, hardware behavior, security, or tradeoffs. Never infer approval for mains-powered testing or unresolved wiring.
-- Check side effects across callers, shared abstractions, and behavior/API boundaries; report relevant changes, compatibility risks, verification results, and remaining blockers.
-- Run the checks already configured for every changed workspace. Keep package-only verification scoped to that package and validate firmware through its independent CMake boundary.
-- Ask before introducing tests, lint/formatter configuration, packages, programs, CLIs, or dependencies. Never install anything without explicit user permission; explain why any new external dependency is necessary.
-- Keep new functions and modules single-purpose and colocated with the code that owns the concern.
-- Preserve unrelated working-tree changes. Never read, open, or recursively search `node_modules`, generated, dependency, cache, build, coverage, binary-heavy, or local database paths unless the user explicitly requests a specific file.
-- Follow `docs/TRACKER.md` and the active task file exactly. Do not advance later tasks, broaden a PRD, or claim human acceptance without confirmation.
-- Before Git operations, read the Git guidance under `docs`. Never push `master`; create pull requests only through the GitHub Connector or `gh`.
+- Build context before editing: read the active PRD task, `docs/TRACKER.md`, relevant decisions/references, related usages, full data flow, failure paths, and shared boundaries.
+- Follow the active task exactly. Apply the narrowest complete root-cause fix, check callers and API boundaries, and do not advance later tasks or broaden approved scope.
+- Treat `packages/protocol/openapi.yaml` as the wire-contract source of truth. Keep Zod schemas, simulator behavior, mobile parsing, firmware validation, fixtures, and examples aligned without coupling C++ to TypeScript.
+- Keep heater control, timeouts, sensor validation, persistence authority, and fault ownership in firmware. Mobile validation exists only for feedback, and requested mutations must not appear live before firmware acknowledgement.
+- Ask when a human decision affects scope, hardware behavior, security, or tradeoffs. Never infer approval for mains-powered work, unresolved wiring, or physical acceptance; record deferred checks in `docs/side-notes.md`.
+- Preserve unrelated worktree changes. Never read, open, or recursively search dependency, generated, cache, build, coverage, binary-heavy, or local database paths, including `node_modules`, `.expo`, `dist`, `build`, `coverage`, and SQLite files, unless a specific file is explicitly requested.
+- Do not install packages, programs, CLIs, or dependencies without explicit user permission. Task-required tests may use existing infrastructure; ask before adding test/lint/formatter infrastructure or configuration.
+- Use project-pinned documentation: prefer `dev-mind` when available, otherwise use links in `docs/references` and exact Expo 54 or ESP-IDF 6.0.2 documentation. Do not guess framework APIs.
+- Keep new functions and modules single-purpose and colocated with the owning concern. Preserve strict runtime validation, cancellation semantics, deterministic simulator time, and fail-off firmware behavior.
+- Run all configured checks relevant to each changed workspace. Keep package checks scoped to that package; validate firmware through its independent CMake/ESP-IDF and host-test boundaries.
+- Report changed behavior, compatibility or safety impact, verification evidence, assumptions, deferred human checks, and remaining blockers. Do not claim human acceptance until the owner explicitly grants it.
+- Before every Git operation, reread the Git guidance under `docs`; preserve unrelated changes and stage only the intended task files. Never push `master`. Create pull requests only through the GitHub Connector or `gh`.

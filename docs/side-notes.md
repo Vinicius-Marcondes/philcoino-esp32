@@ -95,3 +95,60 @@ deferred checks with an iOS development build:
   unavailable data is not presented as a current live snapshot; and
 - inject a firmware fault and recover connectivity to verify the fault code,
   message, heater-off state, and automatic polling recovery are clear.
+
+## PHIL-011 physical iPhone controls review
+
+Status: DEFERRED — SOFTWARE APPROVED 2026-07-06
+
+The project owner approved PHIL-011 after the bounded-control, confirmation,
+acknowledgement, rejection, disconnection, race, simulator-integration, type,
+lint, protocol, configuration, and export checks passed. This closes the
+software task but does not claim that the controls, feedback timing, or
+accessibility have been observed on a physical iPhone.
+
+Perform this review with an iOS development build and either the simulator or a
+low-voltage network-only machine setup. Do not energize the heater or mains
+wiring for this UI review. For the simulator, run `bun run simulator`, put the
+iPhone and development computer on the same Wi-Fi, and pair with the computer's
+LAN address rather than `127.0.0.1`. Confirm `/healthz` is reachable from the
+iPhone first. The development bearer token is `philcoino-dev-token`.
+
+Complete the following checks:
+
+1. **Whole-degree bounds:** decrement Brew to 85°C and Steam to 110°C, then
+   increment Brew to 95°C and Steam to 120°C. Confirm the boundary buttons
+   disable and no fractional or out-of-range value can be entered.
+2. **Explicit confirmation:** change both drafts, tap **Review target changes**,
+   verify the old-to-new summary, then cancel. Confirm the live target cards do
+   not change. Repeat and tap **Confirm and save**.
+3. **Pending and acknowledgement:** while saving, confirm **Change pending** is
+   readable and the old live targets remain visible. After the response,
+   confirm **Change acknowledged** appears and both cards use the values returned
+   by the machine.
+4. **Persistence:** after an acknowledged target change, power-cycle the
+   simulator with `POST /_simulator/power-cycle` or safely restart the
+   low-voltage device. Reconnect and confirm both targets remain saved while the
+   active mode returns to Brew.
+5. **Acknowledged mode switching:** switch from Brew to Steam and back. Confirm
+   the previously active mode stays selected while the request is pending and
+   changes only after acknowledgement. Approve the Brew/Steam labels, selected
+   state, and the five-minute automatic-return explanation.
+6. **Firmware rejection:** with the simulator, latch a fault using
+   `PUT /_simulator/fault` and body `{ "code": "sensor_failure" }`, then request
+   a mode change. Confirm **Change rejected by firmware** displays the firmware
+   message and the active mode does not change. Use `POST /_simulator/power-cycle`
+   before continuing.
+7. **Disconnection during mutation:** prepare a target change, confirm it, and
+   immediately stop the simulator or disconnect the low-voltage device before
+   acknowledgement. Confirm pending feedback becomes **Change not acknowledged**,
+   live values are cleared as unavailable, and neither the draft target nor
+   requested mode is shown as successful after reconnection.
+8. **Steam timeout context:** in the simulator, switch to Steam, set the steam
+   reading to its target with `PUT /_simulator/temperatures`, and advance manual
+   time with `POST /_simulator/advance`. Confirm the copy explains when the timer
+   starts, the countdown is understandable, and mode returns to Brew after the
+   five-minute interval.
+9. **Accessibility and layout:** repeat the controls with VoiceOver and larger
+   Dynamic Type. Confirm stepper actions, disabled bounds, selected mode,
+   confirmation actions, and pending/rejected/disconnected announcements are
+   understandable without relying only on color.

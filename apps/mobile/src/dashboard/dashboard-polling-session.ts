@@ -41,6 +41,7 @@ export class DashboardPollingSession {
 
   private activeController: AbortController | null = null;
   private generation = 0;
+  private paused = false;
   private running = false;
   private timer: unknown | null = null;
 
@@ -58,16 +59,42 @@ export class DashboardPollingSession {
     }
 
     this.running = true;
+    this.paused = false;
     const generation = ++this.generation;
     this.onSnapshotChange(null);
     this.onConnectionChange(connectingState);
     void this.poll(generation);
   }
 
+  pause(): void {
+    if (!this.running || this.paused) {
+      return;
+    }
+
+    this.paused = true;
+    this.generation += 1;
+    this.cancelScheduledWork();
+  }
+
+  resume(): void {
+    if (!this.running || !this.paused) {
+      return;
+    }
+
+    this.paused = false;
+    const generation = ++this.generation;
+    void this.poll(generation);
+  }
+
   stop(): void {
     this.running = false;
+    this.paused = false;
     this.generation += 1;
 
+    this.cancelScheduledWork();
+  }
+
+  private cancelScheduledWork(): void {
     if (this.timer !== null) {
       this.scheduler.clearTimeout(this.timer);
       this.timer = null;
@@ -111,6 +138,6 @@ export class DashboardPollingSession {
   }
 
   private isCurrent(generation: number): boolean {
-    return this.running && this.generation === generation;
+    return !this.paused && this.running && this.generation === generation;
   }
 }

@@ -1,10 +1,10 @@
 # PRD-001 Tracker
 
 PRD Status: Active
-Current Task: PHIL-011 (not started)
+Current Task: PHIL-012 (not started)
 
-Implementation Boundary: PHIL-001 through PHIL-010 are complete. PHIL-011 is
-the next task; PHIL-012 and PHIL-013 have not started.
+Implementation Boundary: PHIL-001 through PHIL-011 are complete. PHIL-012 is
+the next task; PHIL-013 has not started.
 
 ## Summary
 
@@ -32,6 +32,6 @@ PRD: `docs/prds/PRD-001/PRD-001.md`
 | [PHIL-008](prds/PRD-001/tasks/PHIL-008.md) | Agent | Done | 15 mobile tests, mobile/protocol/simulator typechecks, mobile lint, 35 protocol tests, 20 simulator tests, OpenAPI validation, and Expo SDK 54 config introspection passed; user-approved 2026-07-05 | Strict protocol schemas gate all returned data; Expo fetch is isolated behind an injected client; requests use a 5 s default/30 s maximum timeout and first-cause cancellation; one strict SecureStore record holds device ID, normalized address, and token; cancelled requests do not change connection state | This commit | None | None |
 | [PHIL-009](prds/PRD-001/tasks/PHIL-009.md) | Human | Done | 23 mobile tests including simulator pairing/recovery, mobile lint/typecheck, 20 simulator tests/typecheck, 35 protocol tests/typecheck, OpenAPI validation, Expo SDK 54 config introspection, and web export passed; human-approved 2026-07-05 with physical-iPhone checks deferred in `docs/side-notes.md` | `react-native-zeroconf` 0.14.0 is isolated behind a discovery adapter; firmware TXT metadata is strictly parsed; pairing saves only after public identity and authenticated-state verification; startup tries the cached address first and re-verifies stable ID plus authentication before saving a rediscovered address; owner approved software completion while deferring hardware review | `024d740` | None | None |
 | [PHIL-010](prds/PRD-001/tasks/PHIL-010.md) | Human | Done | 30 mobile tests, mobile/protocol/simulator typechecks, mobile lint, 35 protocol tests, 20 simulator tests, OpenAPI validation, Expo SDK 54 config introspection, and web export passed; human-approved 2026-07-05 with physical-iPhone checks deferred in `docs/side-notes.md` | Completion-driven one-second polling prevents overlap; Expo Router focus and React Native AppState cancel active work; connection failures clear live values; app connection and firmware status remain separate; dashboard controls stay read-only; owner approved software completion while deferring hardware review | This commit | None | None |
-| [PHIL-011](prds/PRD-001/tasks/PHIL-011.md) | Human | Todo | Pending | Pending | Pending | None | None |
+| [PHIL-011](prds/PRD-001/tasks/PHIL-011.md) | Human | Done | 38 mobile tests, mobile lint/typecheck, 35 protocol tests/typecheck, 20 simulator tests/typecheck, OpenAPI validation, Expo SDK 54 config introspection, and web export passed; human-approved 2026-07-06 with physical-iPhone checks deferred in `docs/side-notes.md` | Whole-degree bounded steppers keep edits as drafts until inline confirmation; polling pauses during mutations; only validated firmware acknowledgements update displayed targets/mode; firmware rejections remain visible and disconnects clear live state without false success; owner approved software completion while deferring physical-iPhone review | This commit | None | None |
 | [PHIL-012](prds/PRD-001/tasks/PHIL-012.md) | Agent | Todo | Pending | Pending | Pending | None | None |
 | [PHIL-013](prds/PRD-001/tasks/PHIL-013.md) | Human | Todo | Pending | Pending | Pending | None | None |

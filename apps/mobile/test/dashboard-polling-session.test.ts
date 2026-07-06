@@ -105,6 +105,48 @@ describe("DashboardPollingSession", () => {
     expect(scheduler.size).toBe(0);
   });
 
+  test("pauses an active read and resumes immediately without clearing live state", async () => {
+    const scheduler = new FakeScheduler();
+    const connections: ConnectionState[] = [];
+    const snapshots: (MachineState | null)[] = [];
+    let requests = 0;
+    const client: DashboardStateClient = {
+      getState: ({ signal } = {}) => {
+        requests += 1;
+        if (requests === 1) {
+          return new Promise((_resolve, reject) => {
+            signal?.addEventListener("abort", () => {
+              reject(new ApiClientError("cancelled", "cancelled"));
+            });
+          });
+        }
+        return Promise.resolve(validState);
+      },
+    };
+    const session = new DashboardPollingSession({
+      client,
+      onConnectionChange: (connection) => connections.push(connection),
+      onSnapshotChange: (snapshot) => snapshots.push(snapshot),
+      scheduler,
+    });
+
+    session.start();
+    session.pause();
+    await settle();
+    expect(requests).toBe(1);
+    expect(snapshots).toEqual([null]);
+
+    session.resume();
+    await settle();
+    expect(requests).toBe(2);
+    expect(snapshots).toEqual([null, validState]);
+    expect(connections).toEqual([
+      { status: "connecting" },
+      { status: "online" },
+    ]);
+    session.stop();
+  });
+
   test("clears the last snapshot and exposes a protocol error without stopping recovery", async () => {
     const scheduler = new FakeScheduler();
     const connections: ConnectionState[] = [];

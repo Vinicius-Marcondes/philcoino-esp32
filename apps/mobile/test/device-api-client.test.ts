@@ -154,6 +154,41 @@ describe("DeviceApiClient", () => {
     expect((error as ApiClientError).kind).toBe("invalid-request");
   });
 
+  test("blocks out-of-range temperature settings before sending and validates acknowledgement", async () => {
+    let fetchCalls = 0;
+    let sentBody: string | undefined;
+    let sentMethod: string | undefined;
+    const client = new DeviceApiClient({
+      address: "philcoino.local",
+      fetch: async (_url, init) => {
+        fetchCalls += 1;
+        sentBody = init.body;
+        sentMethod = init.method;
+        return Response.json({ brewTargetC: 94, steamTargetC: 116 });
+      },
+      token: "secret-token",
+    });
+
+    const invalid = client.updateTemperatureSettings({
+      brewTargetC: 84,
+    } as never);
+    const error = await captureError(invalid);
+    expect((error as ApiClientError).kind).toBe("invalid-request");
+    expect(fetchCalls).toBe(0);
+
+    await expect(
+      client.updateTemperatureSettings({
+        brewTargetC: 94,
+        steamTargetC: 116,
+      }),
+    ).resolves.toEqual({ brewTargetC: 94, steamTargetC: 116 });
+    expect(fetchCalls).toBe(1);
+    expect(sentMethod).toBe("PATCH");
+    expect(sentBody).toBe(
+      JSON.stringify({ brewTargetC: 94, steamTargetC: 116 }),
+    );
+  });
+
   test("enforces a finite timeout bound", () => {
     expect(
       () =>

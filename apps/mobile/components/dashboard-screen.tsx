@@ -11,6 +11,10 @@ import {
   View,
 } from "react-native";
 
+import {
+  MachineControls,
+  MutationFeedback,
+} from "@/components/machine-controls";
 import { useMachineDashboard } from "@/hooks/use-machine-dashboard";
 import { createDeviceApiClient } from "@/src/networking/expo-device-api-client";
 import {
@@ -47,7 +51,14 @@ export function DashboardScreen({
       }),
     [selectedDevice.lastSuccessfulAddress, selectedDevice.token],
   );
-  const { connection, snapshot } = useMachineDashboard(client);
+  const {
+    connection,
+    modeMutation,
+    setMode,
+    snapshot,
+    temperatureMutation,
+    updateTemperatureSettings,
+  } = useMachineDashboard(client);
   const { width } = useWindowDimensions();
   const connectionContent = connectionCopy(connection);
   const metricWidth = width >= 700 ? "48.5%" : "100%";
@@ -94,8 +105,20 @@ export function DashboardScreen({
           </Text>
         </View>
 
+        <MutationFeedback state={modeMutation} />
+        <MutationFeedback state={temperatureMutation} />
+
         {connection.status === "online" && snapshot !== null ? (
-          <MachineSnapshot snapshot={snapshot} metricWidth={metricWidth} />
+          <>
+            <MachineSnapshot snapshot={snapshot} metricWidth={metricWidth} />
+            <MachineControls
+              modeMutation={modeMutation}
+              onSetMode={setMode}
+              onUpdateTemperatureSettings={updateTemperatureSettings}
+              snapshot={snapshot}
+              temperatureMutation={temperatureMutation}
+            />
+          </>
         ) : (
           <View style={styles.unavailableCard}>
             <Text selectable style={styles.unavailableTitle}>

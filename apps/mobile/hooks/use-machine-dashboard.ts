@@ -1,8 +1,18 @@
-import type { MachineState } from "@philcoino/protocol";
+import type {
+  MachineState,
+  Mode,
+  TemperatureSettingsRequest,
+} from "@philcoino/protocol";
 import { useFocusEffect } from "expo-router";
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { AppState } from "react-native";
 
+import {
+  DashboardMutationSession,
+  idleMutationState,
+  type DashboardMutationClient,
+  type DashboardMutationState,
+} from "@/src/dashboard/dashboard-mutation-session";
 import {
   DashboardPollingSession,
   type DashboardStateClient,
@@ -14,14 +24,23 @@ import {
 
 export interface MachineDashboardState {
   connection: ConnectionState;
+  modeMutation: DashboardMutationState;
+  setMode: (mode: Mode) => void;
   snapshot: MachineState | null;
+  temperatureMutation: DashboardMutationState;
+  updateTemperatureSettings: (settings: TemperatureSettingsRequest) => void;
 }
 
 export function useMachineDashboard(
-  client: DashboardStateClient,
+  client: DashboardStateClient & DashboardMutationClient,
 ): MachineDashboardState {
   const [connection, setConnection] = useState<ConnectionState>(connectingState);
+  const [modeMutation, setModeMutation] =
+    useState<DashboardMutationState>(idleMutationState);
   const [snapshot, setSnapshot] = useState<MachineState | null>(null);
+  const [temperatureMutation, setTemperatureMutation] =
+    useState<DashboardMutationState>(idleMutationState);
+  const mutationSession = useRef<DashboardMutationSession | null>(null);
 
   useFocusEffect(
     useCallback(() => {
@@ -30,11 +49,48 @@ export function useMachineDashboard(
         onConnectionChange: setConnection,
         onSnapshotChange: setSnapshot,
       });
+      const mutations = new DashboardMutationSession({
+        client,
+        onConnectionLost: (nextConnection) => {
+          setSnapshot(null);
+          setConnection(nextConnection);
+        },
+        onModeAcknowledged: (mode) => {
+          setSnapshot((current) =>
+            current === null
+              ? null
+              : {
+                  ...current,
+                  activeMode: mode,
+                  steamTimeoutRemainingMs:
+                    mode === "brew"
+                      ? null
+                      : current.steamTimeoutRemainingMs,
+                },
+          );
+        },
+        onMutationChange: (kind, state) => {
+          if (kind === "mode") {
+            setModeMutation(state);
+          } else {
+            setTemperatureMutation(state);
+          }
+        },
+        onTemperatureSettingsAcknowledged: (settings) => {
+          setSnapshot((current) =>
+            current === null ? null : { ...current, ...settings },
+          );
+        },
+        polling,
+      });
+      mutationSession.current = mutations;
 
       const synchronizePolling = (appState: typeof AppState.currentState) => {
         if (appState === "active") {
           polling.start();
+          mutations.start();
         } else {
+          mutations.stop();
           polling.stop();
         }
       };
@@ -47,10 +103,32 @@ export function useMachineDashboard(
 
       return () => {
         subscription.remove();
+        mutations.stop();
         polling.stop();
+        if (mutationSession.current === mutations) {
+          mutationSession.current = null;
+        }
       };
     }, [client]),
   );
 
-  return { connection, snapshot };
+  const setMode = useCallback((mode: Mode) => {
+    mutationSession.current?.setMode(mode);
+  }, []);
+
+  const updateTemperatureSettings = useCallback(
+    (settings: TemperatureSettingsRequest) => {
+      mutationSession.current?.updateTemperatureSettings(settings);
+    },
+    [],
+  );
+
+  return {
+    connection,
+    modeMutation,
+    setMode,
+    snapshot,
+    temperatureMutation,
+    updateTemperatureSettings,
+  };
 }
