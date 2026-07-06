@@ -9,6 +9,7 @@
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
+      "bundleIdentifier": "dev.viniciuslab.philcoino",
       "supportsTablet": true,
       "infoPlist": {
         "NSLocalNetworkUsageDescription": "Philcoino uses your local network to discover and connect to your espresso machine.",
