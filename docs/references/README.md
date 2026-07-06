@@ -33,7 +33,7 @@ These references inform engineering work; they do not constitute electrical, mai
 - [ESP32-C3 technical reference manual](https://documentation.espressif.com/esp32-c3_technical_reference_manual_en.pdf): peripheral and register-level reference.
 - [ESP-IDF v6.0.2 GPIO](https://docs.espressif.com/projects/esp-idf/en/v6.0.2/esp32c3/api-reference/peripherals/gpio.html): GPIO restrictions and configuration.
 - [ESP-IDF v6.0.2 I2C](https://docs.espressif.com/projects/esp-idf/en/v6.0.2/esp32c3/api-reference/peripherals/i2c.html): SSD1306 bus implementation.
-- [ESP-IDF v6.0.2 SPI master](https://docs.espressif.com/projects/esp-idf/en/v6.0.2/esp32c3/api-reference/peripherals/spi_master.html): shared MAX6675 bus implementation.
+- [ESP-IDF v6.0.2 GPIO](https://docs.espressif.com/projects/esp-idf/en/v6.0.2/esp32c3/api-reference/peripherals/gpio.html): explicit MAX6675 SCK, CS, and SO GPIO implementation.
 - [ESP-IDF v6.0.2 NVS](https://docs.espressif.com/projects/esp-idf/en/v6.0.2/esp32c3/api-reference/storage/nvs_flash.html): persisted temperature targets and configuration.
 - [ESP-IDF v6.0.2 HTTP server](https://docs.espressif.com/projects/esp-idf/en/v6.0.2/esp32c3/api-reference/protocols/esp_http_server.html): firmware HTTP API implementation.
 - [ESP-IDF v6.0.2 component manager](https://docs.espressif.com/projects/esp-idf/en/v6.0.2/esp32c3/api-guides/tools/idf-component-manager.html): managed dependency manifests and lock files.
