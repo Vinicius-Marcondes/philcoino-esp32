@@ -58,6 +58,7 @@ export function createSimulator(
   app.use("/api/v1/state", requireBearer);
   app.use("/api/v1/settings/temperatures", requireBearer);
   app.use("/api/v1/mode", requireBearer);
+  app.use("/api/v1/faults/over-temperature/dismiss", requireBearer);
 
   app.get("/api/v1/state", (c) => c.json(machine.getState()));
 
@@ -104,6 +105,19 @@ export function createSimulator(
     }
 
     return c.json(ModeResponseSchema.parse({ mode: machine.setMode(parsed.data.mode) }));
+  });
+
+  app.post("/api/v1/faults/over-temperature/dismiss", (c) => {
+    const state = machine.dismissOverTemperature();
+    if (state === null) {
+      return contractError(
+        c,
+        409,
+        "sensor_unavailable",
+        "Over-temperature can only be dismissed after the active temperature returns to target.",
+      );
+    }
+    return c.json(state);
   });
 
   app.post("/_simulator/reset", (c) => {

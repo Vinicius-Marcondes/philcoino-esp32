@@ -16,6 +16,18 @@ Then start the app from the repository root:
    bun run start
    ```
 
+To run the dashboard without connecting to an ESP32, enable the debug device
+client:
+
+   ```bash
+   EXPO_PUBLIC_PHILCOINO_DEBUG_DEVICE=1 bun run start
+   ```
+
+Debug device mode bypasses discovery, secure restore, and authentication. Live
+temperature and uptime readings stay at `0`; target defaults remain within the
+shared protocol ranges so dashboard controls can render and acknowledge changes
+locally.
+
 In the output, you'll find options to open the app in a
 
 - [development build](https://docs.expo.dev/develop/development-builds/introduction/)

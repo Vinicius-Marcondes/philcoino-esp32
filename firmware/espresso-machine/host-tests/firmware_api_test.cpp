@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "philcoino/api.hpp"
+#include "philcoino/config.hpp"
 
 namespace {
 
@@ -133,6 +134,7 @@ void test_public_contract_and_authentication() {
            {HttpMethod::kGet, "/api/v1/state"},
            {HttpMethod::kPatch, "/api/v1/settings/temperatures"},
            {HttpMethod::kPut, "/api/v1/mode"},
+           {HttpMethod::kPost, "/api/v1/faults/over-temperature/dismiss"},
        }) {
     const auto missing = harness.request(request.first, request.second);
     expect_error(missing, 401, "unauthorized");
@@ -177,6 +179,33 @@ void test_state_and_mutations_delegate_to_control() {
   response = harness.request(HttpMethod::kPut, "/api/v1/mode", authorization,
                              "{\"mode\":\"steam\"}");
   assert(response.status == 200);
+}
+
+void test_over_temperature_dismissal_endpoint_is_guarded() {
+  ApiHarness harness;
+  const char* authorization = "Bearer test-secret";
+
+  auto response = harness.request(
+      HttpMethod::kPost, "/api/v1/faults/over-temperature/dismiss",
+      authorization);
+  expect_error(response, 409, "sensor_unavailable");
+
+  harness.controller.update(
+      {ok(static_cast<float>(philcoino::config::kBrewOverTemperatureC)),
+       ok(100.0F)},
+      2000);
+  response = harness.request(
+      HttpMethod::kPost, "/api/v1/faults/over-temperature/dismiss",
+      authorization, "", 3000);
+  expect_error(response, 409, "sensor_unavailable");
+
+  harness.controller.update({ok(93.0F), ok(100.0F)}, 4000);
+  response = harness.request(
+      HttpMethod::kPost, "/api/v1/faults/over-temperature/dismiss",
+      authorization, "", 5000);
+  assert(response.status == 200);
+  assert(response.body.find("\"status\":\"heating\"") != std::string::npos);
+  assert(response.body.find("\"fault\":null") != std::string::npos);
 }
 
 void test_malformed_and_domain_failures_do_not_bypass_validation() {
@@ -248,6 +277,7 @@ void capture_contract_payloads(const std::filesystem::path& directory) {
 int main(int argc, char** argv) {
   test_public_contract_and_authentication();
   test_state_and_mutations_delegate_to_control();
+  test_over_temperature_dismissal_endpoint_is_guarded();
   test_malformed_and_domain_failures_do_not_bypass_validation();
   if (argc == 2) {
     capture_contract_payloads(argv[1]);

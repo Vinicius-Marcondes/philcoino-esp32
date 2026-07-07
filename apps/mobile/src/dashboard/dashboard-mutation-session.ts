@@ -1,6 +1,8 @@
 import type {
+  MachineState,
   Mode,
   ModeResponse,
+  OverTemperatureDismissResponse,
   TemperatureSettingsRequest,
   TemperatureSettingsResponse,
 } from "@philcoino/protocol";
@@ -11,7 +13,7 @@ import {
   type ConnectionState,
 } from "../networking/connection-state";
 
-export type DashboardMutationKind = "mode" | "temperatures";
+export type DashboardMutationKind = "fault" | "mode" | "temperatures";
 export type DashboardMutationStatus =
   | "idle"
   | "pending"
@@ -29,7 +31,12 @@ export const idleMutationState: DashboardMutationState = {
   status: "idle",
 };
 
+const mutationKinds: DashboardMutationKind[] = ["fault", "mode", "temperatures"];
+
 export interface DashboardMutationClient {
+  dismissOverTemperature(
+    options?: { signal?: AbortSignal },
+  ): Promise<OverTemperatureDismissResponse>;
   setMode(
     request: { mode: Mode },
     options?: { signal?: AbortSignal },
@@ -53,6 +60,7 @@ interface DashboardMutationSessionOptions {
     kind: DashboardMutationKind,
     state: DashboardMutationState,
   ) => void;
+  onOverTemperatureDismissed: (snapshot: MachineState) => void;
   onTemperatureSettingsAcknowledged: (
     settings: TemperatureSettingsResponse,
   ) => void;
@@ -64,6 +72,7 @@ export class DashboardMutationSession {
   private readonly onConnectionLost: (connection: ConnectionState) => void;
   private readonly onModeAcknowledged: (mode: Mode) => void;
   private readonly onMutationChange: DashboardMutationSessionOptions["onMutationChange"];
+  private readonly onOverTemperatureDismissed: DashboardMutationSessionOptions["onOverTemperatureDismissed"];
   private readonly onTemperatureSettingsAcknowledged: DashboardMutationSessionOptions["onTemperatureSettingsAcknowledged"];
   private readonly polling: DashboardPollingControl;
 
@@ -77,6 +86,7 @@ export class DashboardMutationSession {
     this.onConnectionLost = options.onConnectionLost;
     this.onModeAcknowledged = options.onModeAcknowledged;
     this.onMutationChange = options.onMutationChange;
+    this.onOverTemperatureDismissed = options.onOverTemperatureDismissed;
     this.onTemperatureSettingsAcknowledged =
       options.onTemperatureSettingsAcknowledged;
     this.polling = options.polling;
@@ -88,8 +98,9 @@ export class DashboardMutationSession {
     }
 
     this.running = true;
-    this.onMutationChange("mode", idleMutationState);
-    this.onMutationChange("temperatures", idleMutationState);
+    for (const kind of mutationKinds) {
+      this.onMutationChange(kind, idleMutationState);
+    }
   }
 
   stop(): void {
@@ -128,6 +139,18 @@ export class DashboardMutationSession {
     );
   }
 
+  dismissOverTemperature(): void {
+    void this.perform(
+      "fault",
+      (signal) => this.client.dismissOverTemperature({ signal }),
+      (response) => {
+        this.onOverTemperatureDismissed(response);
+        return "Machine dismissed the over-temperature limit and resumed normal control.";
+      },
+      "Waiting for the machine to dismiss the over-temperature limit…",
+    );
+  }
+
   private async perform<T>(
     kind: DashboardMutationKind,
     request: (signal: AbortSignal) => Promise<T>,
@@ -142,8 +165,11 @@ export class DashboardMutationSession {
     const controller = new AbortController();
     this.activeController = controller;
     const generation = ++this.generation;
-    const otherKind = kind === "mode" ? "temperatures" : "mode";
-    this.onMutationChange(otherKind, idleMutationState);
+    for (const otherKind of mutationKinds) {
+      if (otherKind !== kind) {
+        this.onMutationChange(otherKind, idleMutationState);
+      }
+    }
     this.onMutationChange(kind, {
       message: pendingMessage,
       status: "pending",

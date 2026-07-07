@@ -458,7 +458,9 @@ HttpResponse FirmwareApi::handle(HttpMethod method, const std::string& path,
       (method == HttpMethod::kGet && path == "/api/v1/state") ||
       (method == HttpMethod::kPatch &&
        path == "/api/v1/settings/temperatures") ||
-      (method == HttpMethod::kPut && path == "/api/v1/mode");
+      (method == HttpMethod::kPut && path == "/api/v1/mode") ||
+      (method == HttpMethod::kPost &&
+       path == "/api/v1/faults/over-temperature/dismiss");
   if (!protected_path) {
     return error_response(404, "internal_error", "The requested endpoint does not exist.");
   }
@@ -472,7 +474,10 @@ HttpResponse FirmwareApi::handle(HttpMethod method, const std::string& path,
   if (method == HttpMethod::kPatch) {
     return update_temperatures(body, uptime_ms);
   }
-  return update_mode(body, uptime_ms);
+  if (method == HttpMethod::kPut) {
+    return update_mode(body, uptime_ms);
+  }
+  return dismiss_over_temperature(uptime_ms);
 }
 
 HttpResponse FirmwareApi::health(std::uint64_t uptime_ms) const {
@@ -540,6 +545,16 @@ HttpResponse FirmwareApi::update_mode(const std::string& body,
   std::ostringstream output;
   output << "{\"mode\":\"" << mode_name(controller_.mode()) << "\"}";
   return json_response(200, output.str());
+}
+
+HttpResponse FirmwareApi::dismiss_over_temperature(std::uint64_t uptime_ms) {
+  if (!controller_.dismiss_over_temperature(
+          static_cast<std::uint32_t>(uptime_ms))) {
+    return error_response(
+        409, "sensor_unavailable",
+        "Over-temperature can only be dismissed after the active temperature returns to target.");
+  }
+  return state(uptime_ms);
 }
 
 }  // namespace philcoino::networking

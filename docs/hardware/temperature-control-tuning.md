@@ -35,19 +35,19 @@ The key constants are in
 
 ```cpp
 kMinimumHeaterPulseMs = 500U;
-kBrewHeatRampBandC = 7.0F;
+kBrewHeatRampBandC = 8.0F;
 kSteamHeatRampBandC = 12.0F;
 ```
 
 The ramp band defines where firmware stops using full heat and starts reducing
 heater duty.
 
-For brew mode with a target of 85C and `kBrewHeatRampBandC = 7.0F`:
+For brew mode with a target of 85C and `kBrewHeatRampBandC = 8.0F`:
 
 | Temperature | Error below target | Normal behavior |
 | --- | ---: | --- |
-| 78C or below | 7C or more | Full heat for the whole 10s window |
-| 81.5C | 3.5C | About 25% duty, 2.5s on / 10s |
+| 77C or below | 8C or more | Full heat for the whole 10s window |
+| 81C | 4C | About 25% duty, 2.5s on / 10s |
 | 83.5C | 1.5C | About 500ms on / 10s, clamped by minimum pulse |
 | 85C or above | 0C | Heater off |
 
@@ -73,7 +73,11 @@ kBrewRecoveryHeatRampBandC = 4.0F;
 kSteamRecoveryHeatRampBandC = 6.0F;
 ```
 
-Recovery mode turns on when:
+Recovery mode is armed only after the active temperature reaches the active
+target at least once. This prevents extraction recovery from engaging during the
+first warm-up from cold.
+
+After recovery is armed, recovery mode turns on when:
 
 ```text
 target - active_temperature >= recovery_trigger_drop

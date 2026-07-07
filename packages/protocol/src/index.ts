@@ -13,6 +13,7 @@ export {
   ModeRequestSchema,
   ModeResponseSchema,
   ModeSchema,
+  OverTemperatureDismissResponseSchema,
   STEAM_TARGET_MAX_C,
   STEAM_TARGET_MIN_C,
   STEAM_TIMEOUT_MS,
@@ -33,6 +34,7 @@ export type {
   Mode,
   ModeRequest,
   ModeResponse,
+  OverTemperatureDismissResponse,
   TemperatureSettingsRequest,
   TemperatureSettingsResponse,
 } from "./schemas.ts";

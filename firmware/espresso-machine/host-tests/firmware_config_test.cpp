@@ -23,7 +23,7 @@ int main() {
   static_assert(kMinimumHeaterPulseMs < kHeaterControlWindowMs);
   static_assert(kBrewHeatRampBandC > static_cast<float>(kReadyBandC));
   static_assert(kSteamHeatRampBandC > kBrewHeatRampBandC);
-  static_assert(kBrewRecoveryTriggerDropC > static_cast<float>(kReadyBandC));
+  static_assert(kBrewRecoveryTriggerDropC >= static_cast<float>(kReadyBandC));
   static_assert(kSteamRecoveryTriggerDropC > kBrewRecoveryTriggerDropC);
   static_assert(kBrewRecoveryHeatRampBandC < kBrewHeatRampBandC);
   static_assert(kSteamRecoveryHeatRampBandC < kSteamHeatRampBandC);

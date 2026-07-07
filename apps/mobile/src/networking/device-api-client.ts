@@ -5,6 +5,7 @@ import {
   MachineStateSchema,
   ModeRequestSchema,
   ModeResponseSchema,
+  OverTemperatureDismissResponseSchema,
   TemperatureSettingsRequestSchema,
   TemperatureSettingsResponseSchema,
   type DeviceResponse,
@@ -12,6 +13,7 @@ import {
   type MachineState,
   type ModeRequest,
   type ModeResponse,
+  type OverTemperatureDismissResponse,
   type TemperatureSettingsRequest,
   type TemperatureSettingsResponse,
 } from "@philcoino/protocol";
@@ -33,7 +35,7 @@ interface RuntimeSchema<T> {
 export interface DeviceFetchRequestInit {
   body?: string;
   headers: Record<string, string>;
-  method: "GET" | "PATCH" | "PUT";
+  method: "GET" | "PATCH" | "POST" | "PUT";
   signal: AbortSignal;
 }
 
@@ -140,13 +142,27 @@ export class DeviceApiClient {
     );
   }
 
+  dismissOverTemperature(
+    options: RequestOptions = {},
+  ): Promise<OverTemperatureDismissResponse> {
+    return this.request(
+      "/api/v1/faults/over-temperature/dismiss",
+      OverTemperatureDismissResponseSchema,
+      {
+        authenticated: true,
+        method: "POST",
+      },
+      options,
+    );
+  }
+
   private async request<T>(
     path: string,
     schema: RuntimeSchema<T>,
     request: {
       authenticated?: boolean;
       body?: unknown;
-      method?: "GET" | "PATCH" | "PUT";
+      method?: "GET" | "PATCH" | "POST" | "PUT";
     },
     options: RequestOptions,
   ): Promise<T> {

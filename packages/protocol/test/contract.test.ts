@@ -15,6 +15,7 @@ import {
   ModeRequestSchema,
   ModeResponseSchema,
   ModeSchema,
+  OverTemperatureDismissResponseSchema,
   STEAM_TARGET_MAX_C,
   STEAM_TARGET_MIN_C,
   SteamTargetSchema,
@@ -51,6 +52,7 @@ const documentedSchemas: Record<string, ZodType> = {
   TemperatureSettingsResponse: TemperatureSettingsResponseSchema,
   ModeRequest: ModeRequestSchema,
   ModeResponse: ModeResponseSchema,
+  OverTemperatureDismissResponse: OverTemperatureDismissResponseSchema,
   ErrorResponse: ErrorResponseSchema,
 };
 
@@ -121,6 +123,9 @@ describe("documented OpenAPI examples", () => {
       ],
       ModeRequest: [await fixture("valid/mode-request.json")],
       ModeResponse: [await fixture("valid/mode-response.json")],
+      OverTemperatureDismissResponse: [
+        openApi.components.schemas.OverTemperatureDismissResponse.examples?.[0],
+      ],
       ErrorResponse: [await fixture("valid/error.json")],
     };
 

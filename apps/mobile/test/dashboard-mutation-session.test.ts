@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type {
+  MachineState,
   Mode,
   TemperatureSettingsResponse,
 } from "@philcoino/protocol";
@@ -75,6 +76,52 @@ describe("DashboardMutationSession", () => {
       kind: "mode",
       state: {
         message: "Machine acknowledged Steam mode.",
+        status: "acknowledged",
+      },
+    });
+  });
+
+  test("replaces the fault snapshot only after over-temperature dismissal acknowledgement", async () => {
+    const acknowledgedState: MachineState = {
+      activeMode: "brew",
+      brewTargetC: 93,
+      brewTemperatureC: 93,
+      fault: null,
+      heaterActive: false,
+      status: "heating",
+      steamTargetC: 115,
+      steamTemperatureC: 100,
+      steamTimeoutRemainingMs: null,
+      uptimeMs: 190_000,
+    };
+    const response = deferred<MachineState>();
+    const client = mutationClient({
+      dismissOverTemperature: () => response.promise,
+    });
+    const harness = createHarness(client);
+
+    harness.session.start();
+    harness.session.dismissOverTemperature();
+
+    expect(harness.dismissedFaults).toEqual([]);
+    expect(harness.outcomes.at(-1)).toEqual({
+      kind: "fault",
+      state: {
+        message:
+          "Waiting for the machine to dismiss the over-temperature limit…",
+        status: "pending",
+      },
+    });
+
+    response.resolve(acknowledgedState);
+    await settle();
+
+    expect(harness.dismissedFaults).toEqual([acknowledgedState]);
+    expect(harness.outcomes.at(-1)).toEqual({
+      kind: "fault",
+      state: {
+        message:
+          "Machine dismissed the over-temperature limit and resumed normal control.",
         status: "acknowledged",
       },
     });
@@ -195,6 +242,7 @@ function createHarness(client: DashboardMutationClient) {
   const acknowledgedModes: Mode[] = [];
   const acknowledgedSettings: TemperatureSettingsResponse[] = [];
   const connections: ConnectionState[] = [];
+  const dismissedFaults: MachineState[] = [];
   const outcomes: {
     kind: DashboardMutationKind;
     state: DashboardMutationState;
@@ -214,6 +262,7 @@ function createHarness(client: DashboardMutationClient) {
     onConnectionLost: (connection) => connections.push(connection),
     onModeAcknowledged: (mode) => acknowledgedModes.push(mode),
     onMutationChange: (kind, state) => outcomes.push({ kind, state }),
+    onOverTemperatureDismissed: (snapshot) => dismissedFaults.push(snapshot),
     onTemperatureSettingsAcknowledged: (settings) =>
       acknowledgedSettings.push(settings),
     polling,
@@ -223,6 +272,7 @@ function createHarness(client: DashboardMutationClient) {
     acknowledgedModes,
     acknowledgedSettings,
     connections,
+    dismissedFaults,
     outcomes,
     polling,
     session,
@@ -233,6 +283,18 @@ function mutationClient(
   overrides: Partial<DashboardMutationClient>,
 ): DashboardMutationClient {
   return {
+    dismissOverTemperature: async () => ({
+      activeMode: "brew",
+      brewTargetC: 93,
+      brewTemperatureC: 93,
+      fault: null,
+      heaterActive: false,
+      status: "heating",
+      steamTargetC: 115,
+      steamTemperatureC: 100,
+      steamTimeoutRemainingMs: null,
+      uptimeMs: 190_000,
+    }),
     setMode: async ({ mode }) => ({ mode }),
     updateTemperatureSettings: async (settings) => ({
       brewTargetC: settings.brewTargetC ?? 93,

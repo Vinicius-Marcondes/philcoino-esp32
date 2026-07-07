@@ -246,10 +246,25 @@ void test_brew_heat_ramp_uses_full_heat_far_below_target() {
   assert(snapshot.heater_enabled);
 }
 
-void test_brew_recovery_heat_latches_after_extraction_drop() {
+void test_brew_recovery_heat_does_not_start_during_initial_warmup() {
   ControllerHarness harness({85, 115});
 
   auto snapshot = harness.controller.update(readings(83.0F, 90.0F), 0);
+  assert(snapshot.status == ControlStatus::kHeating);
+  assert(snapshot.heater_enabled);
+
+  snapshot = harness.controller.update(readings(83.0F, 90.0F), 4000);
+  assert(snapshot.status == ControlStatus::kHeating);
+  assert(!snapshot.heater_enabled);
+}
+
+void test_brew_recovery_heat_latches_after_extraction_drop() {
+  ControllerHarness harness({85, 115});
+
+  auto snapshot = harness.controller.update(readings(85.0F, 90.0F), 0);
+  assert(!snapshot.heater_enabled);
+
+  snapshot = harness.controller.update(readings(83.0F, 90.0F), 1000);
   assert(snapshot.status == ControlStatus::kHeating);
   assert(snapshot.heater_enabled);
 
@@ -294,6 +309,56 @@ void test_over_temperature_monitors_inactive_sensor() {
   assert(!snapshot.heater_enabled);
 }
 
+void test_over_temperature_can_be_dismissed_after_cooldown() {
+  ControllerHarness harness({93, 115});
+  auto snapshot = harness.controller.update(
+      readings(static_cast<float>(philcoino::config::kBrewOverTemperatureC),
+               100.0F),
+      0);
+  assert(snapshot.status == ControlStatus::kFault);
+  assert(snapshot.fault.code == FaultCode::kOverTemperature);
+  assert(!harness.controller.dismiss_over_temperature(1000));
+
+  snapshot = harness.controller.update(readings(93.0F, 100.0F), 2000);
+  assert(snapshot.status == ControlStatus::kFault);
+  assert(harness.controller.dismiss_over_temperature(3000));
+  snapshot = harness.controller.snapshot(3000);
+  assert(snapshot.status == ControlStatus::kHeating);
+  assert(!snapshot.fault_active);
+  assert(!snapshot.heater_enabled);
+}
+
+void test_over_temperature_dismissal_requires_all_monitored_limits_clear() {
+  ControllerHarness harness({93, 115});
+  auto snapshot = harness.controller.update(
+      readings(93.0F, static_cast<float>(philcoino::config::kSteamOverTemperatureC)),
+      0);
+  assert(snapshot.status == ControlStatus::kFault);
+  assert(snapshot.fault.code == FaultCode::kOverTemperature);
+  snapshot = harness.controller.update(
+      readings(93.0F, static_cast<float>(philcoino::config::kSteamOverTemperatureC)),
+      1000);
+  assert(snapshot.status == ControlStatus::kFault);
+  assert(!harness.controller.dismiss_over_temperature(2000));
+
+  snapshot = harness.controller.update(
+      readings(93.0F,
+               static_cast<float>(philcoino::config::kSteamOverTemperatureC) -
+                   1.0F),
+      3000);
+  assert(snapshot.status == ControlStatus::kFault);
+  assert(harness.controller.dismiss_over_temperature(4000));
+}
+
+void test_only_over_temperature_fault_is_dismissible() {
+  ControllerHarness harness({93, 115});
+  harness.controller.latch_fault(FaultCode::kSensorFailure);
+  harness.controller.update(readings(93.0F, 100.0F), 1000);
+  assert(!harness.controller.dismiss_over_temperature(2000));
+  assert(harness.controller.has_fault());
+  assert(harness.controller.fault_code() == FaultCode::kSensorFailure);
+}
+
 void test_heating_timeout_latches_fault_and_forces_off() {
   ControllerHarness harness({93, 115});
   auto snapshot = harness.controller.update(readings(80.0F, 90.0F), 0);
@@ -334,9 +399,13 @@ int main() {
   test_over_target_brew_disables_heater_while_not_ready();
   test_brew_heat_ramp_pulses_near_target();
   test_brew_heat_ramp_uses_full_heat_far_below_target();
+  test_brew_recovery_heat_does_not_start_during_initial_warmup();
   test_brew_recovery_heat_latches_after_extraction_drop();
   test_sensor_faults_monitor_both_sensors_and_latch_off();
   test_over_temperature_monitors_inactive_sensor();
+  test_over_temperature_can_be_dismissed_after_cooldown();
+  test_over_temperature_dismissal_requires_all_monitored_limits_clear();
+  test_only_over_temperature_fault_is_dismissible();
   test_heating_timeout_latches_fault_and_forces_off();
   test_internal_output_failure_latches_fault();
   return 0;

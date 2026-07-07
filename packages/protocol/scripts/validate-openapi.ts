@@ -71,6 +71,7 @@ const expectedOperations = {
   "/api/v1/state": "get",
   "/api/v1/settings/temperatures": "patch",
   "/api/v1/mode": "put",
+  "/api/v1/faults/over-temperature/dismiss": "post",
 } as const;
 
 if (

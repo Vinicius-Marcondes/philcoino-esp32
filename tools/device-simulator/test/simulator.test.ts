@@ -44,6 +44,7 @@ describe("bearer authentication", () => {
     ["GET", "/api/v1/state"],
     ["PATCH", "/api/v1/settings/temperatures"],
     ["PUT", "/api/v1/mode"],
+    ["POST", "/api/v1/faults/over-temperature/dismiss"],
   ])("rejects a missing token for %s %s", async (method, path) => {
     const response = await simulator.app.request(path, { method });
     expect(response.status).toBe(401);
@@ -203,6 +204,35 @@ describe("deterministic machine controls", () => {
     expect(state.status).toBe("heating");
     expect(state.fault).toBeNull();
     expect(state.activeMode).toBe("brew");
+  });
+
+  it("dismisses only cooled over-temperature faults", async () => {
+    await control("PUT", "/_simulator/temperatures", {
+      brewTemperatureC: 99,
+    });
+    await control("PUT", "/_simulator/fault", { code: "over_temperature" });
+
+    let response = await simulator.app.request(
+      "/api/v1/faults/over-temperature/dismiss",
+      { headers: authorization, method: "POST" },
+    );
+    expect(response.status).toBe(409);
+    expect(ErrorResponseSchema.parse(await response.json()).error.code).toBe(
+      "sensor_unavailable",
+    );
+
+    await control("PUT", "/_simulator/temperatures", {
+      brewTemperatureC: 93,
+    });
+    response = await simulator.app.request(
+      "/api/v1/faults/over-temperature/dismiss",
+      { headers: authorization, method: "POST" },
+    );
+    expect(response.status).toBe(200);
+    const state = MachineStateSchema.parse(await response.json());
+    expect(state.status).toBe("heating");
+    expect(state.fault).toBeNull();
+    expect(state.heaterActive).toBe(false);
   });
 
   it("full reset restores default persisted targets", async () => {

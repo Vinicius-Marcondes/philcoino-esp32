@@ -89,7 +89,7 @@ bool TemperatureController::set_mode(ControlMode mode, std::uint32_t now_ms) {
   reset_readiness(now_ms);
   reset_heater_control_window(now_ms);
   heating_demand_active_ = false;
-  recovery_heat_active_ = false;
+  reset_recovery_heat();
   steam_timeout_active_ = false;
   if (fault_latched_) {
     status_ = ControlStatus::kFault;
@@ -113,7 +113,7 @@ bool TemperatureController::update_targets(
   reset_readiness(now_ms);
   reset_heater_control_window(now_ms);
   heating_demand_active_ = false;
-  recovery_heat_active_ = false;
+  reset_recovery_heat();
   steam_timeout_active_ = false;
   if (!fault_latched_) {
     status_ = ControlStatus::kHeating;
@@ -139,6 +139,20 @@ bool TemperatureController::update_steam_target(
   auto targets = targets_;
   targets.steam_c = steam_c;
   return update_targets(targets, storage, now_ms);
+}
+
+bool TemperatureController::dismiss_over_temperature(std::uint32_t now_ms) {
+  if (!fault_latched_ || fault_code_ != FaultCode::kOverTemperature ||
+      !monitored_readings_ok() || !active_temperature_back_at_target() ||
+      over_temperature(readings_, mode_, dual_thermocouples_enabled_)) {
+    return false;
+  }
+  fault_latched_ = false;
+  reset_readiness(now_ms);
+  reset_heater_control_window(now_ms);
+  heating_demand_active_ = false;
+  reset_recovery_heat();
+  return !update(readings_, now_ms).fault_active;
 }
 
 ControlSnapshot TemperatureController::update(
@@ -230,6 +244,15 @@ bool TemperatureController::active_temperature_demands_heat() const {
   return active_temperature() < static_cast<float>(active_target());
 }
 
+bool TemperatureController::monitored_readings_ok() const {
+  return reading_ok(readings_.brew) &&
+         (!dual_thermocouples_enabled_ || reading_ok(readings_.steam));
+}
+
+bool TemperatureController::active_temperature_back_at_target() const {
+  return active_temperature() <= static_cast<float>(active_target());
+}
+
 float TemperatureController::active_heat_ramp_band() const {
   return mode_ == ControlMode::kBrew ? config::kBrewHeatRampBandC
                                      : config::kSteamHeatRampBandC;
@@ -245,14 +268,21 @@ float TemperatureController::active_recovery_heat_ramp_band() const {
                                      : config::kSteamRecoveryHeatRampBandC;
 }
 
+void TemperatureController::reset_recovery_heat() {
+  recovery_heat_armed_ = false;
+  recovery_heat_active_ = false;
+}
+
 void TemperatureController::update_recovery_heat() {
   const float temperature_error =
       static_cast<float>(active_target()) - active_temperature();
   if (temperature_error <= 0.0F) {
+    recovery_heat_armed_ = true;
     recovery_heat_active_ = false;
     return;
   }
-  if (temperature_error >= active_recovery_trigger_drop()) {
+  if (recovery_heat_armed_ &&
+      temperature_error >= active_recovery_trigger_drop()) {
     recovery_heat_active_ = true;
   }
 }
@@ -296,7 +326,7 @@ void TemperatureController::return_to_brew(std::uint32_t now_ms) {
   reset_readiness(now_ms);
   reset_heater_control_window(now_ms);
   heating_demand_active_ = false;
-  recovery_heat_active_ = false;
+  reset_recovery_heat();
   status_ = ControlStatus::kHeating;
 }
 

@@ -129,6 +129,26 @@
           "500": { "$ref": "#/components/responses/InternalError" }
         }
       }
+    },
+    "/api/v1/faults/over-temperature/dismiss": {
+      "post": {
+        "operationId": "dismissOverTemperature",
+        "summary": "Dismiss a recoverable over-temperature fault after cooldown",
+        "security": [{ "bearerAuth": [] }],
+        "responses": {
+          "200": {
+            "description": "The fresh machine snapshot after the over-temperature fault is dismissed.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/OverTemperatureDismissResponse" }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "409": { "$ref": "#/components/responses/Conflict" },
+          "500": { "$ref": "#/components/responses/InternalError" }
+        }
+      }
     }
   },
   "components": {
@@ -398,6 +418,23 @@
         },
         "examples": [
           { "mode": "steam" }
+        ]
+      },
+      "OverTemperatureDismissResponse": {
+        "$ref": "#/components/schemas/MachineState",
+        "examples": [
+          {
+            "status": "heating",
+            "activeMode": "brew",
+            "brewTemperatureC": 93,
+            "steamTemperatureC": 103.8,
+            "brewTargetC": 93,
+            "steamTargetC": 115,
+            "heaterActive": false,
+            "fault": null,
+            "steamTimeoutRemainingMs": null,
+            "uptimeMs": 190000
+          }
         ]
       },
       "ErrorResponse": {

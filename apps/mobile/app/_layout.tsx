@@ -14,12 +14,15 @@ export default function RootLayout() {
 
   return (
     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-      <Stack>
+      <Stack
+        screenOptions={{
+          contentStyle: { backgroundColor: '#F4F0E8' },
+          headerShown: false,
+        }}>
         <Stack.Screen
           name="index"
           options={{
-            headerLargeTitle: true,
-            headerShadowVisible: false,
+            headerLargeTitle: false,
             title: 'Pair machine',
           }}
         />

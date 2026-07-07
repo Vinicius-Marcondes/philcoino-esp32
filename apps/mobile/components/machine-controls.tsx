@@ -13,6 +13,7 @@ import { Pressable, StyleSheet, Text, View } from "react-native";
 import type { DashboardMutationState } from "@/src/dashboard/dashboard-mutation-session";
 
 interface MachineControlsProps {
+  faultMutation: DashboardMutationState;
   modeMutation: DashboardMutationState;
   onSetMode: (mode: Mode) => void;
   onUpdateTemperatureSettings: (
@@ -23,6 +24,7 @@ interface MachineControlsProps {
 }
 
 export function MachineControls({
+  faultMutation,
   modeMutation,
   onSetMode,
   onUpdateTemperatureSettings,
@@ -33,6 +35,7 @@ export function MachineControls({
   const [confirmingTargets, setConfirmingTargets] = useState(false);
   const [steamTargetC, setSteamTargetC] = useState(snapshot.steamTargetC);
   const mutationPending =
+    faultMutation.status === "pending" ||
     modeMutation.status === "pending" ||
     temperatureMutation.status === "pending";
   const targetsChanged =

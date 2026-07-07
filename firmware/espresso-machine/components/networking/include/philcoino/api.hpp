@@ -14,7 +14,7 @@ inline constexpr char kMdnsServiceType[] = "_philcoino";
 inline constexpr char kMdnsProtocol[] = "_tcp";
 inline constexpr std::uint16_t kHttpPort = 80;
 
-enum class HttpMethod { kGet, kPatch, kPut };
+enum class HttpMethod { kGet, kPatch, kPost, kPut };
 
 struct DeviceIdentity {
   std::string device_id;
@@ -59,6 +59,7 @@ class FirmwareApi {
                                    std::uint64_t uptime_ms);
   HttpResponse update_mode(const std::string& body,
                            std::uint64_t uptime_ms);
+  HttpResponse dismiss_over_temperature(std::uint64_t uptime_ms);
 
   DeviceIdentity identity_;
   std::string bearer_token_;

@@ -46,6 +46,7 @@ const char* status_text(int status) {
 HttpMethod request_method(int method) {
   switch (method) {
     case HTTP_PATCH: return HttpMethod::kPatch;
+    case HTTP_POST: return HttpMethod::kPost;
     case HTTP_PUT: return HttpMethod::kPut;
     default: return HttpMethod::kGet;
   }
@@ -225,12 +226,13 @@ bool EspNetworkServer::start_http() {
         static_cast<EspNetworkServer*>(request->user_ctx)
             ->handle_http_request(request));
   };
-  const std::array<std::pair<const char*, httpd_method_t>, 5> routes{{
+  const std::array<std::pair<const char*, httpd_method_t>, 6> routes{{
       {"/healthz", HTTP_GET},
       {"/api/v1/device", HTTP_GET},
       {"/api/v1/state", HTTP_GET},
       {"/api/v1/settings/temperatures", HTTP_PATCH},
       {"/api/v1/mode", HTTP_PUT},
+      {"/api/v1/faults/over-temperature/dismiss", HTTP_POST},
   }};
   for (const auto& route : routes) {
     httpd_uri_t uri{};

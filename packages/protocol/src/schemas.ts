@@ -108,6 +108,8 @@ export const TemperatureSettingsResponseSchema = z.strictObject({
   steamTargetC: SteamTargetSchema,
 });
 
+export const OverTemperatureDismissResponseSchema = MachineStateSchema;
+
 export const ModeRequestSchema = z.strictObject({
   mode: ModeSchema,
 });
@@ -136,6 +138,9 @@ export type TemperatureSettingsRequest = z.infer<
 >;
 export type TemperatureSettingsResponse = z.infer<
   typeof TemperatureSettingsResponseSchema
+>;
+export type OverTemperatureDismissResponse = z.infer<
+  typeof OverTemperatureDismissResponseSchema
 >;
 export type ModeRequest = z.infer<typeof ModeRequestSchema>;
 export type ModeResponse = z.infer<typeof ModeResponseSchema>;

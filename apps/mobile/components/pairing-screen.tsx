@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
-  KeyboardAvoidingView,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -14,7 +13,12 @@ import { DashboardScreen } from "@/components/dashboard-screen";
 import type { DiscoveredDevice } from "@/src/discovery/device-discovery";
 import { findDiscoveredDevice } from "@/src/discovery/device-discovery";
 import { nativeDeviceDiscovery } from "@/src/discovery/native-device-discovery";
+import { isDebugDeviceModeEnabled } from "@/src/debug-device-mode";
 import { ApiClientError } from "@/src/networking/api-client-error";
+import {
+  debugDeviceIdentity,
+  debugSelectedDevice,
+} from "@/src/networking/debug-device-api-client";
 import { createDeviceApiClient } from "@/src/networking/expo-device-api-client";
 import {
   authenticateAndSave,
@@ -37,6 +41,25 @@ type PairedDevice = {
 };
 
 export function PairingScreen() {
+  if (isDebugDeviceModeEnabled()) {
+    return <DebugPairingScreen />;
+  }
+
+  return <RealPairingScreen />;
+}
+
+function DebugPairingScreen() {
+  return (
+    <DashboardScreen
+      deviceName={debugDeviceIdentity.name}
+      initialNote="Debug device mode is enabled. Discovery, authentication, and ESP32 requests are bypassed."
+      onForget={() => undefined}
+      selectedDevice={debugSelectedDevice}
+    />
+  );
+}
+
+function RealPairingScreen() {
   const [devices, setDevices] = useState<DiscoveredDevice[]>([]);
   const [selected, setSelected] = useState<PairingCandidate | null>(null);
   const [paired, setPaired] = useState<PairedDevice | null>(null);
@@ -243,6 +266,7 @@ export function PairingScreen() {
     setToken("");
     startBrowsing();
   };
+  const tokenSubmitDisabled = busy || token.trim().length === 0;
 
   if (paired !== null) {
     return (
@@ -256,16 +280,17 @@ export function PairingScreen() {
   }
 
   return (
-    <KeyboardAvoidingView
-      behavior={process.env.EXPO_OS === "ios" ? "padding" : "height"}
-      enabled={process.env.EXPO_OS !== "web"}
-      style={styles.screen}>
+    <>
       <ScrollView
+        automaticallyAdjustKeyboardInsets
         contentInsetAdjustmentBehavior="automatic"
         keyboardDismissMode="interactive"
         keyboardShouldPersistTaps="handled"
         style={styles.screen}
         contentContainerStyle={styles.content}>
+        <View style={styles.pageHeader}>
+          <Text selectable style={styles.pageTitle}>Pair machine</Text>
+        </View>
         <View style={styles.intro}>
           <Text selectable style={styles.eyebrow}>LOCAL ESPRESSO CONTROL</Text>
           <Text selectable style={styles.lead}>
@@ -294,7 +319,7 @@ export function PairingScreen() {
               />
             </View>
             <ActionButton
-              disabled={busy || token.trim().length === 0}
+              disabled={tokenSubmitDisabled}
               label={busy ? "Verifying…" : "Verify and save"}
               onPress={() => void pairSelectedDevice()}
             />
@@ -366,7 +391,7 @@ export function PairingScreen() {
           </View>
         ) : null}
       </ScrollView>
-    </KeyboardAvoidingView>
+    </>
   );
 }
 
@@ -449,7 +474,10 @@ const styles = StyleSheet.create({
     gap: 18,
     padding: 20,
     paddingBottom: 44,
+    paddingTop: 24,
   },
+  pageHeader: { alignItems: "center", minHeight: 34 },
+  pageTitle: { color: "#241B17", fontSize: 22, fontWeight: "800" },
   intro: { gap: 7, paddingHorizontal: 2, paddingTop: 8 },
   eyebrow: { color: "#8B3A2B", fontSize: 12, fontWeight: "800", letterSpacing: 1.5 },
   lead: { color: "#332A25", fontSize: 17, lineHeight: 24 },

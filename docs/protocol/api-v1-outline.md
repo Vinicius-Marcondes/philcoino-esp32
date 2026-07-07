@@ -42,6 +42,7 @@ The app remembers the stable device ID, resolved address, and token. It tries th
 - `GET /api/v1/state`: complete machine snapshot, polled once per second while the main screen is active.
 - `PATCH /api/v1/settings/temperatures`: update one or both temperature targets.
 - `PUT /api/v1/mode`: set the active temperature-control mode to `brew` or `steam`.
+- `POST /api/v1/faults/over-temperature/dismiss`: dismiss a latched over-temperature fault only after the active control temperature has returned to its target.
 
 V1 has no remote power, pump, water-flow, or heater action endpoints. Brewing is activated physically on the machine. The app monitors the machine, changes temperature targets, and selects whether the firmware regulates toward the brew or steam target.
 
@@ -130,7 +131,7 @@ Initial machine fault codes are:
 - `heating_timeout`
 - `internal_error`
 
-All faults are latched until the espresso machine is power-cycled. Entering a fault state de-energizes the heater output immediately.
+Faults remain latched until the espresso machine is power-cycled, except `over_temperature`, which may be dismissed through API v1 only after the active control temperature has returned to its target. Entering any fault state de-energizes the heater output immediately, and the ESP32 rejects over-temperature dismissal while the active temperature is still above target or when any other fault is latched.
 
 ## Safety boundary
 

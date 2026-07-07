@@ -24,6 +24,8 @@ import {
 
 export interface MachineDashboardState {
   connection: ConnectionState;
+  dismissOverTemperature: () => void;
+  faultMutation: DashboardMutationState;
   modeMutation: DashboardMutationState;
   setMode: (mode: Mode) => void;
   snapshot: MachineState | null;
@@ -35,6 +37,8 @@ export function useMachineDashboard(
   client: DashboardStateClient & DashboardMutationClient,
 ): MachineDashboardState {
   const [connection, setConnection] = useState<ConnectionState>(connectingState);
+  const [faultMutation, setFaultMutation] =
+    useState<DashboardMutationState>(idleMutationState);
   const [modeMutation, setModeMutation] =
     useState<DashboardMutationState>(idleMutationState);
   const [snapshot, setSnapshot] = useState<MachineState | null>(null);
@@ -72,10 +76,13 @@ export function useMachineDashboard(
         onMutationChange: (kind, state) => {
           if (kind === "mode") {
             setModeMutation(state);
-          } else {
+          } else if (kind === "temperatures") {
             setTemperatureMutation(state);
+          } else {
+            setFaultMutation(state);
           }
         },
+        onOverTemperatureDismissed: setSnapshot,
         onTemperatureSettingsAcknowledged: (settings) => {
           setSnapshot((current) =>
             current === null ? null : { ...current, ...settings },
@@ -116,6 +123,10 @@ export function useMachineDashboard(
     mutationSession.current?.setMode(mode);
   }, []);
 
+  const dismissOverTemperature = useCallback(() => {
+    mutationSession.current?.dismissOverTemperature();
+  }, []);
+
   const updateTemperatureSettings = useCallback(
     (settings: TemperatureSettingsRequest) => {
       mutationSession.current?.updateTemperatureSettings(settings);
@@ -125,6 +136,8 @@ export function useMachineDashboard(
 
   return {
     connection,
+    dismissOverTemperature,
+    faultMutation,
     modeMutation,
     setMode,
     snapshot,

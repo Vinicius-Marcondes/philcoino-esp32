@@ -14,6 +14,7 @@ import {
   type HealthResponse,
   type MachineState,
   type Mode,
+  type OverTemperatureDismissResponse,
   type TemperatureSettingsRequest,
   type TemperatureSettingsResponse,
 } from "@philcoino/protocol";
@@ -24,6 +25,8 @@ const COOLING_RATE_C_PER_SECOND = 2;
 const READY_BAND_C = 1;
 const READY_HOLD_MS = 3_000;
 const MAX_SIMULATION_STEP_MS = 100;
+const BREW_OVER_TEMPERATURE_C = 98;
+const STEAM_OVER_TEMPERATURE_C = 130;
 
 const FAULT_MESSAGES: Record<FaultCode, string> = {
   sensor_failure: "A simulated thermocouple is unavailable.",
@@ -172,6 +175,21 @@ export class SimulatorMachine {
     this.readyElapsedMs = 0;
   }
 
+  dismissOverTemperature(): OverTemperatureDismissResponse | null {
+    if (
+      this.fault?.code !== "over_temperature" ||
+      !this.activeTemperatureBackAtTarget() ||
+      this.brewTemperatureC >= BREW_OVER_TEMPERATURE_C ||
+      this.steamTemperatureC >= STEAM_OVER_TEMPERATURE_C
+    ) {
+      return null;
+    }
+
+    this.fault = null;
+    this.readyElapsedMs = 0;
+    return this.getState();
+  }
+
   advance(milliseconds: number): void {
     let remainingMs = milliseconds;
 
@@ -295,6 +313,16 @@ export class SimulatorMachine {
     const target =
       this.activeMode === "brew" ? this.brewTargetC : this.steamTargetC;
     return temperature < target;
+  }
+
+  private activeTemperatureBackAtTarget(): boolean {
+    const temperature =
+      this.activeMode === "brew"
+        ? this.brewTemperatureC
+        : this.steamTemperatureC;
+    const target =
+      this.activeMode === "brew" ? this.brewTargetC : this.steamTargetC;
+    return temperature <= target;
   }
 
   private resetVolatileState(): void {

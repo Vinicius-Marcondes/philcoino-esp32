@@ -63,6 +63,7 @@ class TemperatureController {
   bool update_steam_target(std::int32_t steam_c,
                            peripherals::TargetStorage& storage,
                            std::uint32_t now_ms);
+  bool dismiss_over_temperature(std::uint32_t now_ms);
 
   ControlSnapshot update(const peripherals::ThermocoupleReadings& readings,
                          std::uint32_t now_ms);
@@ -74,9 +75,12 @@ class TemperatureController {
   float active_temperature() const;
   bool active_temperature_in_ready_band() const;
   bool active_temperature_demands_heat() const;
+  bool monitored_readings_ok() const;
+  bool active_temperature_back_at_target() const;
   float active_heat_ramp_band() const;
   float active_recovery_trigger_drop() const;
   float active_recovery_heat_ramp_band() const;
+  void reset_recovery_heat();
   void update_recovery_heat();
   std::uint32_t heater_pulse_ms() const;
   void reset_heater_control_window(std::uint32_t now_ms);
@@ -100,6 +104,7 @@ class TemperatureController {
   bool heating_demand_active_{false};
   std::uint32_t heating_demand_since_ms_{0};
   std::uint32_t heater_control_window_started_ms_{0};
+  bool recovery_heat_armed_{false};
   bool recovery_heat_active_{false};
   bool steam_timeout_active_{false};
   std::uint32_t steam_timeout_started_ms_{0};

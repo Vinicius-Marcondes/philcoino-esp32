@@ -154,6 +154,40 @@ describe("DeviceApiClient", () => {
     expect((error as ApiClientError).kind).toBe("invalid-request");
   });
 
+  test("requests over-temperature dismissal and validates the acknowledged snapshot", async () => {
+    let sentMethod: string | undefined;
+    let sentUrl: string | undefined;
+    const dismissedState: MachineState = {
+      ...validState,
+      brewTemperatureC: 93,
+      fault: null,
+      heaterActive: false,
+      status: "heating",
+    };
+    const client = new DeviceApiClient({
+      address: "philcoino.local",
+      fetch: async (url, init) => {
+        sentMethod = init.method;
+        sentUrl = url;
+        return Response.json(dismissedState);
+      },
+      token: "secret-token",
+    });
+
+    await expect(client.dismissOverTemperature()).resolves.toEqual(dismissedState);
+    expect(sentMethod).toBe("POST");
+    expect(sentUrl).toBe(
+      "http://philcoino.local/api/v1/faults/over-temperature/dismiss",
+    );
+  });
+
+  test("rejects malformed over-temperature dismissal acknowledgement", async () => {
+    const client = clientWithResponse(Response.json({ ok: true }));
+
+    const error = await captureError(client.dismissOverTemperature());
+    expect((error as ApiClientError).kind).toBe("protocol");
+  });
+
   test("blocks out-of-range temperature settings before sending and validates acknowledgement", async () => {
     let fetchCalls = 0;
     let sentBody: string | undefined;

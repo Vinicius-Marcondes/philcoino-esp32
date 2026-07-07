@@ -1,8 +1,8 @@
 import type { MachineState } from "@philcoino/protocol";
-import { Stack } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -16,7 +16,6 @@ import {
   MutationFeedback,
 } from "@/components/machine-controls";
 import { useMachineDashboard } from "@/hooks/use-machine-dashboard";
-import { createDeviceApiClient } from "@/src/networking/expo-device-api-client";
 import {
   appendTemperatureSample,
   boilerTargetC,
@@ -33,6 +32,10 @@ import {
   steamCountdownContext,
   type TemperatureSample,
 } from "@/src/dashboard/dashboard-view-model";
+import type { DashboardMutationState } from "@/src/dashboard/dashboard-mutation-session";
+import { isDebugDeviceModeEnabled } from "@/src/debug-device-mode";
+import { createDebugDeviceApiClient } from "@/src/networking/debug-device-api-client";
+import { createDeviceApiClient } from "@/src/networking/expo-device-api-client";
 import type { SelectedDevice } from "@/src/storage/selected-device-repository";
 
 interface DashboardScreenProps {
@@ -48,16 +51,25 @@ export function DashboardScreen({
   onForget,
   selectedDevice,
 }: DashboardScreenProps) {
+  const debugDeviceMode = isDebugDeviceModeEnabled();
   const client = useMemo(
     () =>
-      createDeviceApiClient({
-        address: selectedDevice.lastSuccessfulAddress,
-        token: selectedDevice.token,
-      }),
-    [selectedDevice.lastSuccessfulAddress, selectedDevice.token],
+      debugDeviceMode
+        ? createDebugDeviceApiClient()
+        : createDeviceApiClient({
+            address: selectedDevice.lastSuccessfulAddress,
+            token: selectedDevice.token,
+          }),
+    [
+      debugDeviceMode,
+      selectedDevice.lastSuccessfulAddress,
+      selectedDevice.token,
+    ],
   );
   const {
     connection,
+    dismissOverTemperature,
+    faultMutation,
     modeMutation,
     setMode,
     snapshot,
@@ -83,10 +95,12 @@ export function DashboardScreen({
 
   return (
     <>
-      <Stack.Screen options={{ title: deviceName }} />
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
         contentContainerStyle={styles.content}>
+        <View style={styles.pageHeader}>
+          <Text selectable style={styles.pageTitle}>{deviceName}</Text>
+        </View>
         <View style={styles.intro}>
           <Text selectable style={styles.eyebrow}>LIVE MACHINE</Text>
           <Text selectable style={styles.lead}>
@@ -125,15 +139,22 @@ export function DashboardScreen({
 
         <MutationFeedback state={modeMutation} />
         <MutationFeedback state={temperatureMutation} />
+        <MutationFeedback state={faultMutation} />
 
         {connection.status === "online" && snapshot !== null ? (
           <>
-            <MachineSnapshot snapshot={snapshot} metricWidth={metricWidth} />
+            <MachineSnapshot
+              faultMutation={faultMutation}
+              metricWidth={metricWidth}
+              onDismissOverTemperature={dismissOverTemperature}
+              snapshot={snapshot}
+            />
             <TemperatureCurve
               history={temperatureHistory}
               snapshot={snapshot}
             />
             <MachineControls
+              faultMutation={faultMutation}
               modeMutation={modeMutation}
               onSetMode={setMode}
               onUpdateTemperatureSettings={updateTemperatureSettings}
@@ -409,12 +430,36 @@ function curvePointTop(value: number, minimumValue: number, maximumValue: number
 }
 
 function MachineSnapshot({
+  faultMutation,
   metricWidth,
+  onDismissOverTemperature,
   snapshot,
 }: {
+  faultMutation: DashboardMutationState;
   metricWidth: "100%" | "48.5%";
+  onDismissOverTemperature: () => void;
   snapshot: MachineState;
 }) {
+  const canDismissOverTemperature =
+    snapshot.status === "fault" &&
+    snapshot.fault.code === "over_temperature" &&
+    boilerTemperatureC(snapshot) <= boilerTargetC(snapshot);
+  const dismissPending = faultMutation.status === "pending";
+  const confirmDismissOverTemperature = () => {
+    Alert.alert(
+      "Dismiss over-temperature?",
+      "The machine will resume normal temperature control only if the boiler has cooled back to target.",
+      [
+        { style: "cancel", text: "Cancel" },
+        {
+          onPress: onDismissOverTemperature,
+          style: "destructive",
+          text: "Dismiss",
+        },
+      ],
+    );
+  };
+
   return (
     <>
       <View style={styles.machineStateCard}>
@@ -455,6 +500,34 @@ function MachineSnapshot({
           </Text>
           <Text selectable style={styles.faultMessage}>{snapshot.fault.message}</Text>
           <Text selectable style={styles.faultSafety}>Heater command is off.</Text>
+          {snapshot.fault.code === "over_temperature" ? (
+            <>
+              <Text selectable style={styles.faultRecoveryText}>
+                {canDismissOverTemperature
+                  ? "Boiler is back at target. Confirm dismissal to resume normal control."
+                  : `Dismissal unlocks at ${formatTarget(boilerTargetC(snapshot))}. Current ${formatTemperature(boilerTemperatureC(snapshot))}.`}
+              </Text>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityState={{
+                  disabled: !canDismissOverTemperature || dismissPending,
+                }}
+                disabled={!canDismissOverTemperature || dismissPending}
+                onPress={confirmDismissOverTemperature}
+                style={({ pressed }) => [
+                  styles.faultRecoveryButton,
+                  (!canDismissOverTemperature || dismissPending) && styles.disabled,
+                  pressed &&
+                    canDismissOverTemperature &&
+                    !dismissPending &&
+                    styles.pressed,
+                ]}>
+                <Text style={styles.faultRecoveryButtonText}>
+                  {dismissPending ? "Dismissing..." : "Dismiss over-temperature"}
+                </Text>
+              </Pressable>
+            </>
+          ) : null}
         </View>
       ) : null}
 
@@ -541,7 +614,10 @@ const styles = StyleSheet.create({
     gap: 16,
     padding: 20,
     paddingBottom: 44,
+    paddingTop: 24,
   },
+  pageHeader: { alignItems: "center", minHeight: 34 },
+  pageTitle: { color: "#241B17", fontSize: 22, fontWeight: "800" },
   intro: { gap: 7, paddingHorizontal: 2, paddingTop: 8 },
   eyebrow: { color: "#8B3A2B", fontSize: 12, fontWeight: "800", letterSpacing: 1.5 },
   lead: { color: "#332A25", fontSize: 17, lineHeight: 24 },
@@ -591,6 +667,19 @@ const styles = StyleSheet.create({
   faultTitle: { color: "#6F211A", fontSize: 22, fontWeight: "800" },
   faultMessage: { color: "#6F2F28", fontSize: 15, lineHeight: 21 },
   faultSafety: { color: "#6F211A", fontSize: 14, fontWeight: "800" },
+  faultRecoveryText: { color: "#6F2F28", fontSize: 14, lineHeight: 20 },
+  faultRecoveryButton: {
+    alignItems: "center",
+    backgroundColor: "#8C2F24",
+    borderColor: "#8C2F24",
+    borderRadius: 999,
+    borderWidth: 1,
+    justifyContent: "center",
+    marginTop: 4,
+    minHeight: 46,
+    paddingHorizontal: 16,
+  },
+  faultRecoveryButtonText: { color: "#FFFFFF", fontSize: 15, fontWeight: "800" },
   curveCard: {
     backgroundColor: "#FFFCF7",
     borderColor: "#D7C9B8",
@@ -758,4 +847,5 @@ const styles = StyleSheet.create({
   forgetButton: { alignItems: "center", borderColor: "#8B3A2B", borderRadius: 999, borderWidth: 1, justifyContent: "center", marginTop: 6, minHeight: 46, paddingHorizontal: 18 },
   forgetButtonText: { color: "#8B3A2B", fontSize: 15, fontWeight: "800" },
   pressed: { opacity: 0.7 },
+  disabled: { opacity: 0.42 },
 });
