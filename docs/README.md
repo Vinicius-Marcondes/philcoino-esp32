@@ -25,6 +25,7 @@ The first release is expected to cover:
 - [`architecture/repository-layout.md`](architecture/repository-layout.md): proposed Expo and ESP-IDF monorepo organization.
 - [`decisions/firmware-foundation.md`](decisions/firmware-foundation.md): human-approved ESP-IDF, identity, safety-constant, display, GPIO, and secret-handling decisions.
 - [`hardware/esp32-c3-wiring.md`](hardware/esp32-c3-wiring.md): proposed module wiring and unresolved electrical-safety checks.
+- [`hardware/temperature-control-tuning.md`](hardware/temperature-control-tuning.md): firmware heater duty-curve behavior and tuning guidance.
 - [`prds/PRD-001/PRD-001.md`](prds/PRD-001/PRD-001.md): draft product requirements for local monitoring and temperature control.
 - [`protocol/api-v1-outline.md`](protocol/api-v1-outline.md): initial discovery, authentication, state, and temperature API contract.
 - [`references/README.md`](references/README.md): authoritative versioned software, firmware, component, and safety references.
