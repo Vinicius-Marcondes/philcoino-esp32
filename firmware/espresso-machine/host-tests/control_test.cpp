@@ -193,6 +193,82 @@ void test_target_updates_validate_and_persist_before_state_change() {
   assert(state.save_count == 1);
 }
 
+void test_over_target_brew_disables_heater_while_not_ready() {
+  ControllerHarness harness({85, 115});
+
+  auto snapshot = harness.controller.update(readings(84.0F, 90.0F), 0);
+  assert(snapshot.status == ControlStatus::kHeating);
+  assert(snapshot.heater_enabled);
+  assert(harness.output.level);
+
+  snapshot = harness.controller.update(readings(92.0F, 90.0F), 500);
+  assert(snapshot.status == ControlStatus::kHeating);
+  assert(!snapshot.heater_enabled);
+  assert(!harness.output.level);
+}
+
+void test_brew_heat_ramp_pulses_near_target() {
+  ControllerHarness harness({85, 115});
+
+  auto snapshot = harness.controller.update(readings(83.5F, 90.0F), 0);
+  assert(snapshot.status == ControlStatus::kHeating);
+  assert(snapshot.heater_enabled);
+  assert(harness.output.level);
+
+  snapshot = harness.controller.update(
+      readings(83.5F, 90.0F), philcoino::config::kMinimumHeaterPulseMs);
+  assert(snapshot.status == ControlStatus::kHeating);
+  assert(!snapshot.heater_enabled);
+  assert(!harness.output.level);
+
+  snapshot = harness.controller.update(
+      readings(83.5F, 90.0F), philcoino::config::kHeaterControlWindowMs - 1U);
+  assert(snapshot.status == ControlStatus::kHeating);
+  assert(!snapshot.heater_enabled);
+
+  snapshot = harness.controller.update(
+      readings(83.5F, 90.0F), philcoino::config::kHeaterControlWindowMs);
+  assert(snapshot.status == ControlStatus::kHeating);
+  assert(snapshot.heater_enabled);
+  assert(harness.output.level);
+}
+
+void test_brew_heat_ramp_uses_full_heat_far_below_target() {
+  ControllerHarness harness({85, 115});
+
+  auto snapshot = harness.controller.update(readings(70.0F, 90.0F), 0);
+  assert(snapshot.status == ControlStatus::kHeating);
+  assert(snapshot.heater_enabled);
+
+  snapshot = harness.controller.update(
+      readings(70.0F, 90.0F), philcoino::config::kHeaterControlWindowMs - 1U);
+  assert(snapshot.status == ControlStatus::kHeating);
+  assert(snapshot.heater_enabled);
+}
+
+void test_brew_recovery_heat_latches_after_extraction_drop() {
+  ControllerHarness harness({85, 115});
+
+  auto snapshot = harness.controller.update(readings(83.0F, 90.0F), 0);
+  assert(snapshot.status == ControlStatus::kHeating);
+  assert(snapshot.heater_enabled);
+
+  snapshot = harness.controller.update(readings(83.0F, 90.0F), 4000);
+  assert(snapshot.status == ControlStatus::kHeating);
+  assert(snapshot.heater_enabled);
+
+  snapshot = harness.controller.update(readings(83.0F, 90.0F), 5000);
+  assert(snapshot.status == ControlStatus::kHeating);
+  assert(!snapshot.heater_enabled);
+
+  snapshot = harness.controller.update(
+      readings(84.5F, 90.0F), philcoino::config::kHeaterControlWindowMs);
+  assert(snapshot.heater_enabled);
+
+  snapshot = harness.controller.update(readings(85.0F, 90.0F), 11000);
+  assert(!snapshot.heater_enabled);
+}
+
 void test_sensor_faults_monitor_both_sensors_and_latch_off() {
   ControllerHarness harness({93, 115});
   auto snapshot = harness.controller.update(open_steam(80.0F), 0);
@@ -255,6 +331,10 @@ int main() {
   test_ready_requires_three_continuous_seconds();
   test_steam_timeout_returns_to_brew_after_first_ready();
   test_target_updates_validate_and_persist_before_state_change();
+  test_over_target_brew_disables_heater_while_not_ready();
+  test_brew_heat_ramp_pulses_near_target();
+  test_brew_heat_ramp_uses_full_heat_far_below_target();
+  test_brew_recovery_heat_latches_after_extraction_drop();
   test_sensor_faults_monitor_both_sensors_and_latch_off();
   test_over_temperature_monitors_inactive_sensor();
   test_heating_timeout_latches_fault_and_forces_off();

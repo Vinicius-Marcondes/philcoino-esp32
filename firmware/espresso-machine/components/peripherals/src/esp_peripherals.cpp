@@ -8,8 +8,6 @@
 #include "esp_err.h"
 #include "esp_log.h"
 #include "esp_rom_sys.h"
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
 #include "nvs.h"
 #include "nvs_flash.h"
 #include "philcoino/config.hpp"
@@ -29,6 +27,18 @@ std::int32_t chip_select_gpio(ThermocoupleChannel channel) {
   return channel == ThermocoupleChannel::kBrew
              ? config::kBrewThermocoupleChipSelectGpio
              : config::kSteamThermocoupleChipSelectGpio;
+}
+
+std::int32_t data_gpio(ThermocoupleChannel channel) {
+  return channel == ThermocoupleChannel::kBrew
+             ? config::kBrewThermocoupleDataGpio
+             : config::kSteamThermocoupleDataGpio;
+}
+
+std::int32_t clock_gpio(ThermocoupleChannel channel) {
+  return channel == ThermocoupleChannel::kBrew
+             ? config::kBrewThermocoupleClockGpio
+             : config::kSteamThermocoupleClockGpio;
 }
 
 const char* channel_name(ThermocoupleChannel channel) {
@@ -51,13 +61,16 @@ bool EspMax6675Transport::initialize() {
   const auto output_mask =
       (1ULL << config::kBrewThermocoupleChipSelectGpio) |
       (1ULL << config::kSteamThermocoupleChipSelectGpio) |
-      (1ULL << config::kThermocoupleClockGpio);
+      (1ULL << config::kBrewThermocoupleClockGpio) |
+      (1ULL << config::kSteamThermocoupleClockGpio);
   gpio_set_level(
       static_cast<gpio_num_t>(config::kBrewThermocoupleChipSelectGpio), 1);
   gpio_set_level(
       static_cast<gpio_num_t>(config::kSteamThermocoupleChipSelectGpio), 1);
   gpio_set_level(
-      static_cast<gpio_num_t>(config::kThermocoupleClockGpio), 0);
+      static_cast<gpio_num_t>(config::kBrewThermocoupleClockGpio), 0);
+  gpio_set_level(
+      static_cast<gpio_num_t>(config::kSteamThermocoupleClockGpio), 0);
 
   gpio_config_t outputs{};
   outputs.pin_bit_mask = output_mask;
@@ -73,13 +86,18 @@ bool EspMax6675Transport::initialize() {
           static_cast<gpio_num_t>(config::kSteamThermocoupleChipSelectGpio),
           1) != ESP_OK ||
       gpio_set_level(
-          static_cast<gpio_num_t>(config::kThermocoupleClockGpio), 0) !=
+          static_cast<gpio_num_t>(config::kBrewThermocoupleClockGpio), 0) !=
+          ESP_OK ||
+      gpio_set_level(
+          static_cast<gpio_num_t>(config::kSteamThermocoupleClockGpio), 0) !=
           ESP_OK) {
     return false;
   }
 
   gpio_config_t inputs{};
-  inputs.pin_bit_mask = 1ULL << config::kThermocoupleDataGpio;
+  inputs.pin_bit_mask =
+      (1ULL << config::kBrewThermocoupleDataGpio) |
+      (1ULL << config::kSteamThermocoupleDataGpio);
   inputs.mode = GPIO_MODE_INPUT;
   inputs.pull_up_en = GPIO_PULLUP_DISABLE;
   inputs.pull_down_en = GPIO_PULLDOWN_DISABLE;
@@ -98,6 +116,8 @@ bool EspMax6675Transport::read_frame(ThermocoupleChannel channel,
     return false;
   }
   const auto selected_gpio = chip_select_gpio(channel);
+  const auto selected_data_gpio = data_gpio(channel);
+  const auto selected_clock_gpio = clock_gpio(channel);
   const auto other_gpio = chip_select_gpio(
       channel == ThermocoupleChannel::kBrew ? ThermocoupleChannel::kSteam
                                              : ThermocoupleChannel::kBrew);
@@ -108,15 +128,14 @@ bool EspMax6675Transport::read_frame(ThermocoupleChannel channel,
           static_cast<gpio_num_t>(config::kSteamThermocoupleChipSelectGpio),
           1) != ESP_OK ||
       gpio_set_level(
-          static_cast<gpio_num_t>(config::kThermocoupleClockGpio), 0) !=
+          static_cast<gpio_num_t>(config::kBrewThermocoupleClockGpio), 0) !=
+          ESP_OK ||
+      gpio_set_level(
+          static_cast<gpio_num_t>(config::kSteamThermocoupleClockGpio), 0) !=
           ESP_OK) {
     ESP_LOGE(kThermocoupleLogTag, "%s idle setup failed",
              channel_name(channel));
     return false;
-  }
-
-  if (channel == ThermocoupleChannel::kSteam) {
-    vTaskDelay(pdMS_TO_TICKS(config::kThermocoupleInterReadDelayMs));
   }
 
   if (gpio_set_level(static_cast<gpio_num_t>(other_gpio), 1) != ESP_OK ||
@@ -146,28 +165,28 @@ bool EspMax6675Transport::read_frame(ThermocoupleChannel channel,
   frame = 0;
   for (std::uint32_t bit = 0; bit < 16U; ++bit) {
     if (gpio_set_level(
-            static_cast<gpio_num_t>(config::kThermocoupleClockGpio), 1) !=
+            static_cast<gpio_num_t>(selected_clock_gpio), 1) !=
         ESP_OK) {
       gpio_set_level(
-          static_cast<gpio_num_t>(config::kThermocoupleClockGpio), 0);
+          static_cast<gpio_num_t>(selected_clock_gpio), 0);
       gpio_set_level(static_cast<gpio_num_t>(selected_gpio), 1);
       ESP_LOGE(kThermocoupleLogTag,
                "%s clock-high failed on GPIO%" PRId32,
-               channel_name(channel), config::kThermocoupleClockGpio);
+               channel_name(channel), selected_clock_gpio);
       return false;
     }
     esp_rom_delay_us(1);
     frame = static_cast<std::uint16_t>(
         (frame << 1U) |
         static_cast<std::uint16_t>(gpio_get_level(
-            static_cast<gpio_num_t>(config::kThermocoupleDataGpio)) != 0));
+            static_cast<gpio_num_t>(selected_data_gpio)) != 0));
     if (gpio_set_level(
-            static_cast<gpio_num_t>(config::kThermocoupleClockGpio), 0) !=
+            static_cast<gpio_num_t>(selected_clock_gpio), 0) !=
         ESP_OK) {
       gpio_set_level(static_cast<gpio_num_t>(selected_gpio), 1);
       ESP_LOGE(kThermocoupleLogTag,
                "%s clock-low failed on GPIO%" PRId32,
-               channel_name(channel), config::kThermocoupleClockGpio);
+               channel_name(channel), selected_clock_gpio);
       return false;
     }
     esp_rom_delay_us(1);
@@ -184,10 +203,10 @@ bool EspMax6675Transport::read_frame(ThermocoupleChannel channel,
   }
 
   ESP_LOGI(kThermocoupleLogTag,
-           "%s CS=GPIO%" PRId32 " SO=GPIO%" PRId32
+           "%s CS=GPIO%" PRId32 " SCK=GPIO%" PRId32 " SO=GPIO%" PRId32
            " raw=0x%04X status=%s cs_verified=1",
-           channel_name(channel), selected_gpio,
-           config::kThermocoupleDataGpio,
+           channel_name(channel), selected_gpio, selected_clock_gpio,
+           selected_data_gpio,
            static_cast<unsigned>(frame), frame_status(frame));
   return true;
 }

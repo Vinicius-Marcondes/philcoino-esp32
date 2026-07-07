@@ -1,6 +1,6 @@
 import type { MachineState } from "@philcoino/protocol";
 import { Stack } from "expo-router";
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Pressable,
@@ -18,15 +18,20 @@ import {
 import { useMachineDashboard } from "@/hooks/use-machine-dashboard";
 import { createDeviceApiClient } from "@/src/networking/expo-device-api-client";
 import {
+  appendTemperatureSample,
+  boilerTargetC,
+  boilerTemperatureC,
   connectionCopy,
   faultLabel,
+  formatHistoryDuration,
   formatSteamCountdown,
   formatTarget,
   formatTemperature,
   formatUptime,
-  machineStatusLabel,
+  machineActivityLabel,
   modeLabel,
   steamCountdownContext,
+  type TemperatureSample,
 } from "@/src/dashboard/dashboard-view-model";
 import type { SelectedDevice } from "@/src/storage/selected-device-repository";
 
@@ -62,6 +67,19 @@ export function DashboardScreen({
   const { width } = useWindowDimensions();
   const connectionContent = connectionCopy(connection);
   const metricWidth = width >= 700 ? "48.5%" : "100%";
+  const [temperatureHistory, setTemperatureHistory] = useState<
+    TemperatureSample[]
+  >([]);
+
+  useEffect(() => {
+    if (connection.status !== "online" || snapshot === null) {
+      setTemperatureHistory([]);
+      return;
+    }
+    setTemperatureHistory((history) =>
+      appendTemperatureSample(history, snapshot),
+    );
+  }, [connection.status, snapshot]);
 
   return (
     <>
@@ -111,6 +129,10 @@ export function DashboardScreen({
         {connection.status === "online" && snapshot !== null ? (
           <>
             <MachineSnapshot snapshot={snapshot} metricWidth={metricWidth} />
+            <TemperatureCurve
+              history={temperatureHistory}
+              snapshot={snapshot}
+            />
             <MachineControls
               modeMutation={modeMutation}
               onSetMode={setMode}
@@ -149,6 +171,243 @@ export function DashboardScreen({
   );
 }
 
+function TemperatureCurve({
+  history,
+  snapshot,
+}: {
+  history: TemperatureSample[];
+  snapshot: MachineState;
+}) {
+  const visibleHistory = history.slice(-72);
+  const currentSample: TemperatureSample = {
+    activeMode: snapshot.activeMode,
+    brewTargetC: snapshot.brewTargetC,
+    brewTemperatureC: snapshot.brewTemperatureC,
+    heaterActive: snapshot.heaterActive,
+    steamTargetC: snapshot.steamTargetC,
+    steamTemperatureC: snapshot.steamTemperatureC,
+    uptimeMs: snapshot.uptimeMs,
+  };
+  const displayHistory =
+    visibleHistory.length === 0 ? [currentSample] : visibleHistory;
+  const values = [
+    boilerTemperatureC(snapshot),
+    boilerTargetC(snapshot),
+    ...displayHistory.flatMap((sample) => [
+      boilerTemperatureC(sample),
+      boilerTargetC(sample),
+    ]),
+  ];
+  const minimumValue = Math.floor(Math.min(...values) - 1);
+  const maximumValue = Math.ceil(Math.max(...values) + 1);
+
+  return (
+    <View style={styles.curveCard}>
+      <View style={styles.curveHeading}>
+        <View style={styles.curveTitleGroup}>
+          <Text selectable style={styles.cardLabel}>TEMPERATURE CURVE</Text>
+          <Text selectable style={styles.curveTitle}>
+            {modeLabel(snapshot.activeMode)} control trend
+          </Text>
+        </View>
+        <View style={styles.curveWindowPill}>
+          <Text selectable style={styles.curveWindowText}>
+            {formatHistoryDuration(history)}
+          </Text>
+        </View>
+      </View>
+
+      <View style={styles.curveLegend}>
+        <LegendItem color="#8B3A2B" label="Boiler" />
+        <LegendItem color="#D39A42" label="Target" />
+        <LegendItem color="#F29A52" label="Heater" />
+      </View>
+
+      <View style={styles.curvePlot}>
+        <View style={styles.curveGridLineTop} />
+        <View style={styles.curveGridLineMiddle} />
+        <View style={styles.curveGridLineBottom} />
+        <View style={styles.curveYAxis}>
+          <Text selectable style={styles.curveAxisText}>
+            {maximumValue}°
+          </Text>
+          <Text selectable style={styles.curveAxisText}>
+            {minimumValue}°
+          </Text>
+        </View>
+        <LineGraph
+          maximumValue={maximumValue}
+          minimumValue={minimumValue}
+          samples={displayHistory}
+        />
+      </View>
+    </View>
+  );
+}
+
+function LegendItem({ color, label }: { color: string; label: string }) {
+  return (
+    <View style={styles.legendItem}>
+      <View style={[styles.legendSwatch, { backgroundColor: color }]} />
+      <Text selectable style={styles.legendText}>{label}</Text>
+    </View>
+  );
+}
+
+interface ChartPoint {
+  x: number;
+  y: number;
+}
+
+function LineGraph({
+  maximumValue,
+  minimumValue,
+  samples,
+}: {
+  maximumValue: number;
+  minimumValue: number;
+  samples: TemperatureSample[];
+}) {
+  const [plotSize, setPlotSize] = useState({ height: 0, width: 0 });
+  const readyToDraw = plotSize.width > 0 && plotSize.height > 0;
+  const points = readyToDraw
+    ? samples.map((sample, index) =>
+        samplePoint(
+          boilerTemperatureC(sample),
+          index,
+          samples.length,
+          minimumValue,
+          maximumValue,
+          plotSize,
+        ),
+      )
+    : [];
+  const targetPoints = readyToDraw
+    ? samples.map((sample, index) =>
+        samplePoint(
+          boilerTargetC(sample),
+          index,
+          samples.length,
+          minimumValue,
+          maximumValue,
+          plotSize,
+        ),
+      )
+    : [];
+  const heaterBandWidth =
+    samples.length <= 1 ? plotSize.width : plotSize.width / samples.length;
+
+  return (
+    <View
+      accessibilityLabel={`Boiler curve with ${samples.length} samples`}
+      onLayout={(event) => {
+        const { height, width } = event.nativeEvent.layout;
+        setPlotSize({ height, width });
+      }}
+      style={styles.curveCanvas}>
+      {readyToDraw
+        ? samples.map((sample, index) =>
+            sample.heaterActive ? (
+              <View
+                key={`heater-${sample.uptimeMs}`}
+                style={[
+                  styles.heaterPulseBand,
+                  {
+                    left: Math.max(0, points[index].x - heaterBandWidth / 2),
+                    width: Math.max(2, heaterBandWidth),
+                  },
+                ]}
+              />
+            ) : null,
+          )
+        : null}
+      {targetPoints.slice(1).map((point, index) => (
+        <LineSegment
+          color="#D39A42"
+          from={targetPoints[index]}
+          key={`target-${samples[index + 1].uptimeMs}`}
+          thickness={2}
+          to={point}
+        />
+      ))}
+      {points.slice(1).map((point, index) => (
+        <LineSegment
+          color="#8B3A2B"
+          from={points[index]}
+          key={`boiler-${samples[index + 1].uptimeMs}`}
+          thickness={4}
+          to={point}
+        />
+      ))}
+      {points.map((point, index) => (
+        <View
+          key={`dot-${samples[index].uptimeMs}`}
+          style={[
+            styles.curveDot,
+            index === points.length - 1 && styles.currentCurveDot,
+            {
+              left: point.x - 4,
+              top: point.y - 4,
+            },
+          ]}
+        />
+      ))}
+    </View>
+  );
+}
+
+function LineSegment({
+  color,
+  from,
+  thickness,
+  to,
+}: {
+  color: string;
+  from: ChartPoint;
+  thickness: number;
+  to: ChartPoint;
+}) {
+  const deltaX = to.x - from.x;
+  const deltaY = to.y - from.y;
+  const length = Math.sqrt(deltaX * deltaX + deltaY * deltaY);
+  const angle = Math.atan2(deltaY, deltaX);
+
+  return (
+    <View
+      style={[
+        styles.lineSegment,
+        {
+          backgroundColor: color,
+          height: thickness,
+          left: (from.x + to.x) / 2 - length / 2,
+          top: (from.y + to.y) / 2 - thickness / 2,
+          transform: [{ rotateZ: `${angle}rad` }],
+          width: length,
+        },
+      ]}
+    />
+  );
+}
+
+function samplePoint(
+  value: number,
+  index: number,
+  count: number,
+  minimumValue: number,
+  maximumValue: number,
+  plotSize: { height: number; width: number },
+): ChartPoint {
+  const x =
+    count <= 1 ? plotSize.width / 2 : (index / (count - 1)) * plotSize.width;
+  const topPercent = curvePointTop(value, minimumValue, maximumValue);
+  return { x, y: (topPercent / 100) * plotSize.height };
+}
+
+function curvePointTop(value: number, minimumValue: number, maximumValue: number) {
+  const range = Math.max(1, maximumValue - minimumValue);
+  return Math.max(0, Math.min(100, ((maximumValue - value) / range) * 100));
+}
+
 function MachineSnapshot({
   metricWidth,
   snapshot,
@@ -168,7 +427,7 @@ function MachineSnapshot({
                 styles.machineStateValue,
                 snapshot.status === "fault" && styles.faultText,
               ]}>
-              {machineStatusLabel(snapshot.status)}
+              {machineActivityLabel(snapshot)}
             </Text>
             <Text selectable style={styles.machineStateDetail}>
               {modeLabel(snapshot.activeMode)} mode
@@ -201,18 +460,10 @@ function MachineSnapshot({
 
       <View style={styles.metricGrid}>
         <TemperatureCard
-          active={snapshot.activeMode === "brew"}
-          label="Brew"
-          targetC={snapshot.brewTargetC}
-          temperatureC={snapshot.brewTemperatureC}
-          width={metricWidth}
-        />
-        <TemperatureCard
-          active={snapshot.activeMode === "steam"}
-          label="Steam"
-          targetC={snapshot.steamTargetC}
-          temperatureC={snapshot.steamTemperatureC}
-          width={metricWidth}
+          mode={snapshot.activeMode}
+          targetC={boilerTargetC(snapshot)}
+          temperatureC={boilerTemperatureC(snapshot)}
+          width="100%"
         />
       </View>
 
@@ -235,23 +486,23 @@ function MachineSnapshot({
 }
 
 function TemperatureCard({
-  active,
-  label,
+  mode,
   targetC,
   temperatureC,
   width,
 }: {
-  active: boolean;
-  label: string;
+  mode: MachineState["activeMode"];
   targetC: number;
   temperatureC: number;
   width: "100%" | "48.5%";
 }) {
   return (
-    <View style={[styles.temperatureCard, { width }, active && styles.activeCard]}>
+    <View style={[styles.temperatureCard, { width }, styles.activeCard]}>
       <View style={styles.temperatureHeading}>
-        <Text selectable style={styles.temperatureLabel}>{label}</Text>
-        {active ? <Text selectable style={styles.activePill}>ACTIVE</Text> : null}
+        <Text selectable style={styles.temperatureLabel}>Boiler</Text>
+        <Text selectable style={styles.activePill}>
+          {modeLabel(mode).toUpperCase()}
+        </Text>
       </View>
       <Text selectable style={styles.temperatureValue}>
         {formatTemperature(temperatureC)}
@@ -340,6 +591,120 @@ const styles = StyleSheet.create({
   faultTitle: { color: "#6F211A", fontSize: 22, fontWeight: "800" },
   faultMessage: { color: "#6F2F28", fontSize: 15, lineHeight: 21 },
   faultSafety: { color: "#6F211A", fontSize: 14, fontWeight: "800" },
+  curveCard: {
+    backgroundColor: "#FFFCF7",
+    borderColor: "#D7C9B8",
+    borderCurve: "continuous",
+    borderRadius: 20,
+    borderWidth: 1,
+    gap: 14,
+    padding: 18,
+  },
+  curveHeading: {
+    alignItems: "flex-start",
+    flexDirection: "row",
+    gap: 12,
+    justifyContent: "space-between",
+  },
+  curveTitleGroup: { flex: 1, gap: 5 },
+  curveTitle: { color: "#2C231E", fontSize: 20, fontWeight: "800" },
+  curveWindowPill: {
+    backgroundColor: "#EFE6DA",
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  curveWindowText: {
+    color: "#5D5048",
+    fontSize: 12,
+    fontVariant: ["tabular-nums"],
+    fontWeight: "800",
+  },
+  curveLegend: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
+  legendItem: { alignItems: "center", flexDirection: "row", gap: 6 },
+  legendSwatch: { borderRadius: 999, height: 8, width: 8 },
+  legendText: { color: "#5D5048", fontSize: 12, fontWeight: "700" },
+  curvePlot: {
+    backgroundColor: "#F7F1E9",
+    borderColor: "#E0D4C7",
+    borderCurve: "continuous",
+    borderRadius: 14,
+    borderWidth: 1,
+    height: 180,
+    overflow: "hidden",
+    position: "relative",
+  },
+  curveGridLineTop: {
+    backgroundColor: "#E5D8CA",
+    height: 1,
+    left: 40,
+    position: "absolute",
+    right: 0,
+    top: "18%",
+  },
+  curveGridLineMiddle: {
+    backgroundColor: "#E5D8CA",
+    height: 1,
+    left: 40,
+    position: "absolute",
+    right: 0,
+    top: "50%",
+  },
+  curveGridLineBottom: {
+    backgroundColor: "#E5D8CA",
+    bottom: "18%",
+    height: 1,
+    left: 40,
+    position: "absolute",
+    right: 0,
+  },
+  curveYAxis: {
+    bottom: 12,
+    justifyContent: "space-between",
+    left: 10,
+    position: "absolute",
+    top: 12,
+    width: 28,
+  },
+  curveAxisText: {
+    color: "#7B6D63",
+    fontSize: 11,
+    fontVariant: ["tabular-nums"],
+    fontWeight: "700",
+  },
+  curveCanvas: {
+    bottom: 42,
+    left: 42,
+    position: "absolute",
+    right: 10,
+    top: 10,
+  },
+  lineSegment: {
+    borderRadius: 999,
+    position: "absolute",
+  },
+  curveDot: {
+    backgroundColor: "#8B3A2B",
+    borderColor: "#F7F1E9",
+    borderRadius: 999,
+    borderWidth: 2,
+    height: 8,
+    position: "absolute",
+    width: 8,
+  },
+  currentCurveDot: {
+    backgroundColor: "#F7F1E9",
+    borderColor: "#8B3A2B",
+    height: 11,
+    width: 11,
+  },
+  heaterPulseBand: {
+    backgroundColor: "#F29A52",
+    borderRadius: 999,
+    bottom: -30,
+    height: 8,
+    position: "absolute",
+  },
   metricGrid: { flexDirection: "row", flexWrap: "wrap", gap: 12 },
   temperatureCard: {
     backgroundColor: "#FFFCF7",

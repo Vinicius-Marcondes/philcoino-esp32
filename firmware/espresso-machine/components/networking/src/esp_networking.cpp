@@ -25,7 +25,6 @@ namespace {
 constexpr char kLogTag[] = "philcoino-net";
 constexpr EventBits_t kConnectedBit = BIT0;
 constexpr EventBits_t kConnectionFailedBit = BIT1;
-constexpr int kMaximumWifiRetries = 5;
 constexpr std::size_t kMaximumAuthorizationLength = 512;
 constexpr std::size_t kMaximumRequestBodyLength = 256;
 
@@ -71,39 +70,51 @@ bool EspNetworkServer::start(const char* ssid, const char* password) {
   return true;
 }
 
+WifiStatus EspNetworkServer::wifi_status() const {
+  return wifi_status_.load(std::memory_order_relaxed);
+}
+
 bool EspNetworkServer::start_wifi(const char* ssid, const char* password) {
   wifi_config_t configuration{};
   if (ssid == nullptr || password == nullptr || ssid[0] == '\0' ||
       std::strlen(ssid) >= sizeof(configuration.sta.ssid) ||
       std::strlen(password) >= sizeof(configuration.sta.password)) {
     ESP_LOGE(kLogTag, "Wi-Fi configuration is missing or too long");
+    wifi_status_.store(WifiStatus::kFailed, std::memory_order_relaxed);
     return false;
   }
+  wifi_status_.store(WifiStatus::kConnecting, std::memory_order_relaxed);
   if (esp_netif_init() != ESP_OK) {
+    wifi_status_.store(WifiStatus::kFailed, std::memory_order_relaxed);
     return false;
   }
   const auto event_loop_result = esp_event_loop_create_default();
   if (event_loop_result != ESP_OK && event_loop_result != ESP_ERR_INVALID_STATE) {
+    wifi_status_.store(WifiStatus::kFailed, std::memory_order_relaxed);
     return false;
   }
   if (esp_netif_create_default_wifi_sta() == nullptr) {
+    wifi_status_.store(WifiStatus::kFailed, std::memory_order_relaxed);
     return false;
   }
 
   wifi_init_config_t initialization = WIFI_INIT_CONFIG_DEFAULT();
   if (esp_wifi_init(&initialization) != ESP_OK) {
+    wifi_status_.store(WifiStatus::kFailed, std::memory_order_relaxed);
     return false;
   }
 
   event_group_ = xEventGroupCreate();
   if (event_group_ == nullptr) {
+    wifi_status_.store(WifiStatus::kFailed, std::memory_order_relaxed);
     return false;
   }
 
   auto handler = [](void* argument, esp_event_base_t event_base,
-                    std::int32_t event_id, void*) {
+                    std::int32_t event_id, void* event_data) {
     static_cast<EspNetworkServer*>(argument)->handle_wifi_event(event_base,
-                                                                event_id);
+                                                                event_id,
+                                                                event_data);
   };
   esp_event_handler_instance_t wifi_instance = nullptr;
   esp_event_handler_instance_t ip_instance = nullptr;
@@ -111,6 +122,7 @@ bool EspNetworkServer::start_wifi(const char* ssid, const char* password) {
                                           this, &wifi_instance) != ESP_OK ||
       esp_event_handler_instance_register(IP_EVENT, IP_EVENT_STA_GOT_IP, handler,
                                           this, &ip_instance) != ESP_OK) {
+    wifi_status_.store(WifiStatus::kFailed, std::memory_order_relaxed);
     return false;
   }
   wifi_event_handler_ = wifi_instance;
@@ -122,6 +134,7 @@ bool EspNetworkServer::start_wifi(const char* ssid, const char* password) {
   if (esp_wifi_set_mode(WIFI_MODE_STA) != ESP_OK ||
       esp_wifi_set_config(WIFI_IF_STA, &configuration) != ESP_OK ||
       esp_wifi_start() != ESP_OK) {
+    wifi_status_.store(WifiStatus::kFailed, std::memory_order_relaxed);
     return false;
   }
 
@@ -130,6 +143,7 @@ bool EspNetworkServer::start_wifi(const char* ssid, const char* password) {
       kConnectedBit | kConnectionFailedBit, pdFALSE, pdFALSE, portMAX_DELAY);
   if ((bits & kConnectedBit) == 0) {
     ESP_LOGE(kLogTag, "Wi-Fi station connection failed");
+    wifi_status_.store(WifiStatus::kFailed, std::memory_order_relaxed);
     return false;
   }
   ESP_LOGI(kLogTag, "Wi-Fi station connected");
@@ -137,23 +151,39 @@ bool EspNetworkServer::start_wifi(const char* ssid, const char* password) {
 }
 
 void EspNetworkServer::handle_wifi_event(const char* event_base,
-                                         std::int32_t event_id) {
+                                         std::int32_t event_id,
+                                         void* event_data) {
   if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
-    esp_wifi_connect();
+    wifi_status_.store(WifiStatus::kConnecting, std::memory_order_relaxed);
+    if (esp_wifi_connect() != ESP_OK) {
+      wifi_status_.store(WifiStatus::kFailed, std::memory_order_relaxed);
+      xEventGroupSetBits(static_cast<EventGroupHandle_t>(event_group_),
+                         kConnectionFailedBit);
+    }
     return;
   }
   if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
-    if (wifi_retries_ < kMaximumWifiRetries) {
-      ++wifi_retries_;
-      esp_wifi_connect();
-    } else {
+    wifi_status_.store(WifiStatus::kRetrying, std::memory_order_relaxed);
+    xEventGroupClearBits(static_cast<EventGroupHandle_t>(event_group_),
+                         kConnectedBit);
+    const auto* disconnected =
+        static_cast<const wifi_event_sta_disconnected_t*>(event_data);
+    if (disconnected != nullptr) {
+      ESP_LOGW(kLogTag, "Wi-Fi disconnected: reason=%u rssi=%d; retrying",
+               static_cast<unsigned>(disconnected->reason),
+               static_cast<int>(disconnected->rssi));
+    }
+    if (esp_wifi_connect() != ESP_OK) {
+      wifi_status_.store(WifiStatus::kFailed, std::memory_order_relaxed);
       xEventGroupSetBits(static_cast<EventGroupHandle_t>(event_group_),
                          kConnectionFailedBit);
     }
     return;
   }
   if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
-    wifi_retries_ = 0;
+    wifi_status_.store(WifiStatus::kConnected, std::memory_order_relaxed);
+    xEventGroupClearBits(static_cast<EventGroupHandle_t>(event_group_),
+                         kConnectionFailedBit);
     xEventGroupSetBits(static_cast<EventGroupHandle_t>(event_group_),
                        kConnectedBit);
   }

@@ -74,11 +74,17 @@ class TemperatureController {
   float active_temperature() const;
   bool active_temperature_in_ready_band() const;
   bool active_temperature_demands_heat() const;
+  float active_heat_ramp_band() const;
+  float active_recovery_trigger_drop() const;
+  float active_recovery_heat_ramp_band() const;
+  void update_recovery_heat();
+  std::uint32_t heater_pulse_ms() const;
+  void reset_heater_control_window(std::uint32_t now_ms);
   void reset_readiness(std::uint32_t now_ms);
   void return_to_brew(std::uint32_t now_ms);
   bool validate_readings(std::uint32_t now_ms);
   bool update_readiness(std::uint32_t now_ms);
-  bool update_heater();
+  bool update_heater(std::uint32_t now_ms);
   SteamTimeoutSnapshot steam_timeout_snapshot(std::uint32_t now_ms) const;
 
   peripherals::FailOffSsr& heater_;
@@ -93,6 +99,8 @@ class TemperatureController {
   std::uint32_t ready_band_since_ms_{0};
   bool heating_demand_active_{false};
   std::uint32_t heating_demand_since_ms_{0};
+  std::uint32_t heater_control_window_started_ms_{0};
+  bool recovery_heat_active_{false};
   bool steam_timeout_active_{false};
   std::uint32_t steam_timeout_started_ms_{0};
 };

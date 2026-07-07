@@ -7,6 +7,7 @@
 namespace philcoino::peripherals {
 
 inline constexpr std::uint32_t kMax6675ConversionMs = 220;
+inline constexpr std::uint32_t kMax6675SampleIntervalMs = 500;
 inline constexpr std::int32_t kDefaultBrewTargetC = 93;
 inline constexpr std::int32_t kDefaultSteamTargetC = 115;
 
@@ -92,7 +93,7 @@ class DigitalOutput {
 
 class FailOffSsr {
  public:
-  explicit FailOffSsr(DigitalOutput& output);
+  explicit FailOffSsr(DigitalOutput& output, bool active_high = true);
 
   bool initialize();
   bool set_enabled(bool enabled);
@@ -100,13 +101,17 @@ class FailOffSsr {
   bool is_enabled() const;
 
  private:
+  bool write_enabled_level(bool enabled);
+
   DigitalOutput& output_;
+  bool active_high_{true};
   bool initialized_{false};
   bool enabled_{false};
 };
 
 enum class DisplayMode { kUnknown, kBrew, kSteam };
-enum class DisplayStatus { kBoot, kHeating, kReady, kFault };
+enum class DisplayStatus { kBoot, kHeating, kCooling, kReady, kFault };
+enum class DisplayWifiStatus { kOff, kConnecting, kConnected, kRetrying, kFailed };
 
 struct DisplayTemperature {
   bool valid{false};
@@ -120,6 +125,7 @@ struct DisplaySnapshot {
   DisplayMode mode{DisplayMode::kUnknown};
   DisplayStatus status{DisplayStatus::kBoot};
   bool heater_enabled{false};
+  DisplayWifiStatus wifi_status{DisplayWifiStatus::kOff};
 };
 
 class OledTransport {

@@ -14,16 +14,16 @@ PRD: `docs/prds/PRD-001/PRD-001.md`
 
 ## Temporary Hardware State
 
-- One MAX6675 module was confirmed faulty during low-voltage diagnosis on
-  2026-07-05 and must be replaced before final dual-sensor validation.
-- `kDualThermocouplesEnabled` is temporarily `false`. Firmware reads the
-  brew/base sensor on CS GPIO7 with shared SCK/SO on GPIO4/GPIO6 and uses that
-  measurement for both brew and steam control.
+- Dual-MAX6675 low-voltage testing became stable after the wiring and protoboard
+  were replaced and both sensors reached thermal equilibrium. Earlier bus
+  contention was not confirmed as a module defect.
+- `kDualThermocouplesEnabled` is temporarily `false`. Firmware reads only the
+  brew sensor on SCK/SO/CS GPIO4/GPIO6/GPIO7 every 500 ms and mirrors its value
+  for steam-mode control. The steam sensor bus remains disabled by control logic.
 - Wi-Fi is enabled. Brew/steam targets, mode-specific over-temperature limits,
   readiness timing, heating timeout, and steam timeout remain active.
-- Cross-sensor and location-specific temperature protection are unavailable in
-  single-sensor mode. This is a degraded temporary configuration and does not
-  satisfy final PHIL-013 dual-sensor acceptance.
+- This single-sensor diagnostic configuration does not satisfy final PHIL-013
+  dual-sensor acceptance.
 - PHIL-009 mobile discovery and pairing work is not blocked by the temporary
   sensor mode.
 

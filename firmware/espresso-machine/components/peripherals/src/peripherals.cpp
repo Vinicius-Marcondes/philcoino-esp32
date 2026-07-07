@@ -64,10 +64,22 @@ const char* status_name(DisplayStatus status) {
   switch (status) {
     case DisplayStatus::kBoot: return "BOOT";
     case DisplayStatus::kHeating: return "HEATING";
+    case DisplayStatus::kCooling: return "COOLING";
     case DisplayStatus::kReady: return "READY";
     case DisplayStatus::kFault: return "FAULT";
   }
   return "FAULT";
+}
+
+const char* wifi_status_name(DisplayWifiStatus status) {
+  switch (status) {
+    case DisplayWifiStatus::kOff: return "OFF";
+    case DisplayWifiStatus::kConnecting: return "WAIT";
+    case DisplayWifiStatus::kConnected: return "ON";
+    case DisplayWifiStatus::kRetrying: return "RETRY";
+    case DisplayWifiStatus::kFailed: return "FAIL";
+  }
+  return "FAIL";
 }
 
 void format_temperature_line(char* output, std::size_t length,
@@ -164,20 +176,21 @@ bool TargetStorage::save(const TemperatureTargets& targets) {
   return targets_are_valid(targets) && backend_.save(targets);
 }
 
-FailOffSsr::FailOffSsr(DigitalOutput& output) : output_(output) {}
+FailOffSsr::FailOffSsr(DigitalOutput& output, bool active_high)
+    : output_(output), active_high_(active_high) {}
 
 bool FailOffSsr::initialize() {
   initialized_ = false;
   enabled_ = false;
-  if (!output_.set_level(false)) {
+  if (!write_enabled_level(false)) {
     return false;
   }
   if (!output_.configure_output()) {
-    output_.set_level(false);
+    write_enabled_level(false);
     return false;
   }
-  if (!output_.set_level(false)) {
-    output_.set_level(false);
+  if (!write_enabled_level(false)) {
+    write_enabled_level(false);
     return false;
   }
   initialized_ = true;
@@ -186,12 +199,12 @@ bool FailOffSsr::initialize() {
 
 bool FailOffSsr::set_enabled(bool enabled) {
   if (!initialized_) {
-    output_.set_level(false);
+    write_enabled_level(false);
     enabled_ = false;
     return false;
   }
-  if (!output_.set_level(enabled)) {
-    output_.set_level(false);
+  if (!write_enabled_level(enabled)) {
+    write_enabled_level(false);
     enabled_ = false;
     return false;
   }
@@ -201,10 +214,15 @@ bool FailOffSsr::set_enabled(bool enabled) {
 
 bool FailOffSsr::force_off() {
   enabled_ = false;
-  return output_.set_level(false);
+  return write_enabled_level(false);
 }
 
 bool FailOffSsr::is_enabled() const { return enabled_; }
+
+bool FailOffSsr::write_enabled_level(bool enabled) {
+  const bool output_high = enabled ? active_high_ : !active_high_;
+  return output_.set_level(output_high);
+}
 
 Ssd1306Display::Ssd1306Display(OledTransport& transport)
     : transport_(transport) {}
@@ -234,8 +252,9 @@ bool Ssd1306Display::render(const DisplaySnapshot& snapshot) {
   std::snprintf(line.data(), line.size(), "MODE %s %s", mode_name(snapshot.mode),
                 status_name(snapshot.status));
   draw_text(buffer, 2, line.data());
-  std::snprintf(line.data(), line.size(), "HEATER %s",
-                snapshot.heater_enabled ? "ON" : "OFF");
+  std::snprintf(line.data(), line.size(), "HEATER %s WIFI %s",
+                snapshot.heater_enabled ? "ON" : "OFF",
+                wifi_status_name(snapshot.wifi_status));
   draw_text(buffer, 3, line.data());
 
   constexpr std::array<std::uint8_t, 6> address_window{0x21, 0x00, 0x7F,

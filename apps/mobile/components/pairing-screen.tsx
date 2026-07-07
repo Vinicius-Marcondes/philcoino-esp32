@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  KeyboardAvoidingView,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -255,110 +256,117 @@ export function PairingScreen() {
   }
 
   return (
-    <ScrollView
-      contentInsetAdjustmentBehavior="automatic"
-      keyboardShouldPersistTaps="handled"
-      contentContainerStyle={styles.content}>
-      <View style={styles.intro}>
-        <Text selectable style={styles.eyebrow}>LOCAL ESPRESSO CONTROL</Text>
-        <Text selectable style={styles.lead}>
-          Choose the machine on this Wi-Fi or connect directly with its local address.
-        </Text>
-      </View>
-
-      {selected !== null ? (
-        <View style={styles.card}>
-          <Text selectable style={styles.sectionTitle}>Confirm machine identity</Text>
-          <IdentityDetails candidate={selected} />
-          <View style={styles.fieldGroup}>
-            <Text selectable style={styles.label}>Bearer token</Text>
-            <TextInput
-              accessibilityLabel="Bearer token"
-              autoCapitalize="none"
-              autoCorrect={false}
-              editable={!busy}
-              onChangeText={setToken}
-              onSubmitEditing={() => void pairSelectedDevice()}
-              placeholder="Enter the token from the device setup"
-              returnKeyType="done"
-              secureTextEntry
-              style={styles.input}
-              value={token}
-            />
-          </View>
-          <ActionButton
-            disabled={busy || token.trim().length === 0}
-            label={busy ? "Verifying…" : "Verify and save"}
-            onPress={() => void pairSelectedDevice()}
-          />
-          <ActionButton
-            disabled={busy}
-            label="Choose another machine"
-            onPress={chooseAnotherDevice}
-            secondary
-          />
+    <KeyboardAvoidingView
+      behavior={process.env.EXPO_OS === "ios" ? "padding" : "height"}
+      enabled={process.env.EXPO_OS !== "web"}
+      style={styles.screen}>
+      <ScrollView
+        contentInsetAdjustmentBehavior="automatic"
+        keyboardDismissMode="interactive"
+        keyboardShouldPersistTaps="handled"
+        style={styles.screen}
+        contentContainerStyle={styles.content}>
+        <View style={styles.intro}>
+          <Text selectable style={styles.eyebrow}>LOCAL ESPRESSO CONTROL</Text>
+          <Text selectable style={styles.lead}>
+            Choose the machine on this Wi-Fi or connect directly with its local address.
+          </Text>
         </View>
-      ) : (
-        <>
-          <View style={styles.card}>
-            <View style={styles.sectionHeading}>
-              <Text selectable style={styles.sectionTitle}>Nearby machines</Text>
-              {scanning ? <ActivityIndicator accessibilityLabel="Searching" /> : null}
-            </View>
-            {devices.map((device) => (
-              <Pressable
-                accessibilityHint="Shows identity details and token entry"
-                accessibilityRole="button"
-                key={device.deviceId}
-                onPress={() => selectDevice(device)}
-                style={({ pressed }) => [styles.device, pressed && styles.pressed]}>
-                <Text selectable style={styles.deviceName}>{device.name}</Text>
-                <Text selectable style={styles.metadata}>
-                  {device.model} · API {device.apiVersion} · firmware {device.firmwareVersion}
-                </Text>
-                <Text selectable style={styles.metadata}>{device.deviceId}</Text>
-                <Text selectable style={styles.address}>{device.address}</Text>
-              </Pressable>
-            ))}
-            {!scanning ? (
-              <ActionButton label="Search again" onPress={startBrowsing} secondary />
-            ) : null}
-          </View>
 
+        {selected !== null ? (
           <View style={styles.card}>
-            <Text selectable style={styles.sectionTitle}>Enter address manually</Text>
-            <Text selectable style={styles.help}>
-              Use the machine’s IPv4 address or local hostname. A simulator may include a port.
-            </Text>
-            <TextInput
-              accessibilityLabel="Machine address"
-              autoCapitalize="none"
-              autoCorrect={false}
-              editable={!busy}
-              keyboardType="url"
-              onChangeText={setManualAddress}
-              onSubmitEditing={() => void inspectManualAddress()}
-              placeholder="192.168.1.20"
-              returnKeyType="go"
-              style={styles.input}
-              value={manualAddress}
+            <Text selectable style={styles.sectionTitle}>Confirm machine identity</Text>
+            <IdentityDetails candidate={selected} />
+            <View style={styles.fieldGroup}>
+              <Text selectable style={styles.label}>Bearer token</Text>
+              <TextInput
+                accessibilityLabel="Bearer token"
+                autoCapitalize="none"
+                autoCorrect={false}
+                editable={!busy}
+                onChangeText={setToken}
+                onSubmitEditing={() => void pairSelectedDevice()}
+                placeholder="Enter the token from the device setup"
+                returnKeyType="done"
+                secureTextEntry
+                style={styles.input}
+                value={token}
+              />
+            </View>
+            <ActionButton
+              disabled={busy || token.trim().length === 0}
+              label={busy ? "Verifying…" : "Verify and save"}
+              onPress={() => void pairSelectedDevice()}
             />
             <ActionButton
-              disabled={busy || manualAddress.trim().length === 0}
-              label={busy ? "Checking…" : "Review this machine"}
-              onPress={() => void inspectManualAddress()}
+              disabled={busy}
+              label="Choose another machine"
+              onPress={chooseAnotherDevice}
+              secondary
             />
           </View>
-        </>
-      )}
+        ) : (
+          <>
+            <View style={styles.card}>
+              <View style={styles.sectionHeading}>
+                <Text selectable style={styles.sectionTitle}>Nearby machines</Text>
+                {scanning ? <ActivityIndicator accessibilityLabel="Searching" /> : null}
+              </View>
+              {devices.map((device) => (
+                <Pressable
+                  accessibilityHint="Shows identity details and token entry"
+                  accessibilityRole="button"
+                  key={device.deviceId}
+                  onPress={() => selectDevice(device)}
+                  style={({ pressed }) => [styles.device, pressed && styles.pressed]}>
+                  <Text selectable style={styles.deviceName}>{device.name}</Text>
+                  <Text selectable style={styles.metadata}>
+                    {device.model} · API {device.apiVersion} · firmware {device.firmwareVersion}
+                  </Text>
+                  <Text selectable style={styles.metadata}>{device.deviceId}</Text>
+                  <Text selectable style={styles.address}>{device.address}</Text>
+                </Pressable>
+              ))}
+              {!scanning ? (
+                <ActionButton label="Search again" onPress={startBrowsing} secondary />
+              ) : null}
+            </View>
 
-      {message.length > 0 ? (
-        <View accessibilityLiveRegion="polite" style={styles.notice}>
-          {busy ? <ActivityIndicator accessibilityLabel="Working" size="small" /> : null}
-          <Text selectable style={styles.noticeText}>{message}</Text>
-        </View>
-      ) : null}
-    </ScrollView>
+            <View style={styles.card}>
+              <Text selectable style={styles.sectionTitle}>Enter address manually</Text>
+              <Text selectable style={styles.help}>
+                Use the machine’s IPv4 address or local hostname. A simulator may include a port.
+              </Text>
+              <TextInput
+                accessibilityLabel="Machine address"
+                autoCapitalize="none"
+                autoCorrect={false}
+                editable={!busy}
+                keyboardType="url"
+                onChangeText={setManualAddress}
+                onSubmitEditing={() => void inspectManualAddress()}
+                placeholder="192.168.1.20"
+                returnKeyType="go"
+                style={styles.input}
+                value={manualAddress}
+              />
+              <ActionButton
+                disabled={busy || manualAddress.trim().length === 0}
+                label={busy ? "Checking…" : "Review this machine"}
+                onPress={() => void inspectManualAddress()}
+              />
+            </View>
+          </>
+        )}
+
+        {message.length > 0 ? (
+          <View accessibilityLiveRegion="polite" style={styles.notice}>
+            {busy ? <ActivityIndicator accessibilityLabel="Working" size="small" /> : null}
+            <Text selectable style={styles.noticeText}>{message}</Text>
+          </View>
+        ) : null}
+      </ScrollView>
+    </KeyboardAvoidingView>
   );
 }
 
@@ -434,6 +442,7 @@ function errorMessage(error: unknown): string {
 }
 
 const styles = StyleSheet.create({
+  screen: { backgroundColor: "#F4F0E8", flex: 1 },
   content: {
     backgroundColor: "#F4F0E8",
     flexGrow: 1,

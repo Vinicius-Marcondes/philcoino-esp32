@@ -109,6 +109,8 @@ class FakeOledTransport final : public OledTransport {
 };
 
 void test_thermocouples() {
+  static_assert(kMax6675SampleIntervalMs >= kMax6675ConversionMs);
+
   FakeMax6675Transport transport;
   transport.frames = {
       static_cast<std::uint16_t>(373U << 3U),
@@ -196,6 +198,15 @@ void test_fail_off_ssr() {
   assert(!configuration_error.level);
   assert(!failed_ssr.set_enabled(true));
   assert(!configuration_error.level);
+
+  FakeDigitalOutput active_low_output;
+  FailOffSsr active_low_ssr(active_low_output, false);
+  assert(active_low_ssr.initialize());
+  assert(active_low_output.level);
+  assert(active_low_ssr.set_enabled(true));
+  assert(!active_low_output.level);
+  assert(active_low_ssr.force_off());
+  assert(active_low_output.level);
 }
 
 void test_oled() {
@@ -206,6 +217,7 @@ void test_oled() {
   snapshot.steam = {true, 115.0F};
   snapshot.mode = DisplayMode::kBrew;
   snapshot.status = DisplayStatus::kReady;
+  snapshot.heater_enabled = true;
 
   assert(!display.render(snapshot));
   assert(display.initialize());
@@ -215,7 +227,24 @@ void test_oled() {
   assert(transport.data.size() == Ssd1306Display::kBufferSize);
   assert(std::any_of(transport.data.begin(), transport.data.end(),
                      [](std::uint8_t value) { return value != 0; }));
-  assert(transport.commands.size() == 31);
+  const auto wifi_off_frame = transport.data;
+  constexpr std::array wifi_states{
+      DisplayWifiStatus::kConnecting,
+      DisplayWifiStatus::kConnected,
+      DisplayWifiStatus::kRetrying,
+      DisplayWifiStatus::kFailed,
+  };
+  for (const auto wifi_status : wifi_states) {
+    snapshot.wifi_status = wifi_status;
+    assert(display.render(snapshot));
+    assert(std::equal(wifi_off_frame.begin(),
+                      wifi_off_frame.begin() + 3 * Ssd1306Display::kWidth,
+                      transport.data.begin()));
+    assert(!std::equal(wifi_off_frame.begin() + 3 * Ssd1306Display::kWidth,
+                       wifi_off_frame.end(),
+                       transport.data.begin() + 3 * Ssd1306Display::kWidth));
+  }
+  assert(transport.commands.size() == 55);
 }
 
 }  // namespace

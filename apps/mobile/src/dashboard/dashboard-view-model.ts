@@ -58,12 +58,37 @@ const FAULT_LABELS: Record<FaultCode, string> = {
   sensor_failure: "Sensor failure",
 };
 
+export const TEMPERATURE_HISTORY_LIMIT = 180;
+
+export interface TemperatureSample {
+  activeMode: Mode;
+  brewTargetC: number;
+  brewTemperatureC: number;
+  heaterActive: boolean;
+  steamTargetC: number;
+  steamTemperatureC: number;
+  uptimeMs: number;
+}
+
 export function connectionCopy(connection: ConnectionState) {
   return CONNECTION_COPY[connection.status];
 }
 
 export function machineStatusLabel(status: MachineStatus): string {
   return STATUS_LABELS[status];
+}
+
+export function machineActivityLabel(snapshot: MachineState): string {
+  if (snapshot.status !== "heating") {
+    return machineStatusLabel(snapshot.status);
+  }
+  if (snapshot.heaterActive) {
+    return "Heating";
+  }
+
+  return boilerTemperatureC(snapshot) > boilerTargetC(snapshot) + 1
+    ? "Cooling"
+    : "Stabilizing";
 }
 
 export function modeLabel(mode: Mode): string {
@@ -103,6 +128,55 @@ export function steamCountdownContext(snapshot: MachineState): string {
     return "Starts after steam becomes ready";
   }
   return "Available in steam mode";
+}
+
+export function boilerTemperatureC(
+  sample: MachineState | TemperatureSample,
+): number {
+  return sample.activeMode === "brew"
+    ? sample.brewTemperatureC
+    : sample.steamTemperatureC;
+}
+
+export function boilerTargetC(sample: MachineState | TemperatureSample): number {
+  return sample.activeMode === "brew" ? sample.brewTargetC : sample.steamTargetC;
+}
+
+export function appendTemperatureSample(
+  history: TemperatureSample[],
+  snapshot: MachineState,
+  limit = TEMPERATURE_HISTORY_LIMIT,
+): TemperatureSample[] {
+  const sample: TemperatureSample = {
+    activeMode: snapshot.activeMode,
+    brewTargetC: snapshot.brewTargetC,
+    brewTemperatureC: snapshot.brewTemperatureC,
+    heaterActive: snapshot.heaterActive,
+    steamTargetC: snapshot.steamTargetC,
+    steamTemperatureC: snapshot.steamTemperatureC,
+    uptimeMs: snapshot.uptimeMs,
+  };
+  const previous = history.at(-1);
+  if (previous?.uptimeMs === sample.uptimeMs) {
+    return [...history.slice(0, -1), sample];
+  }
+  if (previous !== undefined && sample.uptimeMs < previous.uptimeMs) {
+    return [sample];
+  }
+
+  return [...history, sample].slice(-limit);
+}
+
+export function formatHistoryDuration(history: TemperatureSample[]): string {
+  if (history.length < 2) {
+    return "Collecting";
+  }
+  const durationMs = history[history.length - 1].uptimeMs - history[0].uptimeMs;
+  const seconds = Math.max(0, Math.round(durationMs / 1_000));
+  if (seconds < 60) {
+    return `${seconds}s`;
+  }
+  return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
 }
 
 export function formatUptime(uptimeMs: number): string {

@@ -87,7 +87,9 @@ bool TemperatureController::set_mode(ControlMode mode, std::uint32_t now_ms) {
   }
   mode_ = mode;
   reset_readiness(now_ms);
+  reset_heater_control_window(now_ms);
   heating_demand_active_ = false;
+  recovery_heat_active_ = false;
   steam_timeout_active_ = false;
   if (fault_latched_) {
     status_ = ControlStatus::kFault;
@@ -109,7 +111,9 @@ bool TemperatureController::update_targets(
   }
   targets_ = targets;
   reset_readiness(now_ms);
+  reset_heater_control_window(now_ms);
   heating_demand_active_ = false;
+  recovery_heat_active_ = false;
   steam_timeout_active_ = false;
   if (!fault_latched_) {
     status_ = ControlStatus::kHeating;
@@ -177,7 +181,8 @@ ControlSnapshot TemperatureController::update(
     heating_demand_active_ = false;
   }
 
-  if (!update_heater()) {
+  update_recovery_heat();
+  if (!update_heater(now_ms)) {
     latch_fault(FaultCode::kInternalError);
   }
 
@@ -225,6 +230,61 @@ bool TemperatureController::active_temperature_demands_heat() const {
   return active_temperature() < static_cast<float>(active_target());
 }
 
+float TemperatureController::active_heat_ramp_band() const {
+  return mode_ == ControlMode::kBrew ? config::kBrewHeatRampBandC
+                                     : config::kSteamHeatRampBandC;
+}
+
+float TemperatureController::active_recovery_trigger_drop() const {
+  return mode_ == ControlMode::kBrew ? config::kBrewRecoveryTriggerDropC
+                                     : config::kSteamRecoveryTriggerDropC;
+}
+
+float TemperatureController::active_recovery_heat_ramp_band() const {
+  return mode_ == ControlMode::kBrew ? config::kBrewRecoveryHeatRampBandC
+                                     : config::kSteamRecoveryHeatRampBandC;
+}
+
+void TemperatureController::update_recovery_heat() {
+  const float temperature_error =
+      static_cast<float>(active_target()) - active_temperature();
+  if (temperature_error <= 0.0F) {
+    recovery_heat_active_ = false;
+    return;
+  }
+  if (temperature_error >= active_recovery_trigger_drop()) {
+    recovery_heat_active_ = true;
+  }
+}
+
+std::uint32_t TemperatureController::heater_pulse_ms() const {
+  const float temperature_error =
+      static_cast<float>(active_target()) - active_temperature();
+  if (temperature_error <= 0.0F) {
+    return 0;
+  }
+
+  const float ramp_band = recovery_heat_active_ ? active_recovery_heat_ramp_band()
+                                                : active_heat_ramp_band();
+  if (temperature_error >= ramp_band) {
+    return config::kHeaterControlWindowMs;
+  }
+
+  const float normalized_error = temperature_error / ramp_band;
+  const float curved_duty =
+      recovery_heat_active_ ? normalized_error : normalized_error * normalized_error;
+  auto pulse_ms = static_cast<std::uint32_t>(
+      static_cast<float>(config::kHeaterControlWindowMs) * curved_duty);
+  if (pulse_ms < config::kMinimumHeaterPulseMs) {
+    pulse_ms = config::kMinimumHeaterPulseMs;
+  }
+  return pulse_ms;
+}
+
+void TemperatureController::reset_heater_control_window(std::uint32_t now_ms) {
+  heater_control_window_started_ms_ = now_ms;
+}
+
 void TemperatureController::reset_readiness(std::uint32_t now_ms) {
   ready_band_active_ = false;
   ready_band_since_ms_ = now_ms;
@@ -234,7 +294,9 @@ void TemperatureController::return_to_brew(std::uint32_t now_ms) {
   mode_ = ControlMode::kBrew;
   steam_timeout_active_ = false;
   reset_readiness(now_ms);
+  reset_heater_control_window(now_ms);
   heating_demand_active_ = false;
+  recovery_heat_active_ = false;
   status_ = ControlStatus::kHeating;
 }
 
@@ -265,11 +327,22 @@ bool TemperatureController::update_readiness(std::uint32_t now_ms) {
   return elapsed(now_ms, ready_band_since_ms_, config::kReadyStabilityMs);
 }
 
-bool TemperatureController::update_heater() {
+bool TemperatureController::update_heater(std::uint32_t now_ms) {
   if (fault_latched_) {
     return heater_.force_off();
   }
-  return heater_.set_enabled(active_temperature_demands_heat());
+  if (!active_temperature_demands_heat()) {
+    reset_heater_control_window(now_ms);
+    return heater_.set_enabled(false);
+  }
+
+  if (elapsed(now_ms, heater_control_window_started_ms_,
+              config::kHeaterControlWindowMs)) {
+    reset_heater_control_window(now_ms);
+  }
+  const auto window_elapsed_ms =
+      static_cast<std::uint32_t>(now_ms - heater_control_window_started_ms_);
+  return heater_.set_enabled(window_elapsed_ms < heater_pulse_ms());
 }
 
 SteamTimeoutSnapshot TemperatureController::steam_timeout_snapshot(

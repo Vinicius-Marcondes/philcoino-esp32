@@ -1,6 +1,6 @@
 # Firmware foundation decisions
 
-Status: HUMAN-APPROVED 2026-07-04
+Status: HUMAN-APPROVED 2026-07-04; TEMPORARY DIAGNOSTIC AMENDMENT 2026-07-06
 
 These decisions establish PHIL-004. They do not approve energized heater tests or
 implement peripheral and control behavior.
@@ -41,11 +41,11 @@ implement peripheral and control behavior.
 | --- | --- |
 | SSD1306 OLED | 128×32, I2C address `0x3C`, no dedicated reset configured |
 | OLED SDA / SCL | GPIO8 / GPIO9; module-provided pull-ups retained |
-| MAX6675 shared SCK / SO | GPIO4 / GPIO6 |
-| Brew / steam MAX6675 CS | GPIO7 / GPIO5; temporary diagnostic mapping with explicit CS verification and a 500 ms inter-read delay |
+| MAX6675 brew SCK/SO / steam SCK/SO | GPIO4/GPIO6 / GPIO0/GPIO1; fully isolated digital buses are a temporary diagnostic amendment |
+| Brew / steam MAX6675 CS | GPIO7 / GPIO5; temporary diagnostic mapping with explicit CS verification and a 500 ms sample interval |
 | SSR command | GPIO20, active high, direct 3.3 V connection |
 
-Wi-Fi is enabled. `kDualThermocouplesEnabled` is temporarily disabled because one MAX6675 module is faulty. Single-sensor mode reads the brew/base channel and uses that measurement for both brew and steam control while preserving each mode's existing limits and timeouts. This is a degraded diagnostic configuration, not final dual-sensor acceptance.
+Wi-Fi is enabled. `kDualThermocouplesEnabled` is temporarily disabled after dual-sensor low-voltage diagnosis. Single-sensor mode reads the brew channel every 500 ms and mirrors that measurement for steam control. This degraded diagnostic configuration is not final dual-sensor acceptance.
 
 The human owner explicitly approved direct GPIO20 drive with no external pull-down
 resistor available. Firmware must configure the output low at the earliest possible
