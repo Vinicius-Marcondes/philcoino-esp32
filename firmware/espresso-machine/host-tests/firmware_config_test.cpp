@@ -2,6 +2,7 @@
 #include <cassert>
 #include <cstdint>
 #include <string>
+#include <type_traits>
 
 #include "philcoino/config.hpp"
 
@@ -21,13 +22,16 @@ int main() {
   static_assert(kHeaterControlWindowMs == 10000U);
   static_assert(kMinimumHeaterPulseMs == 500U);
   static_assert(kMinimumHeaterPulseMs < kHeaterControlWindowMs);
+  static_assert(kWifiMaximumTxPowerQuarterDbm == 44);
+  static_assert(kWifiMaximumTxPowerQuarterDbm >= 8);
+  static_assert(kWifiMaximumTxPowerQuarterDbm <= 84);
   static_assert(kBrewHeatRampBandC > static_cast<float>(kReadyBandC));
   static_assert(kSteamHeatRampBandC > kBrewHeatRampBandC);
   static_assert(kBrewRecoveryTriggerDropC >= static_cast<float>(kReadyBandC));
   static_assert(kSteamRecoveryTriggerDropC > kBrewRecoveryTriggerDropC);
   static_assert(kBrewRecoveryHeatRampBandC < kBrewHeatRampBandC);
   static_assert(kSteamRecoveryHeatRampBandC < kSteamHeatRampBandC);
-  static_assert(!kOledEnabled);
+  static_assert(std::is_same_v<decltype(kOledEnabled), const bool>);
   static_assert(kOledI2cAddress == 0x3C);
   static_assert(kBrewThermocoupleChipSelectGpio !=
                 kSteamThermocoupleChipSelectGpio);

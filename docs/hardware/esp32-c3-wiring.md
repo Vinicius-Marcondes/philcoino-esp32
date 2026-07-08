@@ -32,6 +32,13 @@ The two tested MAX6675 modules use fully separate SCK, SO, and active-low CS sig
 Low-voltage testing on 2026-07-05 confirmed that both MAX6675 modules return valid readings when individually selected through GPIO7. Using GPIO10 as a CS returned only zero frames. GPIO3 used first as CS alternated between `0x0000` and `0xFFFF`; when reused as a dedicated steam SO input it returned `0x0008`, while GPIO7/GPIO6 remained valid. Reversing read order ruled out conversion concurrency. A later shared-SO test showed plausible individual readings but corrupted values when both modules drove GPIO6, so the 2026-07-06 diagnostic mapping gives each module a separate SO input and uses previously untested GPIO1 for steam.
 
 Disabling Wi-Fi did not correct the simultaneous-reading failure, so Wi-Fi is enabled again.
+Because the router is expected to be very close to the machine, firmware now
+limits ESP-IDF station transmit power to `44` quarter-dBm units, or 11 dBm, as a
+diagnostic reduction from the default maximum after Wi-Fi starts. If ESP-IDF
+rejects the limit, firmware logs a warning and keeps the network on default
+power. If discovery, HTTP polling, or reconnects become worse, raise this value
+before changing sensor or heater control behavior. This setting does not replace
+antenna placement, supply decoupling, or low-voltage noise checks.
 
 `kDualThermocouplesEnabled` is temporarily `false`. Firmware reads only the brew MAX6675 on SCK/SO/CS GPIO4/GPIO6/GPIO7 every 500 ms, mirrors that measurement into both protocol/display fields, and uses it for brew and steam control. The steam converter is not selected or clocked. This single-sensor mode remains a degraded diagnostic configuration and does not satisfy final dual-sensor acceptance.
 

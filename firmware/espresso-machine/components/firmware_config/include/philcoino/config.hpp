@@ -11,6 +11,8 @@ inline constexpr char kFriendlyName[] = "PhilcoINO";
 inline constexpr char kDeviceModel[] = "ESP32-C3 Super Mini";
 inline constexpr char kDeviceIdPrefix[] = "philcoino-";
 inline constexpr bool kWifiEnabled = true;
+// ESP-IDF uses quarter-dBm units; 44 limits station TX power to 11 dBm.
+inline constexpr std::int8_t kWifiMaximumTxPowerQuarterDbm = 44;
 inline constexpr bool kDualThermocouplesEnabled = false;
 inline constexpr bool kOledEnabled = true;
 

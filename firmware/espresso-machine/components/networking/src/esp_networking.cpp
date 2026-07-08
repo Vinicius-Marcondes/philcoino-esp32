@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "esp_event.h"
+#include "esp_err.h"
 #include "esp_http_server.h"
 #include "esp_log.h"
 #include "esp_netif.h"
@@ -18,6 +19,7 @@
 #include "freertos/event_groups.h"
 #include "freertos/semphr.h"
 #include "mdns.h"
+#include "philcoino/config.hpp"
 
 namespace philcoino::networking {
 namespace {
@@ -137,6 +139,18 @@ bool EspNetworkServer::start_wifi(const char* ssid, const char* password) {
       esp_wifi_start() != ESP_OK) {
     wifi_status_.store(WifiStatus::kFailed, std::memory_order_relaxed);
     return false;
+  }
+  const esp_err_t tx_power_result =
+      esp_wifi_set_max_tx_power(config::kWifiMaximumTxPowerQuarterDbm);
+  if (tx_power_result == ESP_OK) {
+    ESP_LOGI(kLogTag, "Wi-Fi TX power limited: quarter-dBm=%d",
+             static_cast<int>(config::kWifiMaximumTxPowerQuarterDbm));
+  } else {
+    ESP_LOGW(kLogTag,
+             "Wi-Fi TX power limit rejected: quarter-dBm=%d err=%s; using "
+             "default",
+             static_cast<int>(config::kWifiMaximumTxPowerQuarterDbm),
+             esp_err_to_name(tx_power_result));
   }
 
   const EventBits_t bits = xEventGroupWaitBits(
