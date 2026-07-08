@@ -404,6 +404,49 @@ void test_heating_timeout_latches_fault_and_forces_off() {
   assert(!harness.output.level);
 }
 
+void test_manual_heater_disable_forces_off_without_timeout() {
+  ControllerHarness harness({93, 115});
+  auto snapshot = harness.controller.update(readings(80.0F, 90.0F), 0);
+  assert(snapshot.heater_enabled_permission);
+  assert(snapshot.heater_enabled);
+  assert(harness.output.level);
+
+  assert(harness.controller.set_heater_enabled(false, 1000));
+  snapshot = harness.controller.update(readings(80.0F, 90.0F),
+                                       philcoino::config::kHeatingTimeoutMs + 1000U);
+  assert(snapshot.heater_enabled_permission == false);
+  assert(snapshot.status == ControlStatus::kHeating);
+  assert(!snapshot.fault_active);
+  assert(!snapshot.heater_enabled);
+  assert(!harness.output.level);
+
+  assert(harness.controller.set_heater_enabled(true,
+                                               philcoino::config::kHeatingTimeoutMs + 2000U));
+  snapshot = harness.controller.update(readings(80.0F, 90.0F),
+                                       philcoino::config::kHeatingTimeoutMs + 2000U);
+  assert(snapshot.heater_enabled_permission);
+  assert(snapshot.status == ControlStatus::kHeating);
+  assert(snapshot.heater_enabled);
+  assert(!snapshot.fault_active);
+}
+
+void test_manual_heater_toggle_is_allowed_while_faulted() {
+  ControllerHarness harness({93, 115});
+  harness.controller.latch_fault(FaultCode::kSensorFailure);
+
+  assert(harness.controller.set_heater_enabled(false, 1000));
+  auto snapshot = harness.controller.snapshot(1000);
+  assert(snapshot.status == ControlStatus::kFault);
+  assert(!snapshot.heater_enabled_permission);
+  assert(!snapshot.heater_enabled);
+
+  assert(harness.controller.set_heater_enabled(true, 2000));
+  snapshot = harness.controller.snapshot(2000);
+  assert(snapshot.status == ControlStatus::kFault);
+  assert(snapshot.heater_enabled_permission);
+  assert(!snapshot.heater_enabled);
+}
+
 void test_internal_output_failure_latches_fault() {
   ControllerHarness harness({93, 115});
   harness.output.fail_high = true;
@@ -434,6 +477,8 @@ int main() {
   test_over_temperature_dismissal_requires_all_monitored_limits_clear();
   test_only_over_temperature_fault_is_dismissible();
   test_heating_timeout_latches_fault_and_forces_off();
+  test_manual_heater_disable_forces_off_without_timeout();
+  test_manual_heater_toggle_is_allowed_while_faulted();
   test_internal_output_failure_latches_fault();
   return 0;
 }

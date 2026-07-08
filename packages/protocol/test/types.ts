@@ -1,4 +1,5 @@
 import type {
+  HeaterSettingsRequest,
   MachineState,
   ModeRequest,
   TemperatureSettingsRequest,
@@ -11,6 +12,7 @@ const bothUpdate: TemperatureSettingsRequest = {
   steamTargetC: 115,
 };
 const modeUpdate: ModeRequest = { mode: "steam" };
+const heaterUpdate: HeaterSettingsRequest = { heaterEnabled: false };
 const faultState: MachineState = {
   status: "fault",
   activeMode: "brew",
@@ -18,6 +20,7 @@ const faultState: MachineState = {
   steamTemperatureC: 24.7,
   brewTargetC: 93,
   steamTargetC: 115,
+  heaterEnabled: false,
   heaterActive: false,
   fault: {
     code: "sensor_failure",
@@ -38,6 +41,7 @@ void [
   steamUpdate,
   bothUpdate,
   modeUpdate,
+  heaterUpdate,
   faultState,
   emptyUpdate,
   invalidMode,

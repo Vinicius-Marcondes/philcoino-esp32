@@ -1,4 +1,5 @@
 import type {
+  HeaterSettingsResponse,
   MachineState,
   Mode,
   ModeResponse,
@@ -13,7 +14,7 @@ import {
   type ConnectionState,
 } from "../networking/connection-state";
 
-export type DashboardMutationKind = "fault" | "mode" | "temperatures";
+export type DashboardMutationKind = "fault" | "heater" | "mode" | "temperatures";
 export type DashboardMutationStatus =
   | "idle"
   | "pending"
@@ -31,7 +32,12 @@ export const idleMutationState: DashboardMutationState = {
   status: "idle",
 };
 
-const mutationKinds: DashboardMutationKind[] = ["fault", "mode", "temperatures"];
+const mutationKinds: DashboardMutationKind[] = [
+  "fault",
+  "heater",
+  "mode",
+  "temperatures",
+];
 
 export interface DashboardMutationClient {
   dismissOverTemperature(
@@ -41,6 +47,10 @@ export interface DashboardMutationClient {
     request: { mode: Mode },
     options?: { signal?: AbortSignal },
   ): Promise<ModeResponse>;
+  setHeaterEnabled(
+    request: { heaterEnabled: boolean },
+    options?: { signal?: AbortSignal },
+  ): Promise<HeaterSettingsResponse>;
   updateTemperatureSettings(
     settings: TemperatureSettingsRequest,
     options?: { signal?: AbortSignal },
@@ -55,6 +65,7 @@ interface DashboardPollingControl {
 interface DashboardMutationSessionOptions {
   client: DashboardMutationClient;
   onConnectionLost: (connection: ConnectionState) => void;
+  onHeaterAcknowledged: (settings: HeaterSettingsResponse) => void;
   onModeAcknowledged: (mode: Mode) => void;
   onMutationChange: (
     kind: DashboardMutationKind,
@@ -70,6 +81,7 @@ interface DashboardMutationSessionOptions {
 export class DashboardMutationSession {
   private readonly client: DashboardMutationClient;
   private readonly onConnectionLost: (connection: ConnectionState) => void;
+  private readonly onHeaterAcknowledged: (settings: HeaterSettingsResponse) => void;
   private readonly onModeAcknowledged: (mode: Mode) => void;
   private readonly onMutationChange: DashboardMutationSessionOptions["onMutationChange"];
   private readonly onOverTemperatureDismissed: DashboardMutationSessionOptions["onOverTemperatureDismissed"];
@@ -84,6 +96,7 @@ export class DashboardMutationSession {
   constructor(options: DashboardMutationSessionOptions) {
     this.client = options.client;
     this.onConnectionLost = options.onConnectionLost;
+    this.onHeaterAcknowledged = options.onHeaterAcknowledged;
     this.onModeAcknowledged = options.onModeAcknowledged;
     this.onMutationChange = options.onMutationChange;
     this.onOverTemperatureDismissed = options.onOverTemperatureDismissed;
@@ -120,6 +133,22 @@ export class DashboardMutationSession {
         return `Machine acknowledged ${capitalize(response.mode)} mode.`;
       },
       `Waiting for the machine to acknowledge ${capitalize(mode)} mode…`,
+    );
+  }
+
+  setHeaterEnabled(heaterEnabled: boolean): void {
+    void this.perform(
+      "heater",
+      (signal) => this.client.setHeaterEnabled({ heaterEnabled }, { signal }),
+      (response) => {
+        this.onHeaterAcknowledged(response);
+        return response.heaterEnabled
+          ? "Machine allowed automatic heater control."
+          : "Machine turned heater output off.";
+      },
+      heaterEnabled
+        ? "Waiting for the machine to allow heater control..."
+        : "Waiting for the machine to turn heater output off...",
     );
   }
 

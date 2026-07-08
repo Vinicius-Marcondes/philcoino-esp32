@@ -5,6 +5,7 @@
   "steamTemperatureC": 103.8,
   "brewTargetC": 93,
   "steamTargetC": 115,
+  "heaterEnabled": false,
   "heaterActive": false,
   "fault": null,
   "steamTimeoutRemainingMs": null,

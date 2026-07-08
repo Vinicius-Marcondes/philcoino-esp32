@@ -23,6 +23,7 @@ const steamState: MachineState = {
   brewTargetC: 93,
   brewTemperatureC: 91.2,
   fault: null,
+  heaterEnabled: true,
   heaterActive: false,
   status: "ready",
   steamTargetC: 115,

@@ -2,6 +2,7 @@ import {
   BREW_TARGET_MAX_C,
   BREW_TARGET_MIN_C,
   DeviceResponseSchema,
+  HeaterSettingsResponseSchema,
   HealthResponseSchema,
   MachineStateSchema,
   STEAM_TARGET_MAX_C,
@@ -12,6 +13,7 @@ import {
   type Fault,
   type FaultCode,
   type HealthResponse,
+  type HeaterSettingsResponse,
   type MachineState,
   type Mode,
   type OverTemperatureDismissResponse,
@@ -51,6 +53,7 @@ export class SimulatorMachine {
   private steamTemperatureC = AMBIENT_TEMPERATURE_C;
   private brewTargetC: number;
   private steamTargetC: number;
+  private heaterEnabled = true;
   private fault: Fault | null = null;
   private readyElapsedMs = 0;
   private steamTimeoutRemainingMs: number | null = null;
@@ -110,6 +113,7 @@ export class SimulatorMachine {
       steamTemperatureC: roundTemperature(this.steamTemperatureC),
       brewTargetC: this.brewTargetC,
       steamTargetC: this.steamTargetC,
+      heaterEnabled: this.heaterEnabled,
       heaterActive: this.isHeaterActive(),
       fault: this.fault,
       steamTimeoutRemainingMs: this.steamTimeoutRemainingMs,
@@ -150,6 +154,14 @@ export class SimulatorMachine {
     this.readyElapsedMs = 0;
     this.steamTimeoutRemainingMs = null;
     return this.activeMode;
+  }
+
+  setHeaterEnabled(heaterEnabled: boolean): HeaterSettingsResponse {
+    this.heaterEnabled = heaterEnabled;
+    if (!heaterEnabled) {
+      this.readyElapsedMs = 0;
+    }
+    return HeaterSettingsResponseSchema.parse({ heaterEnabled });
   }
 
   setTemperatures(temperatures: {
@@ -229,8 +241,10 @@ export class SimulatorMachine {
         AMBIENT_TEMPERATURE_C,
         COOLING_RATE_C_PER_SECOND * seconds,
       );
-    } else {
+    } else if (this.heaterEnabled) {
       this.advanceTemperatures(seconds);
+    } else {
+      this.coolTemperatures(seconds);
     }
 
     this.uptimeMs += milliseconds;
@@ -291,6 +305,19 @@ export class SimulatorMachine {
     );
   }
 
+  private coolTemperatures(seconds: number): void {
+    this.brewTemperatureC = moveToward(
+      this.brewTemperatureC,
+      AMBIENT_TEMPERATURE_C,
+      COOLING_RATE_C_PER_SECOND * seconds,
+    );
+    this.steamTemperatureC = moveToward(
+      this.steamTemperatureC,
+      AMBIENT_TEMPERATURE_C,
+      COOLING_RATE_C_PER_SECOND * seconds,
+    );
+  }
+
   private isActiveTemperatureReady(): boolean {
     const temperature =
       this.activeMode === "brew"
@@ -302,7 +329,7 @@ export class SimulatorMachine {
   }
 
   private isHeaterActive(): boolean {
-    if (this.fault) {
+    if (this.fault || !this.heaterEnabled) {
       return false;
     }
 
@@ -329,6 +356,7 @@ export class SimulatorMachine {
     this.activeMode = "brew";
     this.brewTemperatureC = AMBIENT_TEMPERATURE_C;
     this.steamTemperatureC = AMBIENT_TEMPERATURE_C;
+    this.heaterEnabled = true;
     this.fault = null;
     this.readyElapsedMs = 0;
     this.steamTimeoutRemainingMs = null;

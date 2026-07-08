@@ -13,6 +13,7 @@ const validState: MachineState = {
   brewTargetC: 93,
   brewTemperatureC: 87.4,
   fault: null,
+  heaterEnabled: true,
   heaterActive: true,
   status: "heating",
   steamTargetC: 115,
@@ -150,6 +151,33 @@ describe("DeviceApiClient", () => {
     });
 
     const invalid = client.setMode({ mode: "cleaning" } as never);
+    const error = await captureError(invalid);
+    expect((error as ApiClientError).kind).toBe("invalid-request");
+  });
+
+  test("requests heater permission changes and validates acknowledgement", async () => {
+    let sentBody: string | undefined;
+    let sentMethod: string | undefined;
+    let sentUrl: string | undefined;
+    const client = new DeviceApiClient({
+      address: "philcoino.local",
+      fetch: async (url, init) => {
+        sentBody = init.body;
+        sentMethod = init.method;
+        sentUrl = url;
+        return Response.json({ heaterEnabled: false });
+      },
+      token: "secret-token",
+    });
+
+    await expect(
+      client.setHeaterEnabled({ heaterEnabled: false }),
+    ).resolves.toEqual({ heaterEnabled: false });
+    expect(sentMethod).toBe("PUT");
+    expect(sentUrl).toBe("http://philcoino.local/api/v1/heater");
+    expect(sentBody).toBe(JSON.stringify({ heaterEnabled: false }));
+
+    const invalid = client.setHeaterEnabled({ heaterEnabled: "off" } as never);
     const error = await captureError(invalid);
     expect((error as ApiClientError).kind).toBe("invalid-request");
   });

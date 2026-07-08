@@ -130,6 +130,34 @@
         }
       }
     },
+    "/api/v1/heater": {
+      "put": {
+        "operationId": "setHeaterPermission",
+        "summary": "Allow or inhibit automatic heater output",
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/HeaterSettingsRequest" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The resulting acknowledged volatile heater permission.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HeaterSettingsResponse" }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "500": { "$ref": "#/components/responses/InternalError" }
+        }
+      }
+    },
     "/api/v1/faults/over-temperature/dismiss": {
       "post": {
         "operationId": "dismissOverTemperature",
@@ -295,6 +323,7 @@
           "steamTemperatureC",
           "brewTargetC",
           "steamTargetC",
+          "heaterEnabled",
           "heaterActive",
           "fault",
           "steamTimeoutRemainingMs",
@@ -307,6 +336,7 @@
           "steamTemperatureC": { "type": "number" },
           "brewTargetC": { "$ref": "#/components/schemas/BrewTarget" },
           "steamTargetC": { "$ref": "#/components/schemas/SteamTarget" },
+          "heaterEnabled": { "type": "boolean" },
           "heaterActive": { "type": "boolean" },
           "fault": {
             "oneOf": [
@@ -349,6 +379,7 @@
             "steamTemperatureC": 103.8,
             "brewTargetC": 93,
             "steamTargetC": 115,
+            "heaterEnabled": true,
             "heaterActive": true,
             "fault": null,
             "steamTimeoutRemainingMs": null,
@@ -361,6 +392,7 @@
             "steamTemperatureC": 24.7,
             "brewTargetC": 93,
             "steamTargetC": 115,
+            "heaterEnabled": false,
             "heaterActive": false,
             "fault": {
               "code": "sensor_failure",
@@ -420,6 +452,28 @@
           { "mode": "steam" }
         ]
       },
+      "HeaterSettingsRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["heaterEnabled"],
+        "properties": {
+          "heaterEnabled": { "type": "boolean" }
+        },
+        "examples": [
+          { "heaterEnabled": false }
+        ]
+      },
+      "HeaterSettingsResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["heaterEnabled"],
+        "properties": {
+          "heaterEnabled": { "type": "boolean" }
+        },
+        "examples": [
+          { "heaterEnabled": false }
+        ]
+      },
       "OverTemperatureDismissResponse": {
         "$ref": "#/components/schemas/MachineState",
         "examples": [
@@ -430,6 +484,7 @@
             "steamTemperatureC": 103.8,
             "brewTargetC": 93,
             "steamTargetC": 115,
+            "heaterEnabled": true,
             "heaterActive": false,
             "fault": null,
             "steamTimeoutRemainingMs": null,

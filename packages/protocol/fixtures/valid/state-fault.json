@@ -5,6 +5,7 @@
   "steamTemperatureC": 24.7,
   "brewTargetC": 93,
   "steamTargetC": 115,
+  "heaterEnabled": false,
   "heaterActive": false,
   "fault": {
     "code": "sensor_failure",

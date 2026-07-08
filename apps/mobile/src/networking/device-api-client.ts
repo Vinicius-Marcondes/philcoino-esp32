@@ -1,6 +1,8 @@
 import {
   DeviceResponseSchema,
   ErrorResponseSchema,
+  HeaterSettingsRequestSchema,
+  HeaterSettingsResponseSchema,
   HealthResponseSchema,
   MachineStateSchema,
   ModeRequestSchema,
@@ -9,6 +11,8 @@ import {
   TemperatureSettingsRequestSchema,
   TemperatureSettingsResponseSchema,
   type DeviceResponse,
+  type HeaterSettingsRequest,
+  type HeaterSettingsResponse,
   type HealthResponse,
   type MachineState,
   type ModeRequest,
@@ -133,6 +137,30 @@ export class DeviceApiClient {
     return await this.request(
       "/api/v1/mode",
       ModeResponseSchema,
+      {
+        authenticated: true,
+        body: parsed.data,
+        method: "PUT",
+      },
+      options,
+    );
+  }
+
+  async setHeaterEnabled(
+    request: HeaterSettingsRequest,
+    options: RequestOptions = {},
+  ): Promise<HeaterSettingsResponse> {
+    const parsed = HeaterSettingsRequestSchema.safeParse(request);
+    if (!parsed.success) {
+      throw new ApiClientError(
+        "invalid-request",
+        "The heater permission request is invalid.",
+      );
+    }
+
+    return await this.request(
+      "/api/v1/heater",
+      HeaterSettingsResponseSchema,
       {
         authenticated: true,
         body: parsed.data,

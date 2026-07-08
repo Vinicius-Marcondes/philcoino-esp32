@@ -9,6 +9,8 @@ import {
   ErrorCodeSchema,
   ErrorResponseSchema,
   FaultCodeSchema,
+  HeaterSettingsRequestSchema,
+  HeaterSettingsResponseSchema,
   HealthResponseSchema,
   MachineStateSchema,
   MachineStatusSchema,
@@ -52,6 +54,8 @@ const documentedSchemas: Record<string, ZodType> = {
   TemperatureSettingsResponse: TemperatureSettingsResponseSchema,
   ModeRequest: ModeRequestSchema,
   ModeResponse: ModeResponseSchema,
+  HeaterSettingsRequest: HeaterSettingsRequestSchema,
+  HeaterSettingsResponse: HeaterSettingsResponseSchema,
   OverTemperatureDismissResponse: OverTemperatureDismissResponseSchema,
   ErrorResponse: ErrorResponseSchema,
 };
@@ -65,6 +69,8 @@ const validFixtures = [
   ["valid/temperatures-response.json", TemperatureSettingsResponseSchema],
   ["valid/mode-request.json", ModeRequestSchema],
   ["valid/mode-response.json", ModeResponseSchema],
+  ["valid/heater-request.json", HeaterSettingsRequestSchema],
+  ["valid/heater-response.json", HeaterSettingsResponseSchema],
   ["valid/error.json", ErrorResponseSchema],
 ] as const;
 
@@ -78,6 +84,7 @@ const invalidFixtures = [
   ["invalid/brew-target-fractional.json", TemperatureSettingsRequestSchema],
   ["invalid/steam-target-too-high.json", TemperatureSettingsRequestSchema],
   ["invalid/mode-invalid.json", ModeRequestSchema],
+  ["invalid/heater-invalid.json", HeaterSettingsRequestSchema],
   ["invalid/error-extra-property.json", ErrorResponseSchema],
 ] as const;
 
@@ -123,6 +130,8 @@ describe("documented OpenAPI examples", () => {
       ],
       ModeRequest: [await fixture("valid/mode-request.json")],
       ModeResponse: [await fixture("valid/mode-response.json")],
+      HeaterSettingsRequest: [await fixture("valid/heater-request.json")],
+      HeaterSettingsResponse: [await fixture("valid/heater-response.json")],
       OverTemperatureDismissResponse: [
         openApi.components.schemas.OverTemperatureDismissResponse.examples?.[0],
       ],
