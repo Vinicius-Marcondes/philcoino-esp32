@@ -151,6 +151,14 @@ export class DashboardMutationSession {
     );
   }
 
+  dismissMutation(kind: DashboardMutationKind): void {
+    if (!this.running) {
+      return;
+    }
+
+    this.onMutationChange(kind, idleMutationState);
+  }
+
   private async perform<T>(
     kind: DashboardMutationKind,
     request: (signal: AbortSignal) => Promise<T>,

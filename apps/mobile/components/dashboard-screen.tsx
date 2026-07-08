@@ -1,5 +1,5 @@
 import type { MachineState } from "@philcoino/protocol";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -68,6 +68,7 @@ export function DashboardScreen({
   );
   const {
     connection,
+    dismissMutation,
     dismissOverTemperature,
     faultMutation,
     modeMutation,
@@ -82,6 +83,18 @@ export function DashboardScreen({
   const [temperatureHistory, setTemperatureHistory] = useState<
     TemperatureSample[]
   >([]);
+  const dismissModeMutation = useCallback(
+    () => dismissMutation("mode"),
+    [dismissMutation],
+  );
+  const dismissTemperatureMutation = useCallback(
+    () => dismissMutation("temperatures"),
+    [dismissMutation],
+  );
+  const dismissFaultMutation = useCallback(
+    () => dismissMutation("fault"),
+    [dismissMutation],
+  );
 
   useEffect(() => {
     if (connection.status !== "online" || snapshot === null) {
@@ -137,9 +150,18 @@ export function DashboardScreen({
           </Text>
         </View>
 
-        <MutationFeedback state={modeMutation} />
-        <MutationFeedback state={temperatureMutation} />
-        <MutationFeedback state={faultMutation} />
+        <MutationFeedback
+          onDismiss={dismissModeMutation}
+          state={modeMutation}
+        />
+        <MutationFeedback
+          onDismiss={dismissTemperatureMutation}
+          state={temperatureMutation}
+        />
+        <MutationFeedback
+          onDismiss={dismissFaultMutation}
+          state={faultMutation}
+        />
 
         {connection.status === "online" && snapshot !== null ? (
           <>

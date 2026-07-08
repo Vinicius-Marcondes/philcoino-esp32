@@ -11,6 +11,7 @@ import {
   DashboardMutationSession,
   idleMutationState,
   type DashboardMutationClient,
+  type DashboardMutationKind,
   type DashboardMutationState,
 } from "@/src/dashboard/dashboard-mutation-session";
 import {
@@ -24,6 +25,7 @@ import {
 
 export interface MachineDashboardState {
   connection: ConnectionState;
+  dismissMutation: (kind: DashboardMutationKind) => void;
   dismissOverTemperature: () => void;
   faultMutation: DashboardMutationState;
   modeMutation: DashboardMutationState;
@@ -127,6 +129,10 @@ export function useMachineDashboard(
     mutationSession.current?.dismissOverTemperature();
   }, []);
 
+  const dismissMutation = useCallback((kind: DashboardMutationKind) => {
+    mutationSession.current?.dismissMutation(kind);
+  }, []);
+
   const updateTemperatureSettings = useCallback(
     (settings: TemperatureSettingsRequest) => {
       mutationSession.current?.updateTemperatureSettings(settings);
@@ -136,6 +142,7 @@ export function useMachineDashboard(
 
   return {
     connection,
+    dismissMutation,
     dismissOverTemperature,
     faultMutation,
     modeMutation,

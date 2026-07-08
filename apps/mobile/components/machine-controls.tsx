@@ -12,6 +12,8 @@ import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import type { DashboardMutationState } from "@/src/dashboard/dashboard-mutation-session";
 
+const MUTATION_FEEDBACK_DISMISS_MS = 30_000;
+
 interface MachineControlsProps {
   faultMutation: DashboardMutationState;
   modeMutation: DashboardMutationState;
@@ -170,10 +172,21 @@ export function MachineControls({
 }
 
 export function MutationFeedback({
+  onDismiss,
   state,
 }: {
+  onDismiss: () => void;
   state: DashboardMutationState;
 }) {
+  useEffect(() => {
+    if (state.status === "idle") {
+      return;
+    }
+
+    const timer = setTimeout(onDismiss, MUTATION_FEEDBACK_DISMISS_MS);
+    return () => clearTimeout(timer);
+  }, [onDismiss, state.message, state.status]);
+
   if (state.status === "idle") {
     return null;
   }
@@ -192,9 +205,22 @@ export function MutationFeedback({
         state.status === "rejected" && styles.feedbackRejected,
         state.status === "disconnected" && styles.feedbackDisconnected,
       ]}>
-      <Text selectable style={styles.feedbackTitle}>
-        {feedbackTitle(state.status)}
-      </Text>
+      <View style={styles.feedbackHeader}>
+        <Text selectable style={styles.feedbackTitle}>
+          {feedbackTitle(state.status)}
+        </Text>
+        <Pressable
+          accessibilityLabel="Dismiss notification"
+          accessibilityRole="button"
+          hitSlop={8}
+          onPress={onDismiss}
+          style={({ pressed }) => [
+            styles.feedbackDismissButton,
+            pressed && styles.pressed,
+          ]}>
+          <Text style={styles.feedbackDismissText}>x</Text>
+        </Pressable>
+      </View>
       <Text selectable style={styles.feedbackMessage}>
         {state.message}
       </Text>
@@ -493,7 +519,31 @@ const styles = StyleSheet.create({
   feedbackAcknowledged: { backgroundColor: "#E5F1E8", borderColor: "#A9C9B0" },
   feedbackRejected: { backgroundColor: "#F8DDD7", borderColor: "#CC7766" },
   feedbackDisconnected: { backgroundColor: "#F5E8C9", borderColor: "#D4B86F" },
-  feedbackTitle: { color: "#332A25", fontSize: 15, fontWeight: "900" },
+  feedbackHeader: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: 10,
+    justifyContent: "space-between",
+  },
+  feedbackTitle: {
+    color: "#332A25",
+    flex: 1,
+    fontSize: 15,
+    fontWeight: "900",
+  },
+  feedbackDismissButton: {
+    alignItems: "center",
+    borderRadius: 999,
+    height: 30,
+    justifyContent: "center",
+    width: 30,
+  },
+  feedbackDismissText: {
+    color: "#332A25",
+    fontSize: 18,
+    fontWeight: "900",
+    lineHeight: 20,
+  },
   feedbackMessage: { color: "#5B4D44", fontSize: 14, lineHeight: 20 },
   disabled: { opacity: 0.42 },
   pressed: { opacity: 0.7 },

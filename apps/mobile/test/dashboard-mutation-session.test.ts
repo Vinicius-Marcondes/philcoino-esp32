@@ -158,6 +158,42 @@ describe("DashboardMutationSession", () => {
     });
   });
 
+  test("dismisses visible mutation feedback without cancelling the active request", async () => {
+    const response = deferred<TemperatureSettingsResponse>();
+    const client = mutationClient({
+      updateTemperatureSettings: () => response.promise,
+    });
+    const harness = createHarness(client);
+
+    harness.session.start();
+    harness.session.updateTemperatureSettings({ brewTargetC: 95 });
+    harness.session.dismissMutation("temperatures");
+
+    expect(harness.outcomes.at(-1)).toEqual({
+      kind: "temperatures",
+      state: {
+        message: "",
+        status: "idle",
+      },
+    });
+    expect(harness.polling.resumes).toBe(0);
+
+    response.resolve({ brewTargetC: 95, steamTargetC: 115 });
+    await settle();
+
+    expect(harness.acknowledgedSettings).toEqual([
+      { brewTargetC: 95, steamTargetC: 115 },
+    ]);
+    expect(harness.outcomes.at(-1)).toEqual({
+      kind: "temperatures",
+      state: {
+        message: "Machine saved Brew 95°C and Steam 115°C.",
+        status: "acknowledged",
+      },
+    });
+    expect(harness.polling.resumes).toBe(1);
+  });
+
   test("reports a disconnect without applying a false success", async () => {
     const client = mutationClient({
       updateTemperatureSettings: async () => {
