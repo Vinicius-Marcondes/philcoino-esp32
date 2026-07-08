@@ -1,0 +1,466 @@
+{
+  "openapi": "3.1.1",
+  "jsonSchemaDialect": "https://spec.openapis.org/oas/3.1/dialect/base",
+  "info": {
+    "title": "Philcoino ESP32 API",
+    "version": "1.0.0",
+    "description": "Local-network API for monitoring and configuring one Philcoino espresso machine."
+  },
+  "servers": [
+    {
+      "url": "http://{host}",
+      "variables": {
+        "host": {
+          "default": "philcoino.local",
+          "description": "mDNS hostname or manually entered local IP address"
+        }
+      }
+    }
+  ],
+  "paths": {
+    "/healthz": {
+      "get": {
+        "operationId": "getHealth",
+        "summary": "Read process and network health",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "The device HTTP service is healthy.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HealthResponse" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/device": {
+      "get": {
+        "operationId": "getDevice",
+        "summary": "Read public device identity",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Stable device identity and version information.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/DeviceResponse" }
+              }
+            }
+          },
+          "500": { "$ref": "#/components/responses/InternalError" }
+        }
+      }
+    },
+    "/api/v1/state": {
+      "get": {
+        "operationId": "getMachineState",
+        "summary": "Read the complete machine snapshot",
+        "security": [{ "bearerAuth": [] }],
+        "responses": {
+          "200": {
+            "description": "Current temperatures, targets, control state, and fault data.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/MachineState" }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "500": { "$ref": "#/components/responses/InternalError" }
+        }
+      }
+    },
+    "/api/v1/settings/temperatures": {
+      "patch": {
+        "operationId": "updateTemperatureSettings",
+        "summary": "Validate and persist one or both temperature targets",
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/TemperatureSettingsRequest" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Both persisted targets after the requested update.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/TemperatureSettingsResponse" }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "409": { "$ref": "#/components/responses/Conflict" },
+          "500": { "$ref": "#/components/responses/InternalError" }
+        }
+      }
+    },
+    "/api/v1/mode": {
+      "put": {
+        "operationId": "setMode",
+        "summary": "Idempotently select the active temperature-control mode",
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/ModeRequest" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The resulting acknowledged mode.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ModeResponse" }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "409": { "$ref": "#/components/responses/Conflict" },
+          "500": { "$ref": "#/components/responses/InternalError" }
+        }
+      }
+    },
+    "/api/v1/faults/over-temperature/dismiss": {
+      "post": {
+        "operationId": "dismissOverTemperature",
+        "summary": "Dismiss a recoverable over-temperature fault after cooldown",
+        "security": [{ "bearerAuth": [] }],
+        "responses": {
+          "200": {
+            "description": "The fresh machine snapshot after the over-temperature fault is dismissed.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/OverTemperatureDismissResponse" }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "409": { "$ref": "#/components/responses/Conflict" },
+          "500": { "$ref": "#/components/responses/InternalError" }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "opaque"
+      }
+    },
+    "responses": {
+      "BadRequest": {
+        "description": "The JSON body is malformed or violates a request constraint.",
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+          }
+        }
+      },
+      "Unauthorized": {
+        "description": "The bearer token is missing or invalid.",
+        "headers": {
+          "WWW-Authenticate": {
+            "schema": { "type": "string" },
+            "description": "Bearer authentication challenge."
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+          }
+        }
+      },
+      "Conflict": {
+        "description": "The machine cannot apply the valid command in its current state.",
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+          }
+        }
+      },
+      "InternalError": {
+        "description": "The device could not complete the request.",
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+          }
+        }
+      }
+    },
+    "schemas": {
+      "Mode": {
+        "type": "string",
+        "enum": ["brew", "steam"]
+      },
+      "MachineStatus": {
+        "type": "string",
+        "enum": ["heating", "ready", "fault"]
+      },
+      "FaultCode": {
+        "type": "string",
+        "enum": [
+          "sensor_failure",
+          "over_temperature",
+          "heating_timeout",
+          "internal_error"
+        ]
+      },
+      "ErrorCode": {
+        "type": "string",
+        "enum": [
+          "malformed_request",
+          "unauthorized",
+          "temperature_out_of_range",
+          "sensor_unavailable",
+          "persistence_failure",
+          "internal_error"
+        ]
+      },
+      "BrewTarget": {
+        "type": "integer",
+        "minimum": 85,
+        "maximum": 95
+      },
+      "SteamTarget": {
+        "type": "integer",
+        "minimum": 110,
+        "maximum": 120
+      },
+      "HealthResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["status", "uptimeMs"],
+        "properties": {
+          "status": { "const": "ok" },
+          "uptimeMs": { "type": "integer", "minimum": 0 }
+        },
+        "examples": [
+          { "status": "ok", "uptimeMs": 184220 }
+        ]
+      },
+      "DeviceResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["deviceId", "name", "model", "apiVersion", "firmwareVersion"],
+        "properties": {
+          "deviceId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+          },
+          "name": { "type": "string", "minLength": 1, "maxLength": 64 },
+          "model": { "type": "string", "minLength": 1, "maxLength": 64 },
+          "apiVersion": { "const": "1" },
+          "firmwareVersion": { "type": "string", "minLength": 1, "maxLength": 32 }
+        },
+        "examples": [
+          {
+            "deviceId": "philcoino-c3-a1b2c3",
+            "name": "Kitchen espresso machine",
+            "model": "philcoino-esp32-c3",
+            "apiVersion": "1",
+            "firmwareVersion": "1.0.0"
+          }
+        ]
+      },
+      "Fault": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["code", "message"],
+        "properties": {
+          "code": { "$ref": "#/components/schemas/FaultCode" },
+          "message": { "type": "string", "minLength": 1, "maxLength": 160 }
+        }
+      },
+      "MachineState": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "status",
+          "activeMode",
+          "brewTemperatureC",
+          "steamTemperatureC",
+          "brewTargetC",
+          "steamTargetC",
+          "heaterActive",
+          "fault",
+          "steamTimeoutRemainingMs",
+          "uptimeMs"
+        ],
+        "properties": {
+          "status": { "$ref": "#/components/schemas/MachineStatus" },
+          "activeMode": { "$ref": "#/components/schemas/Mode" },
+          "brewTemperatureC": { "type": "number" },
+          "steamTemperatureC": { "type": "number" },
+          "brewTargetC": { "$ref": "#/components/schemas/BrewTarget" },
+          "steamTargetC": { "$ref": "#/components/schemas/SteamTarget" },
+          "heaterActive": { "type": "boolean" },
+          "fault": {
+            "oneOf": [
+              { "$ref": "#/components/schemas/Fault" },
+              { "type": "null" }
+            ]
+          },
+          "steamTimeoutRemainingMs": {
+            "oneOf": [
+              { "type": "integer", "minimum": 0, "maximum": 300000 },
+              { "type": "null" }
+            ]
+          },
+          "uptimeMs": { "type": "integer", "minimum": 0 }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": { "status": { "const": "fault" } },
+              "required": ["status"]
+            },
+            "then": {
+              "properties": {
+                "fault": { "$ref": "#/components/schemas/Fault" },
+                "heaterActive": { "const": false }
+              }
+            },
+            "else": {
+              "properties": {
+                "fault": { "type": "null" }
+              }
+            }
+          }
+        ],
+        "examples": [
+          {
+            "status": "heating",
+            "activeMode": "brew",
+            "brewTemperatureC": 87.4,
+            "steamTemperatureC": 103.8,
+            "brewTargetC": 93,
+            "steamTargetC": 115,
+            "heaterActive": true,
+            "fault": null,
+            "steamTimeoutRemainingMs": null,
+            "uptimeMs": 184220
+          },
+          {
+            "status": "fault",
+            "activeMode": "brew",
+            "brewTemperatureC": 24.5,
+            "steamTemperatureC": 24.7,
+            "brewTargetC": 93,
+            "steamTargetC": 115,
+            "heaterActive": false,
+            "fault": {
+              "code": "sensor_failure",
+              "message": "Brew thermocouple is unavailable."
+            },
+            "steamTimeoutRemainingMs": null,
+            "uptimeMs": 185000
+          }
+        ]
+      },
+      "TemperatureSettingsRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "brewTargetC": { "$ref": "#/components/schemas/BrewTarget" },
+          "steamTargetC": { "$ref": "#/components/schemas/SteamTarget" }
+        },
+        "anyOf": [
+          { "required": ["brewTargetC"] },
+          { "required": ["steamTargetC"] }
+        ],
+        "examples": [
+          { "brewTargetC": 93, "steamTargetC": 115 }
+        ]
+      },
+      "TemperatureSettingsResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["brewTargetC", "steamTargetC"],
+        "properties": {
+          "brewTargetC": { "$ref": "#/components/schemas/BrewTarget" },
+          "steamTargetC": { "$ref": "#/components/schemas/SteamTarget" }
+        },
+        "examples": [
+          { "brewTargetC": 93, "steamTargetC": 115 }
+        ]
+      },
+      "ModeRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["mode"],
+        "properties": {
+          "mode": { "$ref": "#/components/schemas/Mode" }
+        },
+        "examples": [
+          { "mode": "steam" }
+        ]
+      },
+      "ModeResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["mode"],
+        "properties": {
+          "mode": { "$ref": "#/components/schemas/Mode" }
+        },
+        "examples": [
+          { "mode": "steam" }
+        ]
+      },
+      "OverTemperatureDismissResponse": {
+        "$ref": "#/components/schemas/MachineState",
+        "examples": [
+          {
+            "status": "heating",
+            "activeMode": "brew",
+            "brewTemperatureC": 93,
+            "steamTemperatureC": 103.8,
+            "brewTargetC": 93,
+            "steamTargetC": 115,
+            "heaterActive": false,
+            "fault": null,
+            "steamTimeoutRemainingMs": null,
+            "uptimeMs": 190000
+          }
+        ]
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["error"],
+        "properties": {
+          "error": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["code", "message"],
+            "properties": {
+              "code": { "$ref": "#/components/schemas/ErrorCode" },
+              "message": { "type": "string", "minLength": 1, "maxLength": 160 }
+            }
+          }
+        },
+        "examples": [
+          {
+            "error": {
+              "code": "temperature_out_of_range",
+              "message": "Brew target must be between 85 and 95 degrees Celsius."
+            }
+          }
+        ]
+      }
+    }
+  }
+}

@@ -1,0 +1,12 @@
+# ESP-IDF generated output and local configuration
+build/
+managed_components/
+sdkconfig
+sdkconfig.old
+
+# Local secret-bearing defaults and environment files
+sdkconfig.local
+sdkconfig.secrets
+.env
+.env.*
+!.env.example

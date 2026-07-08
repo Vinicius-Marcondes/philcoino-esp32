@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": "temperature_out_of_range",
+    "message": "Brew target must be between 85 and 95 degrees Celsius."
+  }
+}

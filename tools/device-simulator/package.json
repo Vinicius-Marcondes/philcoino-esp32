@@ -1,0 +1,18 @@
+{
+  "name": "@philcoino/device-simulator",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun --hot src/index.ts",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@philcoino/protocol": "workspace:*",
+    "hono": "4.12.27"
+  },
+  "devDependencies": {
+    "typescript": "~5.9.2"
+  }
+}

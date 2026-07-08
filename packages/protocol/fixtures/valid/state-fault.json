@@ -1,0 +1,15 @@
+{
+  "status": "fault",
+  "activeMode": "brew",
+  "brewTemperatureC": 24.5,
+  "steamTemperatureC": 24.7,
+  "brewTargetC": 93,
+  "steamTargetC": 115,
+  "heaterActive": false,
+  "fault": {
+    "code": "sensor_failure",
+    "message": "Brew thermocouple is unavailable."
+  },
+  "steamTimeoutRemainingMs": null,
+  "uptimeMs": 185000
+}
