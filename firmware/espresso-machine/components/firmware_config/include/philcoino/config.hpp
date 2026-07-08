@@ -12,6 +12,7 @@ inline constexpr char kDeviceModel[] = "ESP32-C3 Super Mini";
 inline constexpr char kDeviceIdPrefix[] = "philcoino-";
 inline constexpr bool kWifiEnabled = true;
 inline constexpr bool kDualThermocouplesEnabled = false;
+inline constexpr bool kOledEnabled = true;
 
 inline constexpr std::int32_t kBrewTargetMinimumC = 85;
 inline constexpr std::int32_t kBrewTargetMaximumC = 95;

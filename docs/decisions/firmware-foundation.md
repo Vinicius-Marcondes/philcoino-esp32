@@ -45,7 +45,12 @@ implement peripheral and control behavior.
 | Brew / steam MAX6675 CS | GPIO7 / GPIO5; temporary diagnostic mapping with explicit CS verification and a 500 ms sample interval |
 | SSR command | GPIO20, active high, direct 3.3 V connection |
 
-Wi-Fi is enabled. `kDualThermocouplesEnabled` is temporarily disabled after dual-sensor low-voltage diagnosis. Single-sensor mode reads the brew channel every 500 ms and mirrors that measurement for steam control. This degraded diagnostic configuration is not final dual-sensor acceptance.
+Wi-Fi is enabled. `kDualThermocouplesEnabled` is temporarily disabled after
+dual-sensor low-voltage diagnosis. Single-sensor mode reads the brew channel
+every 500 ms and mirrors that measurement for steam control. `kOledEnabled` is
+temporarily disabled so the device can boot while the SSD1306 OLED is
+disconnected. These degraded diagnostic configurations are not final dual-sensor
+or OLED acceptance.
 
 The human owner explicitly approved direct GPIO20 drive with no external pull-down
 resistor available. Firmware must configure the output low at the earliest possible

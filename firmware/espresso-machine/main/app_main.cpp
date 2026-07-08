@@ -143,6 +143,9 @@ extern "C" void app_main() {
     ESP_LOGW(kLogTag,
              "Single-thermocouple mode enabled; brew sensor controls brew and steam");
   }
+  if (!philcoino::config::kOledEnabled) {
+    ESP_LOGW(kLogTag, "OLED display disabled; boot continues without SSD1306");
+  }
 
   static EspNvsTargetBackend nvs_backend;
   if (!nvs_backend.initialize()) {
@@ -172,28 +175,32 @@ extern "C" void app_main() {
 
   static EspOledTransport oled_transport;
   static Ssd1306Display display(oled_transport);
-  if (!oled_transport.initialize() || !display.initialize()) {
-    ESP_LOGE(kLogTag, "SSD1306 initialization failed");
-    ssr.force_off();
-    return;
-  }
+  if (philcoino::config::kOledEnabled) {
+    if (!oled_transport.initialize() || !display.initialize()) {
+      ESP_LOGE(kLogTag, "SSD1306 initialization failed");
+      ssr.force_off();
+      return;
+    }
 
-  DisplaySnapshot boot_display{};
-  boot_display.targets = targets;
-  if (!display.render(boot_display)) {
-    ESP_LOGE(kLogTag, "SSD1306 boot-state render failed");
-    ssr.force_off();
-    return;
+    DisplaySnapshot boot_display{};
+    boot_display.targets = targets;
+    if (!display.render(boot_display)) {
+      ESP_LOGE(kLogTag, "SSD1306 boot-state render failed");
+      ssr.force_off();
+      return;
+    }
   }
 
   static philcoino::control::TemperatureController controller(
       targets, ssr, philcoino::config::kDualThermocouplesEnabled);
   vTaskDelay(pdMS_TO_TICKS(kMax6675SampleIntervalMs));
   auto snapshot = controller.update(thermocouples.read(uptime_ms()), uptime_ms());
-  if (!display.render(display_snapshot(snapshot))) {
-    ESP_LOGE(kLogTag, "SSD1306 sensor-state render failed");
-    ssr.force_off();
-    return;
+  if (philcoino::config::kOledEnabled) {
+    if (!display.render(display_snapshot(snapshot))) {
+      ESP_LOGE(kLogTag, "SSD1306 sensor-state render failed");
+      ssr.force_off();
+      return;
+    }
   }
 
   const auto api_mutex = xSemaphoreCreateMutex();
@@ -235,17 +242,19 @@ extern "C" void app_main() {
     }
     snapshot = controller.update(readings, uptime_ms());
     xSemaphoreGive(api_mutex);
-    if (!display.render(display_snapshot(
-            snapshot, display_wifi_status(network.wifi_status())))) {
-      ESP_LOGE(kLogTag, "SSD1306 state render failed");
-      if (xSemaphoreTake(api_mutex, portMAX_DELAY) == pdTRUE) {
-        controller.latch_fault(
-            philcoino::control::FaultCode::kInternalError);
-        xSemaphoreGive(api_mutex);
-      } else {
-        ssr.force_off();
+    if (philcoino::config::kOledEnabled) {
+      if (!display.render(display_snapshot(
+              snapshot, display_wifi_status(network.wifi_status())))) {
+        ESP_LOGE(kLogTag, "SSD1306 state render failed");
+        if (xSemaphoreTake(api_mutex, portMAX_DELAY) == pdTRUE) {
+          controller.latch_fault(
+              philcoino::control::FaultCode::kInternalError);
+          xSemaphoreGive(api_mutex);
+        } else {
+          ssr.force_off();
+        }
+        return;
       }
-      return;
     }
   }
 }

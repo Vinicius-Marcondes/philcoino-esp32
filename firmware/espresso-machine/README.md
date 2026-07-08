@@ -52,3 +52,7 @@ then confirm both thermocouples report independently, an open probe produces the
 fault display, the OLED shows both temperatures and targets, and GPIO20 remains
 low through reset, initialization, and induced peripheral failures. This check
 does not authorize mains-powered heater operation.
+
+`philcoino::config::kOledEnabled` is the firmware-side display flag. It is
+currently `false` so the device can boot, control temperature, and serve the API
+when the SSD1306 OLED is disconnected. Set it to `true` before OLED validation.

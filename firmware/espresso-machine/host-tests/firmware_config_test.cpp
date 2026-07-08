@@ -27,6 +27,7 @@ int main() {
   static_assert(kSteamRecoveryTriggerDropC > kBrewRecoveryTriggerDropC);
   static_assert(kBrewRecoveryHeatRampBandC < kBrewHeatRampBandC);
   static_assert(kSteamRecoveryHeatRampBandC < kSteamHeatRampBandC);
+  static_assert(!kOledEnabled);
   static_assert(kOledI2cAddress == 0x3C);
   static_assert(kBrewThermocoupleChipSelectGpio !=
                 kSteamThermocoupleChipSelectGpio);
