@@ -35,20 +35,31 @@ The key constants are in
 
 ```cpp
 kMinimumHeaterPulseMs = 500U;
+kBrewHeatRampMinimumTargetBandC = 4.0F;
 kBrewHeatRampBandC = 8.0F;
 kSteamHeatRampBandC = 12.0F;
 ```
 
 The ramp band defines where firmware stops using full heat and starts reducing
-heater duty.
+heater duty. Brew mode scales this band by the selected target so lower targets
+warm more aggressively on first boot while the 95C behavior remains unchanged.
 
-For brew mode with a target of 85C and `kBrewHeatRampBandC = 8.0F`:
+Current brew target scaling:
+
+| Brew target | Effective ramp band |
+| ---: | ---: |
+| 85C | 4C |
+| 90C | 6C |
+| 92C | 6.8C |
+| 95C | 8C |
+
+For brew mode with a target of 85C and an effective 4C ramp band:
 
 | Temperature | Error below target | Normal behavior |
 | --- | ---: | --- |
-| 77C or below | 8C or more | Full heat for the whole 10s window |
-| 81C | 4C | About 25% duty, 2.5s on / 10s |
-| 83.5C | 1.5C | About 500ms on / 10s, clamped by minimum pulse |
+| 81C or below | 4C or more | Full heat for the whole 10s window |
+| 83C | 2C | About 25% duty, 2.5s on / 10s |
+| 83.5C | 1.5C | About 1.4s on / 10s |
 | 85C or above | 0C | Heater off |
 
 Normal mode uses a squared curve:
@@ -137,7 +148,9 @@ cycles. For brew tuning, focus on the brew constants first.
 Use these only if the machine is too slow before reaching the target:
 
 - Decrease `kBrewHeatRampBandC` slightly to stay more aggressive closer to
-  target.
+- Decrease `kBrewHeatRampMinimumTargetBandC` if low brew targets are still too
+  slow.
+- Decrease `kBrewHeatRampBandC` slightly if high brew targets are too slow.
 - Increase `kMinimumHeaterPulseMs` slightly if near-target pulses are too short
   to affect the boiler.
 
@@ -148,6 +161,8 @@ Risk: more overshoot after the heater turns off.
 Use these if the temperature still rises too far past target:
 
 - Increase `kBrewHeatRampBandC` to start tapering earlier.
+- Increase `kBrewHeatRampMinimumTargetBandC` if lower brew targets overshoot
+  after first warm-up.
 - Decrease `kMinimumHeaterPulseMs` if the SSR and heater respond reliably to
   shorter pulses.
 - Increase sensor contact quality before over-tuning software; poor thermal

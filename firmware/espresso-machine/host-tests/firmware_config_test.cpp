@@ -12,7 +12,7 @@ int main() {
   const std::array<std::uint8_t, 6> mac{0xAA, 0xBB, 0xCC, 0x01, 0x02, 0xAF};
   assert(stable_device_id(mac) == std::string("philcoino-0102AF"));
 
-  static_assert(kBrewTargetMinimumC <= kBrewTargetMaximumC);
+  static_assert(kBrewTargetMinimumC < kBrewTargetMaximumC);
   static_assert(kSteamTargetMinimumC <= kSteamTargetMaximumC);
   static_assert(kBrewOverTemperatureC > kBrewTargetMaximumC);
   static_assert(kSteamOverTemperatureC > kSteamTargetMaximumC);
@@ -25,6 +25,9 @@ int main() {
   static_assert(kWifiMaximumTxPowerQuarterDbm == 44);
   static_assert(kWifiMaximumTxPowerQuarterDbm >= 8);
   static_assert(kWifiMaximumTxPowerQuarterDbm <= 84);
+  static_assert(kBrewHeatRampMinimumTargetBandC >
+                static_cast<float>(kReadyBandC));
+  static_assert(kBrewHeatRampMinimumTargetBandC < kBrewHeatRampBandC);
   static_assert(kBrewHeatRampBandC > static_cast<float>(kReadyBandC));
   static_assert(kSteamHeatRampBandC > kBrewHeatRampBandC);
   static_assert(kBrewRecoveryTriggerDropC >= static_cast<float>(kReadyBandC));

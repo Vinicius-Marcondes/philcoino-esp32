@@ -254,8 +254,19 @@ bool TemperatureController::active_temperature_back_at_target() const {
 }
 
 float TemperatureController::active_heat_ramp_band() const {
-  return mode_ == ControlMode::kBrew ? config::kBrewHeatRampBandC
-                                     : config::kSteamHeatRampBandC;
+  if (mode_ == ControlMode::kSteam) {
+    return config::kSteamHeatRampBandC;
+  }
+
+  const float target_span = static_cast<float>(config::kBrewTargetMaximumC -
+                                               config::kBrewTargetMinimumC);
+  const float target_offset =
+      static_cast<float>(active_target() - config::kBrewTargetMinimumC);
+  const float target_ratio = target_offset / target_span;
+  return config::kBrewHeatRampMinimumTargetBandC +
+         (config::kBrewHeatRampBandC -
+          config::kBrewHeatRampMinimumTargetBandC) *
+             target_ratio;
 }
 
 float TemperatureController::active_recovery_trigger_drop() const {

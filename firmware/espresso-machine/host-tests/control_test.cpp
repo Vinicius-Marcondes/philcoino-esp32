@@ -218,6 +218,11 @@ void test_brew_heat_ramp_pulses_near_target() {
   snapshot = harness.controller.update(
       readings(83.5F, 90.0F), philcoino::config::kMinimumHeaterPulseMs);
   assert(snapshot.status == ControlStatus::kHeating);
+  assert(snapshot.heater_enabled);
+  assert(harness.output.level);
+
+  snapshot = harness.controller.update(readings(83.5F, 90.0F), 1500);
+  assert(snapshot.status == ControlStatus::kHeating);
   assert(!snapshot.heater_enabled);
   assert(!harness.output.level);
 
@@ -231,6 +236,27 @@ void test_brew_heat_ramp_pulses_near_target() {
   assert(snapshot.status == ControlStatus::kHeating);
   assert(snapshot.heater_enabled);
   assert(harness.output.level);
+}
+
+void test_brew_heat_ramp_scales_with_target() {
+  ControllerHarness low_target_harness({85, 115});
+  auto snapshot =
+      low_target_harness.controller.update(readings(81.0F, 90.0F), 0);
+  assert(snapshot.status == ControlStatus::kHeating);
+  assert(snapshot.heater_enabled);
+
+  snapshot = low_target_harness.controller.update(readings(81.0F, 90.0F), 9000);
+  assert(snapshot.status == ControlStatus::kHeating);
+  assert(snapshot.heater_enabled);
+
+  ControllerHarness high_target_harness({95, 115});
+  snapshot = high_target_harness.controller.update(readings(91.0F, 90.0F), 0);
+  assert(snapshot.status == ControlStatus::kHeating);
+  assert(snapshot.heater_enabled);
+
+  snapshot = high_target_harness.controller.update(readings(91.0F, 90.0F), 3000);
+  assert(snapshot.status == ControlStatus::kHeating);
+  assert(!snapshot.heater_enabled);
 }
 
 void test_brew_heat_ramp_uses_full_heat_far_below_target() {
@@ -398,6 +424,7 @@ int main() {
   test_target_updates_validate_and_persist_before_state_change();
   test_over_target_brew_disables_heater_while_not_ready();
   test_brew_heat_ramp_pulses_near_target();
+  test_brew_heat_ramp_scales_with_target();
   test_brew_heat_ramp_uses_full_heat_far_below_target();
   test_brew_recovery_heat_does_not_start_during_initial_warmup();
   test_brew_recovery_heat_latches_after_extraction_drop();
