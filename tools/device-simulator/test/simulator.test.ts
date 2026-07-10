@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from "bun:test";
 import {
   DeviceResponseSchema,
   ErrorResponseSchema,
+  HeaterSettingsResponseSchema,
   HealthResponseSchema,
   MachineStateSchema,
   ModeResponseSchema,
@@ -44,6 +45,7 @@ describe("bearer authentication", () => {
     ["GET", "/api/v1/state"],
     ["PATCH", "/api/v1/settings/temperatures"],
     ["PUT", "/api/v1/mode"],
+    ["PUT", "/api/v1/heater"],
     ["POST", "/api/v1/faults/over-temperature/dismiss"],
   ])("rejects a missing token for %s %s", async (method, path) => {
     const response = await simulator.app.request(path, { method });
@@ -70,6 +72,7 @@ describe("API v1 state and mutations", () => {
     const state = await getState();
     expect(state.status).toBe("heating");
     expect(state.activeMode).toBe("brew");
+    expect(state.heaterEnabled).toBe(true);
     expect(state.heaterActive).toBe(true);
   });
 
@@ -141,6 +144,48 @@ describe("API v1 state and mutations", () => {
       "malformed_request",
     );
   });
+
+  it("acknowledges volatile heater permission and cools while disabled", async () => {
+    let response = await simulator.app.request(
+      "/api/v1/heater",
+      jsonRequest("PUT", { heaterEnabled: false }, authorization),
+    );
+    expect(response.status).toBe(200);
+    expect(HeaterSettingsResponseSchema.parse(await response.json())).toEqual({
+      heaterEnabled: false,
+    });
+
+    let state = await getState();
+    expect(state.heaterEnabled).toBe(false);
+    expect(state.heaterActive).toBe(false);
+    const initialTemperature = state.brewTemperatureC;
+
+    await control("POST", "/_simulator/advance", { milliseconds: 1_000 });
+    state = await getState();
+    expect(state.brewTemperatureC).toBeLessThanOrEqual(initialTemperature);
+    expect(state.heaterActive).toBe(false);
+
+    response = await simulator.app.request(
+      "/api/v1/heater",
+      jsonRequest("PUT", { heaterEnabled: true }, authorization),
+    );
+    expect(response.status).toBe(200);
+    expect(HeaterSettingsResponseSchema.parse(await response.json())).toEqual({
+      heaterEnabled: true,
+    });
+    expect((await getState()).heaterEnabled).toBe(true);
+  });
+
+  it("rejects malformed heater permission requests", async () => {
+    const response = await simulator.app.request(
+      "/api/v1/heater",
+      jsonRequest("PUT", { heaterEnabled: "off" }, authorization),
+    );
+    expect(response.status).toBe(400);
+    expect(ErrorResponseSchema.parse(await response.json()).error.code).toBe(
+      "malformed_request",
+    );
+  });
 });
 
 describe("deterministic machine controls", () => {
@@ -204,6 +249,7 @@ describe("deterministic machine controls", () => {
     expect(state.status).toBe("heating");
     expect(state.fault).toBeNull();
     expect(state.activeMode).toBe("brew");
+    expect(state.heaterEnabled).toBe(true);
   });
 
   it("dismisses only cooled over-temperature faults", async () => {
@@ -240,10 +286,15 @@ describe("deterministic machine controls", () => {
       "/api/v1/settings/temperatures",
       jsonRequest("PATCH", { brewTargetC: 95, steamTargetC: 120 }, authorization),
     );
+    await simulator.app.request(
+      "/api/v1/heater",
+      jsonRequest("PUT", { heaterEnabled: false }, authorization),
+    );
     await simulator.app.request("/_simulator/reset", { method: "POST" });
     const state = await getState();
     expect(state.brewTargetC).toBe(93);
     expect(state.steamTargetC).toBe(115);
+    expect(state.heaterEnabled).toBe(true);
   });
 });
 

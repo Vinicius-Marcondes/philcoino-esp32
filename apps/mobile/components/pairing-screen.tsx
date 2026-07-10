@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -103,18 +104,14 @@ function RealPairingScreen() {
       },
       onError: () => {
         stopBrowsing();
-        setMessage(
-          "Automatic discovery is unavailable. On iPhone, allow Local Network access in Settings, then try again. You can also enter the address manually.",
-        );
+        setMessage(automaticDiscoveryUnavailableMessage());
       },
     });
 
     scanTimer.current = setTimeout(() => {
       stopBrowsing();
       if (!foundAny) {
-        setMessage(
-          "No machines were found. Confirm the machine and iPhone are on the same Wi-Fi, then retry or enter the address manually.",
-        );
+        setMessage(noMachinesFoundMessage());
       }
     }, DISCOVERY_TIMEOUT_MS);
   }, [addDevice, stopBrowsing]);
@@ -283,7 +280,7 @@ function RealPairingScreen() {
     <>
       <ScrollView
         automaticallyAdjustKeyboardInsets
-        contentInsetAdjustmentBehavior="automatic"
+        contentInsetAdjustmentBehavior="never"
         keyboardDismissMode="interactive"
         keyboardShouldPersistTaps="handled"
         style={styles.screen}
@@ -466,6 +463,26 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "The operation could not be completed.";
 }
 
+function automaticDiscoveryUnavailableMessage(): string {
+  if (Platform.OS === "android") {
+    return "Automatic discovery is unavailable. Use a physical Android phone on the same Wi-Fi, check local network and Wi-Fi permissions, then try again or enter the address manually.";
+  }
+  if (Platform.OS === "ios") {
+    return "Automatic discovery is unavailable. Allow Local Network access in iPhone Settings, then try again. You can also enter the address manually.";
+  }
+  return "Automatic discovery is unavailable on this platform. Enter the device address manually.";
+}
+
+function noMachinesFoundMessage(): string {
+  if (Platform.OS === "android") {
+    return "No machines were found. Use a physical Android phone, confirm the machine and phone are on the same Wi-Fi, then retry or enter the address manually.";
+  }
+  if (Platform.OS === "ios") {
+    return "No machines were found. Confirm the machine and iPhone are on the same Wi-Fi, then retry or enter the address manually.";
+  }
+  return "No machines were found. Confirm the local network, then retry or enter the address manually.";
+}
+
 const styles = StyleSheet.create({
   screen: { backgroundColor: "#F4F0E8", flex: 1 },
   content: {
@@ -474,7 +491,7 @@ const styles = StyleSheet.create({
     gap: 18,
     padding: 20,
     paddingBottom: 44,
-    paddingTop: 24,
+    paddingTop: 72,
   },
   pageHeader: { alignItems: "center", minHeight: 34 },
   pageTitle: { color: "#241B17", fontSize: 22, fontWeight: "800" },

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type {
+  HeaterSettingsResponse,
   MachineState,
   Mode,
   TemperatureSettingsResponse,
@@ -87,6 +88,7 @@ describe("DashboardMutationSession", () => {
       brewTargetC: 93,
       brewTemperatureC: 93,
       fault: null,
+      heaterEnabled: true,
       heaterActive: false,
       status: "heating",
       steamTargetC: 115,
@@ -157,6 +159,39 @@ describe("DashboardMutationSession", () => {
       },
     });
   });
+
+  test("does not expose a requested heater permission before acknowledgement", async () => {
+    const response = deferred<HeaterSettingsResponse>();
+    const client = mutationClient({ setHeaterEnabled: () => response.promise });
+    const harness = createHarness(client);
+
+    harness.session.start();
+    harness.session.setHeaterEnabled(false);
+
+    expect(harness.acknowledgedHeaterSettings).toEqual([]);
+    expect(harness.outcomes.at(-1)).toEqual({
+      kind: "heater",
+      state: {
+        message: "Waiting for the machine to turn heater output off...",
+        status: "pending",
+      },
+    });
+
+    response.resolve({ heaterEnabled: false });
+    await settle();
+
+    expect(harness.acknowledgedHeaterSettings).toEqual([
+      { heaterEnabled: false },
+    ]);
+    expect(harness.outcomes.at(-1)).toEqual({
+      kind: "heater",
+      state: {
+        message: "Machine turned heater output off.",
+        status: "acknowledged",
+      },
+    });
+  });
+
 
   test("dismisses visible mutation feedback without cancelling the active request", async () => {
     const response = deferred<TemperatureSettingsResponse>();
@@ -261,6 +296,12 @@ describe("DashboardMutationSession", () => {
       steamTargetC: 120,
     });
 
+    harness.session.setHeaterEnabled(false);
+    await waitFor(() => harness.acknowledgedHeaterSettings.length === 1);
+    expect(harness.acknowledgedHeaterSettings.at(-1)).toEqual({
+      heaterEnabled: false,
+    });
+
     simulator.machine.injectFault("sensor_failure");
     harness.session.setMode("steam");
     await waitFor(
@@ -275,6 +316,7 @@ describe("DashboardMutationSession", () => {
 });
 
 function createHarness(client: DashboardMutationClient) {
+  const acknowledgedHeaterSettings: HeaterSettingsResponse[] = [];
   const acknowledgedModes: Mode[] = [];
   const acknowledgedSettings: TemperatureSettingsResponse[] = [];
   const connections: ConnectionState[] = [];
@@ -296,6 +338,8 @@ function createHarness(client: DashboardMutationClient) {
   const session = new DashboardMutationSession({
     client,
     onConnectionLost: (connection) => connections.push(connection),
+    onHeaterAcknowledged: (settings) =>
+      acknowledgedHeaterSettings.push(settings),
     onModeAcknowledged: (mode) => acknowledgedModes.push(mode),
     onMutationChange: (kind, state) => outcomes.push({ kind, state }),
     onOverTemperatureDismissed: (snapshot) => dismissedFaults.push(snapshot),
@@ -305,6 +349,7 @@ function createHarness(client: DashboardMutationClient) {
   });
 
   return {
+    acknowledgedHeaterSettings,
     acknowledgedModes,
     acknowledgedSettings,
     connections,
@@ -324,6 +369,7 @@ function mutationClient(
       brewTargetC: 93,
       brewTemperatureC: 93,
       fault: null,
+      heaterEnabled: true,
       heaterActive: false,
       status: "heating",
       steamTargetC: 115,
@@ -331,6 +377,7 @@ function mutationClient(
       steamTimeoutRemainingMs: null,
       uptimeMs: 190_000,
     }),
+    setHeaterEnabled: async ({ heaterEnabled }) => ({ heaterEnabled }),
     setMode: async ({ mode }) => ({ mode }),
     updateTemperatureSettings: async (settings) => ({
       brewTargetC: settings.brewTargetC ?? 93,

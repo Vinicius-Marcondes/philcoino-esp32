@@ -240,12 +240,13 @@ bool EspNetworkServer::start_http() {
         static_cast<EspNetworkServer*>(request->user_ctx)
             ->handle_http_request(request));
   };
-  const std::array<std::pair<const char*, httpd_method_t>, 6> routes{{
+  const std::array<std::pair<const char*, httpd_method_t>, 7> routes{{
       {"/healthz", HTTP_GET},
       {"/api/v1/device", HTTP_GET},
       {"/api/v1/state", HTTP_GET},
       {"/api/v1/settings/temperatures", HTTP_PATCH},
       {"/api/v1/mode", HTTP_PUT},
+      {"/api/v1/heater", HTTP_PUT},
       {"/api/v1/faults/over-temperature/dismiss", HTTP_POST},
   }};
   for (const auto& route : routes) {

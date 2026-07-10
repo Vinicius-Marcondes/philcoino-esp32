@@ -16,6 +16,7 @@ const MUTATION_FEEDBACK_DISMISS_MS = 30_000;
 
 interface MachineControlsProps {
   faultMutation: DashboardMutationState;
+  heaterMutation: DashboardMutationState;
   modeMutation: DashboardMutationState;
   onSetMode: (mode: Mode) => void;
   onUpdateTemperatureSettings: (
@@ -27,6 +28,7 @@ interface MachineControlsProps {
 
 export function MachineControls({
   faultMutation,
+  heaterMutation,
   modeMutation,
   onSetMode,
   onUpdateTemperatureSettings,
@@ -38,6 +40,7 @@ export function MachineControls({
   const [steamTargetC, setSteamTargetC] = useState(snapshot.steamTargetC);
   const mutationPending =
     faultMutation.status === "pending" ||
+    heaterMutation.status === "pending" ||
     modeMutation.status === "pending" ||
     temperatureMutation.status === "pending";
   const targetsChanged =

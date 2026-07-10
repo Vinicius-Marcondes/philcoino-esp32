@@ -218,6 +218,11 @@ void test_brew_heat_ramp_pulses_near_target() {
   snapshot = harness.controller.update(
       readings(83.5F, 90.0F), philcoino::config::kMinimumHeaterPulseMs);
   assert(snapshot.status == ControlStatus::kHeating);
+  assert(snapshot.heater_enabled);
+  assert(harness.output.level);
+
+  snapshot = harness.controller.update(readings(83.5F, 90.0F), 1500);
+  assert(snapshot.status == ControlStatus::kHeating);
   assert(!snapshot.heater_enabled);
   assert(!harness.output.level);
 
@@ -231,6 +236,27 @@ void test_brew_heat_ramp_pulses_near_target() {
   assert(snapshot.status == ControlStatus::kHeating);
   assert(snapshot.heater_enabled);
   assert(harness.output.level);
+}
+
+void test_brew_heat_ramp_scales_with_target() {
+  ControllerHarness low_target_harness({85, 115});
+  auto snapshot =
+      low_target_harness.controller.update(readings(81.0F, 90.0F), 0);
+  assert(snapshot.status == ControlStatus::kHeating);
+  assert(snapshot.heater_enabled);
+
+  snapshot = low_target_harness.controller.update(readings(81.0F, 90.0F), 9000);
+  assert(snapshot.status == ControlStatus::kHeating);
+  assert(snapshot.heater_enabled);
+
+  ControllerHarness high_target_harness({95, 115});
+  snapshot = high_target_harness.controller.update(readings(91.0F, 90.0F), 0);
+  assert(snapshot.status == ControlStatus::kHeating);
+  assert(snapshot.heater_enabled);
+
+  snapshot = high_target_harness.controller.update(readings(91.0F, 90.0F), 3000);
+  assert(snapshot.status == ControlStatus::kHeating);
+  assert(!snapshot.heater_enabled);
 }
 
 void test_brew_heat_ramp_uses_full_heat_far_below_target() {
@@ -378,6 +404,49 @@ void test_heating_timeout_latches_fault_and_forces_off() {
   assert(!harness.output.level);
 }
 
+void test_manual_heater_disable_forces_off_without_timeout() {
+  ControllerHarness harness({93, 115});
+  auto snapshot = harness.controller.update(readings(80.0F, 90.0F), 0);
+  assert(snapshot.heater_enabled_permission);
+  assert(snapshot.heater_enabled);
+  assert(harness.output.level);
+
+  assert(harness.controller.set_heater_enabled(false, 1000));
+  snapshot = harness.controller.update(readings(80.0F, 90.0F),
+                                       philcoino::config::kHeatingTimeoutMs + 1000U);
+  assert(snapshot.heater_enabled_permission == false);
+  assert(snapshot.status == ControlStatus::kHeating);
+  assert(!snapshot.fault_active);
+  assert(!snapshot.heater_enabled);
+  assert(!harness.output.level);
+
+  assert(harness.controller.set_heater_enabled(true,
+                                               philcoino::config::kHeatingTimeoutMs + 2000U));
+  snapshot = harness.controller.update(readings(80.0F, 90.0F),
+                                       philcoino::config::kHeatingTimeoutMs + 2000U);
+  assert(snapshot.heater_enabled_permission);
+  assert(snapshot.status == ControlStatus::kHeating);
+  assert(snapshot.heater_enabled);
+  assert(!snapshot.fault_active);
+}
+
+void test_manual_heater_toggle_is_allowed_while_faulted() {
+  ControllerHarness harness({93, 115});
+  harness.controller.latch_fault(FaultCode::kSensorFailure);
+
+  assert(harness.controller.set_heater_enabled(false, 1000));
+  auto snapshot = harness.controller.snapshot(1000);
+  assert(snapshot.status == ControlStatus::kFault);
+  assert(!snapshot.heater_enabled_permission);
+  assert(!snapshot.heater_enabled);
+
+  assert(harness.controller.set_heater_enabled(true, 2000));
+  snapshot = harness.controller.snapshot(2000);
+  assert(snapshot.status == ControlStatus::kFault);
+  assert(snapshot.heater_enabled_permission);
+  assert(!snapshot.heater_enabled);
+}
+
 void test_internal_output_failure_latches_fault() {
   ControllerHarness harness({93, 115});
   harness.output.fail_high = true;
@@ -398,6 +467,7 @@ int main() {
   test_target_updates_validate_and_persist_before_state_change();
   test_over_target_brew_disables_heater_while_not_ready();
   test_brew_heat_ramp_pulses_near_target();
+  test_brew_heat_ramp_scales_with_target();
   test_brew_heat_ramp_uses_full_heat_far_below_target();
   test_brew_recovery_heat_does_not_start_during_initial_warmup();
   test_brew_recovery_heat_latches_after_extraction_drop();
@@ -407,6 +477,8 @@ int main() {
   test_over_temperature_dismissal_requires_all_monitored_limits_clear();
   test_only_over_temperature_fault_is_dismissible();
   test_heating_timeout_latches_fault_and_forces_off();
+  test_manual_heater_disable_forces_off_without_timeout();
+  test_manual_heater_toggle_is_allowed_while_faulted();
   test_internal_output_failure_latches_fault();
   return 0;
 }

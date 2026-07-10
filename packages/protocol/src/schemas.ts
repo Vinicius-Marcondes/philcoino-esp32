@@ -63,6 +63,7 @@ const machineStateShape = {
   steamTemperatureC: z.number(),
   brewTargetC: BrewTargetSchema,
   steamTargetC: SteamTargetSchema,
+  heaterEnabled: z.boolean(),
   heaterActive: z.boolean(),
   steamTimeoutRemainingMs: z
     .number()
@@ -118,6 +119,14 @@ export const ModeResponseSchema = z.strictObject({
   mode: ModeSchema,
 });
 
+export const HeaterSettingsRequestSchema = z.strictObject({
+  heaterEnabled: z.boolean(),
+});
+
+export const HeaterSettingsResponseSchema = z.strictObject({
+  heaterEnabled: z.boolean(),
+});
+
 export const ErrorResponseSchema = z.strictObject({
   error: z.strictObject({
     code: ErrorCodeSchema,
@@ -144,4 +153,10 @@ export type OverTemperatureDismissResponse = z.infer<
 >;
 export type ModeRequest = z.infer<typeof ModeRequestSchema>;
 export type ModeResponse = z.infer<typeof ModeResponseSchema>;
+export type HeaterSettingsRequest = z.infer<
+  typeof HeaterSettingsRequestSchema
+>;
+export type HeaterSettingsResponse = z.infer<
+  typeof HeaterSettingsResponseSchema
+>;
 export type ErrorResponse = z.infer<typeof ErrorResponseSchema>;

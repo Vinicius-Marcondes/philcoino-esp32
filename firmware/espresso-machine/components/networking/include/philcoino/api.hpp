@@ -59,6 +59,8 @@ class FirmwareApi {
                                    std::uint64_t uptime_ms);
   HttpResponse update_mode(const std::string& body,
                            std::uint64_t uptime_ms);
+  HttpResponse update_heater(const std::string& body,
+                             std::uint64_t uptime_ms);
   HttpResponse dismiss_over_temperature(std::uint64_t uptime_ms);
 
   DeviceIdentity identity_;

@@ -4,6 +4,7 @@ import { join } from "node:path";
 import {
   DeviceResponseSchema,
   ErrorResponseSchema,
+  HeaterSettingsResponseSchema,
   HealthResponseSchema,
   MachineStateSchema,
   ModeResponseSchema,
@@ -22,6 +23,7 @@ const captures = [
   ["state-fault.json", MachineStateSchema],
   ["temperatures-response.json", TemperatureSettingsResponseSchema],
   ["mode-response.json", ModeResponseSchema],
+  ["heater-response.json", HeaterSettingsResponseSchema],
   ["error.json", ErrorResponseSchema],
 ] as const;
 

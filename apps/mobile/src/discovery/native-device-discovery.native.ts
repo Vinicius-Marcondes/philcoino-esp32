@@ -1,10 +1,13 @@
 import Zeroconf, { type ZeroconfService } from "react-native-zeroconf";
+import { Platform } from "react-native";
 
 import {
   DiscoveryError,
   parseResolvedService,
   type DeviceDiscovery,
 } from "./device-discovery";
+
+const ANDROID_DISCOVERY_IMPLEMENTATION = "DNSSD";
 
 class NativeDeviceDiscovery implements DeviceDiscovery {
   private stopActiveScan: (() => void) | null = null;
@@ -39,7 +42,11 @@ class NativeDeviceDiscovery implements DeviceDiscovery {
         return;
       }
       active = false;
-      zeroconf.stop();
+      if (Platform.OS === "android") {
+        zeroconf.stop(ANDROID_DISCOVERY_IMPLEMENTATION);
+      } else {
+        zeroconf.stop();
+      }
       zeroconf.removeDeviceListeners();
       if (this.stopActiveScan === stop) {
         this.stopActiveScan = null;
@@ -48,7 +55,16 @@ class NativeDeviceDiscovery implements DeviceDiscovery {
     this.stopActiveScan = stop;
 
     try {
-      zeroconf.scan("philcoino", "tcp", "local.");
+      if (Platform.OS === "android") {
+        zeroconf.scan(
+          "philcoino",
+          "tcp",
+          "local.",
+          ANDROID_DISCOVERY_IMPLEMENTATION,
+        );
+      } else {
+        zeroconf.scan("philcoino", "tcp", "local.");
+      }
     } catch (error) {
       stop();
       handlers.onError(

@@ -16,10 +16,11 @@ namespace {
 constexpr char kMalformedMessage[] = "The JSON request body is malformed.";
 
 struct JsonValue {
-  enum class Type { kString, kNumber, kOther };
+  enum class Type { kString, kNumber, kBoolean, kOther };
   Type type{Type::kOther};
   std::string string;
   double number{0.0};
+  bool boolean{false};
 };
 
 struct JsonField {
@@ -82,9 +83,18 @@ class JsonObjectParser {
       value.type = JsonValue::Type::kNumber;
       return parse_number(value.number);
     }
+    if (consume_literal("true")) {
+      value.type = JsonValue::Type::kBoolean;
+      value.boolean = true;
+      return true;
+    }
+    if (consume_literal("false")) {
+      value.type = JsonValue::Type::kBoolean;
+      value.boolean = false;
+      return true;
+    }
     value.type = JsonValue::Type::kOther;
-    return consume_literal("true") || consume_literal("false") ||
-           consume_literal("null") || consume_composite();
+    return consume_literal("null") || consume_composite();
   }
 
   bool parse_string(std::string& output) {
@@ -298,7 +308,9 @@ std::string serialize_state(const control::ControlSnapshot& snapshot,
          << json_temperature(snapshot.readings.steam.temperature_c)
          << ",\"brewTargetC\":"
          << snapshot.targets.brew_c << ",\"steamTargetC\":"
-         << snapshot.targets.steam_c << ",\"heaterActive\":"
+         << snapshot.targets.steam_c << ",\"heaterEnabled\":"
+         << (snapshot.heater_enabled_permission ? "true" : "false")
+         << ",\"heaterActive\":"
          << (snapshot.heater_enabled ? "true" : "false") << ",\"fault\":";
   if (snapshot.fault_active) {
     output << "{\"code\":\"" << control::fault_code_name(snapshot.fault.code)
@@ -372,6 +384,18 @@ bool parse_mode(const std::string& body, control::ControlMode& mode) {
     return true;
   }
   return false;
+}
+
+bool parse_heater_enabled(const std::string& body, bool& enabled) {
+  std::vector<JsonField> fields;
+  JsonObjectParser parser(body);
+  if (!parser.parse(fields) || fields.size() != 1 ||
+      fields[0].key != "heaterEnabled" ||
+      fields[0].value.type != JsonValue::Type::kBoolean) {
+    return false;
+  }
+  enabled = fields[0].value.boolean;
+  return true;
 }
 
 bool ascii_case_equal(char left, char right) {
@@ -459,6 +483,7 @@ HttpResponse FirmwareApi::handle(HttpMethod method, const std::string& path,
       (method == HttpMethod::kPatch &&
        path == "/api/v1/settings/temperatures") ||
       (method == HttpMethod::kPut && path == "/api/v1/mode") ||
+      (method == HttpMethod::kPut && path == "/api/v1/heater") ||
       (method == HttpMethod::kPost &&
        path == "/api/v1/faults/over-temperature/dismiss");
   if (!protected_path) {
@@ -474,8 +499,11 @@ HttpResponse FirmwareApi::handle(HttpMethod method, const std::string& path,
   if (method == HttpMethod::kPatch) {
     return update_temperatures(body, uptime_ms);
   }
-  if (method == HttpMethod::kPut) {
+  if (method == HttpMethod::kPut && path == "/api/v1/mode") {
     return update_mode(body, uptime_ms);
+  }
+  if (method == HttpMethod::kPut) {
+    return update_heater(body, uptime_ms);
   }
   return dismiss_over_temperature(uptime_ms);
 }
@@ -544,6 +572,24 @@ HttpResponse FirmwareApi::update_mode(const std::string& body,
   }
   std::ostringstream output;
   output << "{\"mode\":\"" << mode_name(controller_.mode()) << "\"}";
+  return json_response(200, output.str());
+}
+
+HttpResponse FirmwareApi::update_heater(const std::string& body,
+                                        std::uint64_t uptime_ms) {
+  bool enabled = false;
+  if (!parse_heater_enabled(body, enabled)) {
+    return error_response(400, "malformed_request", kMalformedMessage);
+  }
+  if (!controller_.set_heater_enabled(
+          enabled, static_cast<std::uint32_t>(uptime_ms))) {
+    return error_response(500, "internal_error",
+                          "The heater permission could not be changed safely.");
+  }
+  std::ostringstream output;
+  output << "{\"heaterEnabled\":"
+         << (controller_.heater_enabled_permission() ? "true" : "false")
+         << '}';
   return json_response(200, output.str());
 }
 

@@ -71,7 +71,9 @@ export function DashboardScreen({
     dismissMutation,
     dismissOverTemperature,
     faultMutation,
+    heaterMutation,
     modeMutation,
+    setHeaterEnabled,
     setMode,
     snapshot,
     temperatureMutation,
@@ -95,6 +97,15 @@ export function DashboardScreen({
     () => dismissMutation("fault"),
     [dismissMutation],
   );
+  const dismissHeaterMutation = useCallback(
+    () => dismissMutation("heater"),
+    [dismissMutation],
+  );
+  const mutationPending =
+    faultMutation.status === "pending" ||
+    heaterMutation.status === "pending" ||
+    modeMutation.status === "pending" ||
+    temperatureMutation.status === "pending";
 
   useEffect(() => {
     if (connection.status !== "online" || snapshot === null) {
@@ -107,9 +118,9 @@ export function DashboardScreen({
   }, [connection.status, snapshot]);
 
   return (
-    <>
+    <View style={styles.screen}>
       <ScrollView
-        contentInsetAdjustmentBehavior="automatic"
+        contentInsetAdjustmentBehavior="never"
         contentContainerStyle={styles.content}>
         <View style={styles.pageHeader}>
           <Text selectable style={styles.pageTitle}>{deviceName}</Text>
@@ -162,6 +173,10 @@ export function DashboardScreen({
           onDismiss={dismissFaultMutation}
           state={faultMutation}
         />
+        <MutationFeedback
+          onDismiss={dismissHeaterMutation}
+          state={heaterMutation}
+        />
 
         {connection.status === "online" && snapshot !== null ? (
           <>
@@ -177,6 +192,7 @@ export function DashboardScreen({
             />
             <MachineControls
               faultMutation={faultMutation}
+              heaterMutation={heaterMutation}
               modeMutation={modeMutation}
               onSetMode={setMode}
               onUpdateTemperatureSettings={updateTemperatureSettings}
@@ -195,6 +211,15 @@ export function DashboardScreen({
           </View>
         )}
 
+        {connection.status === "online" && snapshot !== null ? (
+          <HeaterToggleBar
+            disabled={mutationPending}
+            mutation={heaterMutation}
+            onSetHeaterEnabled={setHeaterEnabled}
+            snapshot={snapshot}
+          />
+        ) : null}
+
         <View style={styles.contextCard}>
           <Text selectable style={styles.contextTitle}>Saved machine</Text>
           <Text selectable style={styles.contextText}>{initialNote}</Text>
@@ -210,7 +235,7 @@ export function DashboardScreen({
           </Pressable>
         </View>
       </ScrollView>
-    </>
+    </View>
   );
 }
 
@@ -629,14 +654,71 @@ function ContextMetric({
   );
 }
 
+function HeaterToggleBar({
+  disabled,
+  mutation,
+  onSetHeaterEnabled,
+  snapshot,
+}: {
+  disabled: boolean;
+  mutation: DashboardMutationState;
+  onSetHeaterEnabled: (heaterEnabled: boolean) => void;
+  snapshot: MachineState;
+}) {
+  const pending = mutation.status === "pending";
+  const switchDisabled = disabled || pending;
+  const label = snapshot.heaterEnabled ? "Heater enabled" : "Heater off";
+  const detail = snapshot.heaterEnabled
+    ? snapshot.heaterActive
+      ? "SSR is active"
+      : "Automatic control is allowed"
+    : "SSR output is inhibited";
+
+  return (
+    <View style={styles.heaterToggleBar}>
+      <View style={styles.heaterToggleCopy}>
+        <Text selectable style={styles.heaterToggleLabel}>
+          {pending ? "Heater change pending" : label}
+        </Text>
+        <Text selectable style={styles.heaterToggleDetail}>
+          {pending ? mutation.message : detail}
+        </Text>
+      </View>
+      <Pressable
+        accessibilityLabel={label}
+        accessibilityRole="switch"
+        accessibilityState={{
+          checked: snapshot.heaterEnabled,
+          disabled: switchDisabled,
+        }}
+        disabled={switchDisabled}
+        onPress={() => onSetHeaterEnabled(!snapshot.heaterEnabled)}
+        style={({ pressed }) => [
+          styles.heaterSwitch,
+          snapshot.heaterEnabled && styles.heaterSwitchOn,
+          switchDisabled && styles.disabled,
+          pressed && !switchDisabled && styles.pressed,
+        ]}>
+        <View
+          style={[
+            styles.heaterSwitchThumb,
+            snapshot.heaterEnabled && styles.heaterSwitchThumbOn,
+          ]}
+        />
+      </Pressable>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
+  screen: { backgroundColor: "#F4F0E8", flex: 1 },
   content: {
     backgroundColor: "#F4F0E8",
     flexGrow: 1,
     gap: 16,
     padding: 20,
     paddingBottom: 44,
-    paddingTop: 24,
+    paddingTop: 72,
   },
   pageHeader: { alignItems: "center", minHeight: 34 },
   pageTitle: { color: "#241B17", fontSize: 22, fontWeight: "800" },
@@ -868,6 +950,37 @@ const styles = StyleSheet.create({
   address: { color: "#8B3A2B", fontSize: 13, fontWeight: "700" },
   forgetButton: { alignItems: "center", borderColor: "#8B3A2B", borderRadius: 999, borderWidth: 1, justifyContent: "center", marginTop: 6, minHeight: 46, paddingHorizontal: 18 },
   forgetButtonText: { color: "#8B3A2B", fontSize: 15, fontWeight: "800" },
+  heaterToggleBar: {
+    alignItems: "center",
+    backgroundColor: "#241B17",
+    borderColor: "#4B3A31",
+    borderCurve: "continuous",
+    borderRadius: 18,
+    borderWidth: 1,
+    flexDirection: "row",
+    gap: 14,
+    justifyContent: "space-between",
+    padding: 16,
+  },
+  heaterToggleCopy: { flex: 1, gap: 3 },
+  heaterToggleLabel: { color: "#FFF9F1", fontSize: 17, fontWeight: "800" },
+  heaterToggleDetail: { color: "#D9CBC1", fontSize: 13, lineHeight: 18 },
+  heaterSwitch: {
+    backgroundColor: "#7B6D63",
+    borderRadius: 999,
+    height: 36,
+    justifyContent: "center",
+    padding: 3,
+    width: 64,
+  },
+  heaterSwitchOn: { backgroundColor: "#2D7547" },
+  heaterSwitchThumb: {
+    backgroundColor: "#FFF9F1",
+    borderRadius: 999,
+    height: 30,
+    width: 30,
+  },
+  heaterSwitchThumbOn: { alignSelf: "flex-end" },
   pressed: { opacity: 0.7 },
   disabled: { opacity: 0.42 },
 });

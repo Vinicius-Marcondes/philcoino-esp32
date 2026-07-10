@@ -42,9 +42,10 @@ The app remembers the stable device ID, resolved address, and token. It tries th
 - `GET /api/v1/state`: complete machine snapshot, polled once per second while the main screen is active.
 - `PATCH /api/v1/settings/temperatures`: update one or both temperature targets.
 - `PUT /api/v1/mode`: set the active temperature-control mode to `brew` or `steam`.
+- `PUT /api/v1/heater`: allow or inhibit firmware heater output through the SSR.
 - `POST /api/v1/faults/over-temperature/dismiss`: dismiss a latched over-temperature fault only after the active control temperature has returned to its target.
 
-V1 has no remote power, pump, water-flow, or heater action endpoints. Brewing is activated physically on the machine. The app monitors the machine, changes temperature targets, and selects whether the firmware regulates toward the brew or steam target.
+V1 has no remote machine-power, pump, water-flow, or physical brewing endpoints. Brewing is activated physically on the machine. The app monitors the machine, changes temperature targets, selects whether the firmware regulates toward the brew or steam target, and can inhibit heater output for testing. The heater permission endpoint never forces the SSR on.
 
 ## Machine state
 
@@ -68,6 +69,7 @@ A state payload contains both monitored thermocouple temperatures:
   "steamTemperatureC": 103.8,
   "brewTargetC": 93,
   "steamTargetC": 115,
+  "heaterEnabled": true,
   "heaterActive": true,
   "fault": null,
   "steamTimeoutRemainingMs": null,
@@ -80,6 +82,8 @@ A state payload contains both monitored thermocouple temperatures:
 `brew` or `steam`. `uptimeMs` is monotonic device uptime and does not require
 internet time synchronization. `fault` is `null` while status is `heating` or
 `ready`, and contains a stable code and message while status is `fault`.
+`heaterEnabled` is the volatile operator permission for automatic heater output.
+`heaterActive` is the actual SSR command at the time of the snapshot.
 
 ## Mode selection
 
@@ -92,6 +96,14 @@ internet time synchronization. `fault` is `null` while status is `heating` or
 - When that countdown expires, the firmware automatically returns to brew mode. A later temperature dip does not reset or pause the countdown.
 - `steamTimeoutRemainingMs` is `null` outside steam mode and before steam temperature first becomes ready; otherwise it reports the remaining countdown.
 - The firmware owns safe transition behavior and must not depend on the app remaining connected.
+
+## Heater permission
+
+- `PUT /api/v1/heater` uses `{ "heaterEnabled": false }` to inhibit SSR output and `{ "heaterEnabled": true }` to allow normal firmware control.
+- The setting is volatile and returns to `true` after ESP32 power cycle.
+- Disabling the heater does not change active mode, persisted targets, fault detection, readiness calculation, or steam timeout behavior.
+- `heaterEnabled: true` never forces the SSR on; it only permits the firmware to energize the SSR when the control algorithm and safety checks allow it.
+- `heaterActive` remains `false` while disabled or faulted.
 
 ## Readiness
 

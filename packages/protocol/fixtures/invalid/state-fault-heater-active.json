@@ -5,6 +5,7 @@
   "steamTemperatureC": 103.8,
   "brewTargetC": 93,
   "steamTargetC": 115,
+  "heaterEnabled": true,
   "heaterActive": true,
   "fault": {
     "code": "internal_error",

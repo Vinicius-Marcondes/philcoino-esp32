@@ -1,6 +1,8 @@
 import {
   ErrorResponseSchema,
   FaultCodeSchema,
+  HeaterSettingsRequestSchema,
+  HeaterSettingsResponseSchema,
   ModeRequestSchema,
   ModeResponseSchema,
   TemperatureSettingsRequestSchema,
@@ -58,6 +60,7 @@ export function createSimulator(
   app.use("/api/v1/state", requireBearer);
   app.use("/api/v1/settings/temperatures", requireBearer);
   app.use("/api/v1/mode", requireBearer);
+  app.use("/api/v1/heater", requireBearer);
   app.use("/api/v1/faults/over-temperature/dismiss", requireBearer);
 
   app.get("/api/v1/state", (c) => c.json(machine.getState()));
@@ -105,6 +108,24 @@ export function createSimulator(
     }
 
     return c.json(ModeResponseSchema.parse({ mode: machine.setMode(parsed.data.mode) }));
+  });
+
+  app.put("/api/v1/heater", async (c) => {
+    const body = await readJson(c);
+    if (!body.ok) {
+      return contractError(c, 400, "malformed_request", MALFORMED_REQUEST_MESSAGE);
+    }
+
+    const parsed = HeaterSettingsRequestSchema.safeParse(body.value);
+    if (!parsed.success) {
+      return contractError(c, 400, "malformed_request", MALFORMED_REQUEST_MESSAGE);
+    }
+
+    return c.json(
+      HeaterSettingsResponseSchema.parse(
+        machine.setHeaterEnabled(parsed.data.heaterEnabled),
+      ),
+    );
   });
 
   app.post("/api/v1/faults/over-temperature/dismiss", (c) => {

@@ -1,9 +1,12 @@
 import {
   BREW_TARGET_MIN_C,
+  HeaterSettingsRequestSchema,
   ModeRequestSchema,
   STEAM_TARGET_MIN_C,
   TemperatureSettingsRequestSchema,
   type DeviceResponse,
+  type HeaterSettingsRequest,
+  type HeaterSettingsResponse,
   type HealthResponse,
   type MachineState,
   type ModeRequest,
@@ -70,6 +73,7 @@ export class DebugDeviceApiClient
     };
     this.state = createDebugState({
       activeMode: this.state.activeMode,
+      heaterEnabled: this.state.heaterEnabled,
       ...response,
     });
     return response;
@@ -88,9 +92,32 @@ export class DebugDeviceApiClient
     this.state = createDebugState({
       activeMode: parsed.data.mode,
       brewTargetC: this.state.brewTargetC,
+      heaterEnabled: this.state.heaterEnabled,
       steamTargetC: this.state.steamTargetC,
     });
     return { mode: parsed.data.mode };
+  }
+
+  async setHeaterEnabled(
+    request: HeaterSettingsRequest,
+    options: { signal?: AbortSignal } = {},
+  ): Promise<HeaterSettingsResponse> {
+    throwIfAborted(options.signal);
+    const parsed = HeaterSettingsRequestSchema.safeParse(request);
+    if (!parsed.success) {
+      throw new ApiClientError(
+        "invalid-request",
+        "The heater permission request is invalid.",
+      );
+    }
+
+    this.state = createDebugState({
+      activeMode: this.state.activeMode,
+      brewTargetC: this.state.brewTargetC,
+      heaterEnabled: parsed.data.heaterEnabled,
+      steamTargetC: this.state.steamTargetC,
+    });
+    return { heaterEnabled: parsed.data.heaterEnabled };
   }
 
   async dismissOverTemperature(
@@ -107,15 +134,20 @@ export function createDebugDeviceApiClient(): DebugDeviceApiClient {
 
 function createDebugState(
   overrides: Partial<
-    Pick<MachineState, "activeMode" | "brewTargetC" | "steamTargetC">
+    Pick<
+      MachineState,
+      "activeMode" | "brewTargetC" | "heaterEnabled" | "steamTargetC"
+    >
   > = {},
 ): MachineState {
   const activeMode = overrides.activeMode ?? "brew";
+  const heaterEnabled = overrides.heaterEnabled ?? true;
   return {
     activeMode,
     brewTargetC: overrides.brewTargetC ?? BREW_TARGET_MIN_C,
     brewTemperatureC: 0,
     fault: null,
+    heaterEnabled,
     heaterActive: false,
     status: "heating",
     steamTargetC: overrides.steamTargetC ?? STEAM_TARGET_MIN_C,

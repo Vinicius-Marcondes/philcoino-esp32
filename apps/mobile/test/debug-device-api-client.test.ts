@@ -37,6 +37,7 @@ describe("debug device mode", () => {
       activeMode: "brew",
       brewTargetC: BREW_TARGET_MIN_C,
       brewTemperatureC: 0,
+      heaterEnabled: true,
       heaterActive: false,
       steamTargetC: STEAM_TARGET_MIN_C,
       steamTemperatureC: 0,
@@ -57,11 +58,17 @@ describe("debug device mode", () => {
     await expect(client.setMode({ mode: "steam" })).resolves.toEqual({
       mode: "steam",
     });
+    await expect(
+      client.setHeaterEnabled({ heaterEnabled: false }),
+    ).resolves.toEqual({
+      heaterEnabled: false,
+    });
 
     await expect(client.getState()).resolves.toMatchObject({
       activeMode: "steam",
       brewTargetC: 94,
       brewTemperatureC: 0,
+      heaterEnabled: false,
       steamTargetC: 116,
       steamTemperatureC: 0,
       steamTimeoutRemainingMs: 0,
@@ -78,9 +85,13 @@ describe("debug device mode", () => {
     const invalidMode = await captureError(
       client.setMode({ mode: "cleaning" } as never),
     );
+    const invalidHeater = await captureError(
+      client.setHeaterEnabled({ heaterEnabled: "off" } as never),
+    );
 
     expect((invalidTemperature as ApiClientError).kind).toBe("invalid-request");
     expect((invalidMode as ApiClientError).kind).toBe("invalid-request");
+    expect((invalidHeater as ApiClientError).kind).toBe("invalid-request");
   });
 
   test("keeps the same cancellation semantics as the network client", async () => {

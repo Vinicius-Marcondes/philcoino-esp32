@@ -22,6 +22,7 @@ const validState: MachineState = {
   brewTargetC: 93,
   brewTemperatureC: 87.4,
   fault: null,
+  heaterEnabled: true,
   heaterActive: true,
   status: "heating",
   steamTargetC: 115,
@@ -220,6 +221,7 @@ describe("DashboardPollingSession", () => {
     scheduler.runNext();
     await expect(faultSnapshot.promise).resolves.toMatchObject({
       fault: { code: "sensor_failure" },
+      heaterEnabled: true,
       heaterActive: false,
       status: "fault",
     });

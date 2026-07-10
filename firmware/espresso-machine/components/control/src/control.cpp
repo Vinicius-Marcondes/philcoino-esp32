@@ -79,6 +79,10 @@ bool TemperatureController::has_fault() const { return fault_latched_; }
 
 FaultCode TemperatureController::fault_code() const { return fault_code_; }
 
+bool TemperatureController::heater_enabled_permission() const {
+  return heater_enabled_permission_;
+}
+
 bool TemperatureController::heater_enabled() const { return heater_.is_enabled(); }
 
 bool TemperatureController::set_mode(ControlMode mode, std::uint32_t now_ms) {
@@ -99,6 +103,21 @@ bool TemperatureController::set_mode(ControlMode mode, std::uint32_t now_ms) {
   if (!heater_.force_off()) {
     latch_fault(FaultCode::kInternalError);
     return false;
+  }
+  return true;
+}
+
+bool TemperatureController::set_heater_enabled(bool enabled,
+                                               std::uint32_t now_ms) {
+  if (heater_enabled_permission_ == enabled) {
+    return enabled || heater_.force_off();
+  }
+  heater_enabled_permission_ = enabled;
+  reset_heater_control_window(now_ms);
+  heating_demand_active_ = false;
+  reset_recovery_heat();
+  if (!enabled || fault_latched_) {
+    return heater_.force_off();
   }
   return true;
 }
@@ -182,7 +201,9 @@ ControlSnapshot TemperatureController::update(
     steam_timeout_started_ms_ = now_ms;
   }
 
-  if (active_temperature_demands_heat() && !ready) {
+  if (!heater_enabled_permission_) {
+    heating_demand_active_ = false;
+  } else if (active_temperature_demands_heat() && !ready) {
     if (!heating_demand_active_) {
       heating_demand_active_ = true;
       heating_demand_since_ms_ = now_ms;
@@ -209,7 +230,9 @@ ControlSnapshot TemperatureController::snapshot(std::uint32_t now_ms) const {
   value.mode = mode_;
   value.targets = targets_;
   value.readings = readings_;
-  value.heater_enabled = !fault_latched_ && heater_.is_enabled();
+  value.heater_enabled_permission = heater_enabled_permission_;
+  value.heater_enabled =
+      !fault_latched_ && heater_enabled_permission_ && heater_.is_enabled();
   value.fault_active = fault_latched_;
   value.fault = {fault_code_, fault_message(fault_code_)};
   value.steam_timeout = steam_timeout_snapshot(now_ms);
@@ -254,8 +277,19 @@ bool TemperatureController::active_temperature_back_at_target() const {
 }
 
 float TemperatureController::active_heat_ramp_band() const {
-  return mode_ == ControlMode::kBrew ? config::kBrewHeatRampBandC
-                                     : config::kSteamHeatRampBandC;
+  if (mode_ == ControlMode::kSteam) {
+    return config::kSteamHeatRampBandC;
+  }
+
+  const float target_span = static_cast<float>(config::kBrewTargetMaximumC -
+                                               config::kBrewTargetMinimumC);
+  const float target_offset =
+      static_cast<float>(active_target() - config::kBrewTargetMinimumC);
+  const float target_ratio = target_offset / target_span;
+  return config::kBrewHeatRampMinimumTargetBandC +
+         (config::kBrewHeatRampBandC -
+          config::kBrewHeatRampMinimumTargetBandC) *
+             target_ratio;
 }
 
 float TemperatureController::active_recovery_trigger_drop() const {
@@ -360,6 +394,10 @@ bool TemperatureController::update_readiness(std::uint32_t now_ms) {
 bool TemperatureController::update_heater(std::uint32_t now_ms) {
   if (fault_latched_) {
     return heater_.force_off();
+  }
+  if (!heater_enabled_permission_) {
+    reset_heater_control_window(now_ms);
+    return heater_.set_enabled(false);
   }
   if (!active_temperature_demands_heat()) {
     reset_heater_control_window(now_ms);

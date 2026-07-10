@@ -28,8 +28,10 @@ export interface MachineDashboardState {
   dismissMutation: (kind: DashboardMutationKind) => void;
   dismissOverTemperature: () => void;
   faultMutation: DashboardMutationState;
+  heaterMutation: DashboardMutationState;
   modeMutation: DashboardMutationState;
   setMode: (mode: Mode) => void;
+  setHeaterEnabled: (heaterEnabled: boolean) => void;
   snapshot: MachineState | null;
   temperatureMutation: DashboardMutationState;
   updateTemperatureSettings: (settings: TemperatureSettingsRequest) => void;
@@ -40,6 +42,8 @@ export function useMachineDashboard(
 ): MachineDashboardState {
   const [connection, setConnection] = useState<ConnectionState>(connectingState);
   const [faultMutation, setFaultMutation] =
+    useState<DashboardMutationState>(idleMutationState);
+  const [heaterMutation, setHeaterMutation] =
     useState<DashboardMutationState>(idleMutationState);
   const [modeMutation, setModeMutation] =
     useState<DashboardMutationState>(idleMutationState);
@@ -61,6 +65,27 @@ export function useMachineDashboard(
           setSnapshot(null);
           setConnection(nextConnection);
         },
+        onHeaterAcknowledged: (settings) => {
+          setSnapshot((current) => {
+            if (current === null) {
+              return null;
+            }
+            if (current.status === "fault") {
+              return {
+                ...current,
+                heaterActive: false,
+                heaterEnabled: settings.heaterEnabled,
+              };
+            }
+            return {
+              ...current,
+              heaterActive: settings.heaterEnabled
+                ? current.heaterActive
+                : false,
+              heaterEnabled: settings.heaterEnabled,
+            };
+          });
+        },
         onModeAcknowledged: (mode) => {
           setSnapshot((current) =>
             current === null
@@ -80,6 +105,8 @@ export function useMachineDashboard(
             setModeMutation(state);
           } else if (kind === "temperatures") {
             setTemperatureMutation(state);
+          } else if (kind === "heater") {
+            setHeaterMutation(state);
           } else {
             setFaultMutation(state);
           }
@@ -125,6 +152,10 @@ export function useMachineDashboard(
     mutationSession.current?.setMode(mode);
   }, []);
 
+  const setHeaterEnabled = useCallback((heaterEnabled: boolean) => {
+    mutationSession.current?.setHeaterEnabled(heaterEnabled);
+  }, []);
+
   const dismissOverTemperature = useCallback(() => {
     mutationSession.current?.dismissOverTemperature();
   }, []);
@@ -145,7 +176,9 @@ export function useMachineDashboard(
     dismissMutation,
     dismissOverTemperature,
     faultMutation,
+    heaterMutation,
     modeMutation,
+    setHeaterEnabled,
     setMode,
     snapshot,
     temperatureMutation,

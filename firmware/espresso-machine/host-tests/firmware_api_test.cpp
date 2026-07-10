@@ -134,6 +134,7 @@ void test_public_contract_and_authentication() {
            {HttpMethod::kGet, "/api/v1/state"},
            {HttpMethod::kPatch, "/api/v1/settings/temperatures"},
            {HttpMethod::kPut, "/api/v1/mode"},
+           {HttpMethod::kPut, "/api/v1/heater"},
            {HttpMethod::kPost, "/api/v1/faults/over-temperature/dismiss"},
        }) {
     const auto missing = harness.request(request.first, request.second);
@@ -161,6 +162,7 @@ void test_state_and_mutations_delegate_to_control() {
   assert(response.status == 200);
   assert(response.body.find("\"status\":\"heating\"") != std::string::npos);
   assert(response.body.find("\"activeMode\":\"brew\"") != std::string::npos);
+  assert(response.body.find("\"heaterEnabled\":true") != std::string::npos);
   assert(response.body.find("\"heaterActive\":true") != std::string::npos);
 
   response = harness.request(HttpMethod::kPatch,
@@ -179,6 +181,23 @@ void test_state_and_mutations_delegate_to_control() {
   response = harness.request(HttpMethod::kPut, "/api/v1/mode", authorization,
                              "{\"mode\":\"steam\"}");
   assert(response.status == 200);
+
+  response = harness.request(HttpMethod::kPut, "/api/v1/heater", authorization,
+                             "{\"heaterEnabled\":false}");
+  assert(response.status == 200);
+  assert(response.body == "{\"heaterEnabled\":false}");
+  assert(!harness.controller.heater_enabled_permission());
+  response = harness.request(HttpMethod::kGet, "/api/v1/state", authorization);
+  assert(response.status == 200);
+  assert(response.body.find("\"heaterEnabled\":false") != std::string::npos);
+  assert(response.body.find("\"heaterActive\":false") != std::string::npos);
+
+  harness.controller.latch_fault(FaultCode::kSensorFailure);
+  response = harness.request(HttpMethod::kPut, "/api/v1/heater", authorization,
+                             "{\"heaterEnabled\":true}");
+  assert(response.status == 200);
+  assert(response.body == "{\"heaterEnabled\":true}");
+  assert(harness.controller.heater_enabled_permission());
 }
 
 void test_over_temperature_dismissal_endpoint_is_guarded() {
@@ -238,6 +257,12 @@ void test_malformed_and_domain_failures_do_not_bypass_validation() {
   expect_error(harness.request(HttpMethod::kPut, "/api/v1/mode",
                                authorization, "{\"mode\":\"cleaning\"}"),
                400, "malformed_request");
+  for (const char* body : {"{", "{}", "{\"heaterEnabled\":\"false\"}",
+                           "{\"heaterEnabled\":false,\"extra\":true}"}) {
+    expect_error(harness.request(HttpMethod::kPut, "/api/v1/heater",
+                                 authorization, body),
+                 400, "malformed_request");
+  }
   harness.controller.latch_fault(FaultCode::kSensorFailure);
   expect_error(harness.request(HttpMethod::kPut, "/api/v1/mode",
                                authorization, "{\"mode\":\"steam\"}"),
@@ -261,6 +286,10 @@ void capture_contract_payloads(const std::filesystem::path& directory) {
   write_capture(directory, "mode-response.json",
                 harness.request(HttpMethod::kPut, "/api/v1/mode",
                                 authorization, "{\"mode\":\"steam\"}").body);
+  write_capture(directory, "heater-response.json",
+                harness.request(HttpMethod::kPut, "/api/v1/heater",
+                                authorization,
+                                "{\"heaterEnabled\":false}").body);
   write_capture(directory, "error.json",
                 harness.request(HttpMethod::kGet, "/api/v1/state").body);
 

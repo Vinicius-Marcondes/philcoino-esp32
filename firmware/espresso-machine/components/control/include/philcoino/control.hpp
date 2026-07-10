@@ -31,6 +31,7 @@ struct ControlSnapshot {
   ControlMode mode{ControlMode::kBrew};
   peripherals::TemperatureTargets targets{};
   peripherals::ThermocoupleReadings readings{};
+  bool heater_enabled_permission{true};
   bool heater_enabled{false};
   bool fault_active{false};
   FaultSnapshot fault{};
@@ -51,9 +52,11 @@ class TemperatureController {
   const peripherals::TemperatureTargets& targets() const;
   bool has_fault() const;
   FaultCode fault_code() const;
+  bool heater_enabled_permission() const;
   bool heater_enabled() const;
 
   bool set_mode(ControlMode mode, std::uint32_t now_ms);
+  bool set_heater_enabled(bool enabled, std::uint32_t now_ms);
   bool update_targets(const peripherals::TemperatureTargets& targets,
                       peripherals::TargetStorage& storage,
                       std::uint32_t now_ms);
@@ -98,6 +101,7 @@ class TemperatureController {
   ControlMode mode_{ControlMode::kBrew};
   ControlStatus status_{ControlStatus::kHeating};
   FaultCode fault_code_{FaultCode::kInternalError};
+  bool heater_enabled_permission_{true};
   bool fault_latched_{false};
   bool ready_band_active_{false};
   std::uint32_t ready_band_since_ms_{0};
