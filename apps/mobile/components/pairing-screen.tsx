@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Keyboard,
+  KeyboardAvoidingView,
   Platform,
   Pressable,
   ScrollView,
@@ -72,6 +74,14 @@ function RealPairingScreen() {
   const stopScan = useRef<(() => void) | null>(null);
   const scanTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const activeOperation = useRef<AbortController | null>(null);
+  const scrollView = useRef<ScrollView>(null);
+  const tokenInputFocused = useRef(false);
+
+  const scrollTokenActionsIntoView = useCallback(() => {
+    requestAnimationFrame(() => {
+      scrollView.current?.scrollToEnd({ animated: true });
+    });
+  }, []);
 
   const addDevice = useCallback((device: DiscoveredDevice) => {
     setDevices((current) => {
@@ -172,6 +182,16 @@ function RealPairingScreen() {
       stopBrowsing();
     };
   }, [addDevice, startBrowsing, stopBrowsing]);
+
+  useEffect(() => {
+    const keyboardSubscription = Keyboard.addListener("keyboardDidShow", () => {
+      if (tokenInputFocused.current) {
+        scrollTokenActionsIntoView();
+      }
+    });
+
+    return () => keyboardSubscription.remove();
+  }, [scrollTokenActionsIntoView]);
 
   const selectDevice = (device: PairingCandidate) => {
     stopBrowsing();
@@ -277,13 +297,15 @@ function RealPairingScreen() {
   }
 
   return (
-    <>
+    <KeyboardAvoidingView
+      behavior={Platform.OS === "ios" ? "padding" : "height"}
+      style={styles.screen}>
       <ScrollView
-        automaticallyAdjustKeyboardInsets
         contentInsetAdjustmentBehavior="never"
         keyboardDismissMode="interactive"
         keyboardShouldPersistTaps="handled"
-        style={styles.screen}
+        ref={scrollView}
+        style={styles.scroll}
         contentContainerStyle={styles.content}>
         <View style={styles.pageHeader}>
           <Text selectable style={styles.pageTitle}>Pair machine</Text>
@@ -307,6 +329,13 @@ function RealPairingScreen() {
                 autoCorrect={false}
                 editable={!busy}
                 onChangeText={setToken}
+                onBlur={() => {
+                  tokenInputFocused.current = false;
+                }}
+                onFocus={() => {
+                  tokenInputFocused.current = true;
+                  scrollTokenActionsIntoView();
+                }}
                 onSubmitEditing={() => void pairSelectedDevice()}
                 placeholder="Enter the token from the device setup"
                 returnKeyType="done"
@@ -388,7 +417,7 @@ function RealPairingScreen() {
           </View>
         ) : null}
       </ScrollView>
-    </>
+    </KeyboardAvoidingView>
   );
 }
 
@@ -485,6 +514,7 @@ function noMachinesFoundMessage(): string {
 
 const styles = StyleSheet.create({
   screen: { backgroundColor: "#F4F0E8", flex: 1 },
+  scroll: { backgroundColor: "#F4F0E8", flex: 1 },
   content: {
     backgroundColor: "#F4F0E8",
     flexGrow: 1,
