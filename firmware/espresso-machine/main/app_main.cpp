@@ -114,7 +114,10 @@ extern "C" void app_main() {
   using namespace philcoino::peripherals;
 
   static EspGpioOutput ssr_gpio(philcoino::config::kSsrGpio);
-  static FailOffSsr ssr(ssr_gpio, philcoino::config::kSsrActiveHigh);
+  static EspGptimerSafetyLease ssr_safety_lease(
+      philcoino::config::kSsrGpio, philcoino::config::kSsrActiveHigh);
+  static FailOffSsr ssr(ssr_gpio, ssr_safety_lease,
+                        philcoino::config::kSsrActiveHigh);
   if (!ssr.initialize()) {
     ESP_LOGE(kLogTag, "SSR fail-off initialization failed");
     return;

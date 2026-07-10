@@ -34,6 +34,7 @@ implement peripheral and control behavior.
 | Sensor disagreement | More than 10°C continuously for 5 minutes |
 | Readiness | Within ±1°C continuously for 3 seconds |
 | Steam timeout | Return to brew 5 minutes after steam first becomes ready |
+| Heater safety lease | GPIO20 is forced low after 1500 ms without a healthy control renewal; the trip latches `internal_error` until reboot |
 
 ## Display and GPIO
 
@@ -57,6 +58,12 @@ resistor available. Firmware must configure the output low at the earliest possi
 boot stage, but software cannot guarantee a low level while the pin is uncontrolled
 during reset or before GPIO initialization. This residual risk is tracked in
 `docs/side-notes.md` and must be checked before energized testing.
+
+The ESP32-C3 GPTimer provides a firmware-only fail-off lease while GPIO20 is
+commanded high. The controller renews it during healthy 500 ms updates without
+adding SSR transitions. Its cache-safe ISR commands the pin low on expiry, and
+target persistence forces the output low before NVS writes. This mitigation does
+not replace the retained mechanical cutoff and cannot stop a shorted SSR output.
 
 ## Secrets and logging
 

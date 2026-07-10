@@ -27,6 +27,24 @@ below target.
 When the active temperature reaches or exceeds the active target, firmware turns
 the heater command off and resets the heater window.
 
+## GPTimer fail-off safety lease
+
+Every heater-on control update arms or renews a 1500 ms one-shot GPTimer safety
+lease before GPIO20 is commanded high. Healthy 500 ms control updates renew the
+deadline without toggling the GPIO, so full-power warm-up remains continuously
+on and the existing 10-second duty curve is unchanged.
+
+If control execution stops renewing the lease, the cache-safe timer interrupt
+commands GPIO20 low. The trip remains latched for the current boot; the next
+controller update reports `internal_error` and automatic heating cannot resume
+until reboot. Normal off transitions command GPIO20 low before disarming the
+lease, and target persistence commands the heater off before synchronous NVS
+writes.
+
+This is a firmware fail-off boundary, not an independent thermal cutoff. It
+cannot interrupt current through an SSR that has failed with its output shorted,
+and it does not control GPIO20 before firmware initializes the pin.
+
 ## Normal ramp
 
 Normal ramp mode is used for regular heat-up and stable temperature holding.

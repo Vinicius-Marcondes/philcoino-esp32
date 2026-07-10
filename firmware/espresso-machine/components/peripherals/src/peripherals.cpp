@@ -9,6 +9,9 @@
 namespace philcoino::peripherals {
 namespace {
 
+static_assert(config::kHeaterSafetyLeaseMs > 2U * kMax6675SampleIntervalMs);
+static_assert(config::kHeaterSafetyLeaseMs < config::kHeaterControlWindowMs);
+
 bool deadline_reached(std::uint32_t now, std::uint32_t deadline) {
   return static_cast<std::int32_t>(now - deadline) >= 0;
 }
@@ -176,8 +179,9 @@ bool TargetStorage::save(const TemperatureTargets& targets) {
   return targets_are_valid(targets) && backend_.save(targets);
 }
 
-FailOffSsr::FailOffSsr(DigitalOutput& output, bool active_high)
-    : output_(output), active_high_(active_high) {}
+FailOffSsr::FailOffSsr(DigitalOutput& output, SsrSafetyLease& safety_lease,
+                       bool active_high)
+    : output_(output), safety_lease_(safety_lease), active_high_(active_high) {}
 
 bool FailOffSsr::initialize() {
   initialized_ = false;
@@ -193,6 +197,10 @@ bool FailOffSsr::initialize() {
     write_enabled_level(false);
     return false;
   }
+  if (!safety_lease_.initialize()) {
+    write_enabled_level(false);
+    return false;
+  }
   initialized_ = true;
   return true;
 }
@@ -203,21 +211,55 @@ bool FailOffSsr::set_enabled(bool enabled) {
     enabled_ = false;
     return false;
   }
-  if (!write_enabled_level(enabled)) {
+
+  if (safety_lease_.tripped()) {
     write_enabled_level(false);
     enabled_ = false;
     return false;
   }
+
+  if (enabled) {
+    if (!safety_lease_.arm(config::kHeaterSafetyLeaseMs) ||
+        safety_lease_.tripped()) {
+      write_enabled_level(false);
+      enabled_ = false;
+      return false;
+    }
+    if (!write_enabled_level(true)) {
+      const bool forced_off = write_enabled_level(false);
+      if (forced_off) {
+        safety_lease_.disarm();
+      }
+      enabled_ = false;
+      return false;
+    }
+    enabled_ = true;
+    return true;
+  }
+
+  const bool forced_off = write_enabled_level(false);
   enabled_ = enabled;
-  return true;
+  if (!forced_off) {
+    return false;
+  }
+  return safety_lease_.disarm();
 }
 
 bool FailOffSsr::force_off() {
   enabled_ = false;
-  return write_enabled_level(false);
+  if (!write_enabled_level(false)) {
+    return false;
+  }
+  return safety_lease_.disarm();
 }
 
-bool FailOffSsr::is_enabled() const { return enabled_; }
+bool FailOffSsr::is_enabled() const {
+  return enabled_ && !safety_lease_.tripped();
+}
+
+bool FailOffSsr::safety_cutoff_tripped() const {
+  return safety_lease_.tripped();
+}
 
 bool FailOffSsr::write_enabled_level(bool enabled) {
   const bool output_high = enabled ? active_high_ : !active_high_;
