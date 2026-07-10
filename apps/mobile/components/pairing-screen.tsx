@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Keyboard,
   Platform,
   Pressable,
   ScrollView,
@@ -11,16 +12,21 @@ import {
 } from "react-native";
 
 import { DashboardScreen } from "@/components/dashboard-screen";
-import type { DiscoveredDevice } from "@/src/discovery/device-discovery";
+import type {
+  DeviceDiscovery,
+  DiscoveredDevice,
+} from "@/src/discovery/device-discovery";
 import { findDiscoveredDevice } from "@/src/discovery/device-discovery";
 import { nativeDeviceDiscovery } from "@/src/discovery/native-device-discovery";
 import { isDebugDeviceModeEnabled } from "@/src/debug-device-mode";
 import { ApiClientError } from "@/src/networking/api-client-error";
-import {
-  debugDeviceIdentity,
-  debugSelectedDevice,
-} from "@/src/networking/debug-device-api-client";
 import { createDeviceApiClient } from "@/src/networking/expo-device-api-client";
+import {
+  createDebugPairingClient,
+  DEBUG_DISCOVERY_TIMEOUT_MS,
+  debugDeviceDiscovery,
+  debugSelectedDeviceRepository,
+} from "@/src/pairing/debug-pairing-dependencies";
 import {
   authenticateAndSave,
   inspectDevice,
@@ -29,9 +35,13 @@ import {
   type PairingClientFactory,
 } from "@/src/pairing/pairing-service";
 import { selectedDeviceRepository } from "@/src/storage/secure-selected-device-repository";
-import type { SelectedDevice } from "@/src/storage/selected-device-repository";
+import {
+  SelectedDeviceRepository,
+  type SelectedDevice,
+} from "@/src/storage/selected-device-repository";
 
 const DISCOVERY_TIMEOUT_MS = 8_000;
+const CONTENT_BOTTOM_PADDING = 44;
 const createPairingClient: PairingClientFactory = (options) =>
   createDeviceApiClient(options);
 
@@ -43,24 +53,37 @@ type PairedDevice = {
 
 export function PairingScreen() {
   if (isDebugDeviceModeEnabled()) {
-    return <DebugPairingScreen />;
+    return (
+      <PairingFlowScreen
+        createClient={createDebugPairingClient}
+        discovery={debugDeviceDiscovery}
+        discoveryTimeoutMs={DEBUG_DISCOVERY_TIMEOUT_MS}
+        repository={debugSelectedDeviceRepository}
+      />
+    );
   }
 
-  return <RealPairingScreen />;
-}
-
-function DebugPairingScreen() {
   return (
-    <DashboardScreen
-      deviceName={debugDeviceIdentity.name}
-      initialNote="Debug device mode is enabled. Discovery, authentication, and ESP32 requests are bypassed."
-      onForget={() => undefined}
-      selectedDevice={debugSelectedDevice}
+    <PairingFlowScreen
+      createClient={createPairingClient}
+      discovery={nativeDeviceDiscovery}
+      discoveryTimeoutMs={DISCOVERY_TIMEOUT_MS}
+      repository={selectedDeviceRepository}
     />
   );
 }
 
-function RealPairingScreen() {
+function PairingFlowScreen({
+  createClient,
+  discovery,
+  discoveryTimeoutMs,
+  repository,
+}: {
+  createClient: PairingClientFactory;
+  discovery: DeviceDiscovery;
+  discoveryTimeoutMs: number;
+  repository: SelectedDeviceRepository;
+}) {
   const [devices, setDevices] = useState<DiscoveredDevice[]>([]);
   const [selected, setSelected] = useState<PairingCandidate | null>(null);
   const [paired, setPaired] = useState<PairedDevice | null>(null);
@@ -68,10 +91,19 @@ function RealPairingScreen() {
   const [token, setToken] = useState("");
   const [message, setMessage] = useState("Checking for a saved machine…");
   const [busy, setBusy] = useState(true);
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
   const [scanning, setScanning] = useState(false);
   const stopScan = useRef<(() => void) | null>(null);
   const scanTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const activeOperation = useRef<AbortController | null>(null);
+  const scrollView = useRef<ScrollView>(null);
+  const focusedInput = useRef<"manual-address" | "token" | null>(null);
+
+  const scrollFocusedActionsIntoView = useCallback(() => {
+    requestAnimationFrame(() => {
+      scrollView.current?.scrollToEnd({ animated: false });
+    });
+  }, []);
 
   const addDevice = useCallback((device: DiscoveredDevice) => {
     setDevices((current) => {
@@ -96,7 +128,7 @@ function RealPairingScreen() {
     setScanning(true);
     setMessage("Searching your local network for Philcoino machines…");
 
-    stopScan.current = nativeDeviceDiscovery.scan({
+    stopScan.current = discovery.scan({
       onDevice: (device) => {
         foundAny = true;
         addDevice(device);
@@ -113,8 +145,8 @@ function RealPairingScreen() {
       if (!foundAny) {
         setMessage(noMachinesFoundMessage());
       }
-    }, DISCOVERY_TIMEOUT_MS);
-  }, [addDevice, stopBrowsing]);
+    }, discoveryTimeoutMs);
+  }, [addDevice, discovery, discoveryTimeoutMs, stopBrowsing]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -122,13 +154,13 @@ function RealPairingScreen() {
 
     void restoreSelectedDevice(
       {
-        createClient: createPairingClient,
+        createClient,
         findDeviceById: (deviceId, options) =>
-          findDiscoveredDevice(nativeDeviceDiscovery, deviceId, {
+          findDiscoveredDevice(discovery, deviceId, {
             ...options,
-            timeoutMs: DISCOVERY_TIMEOUT_MS,
+            timeoutMs: discoveryTimeoutMs,
           }),
-        repository: selectedDeviceRepository,
+        repository,
       },
       { onDevice: addDevice, signal: controller.signal },
     )
@@ -171,7 +203,32 @@ function RealPairingScreen() {
       activeOperation.current?.abort();
       stopBrowsing();
     };
-  }, [addDevice, startBrowsing, stopBrowsing]);
+  }, [addDevice, createClient, discovery, discoveryTimeoutMs, repository, startBrowsing, stopBrowsing]);
+
+  useEffect(() => {
+    const keyboardShownEvent = Platform.OS === "ios"
+      ? "keyboardWillChangeFrame"
+      : "keyboardDidShow";
+    const keyboardHiddenEvent = Platform.OS === "ios"
+      ? "keyboardWillHide"
+      : "keyboardDidHide";
+    const shownSubscription = Keyboard.addListener(keyboardShownEvent, (event) => {
+      Keyboard.scheduleLayoutAnimation(event);
+      setKeyboardHeight(event.endCoordinates.height);
+      if (focusedInput.current !== null) {
+        scrollFocusedActionsIntoView();
+      }
+    });
+    const hiddenSubscription = Keyboard.addListener(keyboardHiddenEvent, (event) => {
+      Keyboard.scheduleLayoutAnimation(event);
+      setKeyboardHeight(0);
+    });
+
+    return () => {
+      shownSubscription.remove();
+      hiddenSubscription.remove();
+    };
+  }, [scrollFocusedActionsIntoView]);
 
   const selectDevice = (device: PairingCandidate) => {
     stopBrowsing();
@@ -191,7 +248,7 @@ function RealPairingScreen() {
     try {
       const candidate = await inspectDevice(
         manualAddress,
-        createPairingClient,
+        createClient,
         controller.signal,
       );
       setSelected(candidate);
@@ -223,8 +280,8 @@ function RealPairingScreen() {
         selected,
         token,
         {
-          createClient: createPairingClient,
-          repository: selectedDeviceRepository,
+          createClient,
+          repository,
         },
         controller.signal,
       );
@@ -248,7 +305,7 @@ function RealPairingScreen() {
 
   const forgetDevice = async () => {
     setBusy(true);
-    await selectedDeviceRepository.clear();
+    await repository.clear();
     setPaired(null);
     setSelected(null);
     setDevices([]);
@@ -279,12 +336,15 @@ function RealPairingScreen() {
   return (
     <>
       <ScrollView
-        automaticallyAdjustKeyboardInsets
         contentInsetAdjustmentBehavior="never"
         keyboardDismissMode="interactive"
         keyboardShouldPersistTaps="handled"
+        ref={scrollView}
         style={styles.screen}
-        contentContainerStyle={styles.content}>
+        contentContainerStyle={[
+          styles.content,
+          { paddingBottom: CONTENT_BOTTOM_PADDING + keyboardHeight },
+        ]}>
         <View style={styles.pageHeader}>
           <Text selectable style={styles.pageTitle}>Pair machine</Text>
         </View>
@@ -307,6 +367,17 @@ function RealPairingScreen() {
                 autoCorrect={false}
                 editable={!busy}
                 onChangeText={setToken}
+                onBlur={() => {
+                  focusedInput.current = null;
+                }}
+                onFocus={() => {
+                  focusedInput.current = "token";
+                  const visibleKeyboardHeight = Keyboard.metrics()?.height ?? 0;
+                  if (visibleKeyboardHeight > 0) {
+                    setKeyboardHeight(visibleKeyboardHeight);
+                  }
+                  scrollFocusedActionsIntoView();
+                }}
                 onSubmitEditing={() => void pairSelectedDevice()}
                 placeholder="Enter the token from the device setup"
                 returnKeyType="done"
@@ -366,6 +437,17 @@ function RealPairingScreen() {
                 editable={!busy}
                 keyboardType="url"
                 onChangeText={setManualAddress}
+                onBlur={() => {
+                  focusedInput.current = null;
+                }}
+                onFocus={() => {
+                  focusedInput.current = "manual-address";
+                  const visibleKeyboardHeight = Keyboard.metrics()?.height ?? 0;
+                  if (visibleKeyboardHeight > 0) {
+                    setKeyboardHeight(visibleKeyboardHeight);
+                  }
+                  scrollFocusedActionsIntoView();
+                }}
                 onSubmitEditing={() => void inspectManualAddress()}
                 placeholder="192.168.1.20"
                 returnKeyType="go"
@@ -490,7 +572,7 @@ const styles = StyleSheet.create({
     flexGrow: 1,
     gap: 18,
     padding: 20,
-    paddingBottom: 44,
+    paddingBottom: CONTENT_BOTTOM_PADDING,
     paddingTop: 72,
   },
   pageHeader: { alignItems: "center", minHeight: 34 },

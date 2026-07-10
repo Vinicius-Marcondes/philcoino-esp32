@@ -47,6 +47,20 @@ bun run --cwd apps/mobile reset-project
 
 This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
 
+## Debug-device mode
+
+Exercise discovery, token entry, and the dashboard without mDNS, SecureStore, or
+HTTP:
+
+```bash
+EXPO_PUBLIC_PHILCOINO_DEBUG_DEVICE=1 bun run start
+```
+
+The simulated scan finds one `Philcoino debug` machine. Select it and enter
+`debug-token` to continue to the in-memory dashboard. A wrong token shows the
+normal authentication error, forgetting the machine returns to scanning, and a
+reload starts the flow from the scan screen again.
+
 ## Learn more
 
 To learn more about developing your project with Expo, look at the following resources:
