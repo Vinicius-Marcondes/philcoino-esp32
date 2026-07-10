@@ -14,7 +14,7 @@ Present a reliable live machine snapshot with clear connection and fault states.
 ## Scope
 
 - Poll state once per second only while the dashboard is active.
-- Display both temperatures/targets, active mode, status, heater activity, steam countdown, and uptime-derived context.
+- Display the boiler temperature, both targets, active mode, status, heater activity, steam countdown, and uptime-derived context.
 - Distinguish app offline/unauthorized/protocol states from firmware status.
 - Pause/cancel polling during backgrounding and navigation.
 

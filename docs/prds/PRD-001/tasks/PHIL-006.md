@@ -4,6 +4,8 @@ Status: Todo
 Review Mode: Agent
 Review Reason: Mode, readiness, timeout, validation, and fault transitions can be proven with a simulated clock and sensor inputs.
 
+> Superseded hardware note: the original dual-sensor monitoring scope is historical. Current control uses one permanent boiler-base reading for both modes.
+
 ## Goal
 
 Implement deterministic temperature-control state and safety behavior independent of networking.

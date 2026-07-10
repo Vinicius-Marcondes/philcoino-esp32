@@ -9,12 +9,12 @@ Supervise low-voltage and energized tests, verify the retained thermal cutoff an
 
 ## Goal
 
-Validate the completed system on the real ESP32-C3, sensors, display, SSR, network, and iPhone without weakening documented safety boundaries.
+Validate the completed system on the real ESP32-C3, single boiler sensor, display, SSR, network, and iPhone without weakening documented safety boundaries.
 
 ## Scope
 
 - Verify boot/reset behavior, GPIO levels, sensor identity, display, mDNS, API, persistence, and app flows.
-- Measure sensor disagreement, readiness, overshoot, heating timeout, steam timeout, and SSR/heat-sink temperature.
+- Measure the boiler sensor against an independent instrument, including lag and error, plus readiness, overshoot, heating timeout, steam timeout, and SSR/heat-sink temperature.
 - Confirm faults command SSR off and remain latched.
 - Capture evidence for every remaining PRD acceptance criterion.
 
@@ -32,7 +32,7 @@ Validate the completed system on the real ESP32-C3, sensors, display, SSR, netwo
 ## Acceptance Criteria
 
 - [ ] Low-voltage boot and fault behavior is repeatable.
-- [ ] Both thermocouples are mapped and validated against an independent reference.
+- [ ] The boiler-base thermocouple is mapped and validated against an independent reference in both brew and steam ranges.
 - [ ] Actual network discovery, pairing, polling, settings, and mode behavior pass.
 - [ ] Steam timeout returns to brew without the app connected.
 - [ ] Human reviewer signs off the evidence or records blocking defects.

@@ -6,14 +6,13 @@
 
 namespace philcoino::config {
 
-inline constexpr char kFirmwareVersion[] = "0.1.0";
+inline constexpr char kFirmwareVersion[] = "0.2.0";
 inline constexpr char kFriendlyName[] = "PhilcoINO";
 inline constexpr char kDeviceModel[] = "ESP32-C3 Super Mini";
 inline constexpr char kDeviceIdPrefix[] = "philcoino-";
 inline constexpr bool kWifiEnabled = true;
 // ESP-IDF uses quarter-dBm units; 44 limits station TX power to 11 dBm.
 inline constexpr std::int8_t kWifiMaximumTxPowerQuarterDbm = 44;
-inline constexpr bool kDualThermocouplesEnabled = false;
 inline constexpr bool kOledEnabled = true;
 
 inline constexpr std::int32_t kBrewTargetMinimumC = 85;
@@ -22,11 +21,8 @@ inline constexpr std::int32_t kSteamTargetMinimumC = 110;
 inline constexpr std::int32_t kSteamTargetMaximumC = 120;
 inline constexpr std::int32_t kBrewOverTemperatureC = 98;
 inline constexpr std::int32_t kSteamOverTemperatureC = 130;
-inline constexpr std::int32_t kSensorDisagreementC = 10;
 
 inline constexpr std::uint32_t kHeatingTimeoutMs = 10U * 60U * 1000U;
-inline constexpr std::uint32_t kSensorDisagreementDurationMs =
-    5U * 60U * 1000U;
 inline constexpr std::uint32_t kSteamReadyTimeoutMs = 5U * 60U * 1000U;
 inline constexpr std::uint32_t kReadyStabilityMs = 3U * 1000U;
 inline constexpr std::int32_t kReadyBandC = 1;
@@ -46,12 +42,9 @@ inline constexpr std::int32_t kOledSclGpio = 9;
 inline constexpr std::int32_t kOledWidth = 128;
 inline constexpr std::int32_t kOledHeight = 32;
 
-inline constexpr std::int32_t kBrewThermocoupleClockGpio = 4;
-inline constexpr std::int32_t kSteamThermocoupleClockGpio = 0;
-inline constexpr std::int32_t kBrewThermocoupleDataGpio = 6;
-inline constexpr std::int32_t kSteamThermocoupleDataGpio = 1;
-inline constexpr std::int32_t kBrewThermocoupleChipSelectGpio = 7;
-inline constexpr std::int32_t kSteamThermocoupleChipSelectGpio = 5;
+inline constexpr std::int32_t kBoilerThermocoupleClockGpio = 4;
+inline constexpr std::int32_t kBoilerThermocoupleDataGpio = 6;
+inline constexpr std::int32_t kBoilerThermocoupleChipSelectGpio = 7;
 
 inline constexpr std::int32_t kSsrGpio = 20;
 inline constexpr bool kSsrActiveHigh = true;

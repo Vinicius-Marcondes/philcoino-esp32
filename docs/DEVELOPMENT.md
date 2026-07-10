@@ -88,7 +88,7 @@ curl -X POST http://localhost:3000/_simulator/advance \
 
 curl -X PUT http://localhost:3000/_simulator/temperatures \
   -H 'Content-Type: application/json' \
-  -d '{"brewTemperatureC":93}'
+  -d '{"boilerTemperatureC":93}'
 
 curl http://localhost:3000/api/v1/state \
   -H 'Authorization: Bearer philcoino-dev-token'
@@ -137,11 +137,11 @@ idf.py build
 
 Configure Wi-Fi SSID, Wi-Fi password, and bearer token through `idf.py menuconfig` under `PhilcoINO`. Values belong only in generated, ignored `sdkconfig`; never put them in source, defaults, logs, screenshots, tests, or documentation.
 
-Current source uses diagnostic single-thermocouple mode (`kDualThermocouplesEnabled = false`) and has OLED support enabled (`kOledEnabled = true`). Check [Safety](SAFETY.md), the tracker, and hardware documents before any device test; documentation currently records unresolved configuration/acceptance issues.
+Current source permanently uses one boiler-base thermocouple on GPIO4/GPIO6/GPIO7 for both control modes and has OLED support enabled (`kOledEnabled = true`). Check [Safety](SAFETY.md), the tracker, and hardware documents before any device test; physical acceptance remains incomplete.
 
 ### Low-voltage only
 
-Repository development does not authorize mains power. With the heater/load disconnected, supervised checks may validate boot, sensor independence, open-probe behavior, display output, network discovery, and the SSR control GPIO's inactive level. Record physical evidence in the tracker/side notes only after the responsible human confirms it.
+Repository development does not authorize mains power. With the heater/load disconnected, supervised checks may validate boot, the single boiler sensor against an independent instrument, open-probe behavior, display output, network discovery, and the SSR control GPIO's inactive level. Record physical evidence in the tracker/side notes only after the responsible human confirms it.
 
 ## Verification matrix
 

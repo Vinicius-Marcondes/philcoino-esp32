@@ -3,7 +3,7 @@
 Development-only Bun/Hono implementation of Philcoino API v1. It supports deterministic mobile, contract, and integration scenarios without physical hardware.
 
 > [!WARNING]
-> This is an API/UI simulator, not a reference implementation of firmware safety. It does not model the real ten-second SSR duty loop, sensor buses, FreeRTOS scheduling, mutex/I/O stalls, automatic sensor disagreement/failure, GPIO write failures, or physical temperature dynamics.
+> This is an API/UI simulator, not a reference implementation of firmware safety. It does not model the real ten-second SSR duty loop, the MAX6675 bus, FreeRTOS scheduling, mutex/I/O stalls, automatic sensor failure, GPIO write failures, or physical temperature dynamics.
 
 ## Run and verify
 
@@ -39,7 +39,7 @@ Requests, success responses, and error bodies are validated against `@philcoino/
 These controls are intentionally outside `/api/v1` and must not appear in firmware:
 
 - `POST /_simulator/advance` with `{ "milliseconds": 3000 }` advances manual time by at most one simulated hour per request.
-- `PUT /_simulator/temperatures` sets one or both readings.
+- `PUT /_simulator/temperatures` sets the single `boilerTemperatureC` reading.
 - `PUT /_simulator/fault` latches a contract fault code.
 - `POST /_simulator/power-cycle` clears volatile mode, readings, heater permission, uptime, timers, and faults while preserving targets.
 - `POST /_simulator/reset` also restores default targets.

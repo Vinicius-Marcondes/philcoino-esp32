@@ -145,13 +145,12 @@ function createDebugState(
   return {
     activeMode,
     brewTargetC: overrides.brewTargetC ?? BREW_TARGET_MIN_C,
-    brewTemperatureC: 0,
+    boilerTemperatureC: 0,
     fault: null,
     heaterEnabled,
     heaterActive: false,
     status: "heating",
     steamTargetC: overrides.steamTargetC ?? STEAM_TARGET_MIN_C,
-    steamTemperatureC: 0,
     steamTimeoutRemainingMs: activeMode === "steam" ? 0 : null,
     uptimeMs: 0,
   };

@@ -17,7 +17,6 @@ int main() {
   static_assert(kBrewOverTemperatureC > kBrewTargetMaximumC);
   static_assert(kSteamOverTemperatureC > kSteamTargetMaximumC);
   static_assert(kHeatingTimeoutMs == 600000U);
-  static_assert(kSensorDisagreementDurationMs == 300000U);
   static_assert(kSteamReadyTimeoutMs == 300000U);
   static_assert(kHeaterControlWindowMs == 10000U);
   static_assert(kMinimumHeaterPulseMs == 500U);
@@ -36,14 +35,9 @@ int main() {
   static_assert(kSteamRecoveryHeatRampBandC < kSteamHeatRampBandC);
   static_assert(std::is_same_v<decltype(kOledEnabled), const bool>);
   static_assert(kOledI2cAddress == 0x3C);
-  static_assert(kBrewThermocoupleChipSelectGpio !=
-                kSteamThermocoupleChipSelectGpio);
-  static_assert(kBrewThermocoupleDataGpio == 6);
-  static_assert(kSteamThermocoupleDataGpio == 1);
-  static_assert(kBrewThermocoupleDataGpio != kSteamThermocoupleDataGpio);
-  static_assert(kBrewThermocoupleClockGpio == 4);
-  static_assert(kSteamThermocoupleClockGpio == 0);
-  static_assert(kBrewThermocoupleClockGpio != kSteamThermocoupleClockGpio);
+  static_assert(kBoilerThermocoupleChipSelectGpio == 7);
+  static_assert(kBoilerThermocoupleDataGpio == 6);
+  static_assert(kBoilerThermocoupleClockGpio == 4);
   static_assert(kSsrActiveHigh);
 
   return 0;

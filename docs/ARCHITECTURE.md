@@ -152,11 +152,11 @@ The API and control loop share `TemperatureController` and `TargetStorage` behin
 
 ### Sensor and control state
 
-`DualMax6675` enforces conversion timing, sequentially reads frames, rejects open/invalid/transport failures, and can mirror the brew reading when diagnostic single-sensor mode is configured. Current source sets `kDualThermocouplesEnabled = false`, so the brew channel controls both modes; this does not satisfy final dual-sensor acceptance.
+`Max6675` enforces conversion timing and rejects open, invalid, or transport-failed frames from the permanent boiler-base thermocouple. The one boiler reading is authoritative in both modes; the active mode selects the target, over-temperature limit, and heat-control constants.
 
 `TemperatureController` boots in brew mode with volatile heater permission enabled. A valid update:
 
-1. validates monitored readings and over-temperature limits;
+1. validates the boiler reading and active mode over-temperature limit;
 2. applies the steam return timeout when active;
 3. requires ±1°C stability for three seconds before `ready`;
 4. tracks continuous heating demand toward a ten-minute timeout;
@@ -165,7 +165,7 @@ The API and control loop share `TemperatureController` and `TargetStorage` behin
 
 Mode and target changes reset readiness, steam timing, demand tracking, recovery state, and the heater window. Targets are saved before becoming controller state. Steam timeout starts on first readiness and returns to brew after five minutes.
 
-Sensor, over-temperature, heating-timeout, and internal faults latch and command the SSR off. Only over-temperature can be dismissed without a power cycle, and only when monitored readings are valid, the active temperature is back at target, and no hard limit remains exceeded.
+Sensor, over-temperature, heating-timeout, and internal faults latch and command the SSR off. Only over-temperature can be dismissed without a power cycle, and only when the boiler reading is valid, the temperature is back at the active target, and the active mode limit is clear.
 
 ### Networking
 

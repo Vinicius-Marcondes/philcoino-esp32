@@ -16,7 +16,7 @@ The phone discovers and authenticates one machine, displays live state, and subm
 - Strict API v1 runtime validation and explicit offline, unauthorized, not-found, timeout, and protocol-error states.
 - Completion-driven one-second dashboard polling while the screen/app is active.
 - Firmware-acknowledged brew/steam targets, active mode, heater permission, and over-temperature dismissal.
-- ESP32-C3 control, NVS target persistence, MAX6675 sampling, SSD1306 output, HTTP/mDNS networking, and host-testable policy boundaries.
+- ESP32-C3 control from one boiler-base MAX6675, NVS target persistence, SSD1306 output, HTTP/mDNS networking, and host-testable policy boundaries.
 - Deterministic Bun/Hono simulator for mobile and contract development.
 
 The product is still a prototype. PRD-001 acceptance and physical validation are incomplete; see [the tracker](docs/TRACKER.md) and [known findings](CODEBASE_REVIEW_REPORT.md).

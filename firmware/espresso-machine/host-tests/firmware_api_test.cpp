@@ -64,10 +64,10 @@ struct ApiHarness {
         storage(backend),
         ssr(output),
         controller(memory.targets, ssr),
-        api({"philcoino-0102AF", "PhilcoINO", "ESP32-C3 Super Mini", "0.1.0"},
+        api({"philcoino-0102AF", "PhilcoINO", "ESP32-C3 Super Mini", "0.2.0"},
             "test-secret", controller, storage) {
     assert(ssr.initialize());
-    controller.update({ok(87.5F), ok(103.75F)}, 1000);
+    controller.update(ok(87.5F), 1000);
   }
 
   HttpResponse request(HttpMethod method, const char* path,
@@ -104,7 +104,7 @@ void write_capture(const std::filesystem::path& directory, const char* name,
 void test_public_contract_and_authentication() {
   ApiHarness harness;
   const DeviceIdentity identity{"philcoino-0102AF", "PhilcoINO",
-                                "ESP32-C3 Super Mini", "0.1.0"};
+                                "ESP32-C3 Super Mini", "0.2.0"};
   const auto txt = discovery_txt(identity);
   assert(std::string(kMdnsServiceType) == "_philcoino");
   assert(std::string(kMdnsProtocol) == "_tcp");
@@ -210,15 +210,13 @@ void test_over_temperature_dismissal_endpoint_is_guarded() {
   expect_error(response, 409, "sensor_unavailable");
 
   harness.controller.update(
-      {ok(static_cast<float>(philcoino::config::kBrewOverTemperatureC)),
-       ok(100.0F)},
-      2000);
+      ok(static_cast<float>(philcoino::config::kBrewOverTemperatureC)), 2000);
   response = harness.request(
       HttpMethod::kPost, "/api/v1/faults/over-temperature/dismiss",
       authorization, "", 3000);
   expect_error(response, 409, "sensor_unavailable");
 
-  harness.controller.update({ok(93.0F), ok(100.0F)}, 4000);
+  harness.controller.update(ok(93.0F), 4000);
   response = harness.request(
       HttpMethod::kPost, "/api/v1/faults/over-temperature/dismiss",
       authorization, "", 5000);
@@ -295,7 +293,7 @@ void capture_contract_payloads(const std::filesystem::path& directory) {
 
   ApiHarness fault_harness;
   fault_harness.controller.update(
-      {ok(std::numeric_limits<float>::quiet_NaN()), ok(100.0F)}, 2000);
+      ok(std::numeric_limits<float>::quiet_NaN()), 2000);
   write_capture(directory, "state-fault.json",
                 fault_harness.request(HttpMethod::kGet, "/api/v1/state",
                                       authorization).body);

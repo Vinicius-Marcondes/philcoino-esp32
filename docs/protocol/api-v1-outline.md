@@ -59,14 +59,13 @@ The ESP32 is powered by the espresso machine. When the machine is off, the ESP32
 
 The ESP32 cannot observe the machine's physical brew and steam switches, so the API does not report `brewing` or `steaming`.
 
-A state payload contains both monitored thermocouple temperatures:
+A state payload contains the single boiler thermocouple temperature:
 
 ```json
 {
   "status": "heating",
   "activeMode": "brew",
-  "brewTemperatureC": 87.4,
-  "steamTemperatureC": 103.8,
+  "boilerTemperatureC": 87.4,
   "brewTargetC": 93,
   "steamTargetC": 115,
   "heaterEnabled": true,
@@ -77,9 +76,9 @@ A state payload contains both monitored thermocouple temperatures:
 }
 ```
 
-`brewTemperatureC` is the base/brew control-sensor reading and
-`steamTemperatureC` is the top/steam control-sensor reading. `activeMode` is
-`brew` or `steam`. `uptimeMs` is monotonic device uptime and does not require
+`boilerTemperatureC` is the retained boiler-base control-sensor reading used in
+both modes. `activeMode` selects the target and mode-specific safety policy and
+is `brew` or `steam`. `uptimeMs` is monotonic device uptime and does not require
 internet time synchronization. `fault` is `null` while status is `heating` or
 `ready`, and contains a stable code and message while status is `fault`.
 `heaterEnabled` is the volatile operator permission for automatic heater output.
@@ -96,7 +95,7 @@ physically off.
 - The temperature targets remain persisted independently from active mode.
 - In steam mode, the firmware starts a five-minute countdown the first time temperature qualifies as `ready` for the active steam target.
 - When that countdown expires, the firmware automatically returns to brew mode. A later temperature dip does not reset or pause the countdown.
-- `steamTimeoutRemainingMs` is `null` outside steam mode and before steam temperature first becomes ready; otherwise it reports the remaining countdown.
+- `steamTimeoutRemainingMs` is `null` outside steam mode and before the boiler temperature first reaches steam readiness; otherwise it reports the remaining countdown.
 - The firmware owns safe transition behavior and must not depend on the app remaining connected.
 
 ## Heater permission

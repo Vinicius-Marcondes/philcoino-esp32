@@ -11,8 +11,6 @@ inline constexpr std::uint32_t kMax6675SampleIntervalMs = 500;
 inline constexpr std::int32_t kDefaultBrewTargetC = 93;
 inline constexpr std::int32_t kDefaultSteamTargetC = 115;
 
-enum class ThermocoupleChannel { kBrew, kSteam };
-
 enum class ThermocoupleStatus {
   kOk,
   kNotReady,
@@ -27,32 +25,24 @@ struct ThermocoupleReading {
   std::uint16_t raw_frame{0};
 };
 
-struct ThermocoupleReadings {
-  ThermocoupleReading brew{};
-  ThermocoupleReading steam{};
-};
-
 class Max6675Transport {
  public:
   virtual ~Max6675Transport() = default;
-  virtual bool read_frame(ThermocoupleChannel channel,
-                          std::uint16_t& frame) = 0;
+  virtual bool read_frame(std::uint16_t& frame) = 0;
 };
 
-class DualMax6675 {
+class Max6675 {
  public:
-  explicit DualMax6675(Max6675Transport& transport,
-                       std::uint32_t started_at_ms = 0,
-                       bool dual_thermocouples_enabled = true);
+  explicit Max6675(Max6675Transport& transport,
+                   std::uint32_t started_at_ms = 0);
 
-  ThermocoupleReadings read(std::uint32_t now_ms);
+  ThermocoupleReading read(std::uint32_t now_ms);
 
  private:
   static ThermocoupleReading decode(std::uint16_t frame);
 
   Max6675Transport& transport_;
   std::uint32_t ready_at_ms_;
-  bool dual_thermocouples_enabled_;
 };
 
 struct TemperatureTargets {
@@ -119,8 +109,7 @@ struct DisplayTemperature {
 };
 
 struct DisplaySnapshot {
-  DisplayTemperature brew{};
-  DisplayTemperature steam{};
+  DisplayTemperature boiler{};
   TemperatureTargets targets{};
   DisplayMode mode{DisplayMode::kUnknown};
   DisplayStatus status{DisplayStatus::kBoot};
