@@ -30,7 +30,7 @@ The ESP32 advertises `_philcoino._tcp.local` through mDNS with:
 
 The app remembers the stable device ID, resolved address, and token. It tries the cached address first and rediscovers the device ID when that address stops responding. Manual IP entry is the fallback.
 
-## Proposed endpoints
+## Implemented endpoints
 
 ### Public
 
@@ -83,7 +83,9 @@ A state payload contains both monitored thermocouple temperatures:
 internet time synchronization. `fault` is `null` while status is `heating` or
 `ready`, and contains a stable code and message while status is `fault`.
 `heaterEnabled` is the volatile operator permission for automatic heater output.
-`heaterActive` is the actual SSR command at the time of the snapshot.
+`heaterActive` is the firmware's SSR command state at the time of the snapshot;
+it is not independent confirmation that GPIO, SSR, wiring, or heater current is
+physically off.
 
 ## Mode selection
 
@@ -143,7 +145,7 @@ Initial machine fault codes are:
 - `heating_timeout`
 - `internal_error`
 
-Faults remain latched until the espresso machine is power-cycled, except `over_temperature`, which may be dismissed through API v1 only after the active control temperature has returned to its target. Entering any fault state de-energizes the heater output immediately, and the ESP32 rejects over-temperature dismissal while the active temperature is still above target or when any other fault is latched.
+Faults remain latched until the espresso machine is power-cycled, except `over_temperature`, which may be dismissed through API v1 only after the active control temperature has returned to its target. Entering any fault state commands the heater output off, and the ESP32 rejects over-temperature dismissal while the active temperature is still above target or when any other fault is latched. See `docs/SAFETY.md` for the distinction between a software off command and confirmed physical de-energization.
 
 ## Safety boundary
 

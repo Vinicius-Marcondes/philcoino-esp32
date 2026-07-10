@@ -1,59 +1,68 @@
 # PhilcoINO ESP32-C3 firmware
 
-This is the ESP-IDF C++ firmware project for the ESP32-C3 Super Mini. PHIL-004
-contains host-testable MAX6675, SSD1306, NVS target, fail-off SSR, control-state,
-and HTTP API boundaries. The ESP-IDF adapter connects Wi-Fi, serves the local
-API on port 80, and advertises `_philcoino._tcp` through mDNS.
+ESP-IDF C++ firmware for the ESP32-C3 Super Mini. It owns sensor sampling, persisted targets, brew/steam control state, SSR commands, OLED status, bearer-authenticated HTTP, and `_philcoino._tcp` mDNS advertising.
+
+> [!CAUTION]
+> This firmware is not approved for production, unattended, or mains-powered heater operation. Keep the heater/load disconnected for development and read [Safety](../../docs/SAFETY.md) plus the [current review](../../CODEBASE_REVIEW_REPORT.md).
+
+## Architecture
+
+- `components/firmware_config`: identity, pins, target/safety constants, timeouts, and diagnostic flags.
+- `components/peripherals`: pure MAX6675, NVS target, fail-off SSR, and SSD1306 policies plus ESP-IDF adapters.
+- `components/control`: pure temperature controller, readiness, duty windows, timeouts, and fault latching.
+- `components/networking`: pure HTTP API plus ESP-IDF Wi-Fi, HTTP, and mDNS adapters.
+- `main`: fail-off startup ordering, shared-object wiring, control loop, display, mutex, and background networking.
+- `host-tests`: native C++ tests and protocol contract capture validation.
+
+Pure policy stays host-testable; ESP-IDF GPIO/I2C/NVS/Wi-Fi/HTTP/mDNS calls remain in `esp_*` adapters and startup wiring.
 
 ## Toolchain
 
-The project is pinned to ESP-IDF `v6.0.2` and target `esp32c3`. The only managed
-component currently pinned is `espressif/mdns` `1.11.3`.
+The project is pinned to ESP-IDF `v6.0.2`, target `esp32c3`, and managed `espressif/mdns` `1.11.3`.
 
-On the current development machine, activate that installation with:
+Activate the pinned installation for your environment, then build from this directory:
 
-```sh
-export IDF_PYTHON_ENV_PATH="$HOME/.espressif/python_env/idf6.0_py3.14_env"
-source "$HOME/.espressif/v6.0.2/esp-idf/export.sh"
+```bash
+idf.py set-target esp32c3
+idf.py build
 ```
 
-Build from this directory with `idf.py build`. Build output and downloaded
-managed components are ignored; `dependencies.lock` is committed to preserve the
-resolved dependency graph.
+Build output, downloaded managed components, and generated local configuration are ignored. Do not inspect or commit them.
 
 ## Local secrets
 
-Run `idf.py menuconfig` and enter the Wi-Fi SSID, Wi-Fi password, and bearer token
-under `PhilcoINO`. ESP-IDF writes them to the generated `sdkconfig`, which is
-ignored. Do not place secrets in `sdkconfig.defaults`, source files, logs, or
-documentation. The foundation builds with empty values and logs only that secrets
-are missing.
+Run `idf.py menuconfig` and enter the Wi-Fi SSID, Wi-Fi password, and bearer token under `PhilcoINO`. ESP-IDF writes them to generated, ignored `sdkconfig`.
+
+Never place secrets in `sdkconfig.defaults`, source files, tests, logs, screenshots, or documentation. Firmware logs only whether required values are missing.
 
 ## Host tests
 
-The `firmware_config` component uses only the C++ standard library, allowing its
-identity formatting and safety constants to be tested without ESP-IDF or hardware:
+From the repository root:
 
-```sh
-cmake -S host-tests -B /tmp/philcoino-host-tests
+```bash
+cmake -S firmware/espresso-machine/host-tests -B /tmp/philcoino-host-tests
 cmake --build /tmp/philcoino-host-tests
 ctest --test-dir /tmp/philcoino-host-tests --output-on-failure
+/tmp/philcoino-host-tests/firmware_api_test \
+  /tmp/philcoino-firmware-contract
+bun run firmware/espresso-machine/host-tests/validate_contract.ts \
+  /tmp/philcoino-firmware-contract
 ```
 
-The host suite verifies sequential dual-MAX6675 reads and frame faults, target
-persistence, SSR fail-off behavior, the control state machine, strict API
-parsing/authentication, and contract response serialization. ESP-IDF calls
-remain at the platform boundary.
+The suite covers identity/configuration, MAX6675 decoding, target persistence policy, fail-off SSR behavior, OLED serialization, control transitions/timeouts/faults, bearer/API parsing, and contract response captures. It does not exercise ESP-IDF scheduling, physical sensors, GPIO, SSRs, or thermal behavior.
 
-## Low-voltage peripheral check
+## Current diagnostic configuration
 
-Keep the mains heater disconnected. Power only the ESP32 and 3.3 V peripherals,
-then confirm both thermocouples report independently, an open probe produces the
-fault display, the OLED shows both temperatures and targets, and GPIO20 remains
-low through reset, initialization, and induced peripheral failures. This check
-does not authorize mains-powered heater operation.
+Current source has:
 
-`philcoino::config::kOledEnabled` is the firmware-side display flag. Keep it
-`true` when the SSD1306 OLED is wired for validation, or set it to `false` when
-the display is disconnected so the device can boot, control temperature, and
-serve the API without display hardware.
+- `kDualThermocouplesEnabled = false`: only the brew MAX6675 is read and its value is mirrored for steam control;
+- `kOledEnabled = true`: SSD1306 initialization/render failure stops control startup;
+- `kWifiEnabled = true`.
+
+Single-sensor mode does not satisfy final dual-sensor acceptance. The OLED flag also conflicts with tracker text describing a temporary disabled-display state. Resolve the intended hardware configuration explicitly before device testing.
+
+## Low-voltage checks only
+
+Keep the mains heater disconnected. With qualified supervision, power only the ESP32 and 3.3 V peripherals to check boot, thermocouple readings, open-probe handling, OLED status, network API/discovery, and GPIO20's inactive level through reset and induced failures.
+
+This does not authorize mains operation and cannot validate SSR load behavior, independent cutoff wiring, thermal response, enclosure, grounding, or regulatory compliance.

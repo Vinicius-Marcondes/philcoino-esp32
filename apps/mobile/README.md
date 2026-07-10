@@ -1,51 +1,42 @@
 # Philcoino mobile app
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+Expo 54 / React Native client for discovering, pairing with, monitoring, and submitting acknowledged changes to one local Philcoino machine.
 
-## Get started
+The app is a client, not the temperature-control authority. Firmware owns sensors, targets, persistence, readiness, timeouts, heater output, and faults.
 
-From the repository root, install dependencies:
+## Runtime flow
 
-   ```bash
-   bun install
-   ```
-
-Then start the app from the repository root:
-
-   ```bash
-   bun run start
-   ```
-
-To run the dashboard without connecting to an ESP32, enable the debug device
-client:
-
-   ```bash
-   EXPO_PUBLIC_PHILCOINO_DEBUG_DEVICE=1 bun run start
-   ```
-
-Debug device mode bypasses discovery, secure restore, and authentication. Live
-temperature and uptime readings stay at `0`; target defaults remain within the
-shared protocol ranges so dashboard controls can render and acknowledge changes
-locally.
-
-In the output, you'll find options to open the app in a
-
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
-
-You can start developing by editing files in `apps/mobile/app`. This project uses [file-based routing](https://docs.expo.dev/versions/v54.0.0/router/introduction/).
-
-## Get a fresh project
-
-When you're ready, run:
-
-```bash
-bun run --cwd apps/mobile reset-project
+```text
+PairingScreen
+  -> restore cached SecureStore record
+  -> inspect cached address or rediscover stable device ID
+  -> authenticate bearer token
+  -> DashboardScreen
+       -> one completion-driven state poll per second
+       -> serialized mutations with polling paused
+       -> live state updates only from valid acknowledgements
 ```
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+Key code boundaries:
+
+- `app`: Expo Router entry and layout;
+- `components`: pairing, dashboard, controls, and presentation;
+- `src/discovery`: mDNS abstraction and strict TXT/address parsing;
+- `src/pairing`: inspection, authentication, persistence, and address recovery;
+- `src/networking`: strict API client, cancellation/timeouts, and error mapping;
+- `src/storage`: strict one-device record and Expo SecureStore adapter;
+- `src/dashboard`: polling, acknowledged mutations, and pure view models;
+- `test`: Bun tests for the above boundaries.
+
+## Run
+
+From the repository root after `bun install`:
+
+```bash
+bun run start
+```
+
+Use `bun run ios`, `bun run android`, or `bun run web` for a target. Native mDNS requires an iOS/Android development build and local-network permissions; web/unsupported platforms use manual address entry.
 
 ## Debug-device mode
 
@@ -59,18 +50,21 @@ EXPO_PUBLIC_PHILCOINO_DEBUG_DEVICE=1 bun run start
 The simulated scan finds one `Philcoino debug` machine. Select it and enter
 `debug-token` to continue to the in-memory dashboard. A wrong token shows the
 normal authentication error, forgetting the machine returns to scanning, and a
-reload starts the flow from the scan screen again.
+reload starts the flow from the scan screen again. Use the device simulator for
+API integration work.
 
-## Learn more
+## Simulator integration
 
-To learn more about developing your project with Expo, look at the following resources:
+Run `bun run simulator` at the repository root, manually enter a reachable simulator address, and use `philcoino-dev-token`. A physical phone cannot reach a computer through the phone's own `localhost`; use the computer's LAN address.
 
-- [Expo SDK 54 documentation](https://docs.expo.dev/versions/v54.0.0/): Learn fundamentals and APIs for the project-pinned SDK.
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+## Verify
 
-## Join the community
+```bash
+bun run typecheck
+bun run --cwd apps/mobile test
+bun run lint
+```
 
-Join our community of developers creating universal apps.
+Also exercise the affected platform for UI, discovery, permissions, native configuration, or lifecycle changes.
 
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+See the root [development guide](../../docs/DEVELOPMENT.md), [architecture](../../docs/ARCHITECTURE.md), and [safety status](../../docs/SAFETY.md).
