@@ -283,7 +283,7 @@ function RealPairingScreen() {
     <>
       <ScrollView
         automaticallyAdjustKeyboardInsets
-        contentInsetAdjustmentBehavior="automatic"
+        contentInsetAdjustmentBehavior="never"
         keyboardDismissMode="interactive"
         keyboardShouldPersistTaps="handled"
         style={styles.screen}
@@ -474,7 +474,7 @@ const styles = StyleSheet.create({
     gap: 18,
     padding: 20,
     paddingBottom: 44,
-    paddingTop: 24,
+    paddingTop: 72,
   },
   pageHeader: { alignItems: "center", minHeight: 34 },
   pageTitle: { color: "#241B17", fontSize: 22, fontWeight: "800" },
