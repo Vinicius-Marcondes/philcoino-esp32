@@ -1,44 +1,64 @@
 # Philcoino documentation
 
-This directory is the source of truth for product, architecture, protocol, and delivery documentation for the Philcoino iPhone app and ESP32 integration.
+This directory explains the implemented Philcoino system, the approved product scope, and the safety work that is still incomplete. Read documents by authority rather than assuming every historical plan describes current code.
 
-## Initial product scope
+## Start here
 
-Philcoino will discover an espresso-machine ESP32 on the user's local network, authenticate with it, remember the selected device, and provide live monitoring and control of the machine.
+| Document | Use it for |
+| --- | --- |
+| [Project README](../README.md) | Public overview, current capabilities, and quickest simulator/debug start |
+| [Architecture](ARCHITECTURE.md) | Runtime components, ownership, data flows, state transitions, and failure behavior |
+| [Development](DEVELOPMENT.md) | Prerequisites, package workflows, simulator controls, firmware setup, and verification |
+| [Safety](SAFETY.md) | Prototype restrictions, known software/hardware risks, and the physical-acceptance boundary |
+| [Contributing](../CONTRIBUTING.md) | Change process, contract workflow, validation expectations, and pull-request checklist |
+| [PRD-001 tracker](TRACKER.md) | Supervised task state, recorded evidence, approvals, and work still awaiting acceptance |
+| [Codebase review](../CODEBASE_REVIEW_REPORT.md) | Detailed current BLOCKER/MAJOR/MINOR findings and quality-gate results |
 
-The first release is expected to cover:
+## Sources of truth
 
-- local-network device discovery and reconnection;
-- bearer-token authentication and secure local persistence;
-- machine health, connection state, current temperature, configured brew temperature, configured steam temperature, and operating status;
-- explicit handling for offline, unauthorized, and device-not-found states.
+When documents disagree, use this order:
 
-## Planned documents
+1. `packages/protocol/openapi.yaml` for the HTTP wire contract.
+2. Current source and tests for implemented runtime behavior.
+3. Approved decisions under `docs/decisions` and the active PRD for intended boundaries.
+4. `docs/TRACKER.md` for supervised task acceptance—not merely whether code exists.
+5. Hardware and side-note documents for physical constraints and deferred checks.
 
-- `prds/`: product requirements and deterministic acceptance criteria;
-- `architecture/`: app boundaries, discovery strategy, persistence, networking, and state management;
-- `protocol/`: versioned ESP32 HTTP API contract, authentication, discovery identity, error formats, and examples;
-- `decisions/`: short architecture decision records for choices that are costly to reverse.
+Do not silently resolve a safety, hardware, security, or scope conflict. Record it and request a human decision.
 
-## Current drafts
+## Architecture and protocol
 
-- [`architecture/repository-layout.md`](architecture/repository-layout.md): proposed Expo and ESP-IDF monorepo organization.
-- [`decisions/firmware-foundation.md`](decisions/firmware-foundation.md): human-approved ESP-IDF, identity, safety-constant, display, GPIO, and secret-handling decisions.
-- [`hardware/esp32-c3-wiring.md`](hardware/esp32-c3-wiring.md): proposed module wiring and unresolved electrical-safety checks.
-- [`hardware/temperature-control-tuning.md`](hardware/temperature-control-tuning.md): firmware heater duty-curve behavior and tuning guidance.
-- [`prds/PRD-001/PRD-001.md`](prds/PRD-001/PRD-001.md): draft product requirements for local monitoring and temperature control.
-- [`protocol/api-v1-outline.md`](protocol/api-v1-outline.md): initial discovery, authentication, state, and temperature API contract.
-- [`references/README.md`](references/README.md): authoritative versioned software, firmware, component, and safety references.
-- [`side-notes.md`](side-notes.md): important unresolved items that do not stop software planning.
+- [`ARCHITECTURE.md`](ARCHITECTURE.md): current mobile, protocol, simulator, and firmware architecture.
+- [`architecture/repository-layout.md`](architecture/repository-layout.md): durable repository boundaries and placement guidance.
+- [`protocol/api-v1-outline.md`](protocol/api-v1-outline.md): human-readable API rationale and examples; OpenAPI remains authoritative.
+- [`decisions/firmware-foundation.md`](decisions/firmware-foundation.md): approved firmware/toolchain/foundation decisions.
 
-## Planning sequence
+## Product and delivery
 
-1. Define the v1 user workflows and safety boundaries.
-2. Freeze a versioned ESP32 API and discovery contract.
-3. Choose the iOS-compatible discovery mechanism and fallback setup flow.
-4. Define token provisioning, storage, rotation, and reset behavior.
-5. Draft and approve the first PRD.
-6. Split the approved PRD into supervised implementation tasks.
-7. Build a small discovery/authentication proof of concept before the full interface.
+- [`prds/PRD-001/PRD-001.md`](prds/PRD-001/PRD-001.md): approved local monitoring and temperature-control requirements.
+- [`prds/PRD-001/tasks`](prds/PRD-001/tasks): supervised task definitions and acceptance criteria.
+- [`TRACKER.md`](TRACKER.md): current execution state and evidence.
 
-No implementation decisions in this file are final until they are captured in an approved PRD or architecture decision.
+The PRD and task files are historical/approval records. If implementation has moved ahead of the tracker, do not mark acceptance complete without the required reviewer.
+
+## Hardware and safety
+
+- [`SAFETY.md`](SAFETY.md): public safety status and contribution rules.
+- [`hardware/esp32-c3-wiring.md`](hardware/esp32-c3-wiring.md): GPIO assignments, module wiring, and unresolved electrical checks.
+- [`hardware/temperature-control-tuning.md`](hardware/temperature-control-tuning.md): implemented duty curve and tuning considerations.
+- [`side-notes.md`](side-notes.md): deferred physical iPhone, hardware, relay, cutoff, and mains checks.
+- [`references/README.md`](references/README.md): exact-version framework, firmware, component, and safety references.
+
+No repository document constitutes electrical, thermal, regulatory, or unattended-operation approval.
+
+## Keeping documentation current
+
+Update public docs in the same change when any of these move:
+
+- setup prerequisites, commands, platforms, or package layout;
+- API paths, schemas, authentication, limits, or error mapping;
+- discovery, pairing, persistence, polling, or mutation behavior;
+- firmware state transitions, target ranges, timeouts, fault behavior, or hardware configuration;
+- safety status, known review findings, or deferred physical checks.
+
+Use present tense only for behavior observable in current source. Label proposed, pending, diagnostic, simulated, and human-approved behavior explicitly.

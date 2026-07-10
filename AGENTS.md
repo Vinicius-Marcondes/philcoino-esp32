@@ -4,53 +4,61 @@ Always use dev-mind whenever documentation is needed and it can help, if you can
 
 ## 1. Overview
 
-Philcoino is a local espresso-machine monitoring and temperature-control system spanning a phone client, a language-neutral wire contract, a deterministic simulator, and device firmware. Firmware remains authoritative for real-time control, validation, persistence, heater safety, and fault handling.
+Philcoino is a local-only espresso-machine monitoring and temperature-control system composed of a mobile client, a language-neutral HTTP contract, a deterministic development simulator, and ESP32-C3 firmware. Firmware is the authority for sensor validation, persisted targets, real-time heater control, timeouts, and faults; the phone is never part of the safety loop.
 
 ## 2. Folder Structure
 
-- `apps/mobile`: Expo 54 and React Native client.
-  - `app`: Expo Router route tree and layouts; keep screen and navigation work here.
-  - `components`, `hooks`, and `constants`: reusable UI, platform hooks, and theme primitives.
-  - `src/dashboard`: polling and mutation sessions plus presentation view models; acknowledged device responses, not requested values, drive live state.
-  - `src/discovery` and `src/pairing`: mDNS adapter boundaries, identity verification, authentication, and cached-address recovery.
-  - `src/networking`: typed local-device client, strict protocol parsing, timeout/cancellation handling, and connection-state mapping.
-  - `src/storage`: single-device persistence boundary backed by Expo SecureStore.
-  - `test`: Bun coverage for networking, persistence, discovery, polling, mutation races, simulator integration, and view-model behavior.
-  - `assets`: application icons and static images.
-- `packages/protocol`: language-neutral API boundary shared by clients and simulators.
-  - `openapi.yaml`: authoritative HTTP v1 paths, payloads, limits, and errors.
-  - `src`: strict Zod schemas and inferred TypeScript types.
-  - `fixtures` and `test`: valid/invalid wire examples and contract verification.
-- `tools/device-simulator`: development-only Bun/Hono implementation of the protocol.
-  - `src`: authenticated API surface, manual-time machine model, and simulator-only controls kept outside `/api/v1`.
-  - `test`: deterministic state, persistence, timeout, and fault scenarios.
-- `firmware/espresso-machine`: independent ESP-IDF 6.0.2 CMake project; it is not a Bun workspace.
-  - `components/firmware_config`: host-testable identity, pins, limits, and safety constants.
-  - `components/peripherals`: pure C++ peripheral policies plus ESP-IDF SPI, I2C, NVS, and GPIO adapters.
-  - `components/control`: host-testable mode, readiness, timeout, persistence, fault-latching, and SSR-control policy.
-  - `components/networking`: host-testable HTTP contract plus ESP-IDF Wi-Fi, HTTP, and mDNS adapters.
-  - `main`: device startup wiring and local configuration boundary.
-  - `host-tests`: native policy tests and firmware contract captures that do not require hardware.
-- `docs`: source of truth for delivery scope and approved decisions.
-  - `prds`: approved requirements, supervised task files, and acceptance criteria.
-  - `architecture`, `decisions`, and `protocol`: repository boundaries, durable decisions, and API design.
-  - `hardware` and `references`: wiring status and exact-version implementation sources.
-  - `side-notes.md`: deferred human checks and unresolved physical-safety risks that must remain visible after software approval.
-  - `TRACKER.md`: current task status, evidence, decisions, and branch/merge guidance.
-- Root workspace files coordinate packages under `apps/*`, `packages/*`, and `tools/*`; firmware tooling and generated output remain outside that workspace.
+- `apps/mobile`: Expo 54 / React Native application for one selected machine.
+  - `app`: Expo Router entry point and root layout. Route files default-export screens; navigation concerns stay here.
+  - `components`: pairing, dashboard, machine controls, and reusable presentation. The large screen components currently combine orchestration and presentation, so trace their hooks and services before splitting them.
+  - `hooks`: React lifecycle adapters. `use-machine-dashboard.ts` binds focus/AppState to polling and mutation sessions.
+  - `src/discovery`: mDNS service parsing plus native and unsupported-platform adapters. TXT identity and resolved addresses are treated as untrusted input.
+  - `src/pairing`: device inspection, bearer authentication, cached-address restore, identity re-checks, and rediscovery recovery.
+  - `src/networking`: normalized local origins, the injected/fetch-backed API client, strict protocol parsing, timeout/cancellation ownership, error taxonomy, and debug client.
+  - `src/storage`: strict single-device record and Expo SecureStore adapter; the record contains the device ID, last successful origin, and bearer token.
+  - `src/dashboard`: completion-driven polling, serialized acknowledged mutations, connection mapping, and pure presentation helpers. Never display requested values as live state before a valid device response.
+  - `test`: Bun tests for transport, persistence, discovery, pairing, polling, mutation races, simulator integration, debug mode, and view-model behavior.
+  - `plugins/with-android-cleartext.js`: narrowly enables local HTTP in generated Android configuration; do not hand-edit generated native projects.
+- `packages/protocol`: API v1 contract shared across TypeScript consumers and independently reimplemented by firmware.
+  - `openapi.yaml`: authoritative wire contract, despite the extension it is JSON-compatible YAML 1.2. Paths, authentication, request/response shapes, limits, and errors start here.
+  - `src`: strict Zod schemas, constants, and inferred TypeScript types. Unknown properties are rejected.
+  - `fixtures`: accepted and rejected wire examples.
+  - `scripts` and `test`: OpenAPI structural validation plus schema/example/drift checks.
+- `tools/device-simulator`: development-only Bun/Hono API and UI-integration simulator.
+  - `src/app.ts`: bearer middleware, API v1 routes, contract errors, and `_simulator` control routes.
+  - `src/model.ts`: manually advanced, deterministic temperature/readiness/steam-timeout model with persisted-vs-volatile reset behavior.
+  - `test`: contract, authentication, persistence, mutation, timeout, and injected-fault scenarios. Simulator success is not firmware-safety evidence.
+- `firmware/espresso-machine`: independent ESP-IDF 6.0.2 CMake project, outside the Bun workspace.
+  - `components/firmware_config`: version, identity, pins, ranges, timeouts, duty-curve constants, and diagnostic feature flags.
+  - `components/peripherals`: host-testable MAX6675 decoding, target storage policy, fail-off SSR wrapper, SSD1306 rendering, and ESP-IDF GPIO/I2C/NVS adapters.
+  - `components/control`: host-testable brew/steam state machine, readiness, steam return, heating timeout, fault latching, permission gating, and ten-second SSR duty windows.
+  - `components/networking`: strict C++ API parser/serializer and ESP-IDF Wi-Fi, HTTP, bearer, mutex, and mDNS adapters.
+  - `main`: fail-off startup ordering, storage/sensor/display initialization, control-loop ownership, API synchronization, and background network startup.
+  - `host-tests`: native C++ policy/API tests and TypeScript validation of firmware contract captures; no hardware is required.
+- `docs`: human-facing source of truth.
+  - `README.md`: documentation map and document authority.
+  - `ARCHITECTURE.md`: implemented end-to-end runtime flows and ownership boundaries.
+  - `DEVELOPMENT.md`: prerequisites, local workflows, simulator/debug modes, and verification matrix.
+  - `SAFETY.md`: prototype limits, known blockers, physical-validation boundary, and safe contribution rules.
+  - `prds` and `TRACKER.md`: approved scope, supervised tasks, acceptance state, and evidence; do not infer completion from code presence.
+  - `architecture`, `decisions`, `protocol`, `hardware`, `references`, and `side-notes.md`: durable decisions, detailed contracts, exact-version sources, wiring/tuning notes, and deferred human checks.
+- Root files:
+  - `README.md` and `CONTRIBUTING.md`: public project entry points; keep setup, status, safety, and verification claims aligned with current source.
+  - `CODEBASE_REVIEW_REPORT.md`: current review findings and quality-gate evidence; unresolved BLOCKER/MAJOR findings must remain visible.
+  - `package.json`: Bun workspace orchestration for `apps/*`, `packages/*`, and `tools/*`; it intentionally excludes firmware.
 
 ## 3. Working Agreements
 
-- Respond in the user's preferred language; if unspecified, infer it from the repository. Keep technical terms in English and never translate fenced code blocks.
-- Build context before editing: read the active PRD task, `docs/TRACKER.md`, relevant decisions/references, related usages, full data flow, failure paths, and shared boundaries.
-- Follow the active task exactly. Apply the narrowest complete root-cause fix, check callers and API boundaries, and do not advance later tasks or broaden approved scope.
-- Treat `packages/protocol/openapi.yaml` as the wire-contract source of truth. Keep Zod schemas, simulator behavior, mobile parsing, firmware validation, fixtures, and examples aligned without coupling C++ to TypeScript.
-- Keep heater control, timeouts, sensor validation, persistence authority, and fault ownership in firmware. Mobile validation exists only for feedback, and requested mutations must not appear live before firmware acknowledgement.
-- Ask when a human decision affects scope, hardware behavior, security, or tradeoffs. Never infer approval for mains-powered work, unresolved wiring, or physical acceptance; record deferred checks in `docs/side-notes.md`.
-- Preserve unrelated worktree changes. Never read, open, or recursively search dependency, generated, cache, build, coverage, binary-heavy, or local database paths, including `node_modules`, `.expo`, `dist`, `build`, `coverage`, and SQLite files, unless a specific file is explicitly requested.
-- Do not install packages, programs, CLIs, or dependencies without explicit user permission. Task-required tests may use existing infrastructure; ask before adding test/lint/formatter infrastructure or configuration.
-- Use project-pinned documentation: prefer `dev-mind` when available, otherwise use links in `docs/references` and exact Expo 54 or ESP-IDF 6.0.2 documentation. Do not guess framework APIs.
-- Keep new functions and modules single-purpose and colocated with the owning concern. Preserve strict runtime validation, cancellation semantics, deterministic simulator time, and fail-off firmware behavior.
-- Run all configured checks relevant to each changed workspace. Keep package checks scoped to that package; validate firmware through its independent CMake/ESP-IDF and host-test boundaries.
-- Report changed behavior, compatibility or safety impact, verification evidence, assumptions, deferred human checks, and remaining blockers. Do not claim human acceptance until the owner explicitly grants it.
-- Before every Git operation, reread the Git guidance under `docs`; preserve unrelated changes and stage only the intended task files. Never push `master`. Create pull requests only through the GitHub Connector or `gh`.
+- Respond in the user's preferred language; otherwise infer it from the repository. Keep technical terms in English and never translate fenced code blocks.
+- Before editing, read the active PRD task, `docs/TRACKER.md`, relevant decision/reference/safety documents, all callers, the full success and failure flow, and shared contract boundaries. Do not advance or mark later tasks complete without the required approval.
+- Start wire changes in `packages/protocol/openapi.yaml`, then align Zod schemas, fixtures, simulator, mobile parsing, firmware parsing/serialization, tests, and public docs. C++ validates independently; never couple firmware to TypeScript implementation details.
+- Preserve firmware authority. The app may validate for feedback, but firmware owns targets, persistence, sensors, readiness, timeouts, heater permission/output, and faults. UI mutations stay pending until acknowledged; failure or cancellation must not appear as success or retain stale live data.
+- Treat mains-powered heater work as safety-critical. Do not infer approval for wiring, energized tests, production use, or unresolved review findings. Keep `docs/SAFETY.md`, `docs/side-notes.md`, hardware docs, and `CODEBASE_REVIEW_REPORT.md` aligned; report deferred physical checks explicitly.
+- Preserve strict boundaries: normalize local origins, validate all untrusted discovery/storage/HTTP data, keep cancellation first-cause semantics, avoid overlapping polls, serialize mutations, maintain deterministic simulator time, and default firmware failures to an off command.
+- Preserve unrelated worktree changes. Never read or recursively search dependency, generated, cache, build, coverage, binary-heavy, or database paths such as `node_modules`, `.expo`, `dist`, `build`, `coverage`, `managed_components`, `sdkconfig`, or SQLite files unless the user explicitly requests a specific file.
+- Never install a package, program, CLI, SDK, or dependency without explicit user permission. Ask before introducing tests, lint/formatter infrastructure, generated native projects, or new configuration systems.
+- Use project-pinned documentation: prefer `dev-mind`; otherwise use `docs/references` and exact Expo 54 / React Native 0.81 / ESP-IDF 6.0.2 sources. Do not guess version-sensitive APIs.
+- Keep new functions and modules single-purpose and colocated with their owner. Follow existing TypeScript strict schemas and injected boundaries; keep pure C++ policy separate from ESP-IDF adapters.
+- Run every configured check relevant to changed areas. Type-check TypeScript packages with their package `typecheck` scripts; run Bun tests for affected workspaces; validate OpenAPI for contract changes; use the independent host CMake suite and, when available, the pinned ESP-IDF target build for firmware changes. Never present simulator tests as heater-safety validation.
+- Report changed behavior, affected areas, contract/API compatibility, safety impact, verification evidence, assumptions, checks not run, deferred human acceptance, and remaining blockers.
+- Before every Git operation, reread `docs/GIT_RULES.md`. Stage only intended files, never push `master`, and create pull requests only through the GitHub Connector or `gh`.

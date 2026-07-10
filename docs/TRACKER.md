@@ -22,12 +22,14 @@ PRD: `docs/prds/PRD-001/PRD-001.md`
   for steam-mode control. The steam sensor bus remains disabled by control logic.
 - Wi-Fi is enabled. Brew/steam targets, mode-specific over-temperature limits,
   readiness timing, heating timeout, and steam timeout remain active.
-- `kOledEnabled` is temporarily `false` so firmware can boot, control
-  temperature, and serve the API when the SSD1306 OLED is disconnected.
+- Current source has `kOledEnabled` set to `true`, so OLED initialization or
+  rendering failure stops control startup. This conflicts with the earlier
+  temporary disabled-OLED diagnostic decision and must be resolved before the
+  next hardware test.
 - This single-sensor diagnostic configuration does not satisfy final PHIL-013
   dual-sensor acceptance.
-- The disabled-OLED configuration does not satisfy final OLED display
-  acceptance.
+- Neither the unresolved OLED configuration discrepancy nor a disabled-display
+  diagnostic configuration satisfies final OLED display acceptance.
 - PHIL-009 mobile discovery and pairing work is not blocked by the temporary
   sensor mode.
 
