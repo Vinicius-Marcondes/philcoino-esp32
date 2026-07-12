@@ -220,6 +220,86 @@ bool EspGpioOutput::configure_output() {
   return gpio_config(&configuration) == ESP_OK;
 }
 
+EspGptimerSafetyLease::EspGptimerSafetyLease(std::int32_t gpio,
+                                             bool active_high)
+    : gpio_(gpio), off_level_(active_high ? 0U : 1U) {}
+
+bool EspGptimerSafetyLease::initialize() {
+  initialized_ = false;
+  portENTER_CRITICAL(&trip_lock_);
+  tripped_ = false;
+  portEXIT_CRITICAL(&trip_lock_);
+  if (gpio_set_level(static_cast<gpio_num_t>(gpio_), off_level_) != ESP_OK) {
+    return false;
+  }
+
+  gptimer_config_t timer_config{};
+  timer_config.clk_src = GPTIMER_CLK_SRC_DEFAULT;
+  timer_config.direction = GPTIMER_COUNT_UP;
+  timer_config.resolution_hz = 1000000U;
+  if (gptimer_new_timer(&timer_config, &timer_) != ESP_OK) {
+    timer_ = nullptr;
+    return false;
+  }
+
+  gptimer_event_callbacks_t callbacks{};
+  callbacks.on_alarm = on_alarm;
+  if (gptimer_register_event_callbacks(timer_, &callbacks, this) != ESP_OK ||
+      gptimer_enable(timer_) != ESP_OK || gptimer_start(timer_) != ESP_OK) {
+    gpio_set_level(static_cast<gpio_num_t>(gpio_), off_level_);
+    if (timer_ != nullptr) {
+      gptimer_disable(timer_);
+      gptimer_del_timer(timer_);
+      timer_ = nullptr;
+    }
+    return false;
+  }
+
+  initialized_ = true;
+  return true;
+}
+
+bool EspGptimerSafetyLease::arm(std::uint32_t duration_ms) {
+  if (!initialized_ || timer_ == nullptr || duration_ms == 0U || tripped()) {
+    return false;
+  }
+
+  std::uint64_t current_count = 0;
+  if (gptimer_get_raw_count(timer_, &current_count) != ESP_OK) {
+    return false;
+  }
+  gptimer_alarm_config_t alarm{};
+  alarm.alarm_count = current_count +
+                      static_cast<std::uint64_t>(duration_ms) * 1000ULL;
+  alarm.flags.auto_reload_on_alarm = false;
+  return gptimer_set_alarm_action(timer_, &alarm) == ESP_OK;
+}
+
+bool EspGptimerSafetyLease::disarm() {
+  return initialized_ && timer_ != nullptr &&
+         gptimer_set_alarm_action(timer_, nullptr) == ESP_OK;
+}
+
+bool EspGptimerSafetyLease::tripped() const {
+  portENTER_CRITICAL(&trip_lock_);
+  const bool value = tripped_;
+  portEXIT_CRITICAL(&trip_lock_);
+  return value;
+}
+
+bool EspGptimerSafetyLease::on_alarm(
+    gptimer_handle_t, const gptimer_alarm_event_data_t*, void* context) {
+  static_cast<EspGptimerSafetyLease*>(context)->fail_off_from_isr();
+  return false;
+}
+
+void EspGptimerSafetyLease::fail_off_from_isr() {
+  gpio_set_level(static_cast<gpio_num_t>(gpio_), off_level_);
+  portENTER_CRITICAL_ISR(&trip_lock_);
+  tripped_ = true;
+  portEXIT_CRITICAL_ISR(&trip_lock_);
+}
+
 bool EspOledTransport::initialize() {
   i2c_master_bus_config_t bus_config{};
   bus_config.i2c_port = I2C_NUM_0;

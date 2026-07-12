@@ -22,6 +22,13 @@ The installed relay is confirmed as a `FOTEK SSR-40 DA`. The manufacturer specif
 
 Before final wiring approval, verify that the physical unit and terminal markings match the manufacturer specification, confirm reliable activation from the 3.3 V control circuit, and determine the required heat sink and current derating at approximately 6.3 A heater load.
 
+Firmware now uses a 1500 ms cache-safe GPTimer lease whenever it commands the
+SSR input high. Healthy control iterations renew the lease without toggling the
+input; a missed deadline commands GPIO20 low and latches an internal fault until
+reboot. This bounds a software-stalled high command but does not mitigate an SSR
+whose AC output has failed shorted, so the physical verification and independent
+cutoff requirements below remain unchanged.
+
 On 2026-07-04, the project owner approved an active-high direct connection from
 GPIO20 to the SSR control input. No external pull-down resistor is available or
 planned. Firmware will command GPIO20 low as early as its driver can initialize,

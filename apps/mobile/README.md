@@ -67,4 +67,4 @@ bun run lint
 
 Also exercise the affected platform for UI, discovery, permissions, native configuration, or lifecycle changes.
 
-See the root [development guide](../../docs/DEVELOPMENT.md), [architecture](../../docs/ARCHITECTURE.md), and [safety status](../../docs/SAFETY.md).
+See the root [development guide](../../docs/DEVELOPMENT.md), [architecture](../../docs/ARCHITECTURE.md), and [safety status](../../docs/en/SAFETY.md).

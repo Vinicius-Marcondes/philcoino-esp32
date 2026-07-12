@@ -34,6 +34,7 @@ import {
 } from "@/src/dashboard/dashboard-view-model";
 import type { DashboardMutationState } from "@/src/dashboard/dashboard-mutation-session";
 import { isDebugDeviceModeEnabled } from "@/src/debug-device-mode";
+import { translate } from "@/src/localization/i18n";
 import { createDebugDeviceApiClient } from "@/src/networking/debug-device-api-client";
 import { createDeviceApiClient } from "@/src/networking/expo-device-api-client";
 import type { SelectedDevice } from "@/src/storage/selected-device-repository";
@@ -126,9 +127,9 @@ export function DashboardScreen({
           <Text selectable style={styles.pageTitle}>{deviceName}</Text>
         </View>
         <View style={styles.intro}>
-          <Text selectable style={styles.eyebrow}>LIVE MACHINE</Text>
+          <Text selectable style={styles.eyebrow}>{translate("dashboard.liveMachine")}</Text>
           <Text selectable style={styles.lead}>
-            Temperatures and safety state reported by the machine.
+            {translate("dashboard.lead")}
           </Text>
         </View>
 
@@ -150,10 +151,10 @@ export function DashboardScreen({
               ]}
             />
             <Text selectable style={styles.connectionLabel}>
-              App connection · {connectionContent.label}
+              {translate("dashboard.appConnection", { status: connectionContent.label })}
             </Text>
             {connection.status === "connecting" ? (
-              <ActivityIndicator accessibilityLabel="Connecting" size="small" />
+              <ActivityIndicator accessibilityLabel={translate("dashboard.connecting")} size="small" />
             ) : null}
           </View>
           <Text selectable style={styles.connectionDetail}>
@@ -203,10 +204,10 @@ export function DashboardScreen({
         ) : (
           <View style={styles.unavailableCard}>
             <Text selectable style={styles.unavailableTitle}>
-              Machine status unavailable
+              {translate("dashboard.unavailableTitle")}
             </Text>
             <Text selectable style={styles.unavailableText}>
-              No cached values are shown as live data. The app will keep trying while this screen is active.
+              {translate("dashboard.unavailableText")}
             </Text>
           </View>
         )}
@@ -221,7 +222,7 @@ export function DashboardScreen({
         ) : null}
 
         <View style={styles.contextCard}>
-          <Text selectable style={styles.contextTitle}>Saved machine</Text>
+          <Text selectable style={styles.contextTitle}>{translate("dashboard.savedMachine")}</Text>
           <Text selectable style={styles.contextText}>{initialNote}</Text>
           <Text selectable style={styles.deviceId}>{selectedDevice.deviceId}</Text>
           <Text selectable style={styles.address}>
@@ -231,7 +232,7 @@ export function DashboardScreen({
             accessibilityRole="button"
             onPress={onForget}
             style={({ pressed }) => [styles.forgetButton, pressed && styles.pressed]}>
-            <Text style={styles.forgetButtonText}>Forget this machine</Text>
+            <Text style={styles.forgetButtonText}>{translate("dashboard.forgetMachine")}</Text>
           </Pressable>
         </View>
       </ScrollView>
@@ -272,9 +273,9 @@ function TemperatureCurve({
     <View style={styles.curveCard}>
       <View style={styles.curveHeading}>
         <View style={styles.curveTitleGroup}>
-          <Text selectable style={styles.cardLabel}>TEMPERATURE CURVE</Text>
+          <Text selectable style={styles.cardLabel}>{translate("dashboard.temperatureCurve")}</Text>
           <Text selectable style={styles.curveTitle}>
-            {modeLabel(snapshot.activeMode)} control trend
+            {translate("dashboard.controlTrend", { mode: modeLabel(snapshot.activeMode) })}
           </Text>
         </View>
         <View style={styles.curveWindowPill}>
@@ -285,9 +286,9 @@ function TemperatureCurve({
       </View>
 
       <View style={styles.curveLegend}>
-        <LegendItem color="#8B3A2B" label="Boiler" />
-        <LegendItem color="#D39A42" label="Target" />
-        <LegendItem color="#F29A52" label="Heater" />
+        <LegendItem color="#8B3A2B" label={translate("dashboard.boiler")} />
+        <LegendItem color="#D39A42" label={translate("dashboard.target")} />
+        <LegendItem color="#F29A52" label={translate("dashboard.heater")} />
       </View>
 
       <View style={styles.curvePlot}>
@@ -366,7 +367,7 @@ function LineGraph({
 
   return (
     <View
-      accessibilityLabel={`Boiler curve with ${samples.length} samples`}
+      accessibilityLabel={translate("dashboard.curveAccessibility", { count: samples.length })}
       onLayout={(event) => {
         const { height, width } = event.nativeEvent.layout;
         setPlotSize({ height, width });
@@ -486,6 +487,7 @@ function MachineSnapshot({
   onDismissOverTemperature: () => void;
   snapshot: MachineState;
 }) {
+  const useAndroidStatusLayout = process.env.EXPO_OS === "android";
   const canDismissOverTemperature =
     snapshot.status === "fault" &&
     snapshot.fault.code === "over_temperature" &&
@@ -493,14 +495,14 @@ function MachineSnapshot({
   const dismissPending = faultMutation.status === "pending";
   const confirmDismissOverTemperature = () => {
     Alert.alert(
-      "Dismiss over-temperature?",
-      "The machine will resume normal temperature control only if the boiler has cooled back to target.",
+      translate("dashboard.dismissAlertTitle"),
+      translate("dashboard.dismissAlertMessage"),
       [
-        { style: "cancel", text: "Cancel" },
+        { style: "cancel", text: translate("dashboard.cancel") },
         {
           onPress: onDismissOverTemperature,
           style: "destructive",
-          text: "Dismiss",
+          text: translate("dashboard.dismiss"),
         },
       ],
     );
@@ -509,10 +511,21 @@ function MachineSnapshot({
   return (
     <>
       <View style={styles.machineStateCard}>
-        <Text selectable style={styles.cardLabel}>MACHINE STATUS</Text>
-        <View style={styles.machineStateRow}>
-          <View style={styles.machineStatePrimary}>
+        <Text selectable style={styles.cardLabel}>{translate("dashboard.machineStatus")}</Text>
+        <View
+          style={[
+            styles.machineStateRow,
+            useAndroidStatusLayout && styles.machineStateRowAndroid,
+          ]}>
+          <View
+            style={[
+              styles.machineStatePrimary,
+              useAndroidStatusLayout && styles.machineStatePrimaryAndroid,
+            ]}>
             <Text
+              adjustsFontSizeToFit={useAndroidStatusLayout}
+              minimumFontScale={0.8}
+              numberOfLines={useAndroidStatusLayout ? 1 : undefined}
               selectable
               style={[
                 styles.machineStateValue,
@@ -520,38 +533,38 @@ function MachineSnapshot({
               ]}>
               {machineActivityLabel(snapshot)}
             </Text>
-            <Text selectable style={styles.machineStateDetail}>
-              {modeLabel(snapshot.activeMode)} mode
-            </Text>
+            {!useAndroidStatusLayout ? (
+              <MachineModeLabel mode={snapshot.activeMode} />
+            ) : null}
           </View>
-          <View style={styles.heaterPill}>
-            <View
-              style={[
-                styles.heaterDot,
-                snapshot.heaterActive ? styles.heaterOn : styles.heaterOff,
-              ]}
-            />
-            <Text selectable style={styles.heaterText}>
-              Heater {snapshot.heaterActive ? "on" : "off"}
-            </Text>
-          </View>
+          {useAndroidStatusLayout ? (
+            <View style={styles.machineStateFooterAndroid}>
+              <MachineModeLabel mode={snapshot.activeMode} />
+              <HeaterStatusPill heaterActive={snapshot.heaterActive} />
+            </View>
+          ) : (
+            <HeaterStatusPill heaterActive={snapshot.heaterActive} />
+          )}
         </View>
       </View>
 
       {snapshot.status === "fault" ? (
         <View accessibilityLiveRegion="assertive" style={styles.faultCard}>
-          <Text selectable style={styles.faultEyebrow}>FIRMWARE FAULT</Text>
+          <Text selectable style={styles.faultEyebrow}>{translate("dashboard.firmwareFault")}</Text>
           <Text selectable style={styles.faultTitle}>
             {faultLabel(snapshot.fault.code)}
           </Text>
           <Text selectable style={styles.faultMessage}>{snapshot.fault.message}</Text>
-          <Text selectable style={styles.faultSafety}>Heater command is off.</Text>
+          <Text selectable style={styles.faultSafety}>{translate("dashboard.heaterCommandOff")}</Text>
           {snapshot.fault.code === "over_temperature" ? (
             <>
               <Text selectable style={styles.faultRecoveryText}>
                 {canDismissOverTemperature
-                  ? "Boiler is back at target. Confirm dismissal to resume normal control."
-                  : `Dismissal unlocks at ${formatTarget(boilerTargetC(snapshot))}. Current ${formatTemperature(boilerTemperatureC(snapshot))}.`}
+                  ? translate("dashboard.boilerBackAtTarget")
+                  : translate("dashboard.dismissalLocked", {
+                      current: formatTemperature(boilerTemperatureC(snapshot)),
+                      target: formatTarget(boilerTargetC(snapshot)),
+                    })}
               </Text>
               <Pressable
                 accessibilityRole="button"
@@ -569,7 +582,7 @@ function MachineSnapshot({
                     styles.pressed,
                 ]}>
                 <Text style={styles.faultRecoveryButtonText}>
-                  {dismissPending ? "Dismissing..." : "Dismiss over-temperature"}
+                  {dismissPending ? translate("dashboard.dismissing") : translate("dashboard.dismissOverTemperature")}
                 </Text>
               </Pressable>
             </>
@@ -588,19 +601,45 @@ function MachineSnapshot({
 
       <View style={styles.metricGrid}>
         <ContextMetric
-          label="Steam timer"
+          label={translate("dashboard.steamTimer")}
           value={formatSteamCountdown(snapshot.steamTimeoutRemainingMs)}
           detail={steamCountdownContext(snapshot)}
           width={metricWidth}
         />
         <ContextMetric
-          label="Machine uptime"
+          label={translate("dashboard.machineUptime")}
           value={formatUptime(snapshot.uptimeMs)}
-          detail="Since the last machine power cycle"
+          detail={translate("dashboard.uptimeDetail")}
           width={metricWidth}
         />
       </View>
     </>
+  );
+}
+
+function MachineModeLabel({ mode }: { mode: MachineState["activeMode"] }) {
+  return (
+    <Text selectable style={styles.machineStateDetail}>
+      {translate("dashboard.mode", { mode: modeLabel(mode) })}
+    </Text>
+  );
+}
+
+function HeaterStatusPill({ heaterActive }: { heaterActive: boolean }) {
+  return (
+    <View style={styles.heaterPill}>
+      <View
+        style={[
+          styles.heaterDot,
+          heaterActive ? styles.heaterOn : styles.heaterOff,
+        ]}
+      />
+      <Text selectable style={styles.heaterText}>
+        {translate("dashboard.heaterState", {
+          state: translate(heaterActive ? "dashboard.on" : "dashboard.off"),
+        })}
+      </Text>
+    </View>
   );
 }
 
@@ -618,7 +657,7 @@ function TemperatureCard({
   return (
     <View style={[styles.temperatureCard, { width }, styles.activeCard]}>
       <View style={styles.temperatureHeading}>
-        <Text selectable style={styles.temperatureLabel}>Boiler</Text>
+        <Text selectable style={styles.temperatureLabel}>{translate("dashboard.boiler")}</Text>
         <Text selectable style={styles.activePill}>
           {modeLabel(mode).toUpperCase()}
         </Text>
@@ -627,7 +666,7 @@ function TemperatureCard({
         {formatTemperature(temperatureC)}
       </Text>
       <Text selectable style={styles.temperatureTarget}>
-        Target {formatTarget(targetC)}
+        {translate("dashboard.target")} {formatTarget(targetC)}
       </Text>
     </View>
   );
@@ -666,18 +705,18 @@ function HeaterToggleBar({
 }) {
   const pending = mutation.status === "pending";
   const switchDisabled = disabled || pending;
-  const label = snapshot.heaterEnabled ? "Heater enabled" : "Heater off";
+  const label = translate(snapshot.heaterEnabled ? "dashboard.heaterEnabled" : "dashboard.heaterOff");
   const detail = snapshot.heaterEnabled
     ? snapshot.heaterActive
-      ? "SSR is active"
-      : "Automatic control is allowed"
-    : "SSR output is inhibited";
+      ? translate("dashboard.ssrActive")
+      : translate("dashboard.automaticControlAllowed")
+    : translate("dashboard.ssrInhibited");
 
   return (
     <View style={styles.heaterToggleBar}>
       <View style={styles.heaterToggleCopy}>
         <Text selectable style={styles.heaterToggleLabel}>
-          {pending ? "Heater change pending" : label}
+          {pending ? translate("dashboard.heaterChangePending") : label}
         </Text>
         <Text selectable style={styles.heaterToggleDetail}>
           {pending ? mutation.message : detail}
@@ -748,7 +787,10 @@ const styles = StyleSheet.create({
   },
   cardLabel: { color: "#CDBFB5", fontSize: 11, fontWeight: "800", letterSpacing: 1.3 },
   machineStateRow: { alignItems: "flex-end", flexDirection: "row", gap: 14, justifyContent: "space-between" },
+  machineStateRowAndroid: { alignItems: "stretch", flexDirection: "column", gap: 8 },
   machineStatePrimary: { flex: 1, gap: 4 },
+  machineStatePrimaryAndroid: { flex: undefined },
+  machineStateFooterAndroid: { alignItems: "center", flexDirection: "row", gap: 12, justifyContent: "space-between" },
   machineStateValue: { color: "#FFF9F1", fontSize: 34, fontWeight: "800", letterSpacing: -0.7 },
   machineStateDetail: { color: "#D9CBC1", fontSize: 16, fontWeight: "600" },
   faultText: { color: "#FFB5A5" },

@@ -81,19 +81,31 @@ class DigitalOutput {
   virtual bool configure_output() = 0;
 };
 
+class SsrSafetyLease {
+ public:
+  virtual ~SsrSafetyLease() = default;
+  virtual bool initialize() = 0;
+  virtual bool arm(std::uint32_t duration_ms) = 0;
+  virtual bool disarm() = 0;
+  virtual bool tripped() const = 0;
+};
+
 class FailOffSsr {
  public:
-  explicit FailOffSsr(DigitalOutput& output, bool active_high = true);
+  FailOffSsr(DigitalOutput& output, SsrSafetyLease& safety_lease,
+             bool active_high = true);
 
   bool initialize();
   bool set_enabled(bool enabled);
   bool force_off();
   bool is_enabled() const;
+  bool safety_cutoff_tripped() const;
 
  private:
   bool write_enabled_level(bool enabled);
 
   DigitalOutput& output_;
+  SsrSafetyLease& safety_lease_;
   bool active_high_{true};
   bool initialized_{false};
   bool enabled_{false};

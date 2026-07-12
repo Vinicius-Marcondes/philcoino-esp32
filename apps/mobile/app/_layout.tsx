@@ -1,9 +1,11 @@
 import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
+import { useLocales } from 'expo-localization';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import 'react-native-reanimated';
 
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { setAppLocale, translate } from '@/src/localization/i18n';
 
 export const unstable_settings = {
   anchor: 'index',
@@ -11,6 +13,9 @@ export const unstable_settings = {
 
 export default function RootLayout() {
   const colorScheme = useColorScheme();
+  const locales = useLocales();
+  const hideNativeHeader = process.env.EXPO_OS === 'android';
+  setAppLocale(locales[0]?.languageCode ?? null);
 
   return (
     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
@@ -19,7 +24,7 @@ export default function RootLayout() {
           contentStyle: { backgroundColor: '#F4F0E8' },
           headerBlurEffect: undefined,
           headerShadowVisible: true,
-          headerShown: true,
+          headerShown: !hideNativeHeader,
           headerTitle: '',
           headerTransparent: true,
         }}>
@@ -27,11 +32,11 @@ export default function RootLayout() {
           name="index"
           options={{
             headerLargeTitle: false,
-            title: 'Pair machine',
+            title: translate('navigation.pairMachine'),
           }}
         />
       </Stack>
-      <StatusBar style="auto" />
+      <StatusBar style={hideNativeHeader ? 'dark' : 'auto'} />
     </ThemeProvider>
   );
 }

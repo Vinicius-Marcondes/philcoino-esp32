@@ -3,6 +3,9 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "driver/gptimer.h"
+#include "esp_attr.h"
+#include "freertos/FreeRTOS.h"
 #include "philcoino/peripherals.hpp"
 
 namespace philcoino::peripherals {
@@ -36,6 +39,29 @@ class EspGpioOutput final : public DigitalOutput {
 
  private:
   std::int32_t gpio_;
+};
+
+class EspGptimerSafetyLease final : public SsrSafetyLease {
+ public:
+  EspGptimerSafetyLease(std::int32_t gpio, bool active_high);
+
+  bool initialize() override;
+  bool arm(std::uint32_t duration_ms) override;
+  bool disarm() override;
+  bool tripped() const override;
+
+ private:
+  static bool IRAM_ATTR on_alarm(gptimer_handle_t timer,
+                                 const gptimer_alarm_event_data_t* event,
+                                 void* context);
+  void IRAM_ATTR fail_off_from_isr();
+
+  gptimer_handle_t timer_{nullptr};
+  std::int32_t gpio_;
+  std::uint32_t off_level_;
+  mutable portMUX_TYPE trip_lock_ = portMUX_INITIALIZER_UNLOCKED;
+  bool tripped_{false};
+  bool initialized_{false};
 };
 
 class EspOledTransport final : public OledTransport {

@@ -102,6 +102,10 @@ bool TemperatureController::set_mode(ControlMode mode, std::uint32_t now_ms) {
 
 bool TemperatureController::set_heater_enabled(bool enabled,
                                                std::uint32_t now_ms) {
+  if (enabled && heater_.safety_cutoff_tripped()) {
+    latch_fault(FaultCode::kInternalError);
+    return false;
+  }
   if (heater_enabled_permission_ == enabled) {
     return enabled || heater_.force_off();
   }
@@ -118,7 +122,14 @@ bool TemperatureController::set_heater_enabled(bool enabled,
 bool TemperatureController::update_targets(
     const peripherals::TemperatureTargets& targets,
     peripherals::TargetStorage& storage, std::uint32_t now_ms) {
-  if (!peripherals::targets_are_valid(targets) || !storage.save(targets)) {
+  if (!peripherals::targets_are_valid(targets)) {
+    return false;
+  }
+  if (!heater_.force_off()) {
+    latch_fault(FaultCode::kInternalError);
+    return false;
+  }
+  if (!storage.save(targets)) {
     return false;
   }
   targets_ = targets;
@@ -129,10 +140,6 @@ bool TemperatureController::update_targets(
   steam_timeout_active_ = false;
   if (!fault_latched_) {
     status_ = ControlStatus::kHeating;
-    if (!heater_.force_off()) {
-      latch_fault(FaultCode::kInternalError);
-      return false;
-    }
   }
   return true;
 }
@@ -170,6 +177,11 @@ bool TemperatureController::dismiss_over_temperature(std::uint32_t now_ms) {
 ControlSnapshot TemperatureController::update(
     const peripherals::ThermocoupleReading& reading, std::uint32_t now_ms) {
   boiler_temperature_ = reading;
+
+  if (heater_.safety_cutoff_tripped()) {
+    latch_fault(FaultCode::kInternalError);
+    return snapshot(now_ms);
+  }
 
   if (fault_latched_) {
     status_ = ControlStatus::kFault;

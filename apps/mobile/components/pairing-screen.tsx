@@ -19,6 +19,7 @@ import type {
 import { findDiscoveredDevice } from "@/src/discovery/device-discovery";
 import { nativeDeviceDiscovery } from "@/src/discovery/native-device-discovery";
 import { isDebugDeviceModeEnabled } from "@/src/debug-device-mode";
+import { translate } from "@/src/localization/i18n";
 import { ApiClientError } from "@/src/networking/api-client-error";
 import { createDeviceApiClient } from "@/src/networking/expo-device-api-client";
 import {
@@ -47,7 +48,7 @@ const createPairingClient: PairingClientFactory = (options) =>
 
 type PairedDevice = {
   candidate: PairingCandidate;
-  message: string;
+  messageKey: string;
   selectedDevice: SelectedDevice;
 };
 
@@ -89,7 +90,7 @@ function PairingFlowScreen({
   const [paired, setPaired] = useState<PairedDevice | null>(null);
   const [manualAddress, setManualAddress] = useState("");
   const [token, setToken] = useState("");
-  const [message, setMessage] = useState("Checking for a saved machine…");
+  const [message, setMessage] = useState(() => translate("pairing.checkingSaved"));
   const [busy, setBusy] = useState(true);
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   const [scanning, setScanning] = useState(false);
@@ -126,13 +127,13 @@ function PairingFlowScreen({
     stopBrowsing();
     let foundAny = false;
     setScanning(true);
-    setMessage("Searching your local network for Philcoino machines…");
+    setMessage(translate("pairing.searching"));
 
     stopScan.current = discovery.scan({
       onDevice: (device) => {
         foundAny = true;
         addDevice(device);
-        setMessage("Select a machine to review its identity before entering a token.");
+        setMessage(translate("pairing.selectMachine"));
       },
       onError: () => {
         stopBrowsing();
@@ -171,9 +172,9 @@ function PairingFlowScreen({
         if (result.status === "connected") {
           setPaired({
             candidate: result.candidate,
-            message: result.recoveredAddress
-              ? "The saved machine was found at its new address and the secure record was updated."
-              : "The saved machine was authenticated at its cached address.",
+            messageKey: result.recoveredAddress
+              ? "pairing.recoveredAddress"
+              : "pairing.cachedAddress",
             selectedDevice: result.selected,
           });
           setMessage("");
@@ -181,7 +182,7 @@ function PairingFlowScreen({
         }
         if (result.status === "not-found") {
           setMessage(
-            "The saved machine did not answer at its cached address and was not rediscovered. Pair it again when it is available.",
+            translate("pairing.savedNotFound"),
           );
         }
         startBrowsing();
@@ -234,7 +235,7 @@ function PairingFlowScreen({
     stopBrowsing();
     setSelected(device);
     setToken("");
-    setMessage("Confirm these identity details, then enter the bearer token.");
+    setMessage(translate("pairing.confirmIdentityMessage"));
   };
 
   const inspectManualAddress = async () => {
@@ -243,7 +244,7 @@ function PairingFlowScreen({
     activeOperation.current = controller;
     stopBrowsing();
     setBusy(true);
-    setMessage("Checking the manual address…");
+    setMessage(translate("pairing.checkingAddress"));
 
     try {
       const candidate = await inspectDevice(
@@ -253,7 +254,7 @@ function PairingFlowScreen({
       );
       setSelected(candidate);
       setToken("");
-      setMessage("The address returned a valid Philcoino identity. Enter its bearer token.");
+      setMessage(translate("pairing.validIdentity"));
     } catch (error) {
       if (!controller.signal.aborted) {
         setMessage(errorMessage(error));
@@ -273,7 +274,7 @@ function PairingFlowScreen({
     const controller = new AbortController();
     activeOperation.current = controller;
     setBusy(true);
-    setMessage("Verifying the token with the machine…");
+    setMessage(translate("pairing.verifyingToken"));
 
     try {
       const selectedDevice = await authenticateAndSave(
@@ -287,7 +288,7 @@ function PairingFlowScreen({
       );
       setPaired({
         candidate: selected,
-        message: "Authentication succeeded and this machine was saved securely.",
+        messageKey: "pairing.authenticationSucceeded",
         selectedDevice,
       });
       setToken("");
@@ -326,7 +327,7 @@ function PairingFlowScreen({
     return (
       <DashboardScreen
         deviceName={paired.candidate.name}
-        initialNote={paired.message}
+        initialNote={translate(paired.messageKey)}
         onForget={() => void forgetDevice()}
         selectedDevice={paired.selectedDevice}
       />
@@ -346,23 +347,23 @@ function PairingFlowScreen({
           { paddingBottom: CONTENT_BOTTOM_PADDING + keyboardHeight },
         ]}>
         <View style={styles.pageHeader}>
-          <Text selectable style={styles.pageTitle}>Pair machine</Text>
+          <Text selectable style={styles.pageTitle}>{translate("pairing.title")}</Text>
         </View>
         <View style={styles.intro}>
-          <Text selectable style={styles.eyebrow}>LOCAL ESPRESSO CONTROL</Text>
+          <Text selectable style={styles.eyebrow}>{translate("pairing.eyebrow")}</Text>
           <Text selectable style={styles.lead}>
-            Choose the machine on this Wi-Fi or connect directly with its local address.
+            {translate("pairing.lead")}
           </Text>
         </View>
 
         {selected !== null ? (
           <View style={styles.card}>
-            <Text selectable style={styles.sectionTitle}>Confirm machine identity</Text>
+            <Text selectable style={styles.sectionTitle}>{translate("pairing.confirmIdentity")}</Text>
             <IdentityDetails candidate={selected} />
             <View style={styles.fieldGroup}>
-              <Text selectable style={styles.label}>Bearer token</Text>
+              <Text selectable style={styles.label}>{translate("pairing.bearerToken")}</Text>
               <TextInput
-                accessibilityLabel="Bearer token"
+                accessibilityLabel={translate("pairing.bearerToken")}
                 autoCapitalize="none"
                 autoCorrect={false}
                 editable={!busy}
@@ -379,7 +380,7 @@ function PairingFlowScreen({
                   scrollFocusedActionsIntoView();
                 }}
                 onSubmitEditing={() => void pairSelectedDevice()}
-                placeholder="Enter the token from the device setup"
+                placeholder={translate("pairing.tokenPlaceholder")}
                 returnKeyType="done"
                 secureTextEntry
                 style={styles.input}
@@ -388,12 +389,12 @@ function PairingFlowScreen({
             </View>
             <ActionButton
               disabled={tokenSubmitDisabled}
-              label={busy ? "Verifying…" : "Verify and save"}
+              label={busy ? translate("pairing.verifying") : translate("pairing.verifyAndSave")}
               onPress={() => void pairSelectedDevice()}
             />
             <ActionButton
               disabled={busy}
-              label="Choose another machine"
+              label={translate("pairing.chooseAnother")}
               onPress={chooseAnotherDevice}
               secondary
             />
@@ -402,36 +403,36 @@ function PairingFlowScreen({
           <>
             <View style={styles.card}>
               <View style={styles.sectionHeading}>
-                <Text selectable style={styles.sectionTitle}>Nearby machines</Text>
-                {scanning ? <ActivityIndicator accessibilityLabel="Searching" /> : null}
+                <Text selectable style={styles.sectionTitle}>{translate("pairing.nearbyMachines")}</Text>
+                {scanning ? <ActivityIndicator accessibilityLabel={translate("pairing.searchingLabel")} /> : null}
               </View>
               {devices.map((device) => (
                 <Pressable
-                  accessibilityHint="Shows identity details and token entry"
+                  accessibilityHint={translate("pairing.deviceHint")}
                   accessibilityRole="button"
                   key={device.deviceId}
                   onPress={() => selectDevice(device)}
                   style={({ pressed }) => [styles.device, pressed && styles.pressed]}>
                   <Text selectable style={styles.deviceName}>{device.name}</Text>
                   <Text selectable style={styles.metadata}>
-                    {device.model} · API {device.apiVersion} · firmware {device.firmwareVersion}
+                    {translate("pairing.deviceMetadata", device)}
                   </Text>
                   <Text selectable style={styles.metadata}>{device.deviceId}</Text>
                   <Text selectable style={styles.address}>{device.address}</Text>
                 </Pressable>
               ))}
               {!scanning ? (
-                <ActionButton label="Search again" onPress={startBrowsing} secondary />
+                <ActionButton label={translate("pairing.searchAgain")} onPress={startBrowsing} secondary />
               ) : null}
             </View>
 
             <View style={styles.card}>
-              <Text selectable style={styles.sectionTitle}>Enter address manually</Text>
+              <Text selectable style={styles.sectionTitle}>{translate("pairing.enterAddress")}</Text>
               <Text selectable style={styles.help}>
-                Use the machine’s IPv4 address or local hostname. A simulator may include a port.
+                {translate("pairing.addressHelp")}
               </Text>
               <TextInput
-                accessibilityLabel="Machine address"
+                accessibilityLabel={translate("pairing.machineAddress")}
                 autoCapitalize="none"
                 autoCorrect={false}
                 editable={!busy}
@@ -456,7 +457,7 @@ function PairingFlowScreen({
               />
               <ActionButton
                 disabled={busy || manualAddress.trim().length === 0}
-                label={busy ? "Checking…" : "Review this machine"}
+                label={busy ? translate("pairing.checking") : translate("pairing.reviewMachine")}
                 onPress={() => void inspectManualAddress()}
               />
             </View>
@@ -465,7 +466,7 @@ function PairingFlowScreen({
 
         {message.length > 0 ? (
           <View accessibilityLiveRegion="polite" style={styles.notice}>
-            {busy ? <ActivityIndicator accessibilityLabel="Working" size="small" /> : null}
+            {busy ? <ActivityIndicator accessibilityLabel={translate("pairing.working")} size="small" /> : null}
             <Text selectable style={styles.noticeText}>{message}</Text>
           </View>
         ) : null}
@@ -477,12 +478,12 @@ function PairingFlowScreen({
 function IdentityDetails({ candidate }: { candidate: PairingCandidate }) {
   return (
     <View style={styles.details}>
-      <Detail label="Name" value={candidate.name} />
-      <Detail label="Device ID" value={candidate.deviceId} />
-      <Detail label="Model" value={candidate.model} />
-      <Detail label="API version" value={candidate.apiVersion} />
-      <Detail label="Firmware" value={candidate.firmwareVersion} />
-      <Detail label="Address" value={candidate.address} />
+      <Detail label={translate("pairing.details.name")} value={candidate.name} />
+      <Detail label={translate("pairing.details.deviceId")} value={candidate.deviceId} />
+      <Detail label={translate("pairing.details.model")} value={candidate.model} />
+      <Detail label={translate("pairing.details.apiVersion")} value={candidate.apiVersion} />
+      <Detail label={translate("pairing.details.firmware")} value={candidate.firmwareVersion} />
+      <Detail label={translate("pairing.details.address")} value={candidate.address} />
     </View>
   );
 }
@@ -527,42 +528,43 @@ function errorMessage(error: unknown): string {
   if (error instanceof ApiClientError) {
     switch (error.kind) {
       case "unauthorized":
-        return "The token was rejected. Nothing was saved; check the token and try again.";
+        return translate("pairing.errors.unauthorized");
       case "not-found":
-        return "No Philcoino API was found at that address.";
+        return translate("pairing.errors.notFound");
       case "protocol":
-        return "The address answered, but its response was not a valid Philcoino response.";
+        return translate("pairing.errors.protocol");
       case "timeout":
       case "offline":
-        return "The machine could not be reached. Check its power, address, and local Wi-Fi connection.";
+        return translate("pairing.errors.unreachable");
       case "cancelled":
-        return "The request was cancelled.";
+        return translate("pairing.errors.cancelled");
       case "http":
+        return error.response?.error.message ?? translate("pairing.errors.generic");
       case "invalid-request":
-        return error.message;
+        return translate("pairing.errors.generic");
     }
   }
-  return error instanceof Error ? error.message : "The operation could not be completed.";
+  return translate("pairing.errors.generic");
 }
 
 function automaticDiscoveryUnavailableMessage(): string {
   if (Platform.OS === "android") {
-    return "Automatic discovery is unavailable. Use a physical Android phone on the same Wi-Fi, check local network and Wi-Fi permissions, then try again or enter the address manually.";
+    return translate("pairing.discovery.unavailableAndroid");
   }
   if (Platform.OS === "ios") {
-    return "Automatic discovery is unavailable. Allow Local Network access in iPhone Settings, then try again. You can also enter the address manually.";
+    return translate("pairing.discovery.unavailableIos");
   }
-  return "Automatic discovery is unavailable on this platform. Enter the device address manually.";
+  return translate("pairing.discovery.unavailableOther");
 }
 
 function noMachinesFoundMessage(): string {
   if (Platform.OS === "android") {
-    return "No machines were found. Use a physical Android phone, confirm the machine and phone are on the same Wi-Fi, then retry or enter the address manually.";
+    return translate("pairing.discovery.noneAndroid");
   }
   if (Platform.OS === "ios") {
-    return "No machines were found. Confirm the machine and iPhone are on the same Wi-Fi, then retry or enter the address manually.";
+    return translate("pairing.discovery.noneIos");
   }
-  return "No machines were found. Confirm the local network, then retry or enter the address manually.";
+  return translate("pairing.discovery.noneOther");
 }
 
 const styles = StyleSheet.create({

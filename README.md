@@ -1,27 +1,29 @@
 # Philcoino
 
-Philcoino is a local-first espresso-machine monitoring and temperature-control prototype. It combines an Expo mobile app, an OpenAPI contract, a deterministic device simulator, and ESP32-C3 firmware in one repository.
+[English](docs/en/README.md)
 
-The phone discovers and authenticates one machine, displays live state, and submits target/mode/heater-permission changes. The ESP32 remains authoritative for sensor readings, persisted targets, readiness, heater output, timeouts, and faults.
+Philcoino é um protótipo local-first para monitoramento e controle de temperatura de uma máquina de espresso. O repositório reúne um aplicativo mobile em Expo, um contrato OpenAPI, um simulador determinístico do dispositivo e firmware para ESP32-C3.
+
+O celular descobre e autentica uma máquina, exibe o estado em tempo real e envia alterações de target, mode e permissão do heater. O ESP32 continua sendo a autoridade sobre leituras dos sensores, targets persistidos, readiness, saída do heater, timeouts e faults.
 
 > [!CAUTION]
-> This project is not approved for production, unattended, or mains-powered heater operation. The current review identifies unresolved control-loop, sensor-monitoring, transport, credential, and physical-safety risks. Use the simulator or low-voltage hardware only, read [Safety and project status](docs/SAFETY.md), and do not treat passing tests as electrical or thermal certification.
+> Este projeto não está aprovado para produção, uso sem supervisão ou operação do heater ligado à rede elétrica. A revisão atual registra riscos ainda não resolvidos no control loop, monitoramento dos sensores, transporte, credenciais e segurança física. Use apenas o simulador ou hardware em baixa tensão, leia [Segurança e status do projeto](docs/SAFETY.md) e não trate testes aprovados como certificação elétrica ou térmica.
 
-## What is implemented
+## O que está implementado
 
-- iOS/Android local discovery through `_philcoino._tcp` mDNS, with manual address fallback.
-- Public device identity inspection followed by bearer-token authentication.
-- Secure storage of one selected device, token, and last successful address.
-- Cached-address restore and stable-ID rediscovery after address changes.
-- Strict API v1 runtime validation and explicit offline, unauthorized, not-found, timeout, and protocol-error states.
-- Completion-driven one-second dashboard polling while the screen/app is active.
-- Firmware-acknowledged brew/steam targets, active mode, heater permission, and over-temperature dismissal.
-- ESP32-C3 control from one boiler-base MAX6675, NVS target persistence, SSD1306 output, HTTP/mDNS networking, and host-testable policy boundaries.
-- Deterministic Bun/Hono simulator for mobile and contract development.
+- Descoberta local no iOS/Android por mDNS `_philcoino._tcp`, com endereço manual como fallback.
+- Inspeção pública da identidade do dispositivo seguida de autenticação por bearer token.
+- Armazenamento seguro de um dispositivo selecionado, token e último endereço válido.
+- Restauração pelo endereço salvo e redescoberta por stable ID após mudanças de endereço.
+- Validação estrita da API v1 em runtime e estados explícitos para offline, unauthorized, not found, timeout e protocol error.
+- Polling do dashboard a cada segundo, orientado à conclusão, enquanto a tela e o app estão ativos.
+- Targets de brew/steam, active mode, permissão do heater e dismissal de over-temperature confirmados pelo firmware.
+- Controle pelo ESP32-C3, persistência dos targets em NVS, amostragem MAX6675, saída SSD1306, rede HTTP/mDNS e policy boundaries testáveis no host.
+- Simulador determinístico Bun/Hono para desenvolvimento mobile e do contrato.
 
-The product is still a prototype. PRD-001 acceptance and physical validation are incomplete; see [the tracker](docs/TRACKER.md) and [known findings](CODEBASE_REVIEW_REPORT.md).
+O produto ainda é um protótipo. A aceitação da PRD-001 e a validação física estão incompletas; consulte o [tracker](docs/TRACKER.md) e os [findings conhecidos](CODEBASE_REVIEW_REPORT.md).
 
-## System at a glance
+## Visão geral do sistema
 
 ```text
 Expo mobile app
@@ -42,55 +44,55 @@ Device simulator
   -> contract/UI development only; not a firmware safety model
 ```
 
-For detailed ownership and failure flows, read [Architecture](docs/ARCHITECTURE.md).
+Para entender ownership e fluxos de falha em detalhes, leia [Architecture](docs/ARCHITECTURE.md).
 
-## Repository layout
+## Estrutura do repositório
 
-| Path | Responsibility |
+| Caminho | Responsabilidade |
 | --- | --- |
-| [`apps/mobile`](apps/mobile) | Expo 54 / React Native client, discovery, pairing, secure persistence, polling, controls, and UI |
-| [`packages/protocol`](packages/protocol) | Authoritative OpenAPI contract, strict Zod schemas, fixtures, and contract tests |
-| [`tools/device-simulator`](tools/device-simulator) | Deterministic Bun/Hono API simulator and development controls |
-| [`firmware/espresso-machine`](firmware/espresso-machine) | Independent ESP-IDF 6.0.2 firmware and native host tests |
-| [`docs`](docs) | Architecture, development, safety, PRD, hardware, decisions, and references |
+| [`apps/mobile`](apps/mobile) | Cliente Expo 54 / React Native, discovery, pairing, persistência segura, polling, controles e UI |
+| [`packages/protocol`](packages/protocol) | Contrato OpenAPI autoritativo, schemas Zod estritos, fixtures e contract tests |
+| [`tools/device-simulator`](tools/device-simulator) | Simulador determinístico da API em Bun/Hono e controles de desenvolvimento |
+| [`firmware/espresso-machine`](firmware/espresso-machine) | Firmware independente em ESP-IDF 6.0.2 e host tests nativos |
+| [`docs`](docs) | Architecture, desenvolvimento, segurança, PRD, hardware, decisões e referências |
 
-The Bun workspace includes `apps/*`, `packages/*`, and `tools/*`. Firmware has its own CMake/ESP-IDF toolchain and is intentionally not a Bun package.
+O workspace Bun inclui `apps/*`, `packages/*` e `tools/*`. O firmware tem seu próprio toolchain CMake/ESP-IDF e, intencionalmente, não faz parte do workspace Bun.
 
-## Quick start without hardware
+## Início rápido sem hardware
 
-Prerequisites:
+Pré-requisitos:
 
-- Bun compatible with the committed lockfile;
-- Node.js 20.19 or newer for Expo SDK 54;
-- installed workspace dependencies (`bun install`) before running commands.
+- Bun compatível com o lockfile versionado;
+- Node.js 20.19 ou mais recente para Expo SDK 54;
+- dependências do workspace instaladas (`bun install`) antes de executar os comandos.
 
-No new dependencies are required beyond the repository manifest. From the repository root:
+Nenhuma dependência adicional é necessária além do manifest do repositório. A partir da raiz:
 
 ```bash
 bun install
 EXPO_PUBLIC_PHILCOINO_DEBUG_DEVICE=1 bun run start
 ```
 
-Debug-device mode renders the dashboard without discovery, authentication, network requests, or an ESP32. It is useful for UI work, but its temperatures and uptime remain static.
+O debug-device mode renderiza o dashboard sem discovery, autenticação, requests de rede ou ESP32. Ele é útil para trabalhar na UI, mas as temperaturas e o uptime permanecem estáticos.
 
-For API and integration work, run the deterministic simulator instead:
+Para desenvolver a API e integrações, execute o simulador determinístico:
 
 ```bash
 bun run simulator
 ```
 
-It listens on `http://localhost:3000` by default and uses the development bearer token `philcoino-dev-token`. In the app, enter the simulator address manually. Native local-network discovery requires an iOS/Android development build; web and unsupported platforms use manual entry.
+Por padrão, ele escuta em `http://localhost:3000` e usa o bearer token de desenvolvimento `philcoino-dev-token`. No aplicativo, informe manualmente o endereço do simulador. A descoberta na rede local exige um development build nativo para iOS/Android; web e plataformas sem suporte usam endereço manual.
 
-See [Development](docs/DEVELOPMENT.md) for platform workflows, simulator controls, firmware setup, and the full verification matrix.
+Consulte [Development](docs/DEVELOPMENT.md) para workflows das plataformas, controles do simulador, configuração do firmware e a matriz completa de verificação.
 
-## API contract
+## Contrato da API
 
-[`packages/protocol/openapi.yaml`](packages/protocol/openapi.yaml) is the wire source of truth. The public endpoints are:
+[`packages/protocol/openapi.yaml`](packages/protocol/openapi.yaml) é a source of truth do protocolo. Os endpoints públicos são:
 
 - `GET /healthz`
 - `GET /api/v1/device`
 
-Authenticated endpoints require `Authorization: Bearer <token>`:
+Endpoints autenticados exigem `Authorization: Bearer <token>`:
 
 - `GET /api/v1/state`
 - `PATCH /api/v1/settings/temperatures`
@@ -98,30 +100,30 @@ Authenticated endpoints require `Authorization: Bearer <token>`:
 - `PUT /api/v1/heater`
 - `POST /api/v1/faults/over-temperature/dismiss`
 
-The simulator also exposes `_simulator/*` controls that are deliberately outside API v1 and must never be implemented as production firmware endpoints.
+O simulador também disponibiliza controles `_simulator/*`, que ficam deliberadamente fora da API v1 e nunca devem ser implementados como endpoints do firmware de produção.
 
-## Core design rules
+## Regras centrais de design
 
-- Firmware, not the phone, owns the real-time and safety loop.
-- Requested changes are not shown as live values until a valid firmware acknowledgement arrives.
-- Polling pauses during a mutation so an older snapshot cannot overwrite an acknowledgement.
-- Every discovery, storage, request, response, and error payload is validated at its boundary.
-- Fault snapshots report the heater command inactive; physical output certainty still depends on hardware and the unresolved safety findings.
-- Simulator behavior supports contract/UI testing and is not evidence that firmware timing or heater control is safe.
+- O firmware, não o celular, é responsável pelo loop de tempo real e segurança.
+- Alterações solicitadas não aparecem como estado real até chegar um acknowledgement válido do firmware.
+- O polling pausa durante uma mutation para impedir que um snapshot antigo sobrescreva o acknowledgement.
+- Todo payload de discovery, storage, request, response e error é validado na sua boundary.
+- Snapshots de fault informam o comando do heater como inativo; a certeza sobre a saída física ainda depende do hardware e dos findings de segurança não resolvidos.
+- O simulador ajuda nos testes de contrato/UI e não comprova que o timing ou o controle do heater no firmware sejam seguros.
 
-## Documentation
+## Documentação
 
-- [Documentation index](docs/README.md)
+- [Índice da documentação](docs/README.md)
 - [Architecture](docs/ARCHITECTURE.md)
-- [Development and verification](docs/DEVELOPMENT.md)
-- [Safety and project status](docs/SAFETY.md)
-- [Contributing](CONTRIBUTING.md)
-- [API v1 outline](docs/protocol/api-v1-outline.md)
-- [Hardware wiring](docs/hardware/esp32-c3-wiring.md)
-- [Temperature-control tuning](docs/hardware/temperature-control-tuning.md)
-- [PRD-001 tracker](docs/TRACKER.md)
-- [Codebase review findings](CODEBASE_REVIEW_REPORT.md)
+- [Development e verificação](docs/DEVELOPMENT.md)
+- [Segurança e status do projeto](docs/SAFETY.md)
+- [Como contribuir](CONTRIBUTING.md)
+- [Descrição da API v1](docs/protocol/api-v1-outline.md)
+- [Ligação do hardware](docs/hardware/esp32-c3-wiring.md)
+- [Ajuste do controle de temperatura](docs/hardware/temperature-control-tuning.md)
+- [Tracker da PRD-001](docs/TRACKER.md)
+- [Findings da revisão do codebase](CODEBASE_REVIEW_REPORT.md)
 
-## Contributing
+## Como contribuir
 
-Start with [CONTRIBUTING.md](CONTRIBUTING.md). Changes that touch the API, firmware control, hardware behavior, authentication, or persisted data require end-to-end review across all affected boundaries. Never include local secrets, generated native projects, dependency folders, firmware build output, or `sdkconfig` in a contribution.
+Comece por [CONTRIBUTING.md](CONTRIBUTING.md). Mudanças na API, controle do firmware, comportamento do hardware, autenticação ou dados persistidos exigem revisão end-to-end de todas as boundaries afetadas. Nunca inclua secrets locais, projetos nativos gerados, diretórios de dependências, build output do firmware ou `sdkconfig` em uma contribuição.

@@ -9,53 +9,54 @@ import type {
   ConnectionState,
   ConnectionStatus,
 } from "../networking/connection-state";
+import { currentLocale, translate } from "../localization/i18n";
 
-const CONNECTION_COPY: Record<
+const CONNECTION_COPY_KEYS: Record<
   ConnectionStatus,
   { detail: string; label: string }
 > = {
   connecting: {
-    detail: "Contacting the saved machine on your local network.",
-    label: "Connecting",
+    detail: "viewModel.connection.connecting.detail",
+    label: "viewModel.connection.connecting.label",
   },
   "not-found": {
-    detail: "No Philcoino API was found at the saved address.",
-    label: "Machine not found",
+    detail: "viewModel.connection.notFound.detail",
+    label: "viewModel.connection.notFound.label",
   },
   offline: {
-    detail: "Check machine power and that the iPhone is on the same Wi-Fi.",
-    label: "Offline",
+    detail: "viewModel.connection.offline.detail",
+    label: "viewModel.connection.offline.label",
   },
   online: {
-    detail: "Live data is updating once per second.",
-    label: "Online",
+    detail: "viewModel.connection.online.detail",
+    label: "viewModel.connection.online.label",
   },
   "protocol-error": {
-    detail: "The machine replied with data that does not match API v1.",
-    label: "Protocol error",
+    detail: "viewModel.connection.protocol.detail",
+    label: "viewModel.connection.protocol.label",
   },
   unauthorized: {
-    detail: "The saved bearer token was rejected by the machine.",
-    label: "Authentication required",
+    detail: "viewModel.connection.unauthorized.detail",
+    label: "viewModel.connection.unauthorized.label",
   },
 };
 
-const STATUS_LABELS: Record<MachineStatus, string> = {
-  fault: "Fault",
-  heating: "Heating",
-  ready: "Ready",
+const STATUS_LABEL_KEYS: Record<MachineStatus, string> = {
+  fault: "viewModel.status.fault",
+  heating: "viewModel.status.heating",
+  ready: "viewModel.status.ready",
 };
 
-const MODE_LABELS: Record<Mode, string> = {
-  brew: "Brew",
-  steam: "Steam",
+const MODE_LABEL_KEYS: Record<Mode, string> = {
+  brew: "viewModel.mode.brew",
+  steam: "viewModel.mode.steam",
 };
 
-const FAULT_LABELS: Record<FaultCode, string> = {
-  heating_timeout: "Heating timeout",
-  internal_error: "Internal control error",
-  over_temperature: "Over-temperature",
-  sensor_failure: "Sensor failure",
+const FAULT_LABEL_KEYS: Record<FaultCode, string> = {
+  heating_timeout: "viewModel.fault.heatingTimeout",
+  internal_error: "viewModel.fault.internalError",
+  over_temperature: "viewModel.fault.overTemperature",
+  sensor_failure: "viewModel.fault.sensorFailure",
 };
 
 export const TEMPERATURE_HISTORY_LIMIT = 180;
@@ -70,11 +71,12 @@ export interface TemperatureSample {
 }
 
 export function connectionCopy(connection: ConnectionState) {
-  return CONNECTION_COPY[connection.status];
+  const keys = CONNECTION_COPY_KEYS[connection.status];
+  return { detail: translate(keys.detail), label: translate(keys.label) };
 }
 
 export function machineStatusLabel(status: MachineStatus): string {
-  return STATUS_LABELS[status];
+  return translate(STATUS_LABEL_KEYS[status]);
 }
 
 export function machineActivityLabel(snapshot: MachineState): string {
@@ -82,24 +84,27 @@ export function machineActivityLabel(snapshot: MachineState): string {
     return machineStatusLabel(snapshot.status);
   }
   if (snapshot.heaterActive) {
-    return "Heating";
+    return translate("viewModel.status.heating");
   }
 
   return boilerTemperatureC(snapshot) > boilerTargetC(snapshot) + 1
-    ? "Cooling"
-    : "Stabilizing";
+    ? translate("viewModel.status.cooling")
+    : translate("viewModel.status.stabilizing");
 }
 
 export function modeLabel(mode: Mode): string {
-  return MODE_LABELS[mode];
+  return translate(MODE_LABEL_KEYS[mode]);
 }
 
 export function faultLabel(code: FaultCode): string {
-  return FAULT_LABELS[code];
+  return translate(FAULT_LABEL_KEYS[code]);
 }
 
 export function formatTemperature(temperatureC: number): string {
-  return `${temperatureC.toFixed(1)}°`;
+  return `${new Intl.NumberFormat(currentLocale(), {
+    maximumFractionDigits: 1,
+    minimumFractionDigits: 1,
+  }).format(temperatureC)}°`;
 }
 
 export function formatTarget(targetC: number): string {
@@ -110,7 +115,7 @@ export function formatSteamCountdown(
   remainingMs: MachineState["steamTimeoutRemainingMs"],
 ): string {
   if (remainingMs === null) {
-    return "Not running";
+    return translate("viewModel.notRunning");
   }
 
   const totalSeconds = Math.ceil(remainingMs / 1_000);
@@ -121,12 +126,12 @@ export function formatSteamCountdown(
 
 export function steamCountdownContext(snapshot: MachineState): string {
   if (snapshot.steamTimeoutRemainingMs !== null) {
-    return "Returns to brew automatically";
+    return translate("viewModel.returnsToBrew");
   }
   if (snapshot.activeMode === "steam") {
-    return "Starts after steam becomes ready";
+    return translate("viewModel.startsWhenReady");
   }
-  return "Available in steam mode";
+  return translate("viewModel.availableInSteam");
 }
 
 export function boilerTemperatureC(
@@ -165,7 +170,7 @@ export function appendTemperatureSample(
 
 export function formatHistoryDuration(history: TemperatureSample[]): string {
   if (history.length < 2) {
-    return "Collecting";
+    return translate("viewModel.collecting");
   }
   const durationMs = history[history.length - 1].uptimeMs - history[0].uptimeMs;
   const seconds = Math.max(0, Math.round(durationMs / 1_000));

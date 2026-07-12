@@ -28,6 +28,7 @@ inline constexpr std::uint32_t kReadyStabilityMs = 3U * 1000U;
 inline constexpr std::int32_t kReadyBandC = 1;
 inline constexpr std::uint32_t kHeaterControlWindowMs = 10U * 1000U;
 inline constexpr std::uint32_t kMinimumHeaterPulseMs = 500U;
+inline constexpr std::uint32_t kHeaterSafetyLeaseMs = 1500U;
 inline constexpr float kBrewHeatRampMinimumTargetBandC = 4.0F;
 inline constexpr float kBrewHeatRampBandC = 8.0F;
 inline constexpr float kSteamHeatRampBandC = 12.0F;

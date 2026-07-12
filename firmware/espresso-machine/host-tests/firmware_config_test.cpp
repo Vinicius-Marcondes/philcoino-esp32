@@ -21,6 +21,8 @@ int main() {
   static_assert(kHeaterControlWindowMs == 10000U);
   static_assert(kMinimumHeaterPulseMs == 500U);
   static_assert(kMinimumHeaterPulseMs < kHeaterControlWindowMs);
+  static_assert(kHeaterSafetyLeaseMs == 1500U);
+  static_assert(kHeaterSafetyLeaseMs < kHeaterControlWindowMs);
   static_assert(kWifiMaximumTxPowerQuarterDbm == 44);
   static_assert(kWifiMaximumTxPowerQuarterDbm >= 8);
   static_assert(kWifiMaximumTxPowerQuarterDbm <= 84);

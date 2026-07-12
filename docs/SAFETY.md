@@ -1,100 +1,103 @@
-# Safety and project status
+# Segurança e status do projeto
 
-Philcoino is an experimental, mains-adjacent espresso-machine controller. The repository contains useful software and host-test coverage, but it is not a certified safety controller and is not approved for production, unattended use, or mains-powered heater operation.
+[English](en/SAFETY.md)
 
-## Current status
+Philcoino é um controller experimental para máquina de espresso que trabalha próximo à rede elétrica. O repositório contém software útil e cobertura por host tests, mas não é um safety controller certificado e não está aprovado para produção, uso sem supervisão ou operação do heater ligado à rede elétrica.
 
-- PRD-001 software tasks have progressed through mobile monitoring and acknowledged controls, but the tracker still lists later review/physical tasks as incomplete.
-- The current codebase review contains unresolved BLOCKER and MAJOR findings in firmware timing, single-sensor authority, timeout behavior, physical output certainty, transport, and credential/device identity.
-- Current firmware permanently uses one boiler-base thermocouple for both brew and steam. It is a single point of control failure and provides no independent sensor cross-check.
-- Current firmware source enables the OLED (`kOledEnabled = true`), while tracker text records a temporary disabled-OLED state. Treat this as an unresolved documentation/configuration discrepancy, not an approved hardware state.
-- Physical iPhone discovery, final sensor behavior, relay/SSR installation, independent cutoff, and supervised energized validation remain human checks.
+## Status atual
 
-See [CODEBASE_REVIEW_REPORT.md](../CODEBASE_REVIEW_REPORT.md), [docs/TRACKER.md](TRACKER.md), and [docs/side-notes.md](side-notes.md) for the detailed evidence.
+- As tasks de software da PRD-001 avançaram até o monitoramento mobile e controles com acknowledgement, mas o tracker ainda registra tasks posteriores de revisão/validação física como incompletas.
+- A revisão atual do codebase contém findings BLOCKER e MAJOR não resolvidos sobre timing do firmware, monitoramento dos sensores, comportamento de timeout, certeza da saída física, transporte e identidade/credenciais do dispositivo.
+- O source atual do firmware usa uma leitura de thermocouple para brew e steam (`kDualThermocouplesEnabled = false`), o que não atende à aceitação final de dois sensores.
+- O source atual do firmware habilita o OLED (`kOledEnabled = true`), enquanto o tracker registra um estado temporário com OLED desabilitado. Trate isso como uma divergência não resolvida entre documentação e configuração, não como um estado de hardware aprovado.
+- Discovery físico no iPhone, comportamento final dos sensores, instalação do relay/SSR, cutoff independente e validação energizada supervisionada continuam sendo checks humanos.
 
-## What software currently attempts
+Consulte [CODEBASE_REVIEW_REPORT.md](../CODEBASE_REVIEW_REPORT.md), [docs/TRACKER.md](TRACKER.md) e [docs/side-notes.md](side-notes.md) para as evidências detalhadas.
 
-Firmware owns the temperature-control loop and does not rely on app connectivity. Its policy code:
+## O que o software tenta fazer atualmente
 
-- validates MAX6675 status and finite readings;
-- applies mode-specific target and over-temperature limits;
-- requires a three-second ready hold;
-- applies a heating timeout and five-minute steam-ready timeout;
-- computes heater duty in ten-second windows;
-- latches faults and commands the SSR output off;
-- persists only validated targets;
-- starts critical hardware in a fail-off order.
+O firmware controla o temperature-control loop e não depende da conectividade do aplicativo. Seu policy code:
 
-These are design intentions and tested software behaviors, not proof of physical de-energization or thermal safety.
+- valida o status do MAX6675 e leituras finitas;
+- aplica target e limites de over-temperature específicos de cada mode;
+- exige três segundos contínuos na ready band;
+- aplica um heating timeout e um timeout de cinco minutos após steam-ready;
+- calcula o duty do heater em janelas de dez segundos;
+- faz latch de faults e comanda a saída do SSR para off;
+- persiste apenas targets validados;
+- inicializa hardware crítico em ordem fail-off.
 
-## Known high-risk limitations
+Esses itens são intenções de design e comportamentos de software cobertos por testes, não prova de desenergização física ou segurança térmica.
 
-The current review identifies, among others:
+## Limitações conhecidas de alto risco
 
-- heater pulse shutoff and shared-control access can be delayed by loop stalls or unbounded mutex/I/O work;
-- the permanent single control sensor cannot detect a plausible but incorrect reading through sensor disagreement;
-- some valid remote/no-op writes can reset heating deadlines, allowing a client to extend timeout protection;
-- a failed GPIO off-write can still be presented as heater off even when physical state is unknown;
-- mDNS startup failure currently tears down the HTTP server, defeating manual-address fallback;
-- pairing verifies a public stable ID rather than a cryptographic device identity;
-- plaintext HTTP bearer credentials lack minimum-strength enforcement, throttling, rotation, and transport confidentiality;
-- the simulator omits critical firmware timing, sensor, scheduler, persistence-stall, and GPIO failure behavior.
+A revisão atual identifica, entre outros pontos:
 
-Do not soften or hide these findings in user-facing documentation. Resolve and verify them before reconsidering energized operation.
+- o desligamento de pulsos do heater e o acesso ao controle compartilhado podem atrasar por stalls no loop ou trabalho mutex/I/O sem limite;
+- o mode diagnóstico com um sensor remove monitoramento independente entre dois sensores, e a detecção de disagreement não está implementada;
+- alguns writes remotos válidos ou no-op podem reiniciar deadlines de aquecimento, permitindo que um cliente prolongue a proteção de timeout;
+- uma falha ao escrever off no GPIO ainda pode ser apresentada como heater desligado, mesmo quando o estado físico é desconhecido;
+- uma falha ao iniciar mDNS atualmente encerra o HTTP server, invalidando o fallback por endereço manual;
+- o pairing verifica um stable ID público, não uma identidade criptográfica do dispositivo;
+- credenciais bearer em HTTP plaintext não têm requisitos mínimos de força, throttling, rotação ou confidencialidade no transporte;
+- o simulador omite comportamentos críticos de timing, sensores, scheduler, persistence stall e falhas de GPIO do firmware.
 
-## Physical safety boundary
+Não suavize nem esconda esses findings na documentação destinada ao público. Resolva e verifique cada ponto antes de reconsiderar operação energizada.
 
-Software cannot replace:
+## Boundary de segurança física
 
-- a correctly rated independent thermal fuse/thermostat wired in series with the heater;
-- correctly selected fuse/breaker, conductor, terminal, insulation, creepage, clearance, enclosure, strain relief, and protective earth;
-- verified SSR authenticity, input margin, load rating, failure mode, heat sink, mounting, and temperature derating;
-- pressure-vessel and dry-boil protections already required by the appliance;
-- qualified review and supervised measurement on the actual unit.
+Software não substitui:
 
-An SSR may fail shorted. A successful API response or low GPIO command does not prove that mains current stopped.
+- thermal fuse/thermostat independente, corretamente dimensionado e ligado em série com o heater;
+- fuse/breaker, condutores, terminais, isolação, creepage, clearance, enclosure, strain relief e protective earth corretamente selecionados;
+- autenticidade do SSR, margem de entrada, load rating, failure mode, heat sink, montagem e temperature derating verificados;
+- proteções contra pressão e dry boil já exigidas pelo appliance;
+- revisão qualificada e medição supervisionada na unidade real.
 
-## Allowed development scope
+Um SSR pode falhar em curto. Uma response bem-sucedida da API ou um comando GPIO low não comprova que a corrente da rede elétrica foi interrompida.
 
-Without explicit human authorization, limit work to:
+## Escopo permitido para desenvolvimento
 
-- static analysis and documentation;
-- protocol, simulator, mobile, and host-test development;
-- firmware compilation and non-energized host tests;
-- supervised low-voltage ESP32/peripheral checks with the heater/load disconnected.
+Sem autorização humana explícita, limite o trabalho a:
 
-Do not connect, disconnect, modify, or energize mains wiring based on repository instructions alone.
+- static analysis e documentação;
+- desenvolvimento de protocolo, simulador, mobile e host tests;
+- compilação do firmware e host tests sem energização;
+- checks supervisionados de baixa tensão no ESP32/periféricos com o heater/load desconectado.
 
-## Security model
+Não conecte, desconecte, modifique ou energize a fiação da rede elétrica com base apenas nas instruções do repositório.
 
-API v1 uses local plaintext HTTP and a bearer token. Public identity is advertised over mDNS. This may be acceptable for constrained development on an isolated trusted LAN, but it does not defend against a hostile local peer that can observe traffic, clone identity, steal/replay a token, or brute-force a weak token.
+## Modelo de segurança da informação
 
-Until the known findings are resolved:
+A API v1 usa HTTP plaintext local e um bearer token. A identidade pública é anunciada por mDNS. Isso pode ser aceitável para desenvolvimento restrito em uma LAN confiável e isolada, mas não protege contra um peer local hostil capaz de observar o tráfego, clonar a identidade, roubar/reutilizar um token ou executar brute force contra um token fraco.
 
-- use a dedicated isolated development network;
-- use a high-entropy unique token and never commit or log it;
-- do not reuse personal/account credentials;
-- do not expose the device port to the internet;
-- treat a changed address or identity as untrusted;
-- rotate/remove credentials after demos or shared-network testing.
+Enquanto os findings conhecidos não forem resolvidos:
 
-## Evidence levels
+- use uma rede dedicada e isolada para desenvolvimento;
+- use um token único com alta entropia e nunca faça commit ou log dele;
+- não reutilize credenciais pessoais/de contas;
+- não exponha a porta do dispositivo à internet;
+- trate mudanças de endereço ou identidade como não confiáveis;
+- rotacione/remova credenciais após demos ou testes em redes compartilhadas.
 
-| Evidence | What it supports | What it does not support |
+## Níveis de evidência
+
+| Evidência | O que sustenta | O que não sustenta |
 | --- | --- | --- |
-| Protocol/Zod tests | Wire-shape consistency | Firmware timing or hardware behavior |
-| Simulator tests | Mobile/API flows under deterministic model | Real control loop, sensors, GPIO, SSR, or thermal safety |
-| Firmware host tests | Pure C++ policies and serialization | ESP-IDF scheduling/I/O or physical output |
-| ESP-IDF target build | Target compilation/link integration | Correct wiring or runtime safety |
-| Low-voltage bench check | Specific observed peripheral/GPIO behavior | Mains heater operation |
-| Supervised instrumented hardware test | The measured scenario on one build | Certification or unattended safety |
+| Testes Protocol/Zod | Consistência do wire shape | Timing do firmware ou comportamento do hardware |
+| Testes do simulador | Fluxos mobile/API no modelo determinístico | Control loop real, sensores, GPIO, SSR ou segurança térmica |
+| Host tests do firmware | Policies C++ puras e serialization | Scheduling/I/O do ESP-IDF ou saída física |
+| Target build ESP-IDF | Integração de compilação/link para o target | Wiring correto ou segurança em runtime |
+| Check de bancada em baixa tensão | Comportamento específico observado de periférico/GPIO | Operação do heater ligado à rede elétrica |
+| Teste físico instrumentado e supervisionado | Cenário medido em um build específico | Certificação ou segurança para uso sem supervisão |
 
-Always state which level produced a claim.
+Sempre informe qual nível produziu uma afirmação.
 
-## Requirements before energized consideration
+## Requisitos antes de considerar operação energizada
 
-At minimum:
+No mínimo:
 
+<<<<<<< HEAD
 1. close every relevant BLOCKER and MAJOR finding with adversarial tests;
 2. validate the single sensor's mounting, lag, error, and failure behavior against an independent instrument, and retain an independent hardware thermal cutoff;
 3. make heater-off timing independent of blocking network/storage/display/control-loop work;
@@ -104,9 +107,30 @@ At minimum:
 7. complete the pinned ESP-IDF build and target-runtime checks;
 8. verify independent cutoff, SSR drive/current/thermal behavior, wiring, enclosure, and protection with qualified supervision;
 9. record explicit human acceptance for the exact hardware configuration.
+||||||| 2610c05
+1. close every relevant BLOCKER and MAJOR finding with adversarial tests;
+2. restore and validate independent dual-sensor monitoring and disagreement behavior;
+3. make heater-off timing independent of blocking network/storage/display/control-loop work;
+4. represent and escalate unknown physical output state;
+5. prevent client traffic from extending safety deadlines;
+6. resolve device identity, token strength, throttling, transport, and recovery security;
+7. complete the pinned ESP-IDF build and target-runtime checks;
+8. verify independent cutoff, SSR drive/current/thermal behavior, wiring, enclosure, and protection with qualified supervision;
+9. record explicit human acceptance for the exact hardware configuration.
+=======
+1. fechar todos os findings BLOCKER e MAJOR relevantes com testes adversariais;
+2. restaurar e validar monitoramento independente entre dois sensores e comportamento de disagreement;
+3. tornar o timing de heater-off independente de trabalho bloqueante em rede/storage/display/control loop;
+4. representar e escalar estado físico desconhecido da saída;
+5. impedir que tráfego do cliente prolongue safety deadlines;
+6. resolver identidade do dispositivo, força do token, throttling, transporte e segurança de recovery;
+7. concluir o build ESP-IDF fixado e os checks em runtime no target;
+8. verificar cutoff independente, drive/corrente/comportamento térmico do SSR, wiring, enclosure e proteções com supervisão qualificada;
+9. registrar aceitação humana explícita para a configuração exata do hardware.
+>>>>>>> main
 
-Completion of this list still does not imply regulatory certification.
+Concluir esta lista ainda não representa certificação regulatória.
 
-## Reporting safety issues
+## Relatando problemas de segurança
 
-Do not include live tokens, Wi-Fi credentials, private addresses, or exploit details tied to an exposed device in a public issue. Preserve reproducible evidence, affected code paths, failure sequence, and expected fail-safe behavior, then coordinate privately with the repository owner before public disclosure.
+Não inclua tokens ativos, credenciais Wi-Fi, endereços privados ou detalhes de exploit relacionados a um dispositivo exposto em uma issue pública. Preserve evidências reproduzíveis, code paths afetados, sequência da falha e comportamento fail-safe esperado; depois coordene de forma privada com o owner do repositório antes da divulgação pública.
