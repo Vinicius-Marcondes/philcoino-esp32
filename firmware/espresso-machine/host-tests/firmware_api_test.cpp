@@ -54,6 +54,20 @@ class FakeDigitalOutput final : public DigitalOutput {
   bool level{false};
 };
 
+class FakeSafetyLease final : public SsrSafetyLease {
+ public:
+  bool initialize() override {
+    tripped_ = false;
+    return true;
+  }
+  bool arm(std::uint32_t) override { return !tripped_; }
+  bool disarm() override { return true; }
+  bool tripped() const override { return tripped_; }
+
+ private:
+  bool tripped_{false};
+};
+
 ThermocoupleReading ok(float temperature_c) {
   return {ThermocoupleStatus::kOk, temperature_c, 0};
 }
@@ -62,7 +76,7 @@ struct ApiHarness {
   ApiHarness()
       : backend(memory),
         storage(backend),
-        ssr(output),
+        ssr(output, safety_lease),
         controller(memory.targets, ssr),
         api({"philcoino-0102AF", "PhilcoINO", "ESP32-C3 Super Mini", "0.1.0"},
             "test-secret", controller, storage) {
@@ -80,6 +94,7 @@ struct ApiHarness {
   MemoryBackend backend;
   TargetStorage storage;
   FakeDigitalOutput output{};
+  FakeSafetyLease safety_lease;
   FailOffSsr ssr;
   TemperatureController controller;
   FirmwareApi api;

@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <vector>
 
+#include "philcoino/config.hpp"
 #include "philcoino/peripherals.hpp"
 
 namespace {
@@ -64,7 +65,14 @@ class MemoryBackend final : public TargetBackend {
   MemoryState& state_;
 };
 
-enum class OutputEvent { kLow, kHigh, kConfigure };
+enum class OutputEvent {
+  kLow,
+  kHigh,
+  kConfigure,
+  kLeaseInitialize,
+  kLeaseArm,
+  kLeaseDisarm,
+};
 
 class FakeDigitalOutput final : public DigitalOutput {
  public:
@@ -89,6 +97,41 @@ class FakeDigitalOutput final : public DigitalOutput {
   bool fail_low{false};
   bool fail_high{false};
   bool fail_configure{false};
+};
+
+class FakeSafetyLease final : public SsrSafetyLease {
+ public:
+  explicit FakeSafetyLease(FakeDigitalOutput& output, bool off_high = false)
+      : output_(output), off_high_(off_high) {}
+
+  bool initialize() override {
+    output_.events.push_back(OutputEvent::kLeaseInitialize);
+    tripped_ = false;
+    return !fail_initialize;
+  }
+  bool arm(std::uint32_t duration_ms) override {
+    output_.events.push_back(OutputEvent::kLeaseArm);
+    durations.push_back(duration_ms);
+    return !fail_arm;
+  }
+  bool disarm() override {
+    output_.events.push_back(OutputEvent::kLeaseDisarm);
+    return !fail_disarm;
+  }
+  bool tripped() const override { return tripped_; }
+
+  void expire() {
+    output_.set_level(off_high_);
+    tripped_ = true;
+  }
+
+  FakeDigitalOutput& output_;
+  std::vector<std::uint32_t> durations{};
+  bool off_high_{false};
+  bool fail_initialize{false};
+  bool fail_arm{false};
+  bool fail_disarm{false};
+  bool tripped_{false};
 };
 
 class FakeOledTransport final : public OledTransport {
@@ -176,16 +219,36 @@ void test_target_storage() {
 
 void test_fail_off_ssr() {
   FakeDigitalOutput output;
-  FailOffSsr ssr(output);
+  FakeSafetyLease safety_lease(output);
+  FailOffSsr ssr(output, safety_lease);
   assert(ssr.initialize());
   assert((output.events == std::vector<OutputEvent>{OutputEvent::kLow,
                                                     OutputEvent::kConfigure,
-                                                    OutputEvent::kLow}));
+                                                    OutputEvent::kLow,
+                                                    OutputEvent::kLeaseInitialize}));
   assert(!output.level);
   assert(!ssr.is_enabled());
   assert(ssr.set_enabled(true));
+  assert((safety_lease.durations ==
+          std::vector<std::uint32_t>{
+              philcoino::config::kHeaterSafetyLeaseMs}));
   assert(ssr.is_enabled());
 
+  const auto renewal_start = output.events.size();
+  assert(ssr.set_enabled(true));
+  assert((std::vector<OutputEvent>(output.events.begin() + renewal_start,
+                                  output.events.end()) ==
+          std::vector<OutputEvent>{OutputEvent::kLeaseArm,
+                                   OutputEvent::kHigh}));
+
+  const auto off_start = output.events.size();
+  assert(ssr.set_enabled(false));
+  assert((std::vector<OutputEvent>(output.events.begin() + off_start,
+                                  output.events.end()) ==
+          std::vector<OutputEvent>{OutputEvent::kLow,
+                                   OutputEvent::kLeaseDisarm}));
+
+  assert(ssr.set_enabled(true));
   output.fail_high = true;
   assert(!ssr.set_enabled(true));
   assert(!output.level);
@@ -193,20 +256,58 @@ void test_fail_off_ssr() {
 
   FakeDigitalOutput configuration_error;
   configuration_error.fail_configure = true;
-  FailOffSsr failed_ssr(configuration_error);
+  FakeSafetyLease configuration_error_lease(configuration_error);
+  FailOffSsr failed_ssr(configuration_error, configuration_error_lease);
   assert(!failed_ssr.initialize());
   assert(!configuration_error.level);
   assert(!failed_ssr.set_enabled(true));
   assert(!configuration_error.level);
 
   FakeDigitalOutput active_low_output;
-  FailOffSsr active_low_ssr(active_low_output, false);
+  FakeSafetyLease active_low_lease(active_low_output, true);
+  FailOffSsr active_low_ssr(active_low_output, active_low_lease, false);
   assert(active_low_ssr.initialize());
   assert(active_low_output.level);
   assert(active_low_ssr.set_enabled(true));
   assert(!active_low_output.level);
   assert(active_low_ssr.force_off());
   assert(active_low_output.level);
+
+  FakeDigitalOutput lease_failure_output;
+  FakeSafetyLease lease_failure(lease_failure_output);
+  FailOffSsr lease_failure_ssr(lease_failure_output, lease_failure);
+  lease_failure.fail_initialize = true;
+  assert(!lease_failure_ssr.initialize());
+  assert(!lease_failure_output.level);
+
+  FakeDigitalOutput arm_failure_output;
+  FakeSafetyLease arm_failure(arm_failure_output);
+  FailOffSsr arm_failure_ssr(arm_failure_output, arm_failure);
+  assert(arm_failure_ssr.initialize());
+  arm_failure.fail_arm = true;
+  assert(!arm_failure_ssr.set_enabled(true));
+  assert(!arm_failure_output.level);
+
+  FakeDigitalOutput disarm_failure_output;
+  FakeSafetyLease disarm_failure(disarm_failure_output);
+  FailOffSsr disarm_failure_ssr(disarm_failure_output, disarm_failure);
+  assert(disarm_failure_ssr.initialize());
+  assert(disarm_failure_ssr.set_enabled(true));
+  disarm_failure.fail_disarm = true;
+  assert(!disarm_failure_ssr.set_enabled(false));
+  assert(!disarm_failure_output.level);
+
+  FakeDigitalOutput expired_output;
+  FakeSafetyLease expiring_lease(expired_output);
+  FailOffSsr expired_ssr(expired_output, expiring_lease);
+  assert(expired_ssr.initialize());
+  assert(expired_ssr.set_enabled(true));
+  expiring_lease.expire();
+  assert(!expired_output.level);
+  assert(expired_ssr.safety_cutoff_tripped());
+  assert(!expired_ssr.is_enabled());
+  assert(!expired_ssr.set_enabled(true));
+  assert(!expired_output.level);
 }
 
 void test_oled() {

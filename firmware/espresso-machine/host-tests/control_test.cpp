@@ -16,6 +16,8 @@ struct MemoryState {
   bool fail_load{false};
   bool fail_save{false};
   int save_count{0};
+  const bool* heater_level{nullptr};
+  bool heater_was_high_during_save{false};
   TemperatureTargets targets{};
 };
 
@@ -35,6 +37,8 @@ class MemoryBackend final : public TargetBackend {
   }
 
   bool save(const TemperatureTargets& targets) override {
+    state_.heater_was_high_during_save =
+        state_.heater_level != nullptr && *state_.heater_level;
     if (state_.fail_save) {
       return false;
     }
@@ -75,6 +79,39 @@ class FakeDigitalOutput final : public DigitalOutput {
   bool fail_configure{false};
 };
 
+class FakeSafetyLease final : public SsrSafetyLease {
+ public:
+  explicit FakeSafetyLease(FakeDigitalOutput& output) : output_(output) {}
+
+  bool initialize() override {
+    tripped_ = false;
+    return true;
+  }
+  bool arm(std::uint32_t duration_ms) override {
+    last_duration_ms = duration_ms;
+    ++arm_count;
+    return !fail_arm;
+  }
+  bool disarm() override {
+    ++disarm_count;
+    return !fail_disarm;
+  }
+  bool tripped() const override { return tripped_; }
+
+  void expire() {
+    output_.set_level(false);
+    tripped_ = true;
+  }
+
+  FakeDigitalOutput& output_;
+  std::uint32_t last_duration_ms{0};
+  int arm_count{0};
+  int disarm_count{0};
+  bool fail_arm{false};
+  bool fail_disarm{false};
+  bool tripped_{false};
+};
+
 ThermocoupleReading ok(float temperature_c) {
   return {ThermocoupleStatus::kOk, temperature_c, 0};
 }
@@ -97,7 +134,8 @@ struct ControllerHarness {
   }
 
   FakeDigitalOutput output{};
-  FailOffSsr ssr{output};
+  FakeSafetyLease safety_lease{output};
+  FailOffSsr ssr{output, safety_lease};
   TemperatureController controller;
 };
 
@@ -176,21 +214,83 @@ void test_target_updates_validate_and_persist_before_state_change() {
   MemoryBackend backend(state);
   TargetStorage storage(backend);
   ControllerHarness harness(state.targets);
+  state.heater_level = &harness.output.level;
 
   assert(!harness.controller.update_brew_target(84, storage, 0));
   assert(harness.controller.targets().brew_c == 93);
   assert(state.save_count == 0);
 
   state.fail_save = true;
+  auto snapshot = harness.controller.update(readings(80.0F, 90.0F), 0);
+  assert(snapshot.heater_enabled);
+  assert(harness.output.level);
   assert(!harness.controller.update_steam_target(116, storage, 0));
   assert(harness.controller.targets().steam_c == 115);
   assert(state.targets.steam_c == 115);
+  assert(!harness.output.level);
+  assert(!state.heater_was_high_during_save);
+  assert(harness.safety_lease.disarm_count == 1);
 
   state.fail_save = false;
   assert(harness.controller.update_steam_target(116, storage, 0));
   assert(harness.controller.targets().steam_c == 116);
   assert(state.targets.steam_c == 116);
   assert(state.save_count == 1);
+}
+
+void test_safety_lease_renews_without_normal_off_transition() {
+  ControllerHarness harness({93, 115});
+
+  auto snapshot = harness.controller.update(readings(80.0F, 90.0F), 0);
+  assert(snapshot.heater_enabled);
+  assert(harness.safety_lease.arm_count == 1);
+  assert(harness.safety_lease.last_duration_ms ==
+         philcoino::config::kHeaterSafetyLeaseMs);
+  const auto first_event_count = harness.output.events.size();
+
+  snapshot = harness.controller.update(
+      readings(80.0F, 90.0F), kMax6675SampleIntervalMs);
+  assert(snapshot.heater_enabled);
+  assert(harness.safety_lease.arm_count == 2);
+  assert(harness.output.events.size() == first_event_count + 1U);
+  assert(harness.output.events.back());
+}
+
+void test_safety_lease_expiry_latches_internal_fault_until_reboot() {
+  ControllerHarness harness({93, 115});
+
+  auto snapshot = harness.controller.update(readings(80.0F, 90.0F), 0);
+  assert(snapshot.heater_enabled);
+  harness.safety_lease.expire();
+  assert(!harness.output.level);
+  assert(!harness.ssr.is_enabled());
+
+  snapshot = harness.controller.update(
+      readings(80.0F, 90.0F), kMax6675SampleIntervalMs);
+  assert(snapshot.status == ControlStatus::kFault);
+  assert(snapshot.fault.code == FaultCode::kInternalError);
+  assert(!snapshot.heater_enabled);
+  assert(!harness.controller.set_heater_enabled(true, 1000));
+  assert(harness.controller.has_fault());
+  assert(!harness.output.level);
+}
+
+void test_safety_lease_control_failures_latch_internal_fault() {
+  ControllerHarness arm_failure({93, 115});
+  arm_failure.safety_lease.fail_arm = true;
+  auto snapshot = arm_failure.controller.update(readings(80.0F, 90.0F), 0);
+  assert(snapshot.status == ControlStatus::kFault);
+  assert(snapshot.fault.code == FaultCode::kInternalError);
+  assert(!snapshot.heater_enabled);
+  assert(!arm_failure.output.level);
+
+  ControllerHarness disarm_failure({93, 115});
+  disarm_failure.safety_lease.fail_disarm = true;
+  snapshot = disarm_failure.controller.update(readings(95.0F, 90.0F), 0);
+  assert(snapshot.status == ControlStatus::kFault);
+  assert(snapshot.fault.code == FaultCode::kInternalError);
+  assert(!snapshot.heater_enabled);
+  assert(!disarm_failure.output.level);
 }
 
 void test_over_target_brew_disables_heater_while_not_ready() {
@@ -465,6 +565,9 @@ int main() {
   test_ready_requires_three_continuous_seconds();
   test_steam_timeout_returns_to_brew_after_first_ready();
   test_target_updates_validate_and_persist_before_state_change();
+  test_safety_lease_renews_without_normal_off_transition();
+  test_safety_lease_expiry_latches_internal_fault_until_reboot();
+  test_safety_lease_control_failures_latch_internal_fault();
   test_over_target_brew_disables_heater_while_not_ready();
   test_brew_heat_ramp_pulses_near_target();
   test_brew_heat_ramp_scales_with_target();
