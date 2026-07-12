@@ -1,0 +1,9 @@
+{
+  "ios": {
+    "CFBundleDisplayName": "Philcoino",
+    "NSLocalNetworkUsageDescription": "O Philcoino usa sua rede local para encontrar e conectar à sua máquina de espresso."
+  },
+  "android": {
+    "app_name": "Philcoino"
+  }
+}

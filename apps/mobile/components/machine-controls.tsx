@@ -11,6 +11,7 @@ import { useEffect, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import type { DashboardMutationState } from "@/src/dashboard/dashboard-mutation-session";
+import { translate } from "@/src/localization/i18n";
 
 const MUTATION_FEEDBACK_DISMISS_MS = 30_000;
 
@@ -74,22 +75,22 @@ export function MachineControls({
         <View style={styles.sectionHeading}>
           <View style={styles.headingCopy}>
             <Text selectable style={styles.eyebrow}>
-              TEMPERATURE TARGETS
+              {translate("controls.temperatureTargets")}
             </Text>
             <Text selectable style={styles.sectionTitle}>
-              Whole-degree settings
+              {translate("controls.wholeDegreeSettings")}
             </Text>
           </View>
           <Text
             selectable
             style={[styles.persistedPill, targetsChanged && styles.draftPill]}>
-            {targetsChanged ? "DRAFT" : "SAVED"}
+            {targetsChanged ? translate("controls.draft") : translate("controls.saved")}
           </Text>
         </View>
 
         <TargetStepper
           disabled={mutationPending || confirmingTargets}
-          label="Brew"
+          label={translate("controls.brew")}
           maximum={BREW_TARGET_MAX_C}
           minimum={BREW_TARGET_MIN_C}
           onChange={setBrewTargetC}
@@ -97,7 +98,7 @@ export function MachineControls({
         />
         <TargetStepper
           disabled={mutationPending || confirmingTargets}
-          label="Steam"
+          label={translate("controls.steam")}
           maximum={STEAM_TARGET_MAX_C}
           minimum={STEAM_TARGET_MIN_C}
           onChange={setSteamTargetC}
@@ -105,31 +106,33 @@ export function MachineControls({
         />
 
         <Text selectable style={styles.helpText}>
-          Targets are stored by the machine. A change is sent only after the
-          confirmation below.
+          {translate("controls.targetsHelp")}
         </Text>
 
         {confirmingTargets ? (
           <View accessibilityLiveRegion="polite" style={styles.confirmationCard}>
             <Text selectable style={styles.confirmationTitle}>
-              Confirm persisted target changes
+              {translate("controls.confirmTargets")}
             </Text>
             <Text selectable style={styles.confirmationText}>
-              Brew {snapshot.brewTargetC}°C → {brewTargetC}°C · Steam{" "}
-              {snapshot.steamTargetC}°C → {steamTargetC}°C
+              {translate("controls.targetChanges", {
+                newBrew: brewTargetC,
+                newSteam: steamTargetC,
+                oldBrew: snapshot.brewTargetC,
+                oldSteam: snapshot.steamTargetC,
+              })}
             </Text>
             <Text selectable style={styles.confirmationText}>
-              The values will update on screen only after the machine validates
-              and saves them.
+              {translate("controls.acknowledgementHelp")}
             </Text>
             <View style={styles.actionRow}>
               <ControlButton
-                label="Cancel"
+                label={translate("controls.cancel")}
                 onPress={() => setConfirmingTargets(false)}
                 secondary
               />
               <ControlButton
-                label="Confirm and save"
+                label={translate("controls.confirmAndSave")}
                 onPress={confirmTargets}
               />
             </View>
@@ -137,7 +140,7 @@ export function MachineControls({
         ) : (
           <ControlButton
             disabled={!targetsChanged || mutationPending}
-            label={targetsChanged ? "Review target changes" : "Targets unchanged"}
+            label={targetsChanged ? translate("controls.reviewChanges") : translate("controls.unchanged")}
             onPress={requestTargetConfirmation}
           />
         )}
@@ -145,10 +148,10 @@ export function MachineControls({
 
       <View style={styles.controlCard}>
         <Text selectable style={styles.eyebrow}>
-          ACTIVE MODE
+          {translate("controls.activeMode")}
         </Text>
         <Text selectable style={styles.sectionTitle}>
-          Firmware temperature control
+          {translate("controls.firmwareControl")}
         </Text>
         <View style={styles.modeRow}>
           <ModeButton
@@ -165,9 +168,7 @@ export function MachineControls({
           />
         </View>
         <Text selectable style={styles.helpText}>
-          The active mode changes here only after firmware acknowledgement.
-          Steam timing starts when steam becomes ready and returns to Brew after
-          five minutes, even if the app disconnects.
+          {translate("controls.modeHelp")}
         </Text>
       </View>
     </View>
@@ -213,7 +214,7 @@ export function MutationFeedback({
           {feedbackTitle(state.status)}
         </Text>
         <Pressable
-          accessibilityLabel="Dismiss notification"
+          accessibilityLabel={translate("controls.dismissNotification")}
           accessibilityRole="button"
           hitSlop={8}
           onPress={onDismiss}
@@ -258,19 +259,19 @@ function TargetStepper({
       </View>
       <View style={styles.stepperControls}>
         <StepButton
-          accessibilityLabel={`Decrease ${label} target`}
+          accessibilityLabel={translate("controls.decreaseTarget", { label })}
           disabled={disabled || value <= minimum}
           label="−"
           onPress={() => onChange(Math.max(minimum, value - 1))}
         />
         <Text
-          accessibilityLabel={`${label} target ${value} degrees Celsius`}
+          accessibilityLabel={translate("controls.targetAccessibility", { label, value })}
           selectable
           style={styles.stepperValue}>
           {value}°C
         </Text>
         <StepButton
-          accessibilityLabel={`Increase ${label} target`}
+          accessibilityLabel={translate("controls.increaseTarget", { label })}
           disabled={disabled || value >= maximum}
           label="+"
           onPress={() => onChange(Math.min(maximum, value + 1))}
@@ -319,10 +320,10 @@ function ModeButton({
   mode: Mode;
   onPress: (mode: Mode) => void;
 }) {
-  const label = mode === "brew" ? "Brew" : "Steam";
+  const label = translate(mode === "brew" ? "controls.brew" : "controls.steam");
   return (
     <Pressable
-      accessibilityLabel={`${label} temperature mode`}
+      accessibilityLabel={translate("controls.temperatureMode", { label })}
       accessibilityRole="button"
       accessibilityState={{ disabled: disabled || active, selected: active }}
       disabled={disabled || active}
@@ -337,7 +338,7 @@ function ModeButton({
         {label}
       </Text>
       <Text style={[styles.modeState, active && styles.modeStateActive]}>
-        {active ? "ACTIVE" : "SWITCH"}
+        {active ? translate("controls.active") : translate("controls.switch")}
       </Text>
     </Pressable>
   );
@@ -380,13 +381,13 @@ function ControlButton({
 function feedbackTitle(status: DashboardMutationState["status"]): string {
   switch (status) {
     case "pending":
-      return "Change pending";
+      return translate("controls.feedback.pending");
     case "acknowledged":
-      return "Change acknowledged";
+      return translate("controls.feedback.acknowledged");
     case "rejected":
-      return "Change rejected by firmware";
+      return translate("controls.feedback.rejected");
     case "disconnected":
-      return "Change not acknowledged";
+      return translate("controls.feedback.disconnected");
     case "idle":
       return "";
   }
