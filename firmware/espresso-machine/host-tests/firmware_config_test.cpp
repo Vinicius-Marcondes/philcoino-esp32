@@ -47,6 +47,15 @@ int main() {
   static_assert(kSteamThermocoupleClockGpio == 0);
   static_assert(kBrewThermocoupleClockGpio != kSteamThermocoupleClockGpio);
   static_assert(kSsrActiveHigh);
+  static_assert(kPumpGpio == 10);
+  static_assert(kPumpActiveHigh);
+  static_assert(kPumpGpio != kSsrGpio);
+  static_assert(kPumpGpio != kBrewThermocoupleChipSelectGpio);
+  static_assert(kPumpGpio != kSteamThermocoupleChipSelectGpio);
+  static_assert(kPumpGpio != kBrewThermocoupleClockGpio);
+  static_assert(kPumpGpio != kSteamThermocoupleClockGpio);
+  static_assert(kPumpGpio != kBrewThermocoupleDataGpio);
+  static_assert(kPumpGpio != kSteamThermocoupleDataGpio);
 
   return 0;
 }

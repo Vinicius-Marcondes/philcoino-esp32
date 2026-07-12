@@ -1,7 +1,9 @@
 # @philcoino/protocol
 
-The shared v1 HTTP contract for the Philcoino mobile app, device simulator, and
-ESP-IDF firmware.
+The shared HTTP contract for the Philcoino mobile app, device simulator, and
+ESP-IDF firmware. API v1 remains the compatible temperature-control surface;
+API v2 extraction/profile shapes are implemented by mobile and the simulator
+and staged for later firmware integration.
 
 - `openapi.yaml` is the language-neutral source of truth. It uses JSON syntax,
   which is valid YAML 1.2, so validation does not require a YAML parser.
@@ -21,8 +23,11 @@ bun run validate:openapi
 All authenticated operations use `Authorization: Bearer <token>`. The public
 operations are `GET /healthz` and `GET /api/v1/device`.
 
-The authenticated operations are state read, temperature-target update, mode
+API v1 authenticated operations are state read, temperature-target update, mode
 selection, volatile heater permission, and cooled over-temperature dismissal.
+API v2 additionally defines combined state, four-slot profile read/replace, and
+idempotent extraction Start/Stop. The firmware does not yet serve these routes;
+simulator availability is not firmware or physical-pump evidence.
 Objects are strict: consumers must reject unknown fields rather than silently
 accept protocol drift.
 

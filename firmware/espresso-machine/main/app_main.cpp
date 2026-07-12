@@ -113,6 +113,13 @@ void network_start_task(void* argument) {
 extern "C" void app_main() {
   using namespace philcoino::peripherals;
 
+  static EspGpioOutput pump_gpio(philcoino::config::kPumpGpio);
+  static FailOffPump pump(pump_gpio, philcoino::config::kPumpActiveHigh);
+  if (!pump.initialize()) {
+    ESP_LOGE(kLogTag, "Pump fail-off initialization failed");
+    return;
+  }
+
   static EspGpioOutput ssr_gpio(philcoino::config::kSsrGpio);
   static EspGptimerSafetyLease ssr_safety_lease(
       philcoino::config::kSsrGpio, philcoino::config::kSsrActiveHigh);
@@ -120,6 +127,7 @@ extern "C" void app_main() {
                         philcoino::config::kSsrActiveHigh);
   if (!ssr.initialize()) {
     ESP_LOGE(kLogTag, "SSR fail-off initialization failed");
+    pump.force_off();
     return;
   }
 
@@ -165,6 +173,25 @@ extern "C" void app_main() {
     ssr.force_off();
     return;
   }
+
+  static EspNvsProfileBackend profile_backend;
+  if (!profile_backend.initialize()) {
+    ESP_LOGE(kLogTag, "NVS profile storage initialization failed");
+    pump.force_off();
+    ssr.force_off();
+    return;
+  }
+  static ProfileStorage profile_storage(profile_backend);
+  ExtractionProfiles profiles{};
+  const auto profile_result = profile_storage.load(profiles);
+  if (profile_result == ProfileLoadResult::kCorrupt ||
+      profile_result == ProfileLoadResult::kError) {
+    ESP_LOGE(kLogTag, "Persisted extraction profiles are unavailable or invalid");
+    pump.force_off();
+    ssr.force_off();
+    return;
+  }
+  (void)profiles;
 
   static EspMax6675Transport max6675_transport;
   if (!max6675_transport.initialize()) {

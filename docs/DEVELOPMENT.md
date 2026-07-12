@@ -53,7 +53,17 @@ For dashboard/UI work without a network device:
 EXPO_PUBLIC_PHILCOINO_DEBUG_DEVICE=1 bun run start
 ```
 
-This mode bypasses discovery, SecureStore, bearer authentication, and HTTP. It acknowledges in-memory target/mode/heater changes, but temperatures and uptime stay at zero. It is not an integration or safety test.
+This mode bypasses discovery, SecureStore, bearer authentication, and HTTP. It
+acknowledges in-memory target/mode/heater changes, but temperatures and uptime
+stay at zero. It also exposes the PRD-002 extraction design preview with local
+profiles and deterministic mock actions. Those extraction actions never call a
+device API and are unmistakably labeled as preview state. Debug mode is not an
+integration or safety test.
+
+The debug dashboard uses bottom navigation to separate live Dashboard,
+extraction Profiles, and Machine configuration. While a mock extraction is
+active, a persistent bar above the navigation links back to its Start/Stop and
+phase controls.
 
 ### Simulator-backed app
 
@@ -77,6 +87,7 @@ PUT  /_simulator/temperatures
 PUT  /_simulator/fault
 POST /_simulator/power-cycle
 POST /_simulator/reset
+POST /_simulator/fail-next-profile-save
 ```
 
 Examples:
@@ -95,6 +106,13 @@ curl http://localhost:3000/api/v1/state \
 ```
 
 Manual time never advances in the background. Power-cycle clears volatile state and preserves targets; reset also restores default targets. The simple temperature model is for deterministic app/contract scenarios only.
+
+The simulator also serves authenticated API v2 state, complete profile-set
+read/replace, and extraction Start/Stop. Manual time owns extraction progress;
+power-cycle preserves profiles but always returns extraction to idle. The
+one-shot `fail-next-profile-save` control makes the next complete profile
+replacement fail without changing the previous set. These behaviors support
+API/mobile integration and are not firmware timing or physical-pump evidence.
 
 ## Protocol workflow
 
@@ -141,7 +159,7 @@ Current source uses diagnostic single-thermocouple mode (`kDualThermocouplesEnab
 
 ### Low-voltage only
 
-Repository development does not authorize mains power. With the heater/load disconnected, supervised checks may validate boot, sensor independence, open-probe behavior, display output, network discovery, and the SSR control GPIO's inactive level. Record physical evidence in the tracker/side notes only after the responsible human confirms it.
+Repository development does not authorize mains power. With heater and pump loads disconnected, supervised checks may validate boot, sensor independence, open-probe behavior, display output, network discovery, and heater/pump control GPIO inactive levels. Record physical evidence in the tracker/side notes only after the responsible human confirms it.
 
 ## Verification matrix
 

@@ -73,6 +73,14 @@ const expectedOperations = {
   "/api/v1/mode": "put",
   "/api/v1/heater": "put",
   "/api/v1/faults/over-temperature/dismiss": "post",
+  "/api/v2/state": "get",
+  "/api/v2/profiles": "get",
+  "/api/v2/extractions/start": "post",
+  "/api/v2/extractions/stop": "post",
+} as const;
+
+const expectedAdditionalOperations = {
+  "/api/v2/profiles": "put",
 } as const;
 
 if (
@@ -103,6 +111,28 @@ for (const [path, method] of Object.entries(expectedOperations)) {
     (!Array.isArray(security) ||
       security.length !== 1 ||
       !("bearerAuth" in objectAt(security[0], `${path} security`)))
+  ) {
+    throw new Error(`${method.toUpperCase()} ${path} must require bearerAuth.`);
+  }
+}
+
+for (const [path, method] of Object.entries(expectedAdditionalOperations)) {
+  const pathItem = objectAt(paths[path], path);
+  const operation = objectAt(pathItem[method], `${method.toUpperCase()} ${path}`);
+  const responses = objectAt(
+    operation.responses,
+    `${method.toUpperCase()} ${path} responses`,
+  );
+
+  if (!("200" in responses)) {
+    throw new Error(`${method.toUpperCase()} ${path} must document a 200 response.`);
+  }
+
+  const security = operation.security;
+  if (
+    !Array.isArray(security) ||
+    security.length !== 1 ||
+    !("bearerAuth" in objectAt(security[0], `${path} security`))
   ) {
     throw new Error(`${method.toUpperCase()} ${path} must require bearerAuth.`);
   }

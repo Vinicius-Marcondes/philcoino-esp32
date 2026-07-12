@@ -2,25 +2,44 @@ import { describe, expect, test } from "bun:test";
 import type { ZodType } from "zod";
 
 import {
+  ApiV2ErrorCodeSchema,
+  ApiV2ErrorResponseSchema,
   BREW_TARGET_MAX_C,
   BREW_TARGET_MIN_C,
   BrewTargetSchema,
   DeviceResponseSchema,
   ErrorCodeSchema,
   ErrorResponseSchema,
+  EXTRACTION_MAX_DURATION_MS,
+  EXTRACTION_MAX_DURATION_SECONDS,
+  ExtractionActiveConflictResponseSchema,
+  ExtractionPhaseSchema,
+  ExtractionProfileSchema,
+  ExtractionStateSchema,
   FaultCodeSchema,
   HeaterSettingsRequestSchema,
   HeaterSettingsResponseSchema,
   HealthResponseSchema,
+  IdempotencyKeySchema,
+  IdleExtractionStateSchema,
   MachineStateSchema,
+  MachineStateV2Schema,
   MachineStatusSchema,
   ModeRequestSchema,
   ModeResponseSchema,
   ModeSchema,
   OverTemperatureDismissResponseSchema,
+  PROFILE_NAME_MAX_LENGTH,
+  PROFILE_SLOT_IDS,
+  ProfileNameSchema,
+  ProfileSetSchema,
+  ProfileSlotIdSchema,
+  PumpCommandSchema,
+  RunningExtractionStateSchema,
   STEAM_TARGET_MAX_C,
   STEAM_TARGET_MIN_C,
   SteamTargetSchema,
+  StartExtractionRequestSchema,
   TemperatureSettingsRequestSchema,
   TemperatureSettingsResponseSchema,
 } from "../src/index.ts";
@@ -33,6 +52,7 @@ type OpenApiSchema = {
 };
 
 type OpenApiDocument = {
+  paths: Record<string, unknown>;
   components: {
     schemas: Record<string, OpenApiSchema>;
   };
@@ -58,6 +78,13 @@ const documentedSchemas: Record<string, ZodType> = {
   HeaterSettingsResponse: HeaterSettingsResponseSchema,
   OverTemperatureDismissResponse: OverTemperatureDismissResponseSchema,
   ErrorResponse: ErrorResponseSchema,
+  ProfileSet: ProfileSetSchema,
+  IdleExtractionState: IdleExtractionStateSchema,
+  RunningExtractionState: RunningExtractionStateSchema,
+  MachineStateV2: MachineStateV2Schema,
+  StartExtractionRequest: StartExtractionRequestSchema,
+  ApiV2ErrorResponse: ApiV2ErrorResponseSchema,
+  ExtractionActiveConflictResponse: ExtractionActiveConflictResponseSchema,
 };
 
 const validFixtures = [
@@ -72,6 +99,14 @@ const validFixtures = [
   ["valid/heater-request.json", HeaterSettingsRequestSchema],
   ["valid/heater-response.json", HeaterSettingsResponseSchema],
   ["valid/error.json", ErrorResponseSchema],
+  ["valid/profile-set.json", ProfileSetSchema],
+  ["valid/extraction-idle.json", IdleExtractionStateSchema],
+  ["valid/extraction-running.json", RunningExtractionStateSchema],
+  ["valid/extraction-start-request.json", StartExtractionRequestSchema],
+  [
+    "valid/extraction-active-conflict.json",
+    ExtractionActiveConflictResponseSchema,
+  ],
 ] as const;
 
 const invalidFixtures = [
@@ -86,6 +121,19 @@ const invalidFixtures = [
   ["invalid/mode-invalid.json", ModeRequestSchema],
   ["invalid/heater-invalid.json", HeaterSettingsRequestSchema],
   ["invalid/error-extra-property.json", ErrorResponseSchema],
+  ["invalid/profile-name-symbol.json", ExtractionProfileSchema],
+  ["invalid/profile-name-too-long.json", ExtractionProfileSchema],
+  ["invalid/profile-fractional-duration.json", ExtractionProfileSchema],
+  ["invalid/profile-soak-without-preinfusion.json", ExtractionProfileSchema],
+  ["invalid/profile-duration-overflow.json", ExtractionProfileSchema],
+  ["invalid/profile-set-duplicate-slot.json", ProfileSetSchema],
+  ["invalid/profile-set-extra-slot.json", ProfileSetSchema],
+  ["invalid/extraction-start-key-short.json", StartExtractionRequestSchema],
+  ["invalid/extraction-running-wrong-command.json", ExtractionStateSchema],
+  [
+    "invalid/extraction-conflict-with-idle.json",
+    ExtractionActiveConflictResponseSchema,
+  ],
 ] as const;
 
 describe("contract fixtures", () => {
@@ -136,6 +184,21 @@ describe("documented OpenAPI examples", () => {
         openApi.components.schemas.OverTemperatureDismissResponse.examples?.[0],
       ],
       ErrorResponse: [await fixture("valid/error.json")],
+      ProfileSet: [await fixture("valid/profile-set.json")],
+      IdleExtractionState: [await fixture("valid/extraction-idle.json")],
+      RunningExtractionState: [await fixture("valid/extraction-running.json")],
+      MachineStateV2: [
+        openApi.components.schemas.MachineStateV2.examples?.[0],
+      ],
+      StartExtractionRequest: [
+        await fixture("valid/extraction-start-request.json"),
+      ],
+      ApiV2ErrorResponse: [
+        openApi.components.schemas.ApiV2ErrorResponse.examples?.[0],
+      ],
+      ExtractionActiveConflictResponse: [
+        await fixture("valid/extraction-active-conflict.json"),
+      ],
     };
 
     for (const [schemaName, examples] of Object.entries(fixturesBySchema)) {
@@ -225,5 +288,116 @@ describe("strict payload handling", () => {
     expect(
       TemperatureSettingsRequestSchema.safeParse({ steamTargetC: 115 }).success,
     ).toBe(true);
+  });
+});
+
+describe("API v2 profile boundaries and drift", () => {
+  test("keeps exactly four immutable lowercase slot identifiers", () => {
+    expect(PROFILE_SLOT_IDS).toEqual([
+      "profile-1",
+      "profile-2",
+      "profile-3",
+      "profile-4",
+    ]);
+    expect(openApi.components.schemas.ProfileSlotId.enum).toEqual(
+      ProfileSlotIdSchema.options,
+    );
+    expect(ProfileSlotIdSchema.safeParse("Profile-1").success).toBe(false);
+    expect(ProfileSlotIdSchema.safeParse("profile-5").success).toBe(false);
+  });
+
+  test("accepts only bounded ASCII alphanumeric names", () => {
+    expect(ProfileNameSchema.parse("A")).toBe("A");
+    expect(ProfileNameSchema.parse("Abc123456789")).toHaveLength(
+      PROFILE_NAME_MAX_LENGTH,
+    );
+    for (const name of ["", "Abc1234567890", "Pre 5", "Café", "slot_one"]) {
+      expect(ProfileNameSchema.safeParse(name).success).toBe(false);
+    }
+  });
+
+  test("enforces whole-second phase combinations and total duration", () => {
+    const base = {
+      name: "Boundary",
+      preInfusionSeconds: 5,
+      soakSeconds: 5,
+      mainExtractionSeconds: 50,
+    };
+    expect(ExtractionProfileSchema.safeParse(base).success).toBe(true);
+    expect(
+      ExtractionProfileSchema.safeParse({
+        ...base,
+        preInfusionSeconds: 0,
+        soakSeconds: 0,
+        mainExtractionSeconds: EXTRACTION_MAX_DURATION_SECONDS,
+      }).success,
+    ).toBe(true);
+    expect(
+      ExtractionProfileSchema.safeParse({ ...base, mainExtractionSeconds: 51 })
+        .success,
+    ).toBe(false);
+    expect(
+      ExtractionProfileSchema.safeParse({
+        ...base,
+        preInfusionSeconds: 0,
+        soakSeconds: 1,
+      }).success,
+    ).toBe(false);
+    expect(
+      ExtractionProfileSchema.safeParse({
+        ...base,
+        mainExtractionSeconds: 0,
+      }).success,
+    ).toBe(false);
+  });
+});
+
+describe("API v2 extraction acknowledgement boundaries", () => {
+  test("requires bounded client-generated idempotency keys", () => {
+    expect(IdempotencyKeySchema.safeParse("start-01J2ABCDEF1234").success).toBe(
+      true,
+    );
+    for (const key of ["short", "contains spaces key", `a${"b".repeat(64)}`]) {
+      expect(IdempotencyKeySchema.safeParse(key).success).toBe(false);
+    }
+  });
+
+  test("binds phases to the GPIO command semantics", () => {
+    expect(PumpCommandSchema.options).toEqual(["running", "off"]);
+    expect(ExtractionPhaseSchema.options).toEqual([
+      "idle",
+      "manual",
+      "pre-infusion",
+      "soak",
+      "main-extraction",
+    ]);
+    expect(
+      RunningExtractionStateSchema.safeParse({
+        status: "running",
+        extractionId: "run-1",
+        selection: { kind: "profile", profileId: "profile-1" },
+        phase: "soak",
+        elapsedMs: 5000,
+        remainingMs: EXTRACTION_MAX_DURATION_MS - 5000,
+        pumpCommand: "off",
+      }).success,
+    ).toBe(true);
+  });
+
+  test("keeps v1 paths temperature-control-only while adding v2", () => {
+    const v1Paths = Object.keys(openApi.paths)
+      .filter((path) => path.startsWith("/api/v1/"))
+      .sort();
+    expect(v1Paths).toEqual([
+      "/api/v1/device",
+      "/api/v1/faults/over-temperature/dismiss",
+      "/api/v1/heater",
+      "/api/v1/mode",
+      "/api/v1/settings/temperatures",
+      "/api/v1/state",
+    ]);
+    expect(v1Paths.some((path) => path.includes("extraction"))).toBe(false);
+    expect(ApiV2ErrorCodeSchema.options).toContain("extraction_active");
+    expect(ErrorCodeSchema.options).not.toContain("extraction_active");
   });
 });

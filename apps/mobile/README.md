@@ -25,6 +25,7 @@ Key code boundaries:
 - `src/pairing`: inspection, authentication, persistence, and address recovery;
 - `src/networking`: strict API client, cancellation/timeouts, and error mapping;
 - `src/storage`: strict one-device record and Expo SecureStore adapter;
+- `src/profiles`: seeded four-slot profile set and canonical comparison;
 - `src/dashboard`: polling, acknowledged mutations, and pure view models;
 - `test`: Bun tests for the above boundaries.
 
@@ -52,6 +53,16 @@ The simulated scan finds one `Philcoino debug` machine. Select it and enter
 normal authentication error, forgetting the machine returns to scanning, and a
 reload starts the flow from the scan screen again. Use the device simulator for
 API integration work.
+
+Debug mode also supplies the PRD-002 API v2 dashboard through the same client
+boundary using deterministic in-memory acknowledgements rather than HTTP. The
+three-page bottom navigation keeps machine state and extraction controls on
+Dashboard, editing/export on Profiles, and temperature/heater/device controls on
+Machine.
+
+Outside debug mode the same approved pages use API v2 combined polling and
+acknowledged profile/Start/Stop mutations. Mobile profiles persist independently
+and custom Start is blocked until the complete machine set matches.
 
 ## Simulator integration
 

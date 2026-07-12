@@ -1,4 +1,50 @@
-# PRD-001 Tracker
+# PRD-002 Tracker
+
+PRD Status: Active
+Current Task: PUMP-006 (not started)
+
+Implementation Boundary: PUMP-001 through PUMP-005 are complete. PUMP-006
+through PUMP-009 have not started.
+
+## Summary
+
+Add mobile-controlled Manual and timed-profile extraction through a firmware-owned
+GPIO10 pump command, explicit profile export, and API v2 while retaining API v1.
+
+PRD: `docs/prds/PRD-002/PRD-002.md`
+
+## Safety Boundary
+
+- `running` and `off` describe only the GPIO10 command, not measured pump current,
+  physical switch position, SSR output, flow, or confirmed de-energization.
+- Software, simulator, host, target-build, and disconnected low-voltage work may
+  proceed; energized work remains separately approval-gated under `docs/SAFETY.md`.
+- Existing relevant security, timing, and mains-safety findings remain visible and
+  are not closed by PRD-002 approval or the owner's report that the pump SSR works.
+
+## Git
+
+- Branch: `feature/PRD-002-pump-extraction`
+- Base: `develop`
+- Merge target: `develop`
+
+## Execution State
+
+| Task | Review | Status | Evidence | Decision Log | Commit | Blocked Reason | Requested Decision |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| [PUMP-001](prds/PRD-002/tasks/PUMP-001.md) | Agent | Done | OpenAPI validation, 69 protocol tests, protocol/mobile/simulator typechecks, mobile lint, 25 simulator tests, 4/4 firmware host tests, and 8 firmware contract captures passed; mobile suite had one pre-existing debug-env failure outside this task | API v2 uses four ordered immutable `profile-1`…`profile-4` slots, separate v2 errors, acknowledged phase-bound GPIO command state, same-key replay, and active conflict state; v1 paths/schemas/errors remain unchanged | Pending | None | None |
+| [PUMP-002](prds/PRD-002/tasks/PUMP-002.md) | Human | Done | Refined preview passed 69 mobile tests/217 expectations, mobile lint/typecheck, Expo SDK 54 config, and debug web export; Human-approved 2026-07-12 | Debug-only bottom navigation separates Dashboard, Profiles, and Machine; compact extraction controls follow current machine state, profile configuration/export has its own page, and an active-extraction bar remains visible across pages | Pending | None | None |
+| [PUMP-003](prds/PRD-002/tasks/PUMP-003.md) | Agent | Done | 43 simulator tests/212 expectations, simulator/protocol/mobile typechecks, 69 protocol tests, 69 mobile tests, OpenAPI validation, and mobile lint passed | Manual time owns extraction phases/cutoff; persisted profile is snapshotted at Start; same-key replay preserves elapsed time; profile replacement is whole-set/idle-only with one-shot failure injection; faults remain independent | Pending | None | None |
+| [PUMP-004](prds/PRD-002/tasks/PUMP-004.md) | Agent | Done | 77 mobile tests, mobile lint/typecheck, 43 simulator tests/typecheck, 69 protocol tests/typecheck, OpenAPI validation, Expo SDK 54 config, and web export passed | Strict SecureStore profile set seeds once; one API v2 poll publishes machine/extraction together; all mutations serialize; local/machine sets update only after storage/device acknowledgement; unacknowledged Start retries reuse a key | Pending | None | None |
+| [PUMP-005](prds/PRD-002/tasks/PUMP-005.md) | Agent | Done | Strict C++17 build and 4/4 host tests passed; 8 firmware v1 captures, 77 mobile tests, 43 simulator tests, 69 protocol tests, all configured typechecks/lint/OpenAPI checks, Expo config, and web export passed; ESP-IDF target build unavailable | GPIO10 initializes low before configuration and all noncritical startup; pump command and heater lease remain independent; profiles use one validated versioned NVS blob; failed writes report command `off` without physical claims | Pending | None | Target build and disconnected low-voltage acceptance remain in later tasks |
+| [PUMP-006](prds/PRD-002/tasks/PUMP-006.md) | Agent | Todo | Pending | Pending | Pending | None | None |
+| [PUMP-007](prds/PRD-002/tasks/PUMP-007.md) | Agent | Todo | Pending | Pending | Pending | None | None |
+| [PUMP-008](prds/PRD-002/tasks/PUMP-008.md) | Agent | Todo | Pending | Pending | Pending | None | None |
+| [PUMP-009](prds/PRD-002/tasks/PUMP-009.md) | Human | Todo | Pending | Pending | Pending | None | None |
+
+---
+
+# PRD-001 Tracker (preserved incomplete work)
 
 PRD Status: Active
 Current Task: PHIL-012 (not started)

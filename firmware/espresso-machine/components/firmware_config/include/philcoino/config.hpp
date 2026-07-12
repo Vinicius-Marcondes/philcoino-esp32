@@ -56,6 +56,8 @@ inline constexpr std::int32_t kSteamThermocoupleChipSelectGpio = 5;
 
 inline constexpr std::int32_t kSsrGpio = 20;
 inline constexpr bool kSsrActiveHigh = true;
+inline constexpr std::int32_t kPumpGpio = 10;
+inline constexpr bool kPumpActiveHigh = true;
 
 std::string stable_device_id(const std::array<std::uint8_t, 6>& station_mac);
 

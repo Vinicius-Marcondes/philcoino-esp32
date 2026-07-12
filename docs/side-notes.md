@@ -14,6 +14,16 @@ Before treating this item as resolved, identify the exact component and verify i
 
 This concern is retained for later hardware validation and does not block the approved software/API scope in PRD-001.
 
+## Pump GPIO10 and SSR validation
+
+Status: SOFTWARE CONFIGURATION APPROVED — PHYSICAL VALIDATION DEFERRED
+
+PRD-002 assigns GPIO10 as an active-high pump SSR command and retains the original pump switch in series. PUMP-005 initializes the command low before output configuration, commands it low again after configuration, and never restores an active command at boot. This task intentionally provides no extraction-policy or HTTP path that can command the pump on.
+
+The firmware state is command state only. There is no current, SSR-output, switch-position, pressure, or flow feedback, and an SSR or GPIO path may fail independently of the requested command. Consequently, `running` cannot confirm pump operation and `off` cannot confirm physical de-energization.
+
+Before physical approval, identify and rate the pump SSR, verify the original series-switch wiring, measure reliable 3.3 V input behavior, and observe GPIO10 during reset and power cycles with all mains loads disconnected. The application cannot control the pin during boot ROM/reset, and no energized work is authorized by the software implementation or host/target builds.
+
 ## FOTEK SSR-40 DA verification
 
 Status: HUMAN-APPROVED FOR FIRMWARE CONFIGURATION — PHYSICAL RISK RETAINED

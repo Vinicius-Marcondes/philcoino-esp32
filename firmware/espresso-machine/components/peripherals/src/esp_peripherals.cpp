@@ -1,5 +1,6 @@
 #include "philcoino/esp_peripherals.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cinttypes>
 
@@ -18,6 +19,25 @@ namespace {
 constexpr char kThermocoupleLogTag[] = "max6675";
 constexpr char kNvsNamespace[] = "targets";
 constexpr char kTargetsKey[] = "values";
+constexpr char kProfileNvsNamespace[] = "profiles";
+constexpr char kProfilesKey[] = "set";
+constexpr std::array<std::uint8_t, 4> kProfileBlobMagic{'P', 'F', 'P', '2'};
+constexpr std::uint8_t kProfileBlobVersion = 1;
+constexpr std::size_t kStoredProfileSize = 1U + kProfileNameCapacity + 3U;
+constexpr std::size_t kProfileBlobSize =
+    kProfileBlobMagic.size() + 1U + kProfileSlotCount * kStoredProfileSize;
+
+bool initialize_nvs_flash() {
+  auto result = nvs_flash_init();
+  if (result == ESP_ERR_NVS_NO_FREE_PAGES ||
+      result == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+    if (nvs_flash_erase() != ESP_OK) {
+      return false;
+    }
+    result = nvs_flash_init();
+  }
+  return result == ESP_OK;
+}
 
 i2c_master_dev_handle_t as_i2c_device(void* handle) {
   return static_cast<i2c_master_dev_handle_t>(handle);
@@ -212,15 +232,7 @@ bool EspMax6675Transport::read_frame(ThermocoupleChannel channel,
 }
 
 bool EspNvsTargetBackend::initialize() {
-  auto result = nvs_flash_init();
-  if (result == ESP_ERR_NVS_NO_FREE_PAGES ||
-      result == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-    if (nvs_flash_erase() != ESP_OK) {
-      return false;
-    }
-    result = nvs_flash_init();
-  }
-  if (result != ESP_OK) {
+  if (!initialize_nvs_flash()) {
     return false;
   }
   nvs_handle_t handle = 0;
@@ -254,6 +266,77 @@ bool EspNvsTargetBackend::save(const TemperatureTargets& targets) {
   const std::array<std::int32_t, 2> stored{targets.brew_c, targets.steam_c};
   return initialized_ && nvs_set_blob(handle_, kTargetsKey, stored.data(),
                                       sizeof(stored)) == ESP_OK &&
+         nvs_commit(handle_) == ESP_OK;
+}
+
+bool EspNvsProfileBackend::initialize() {
+  if (!initialize_nvs_flash()) {
+    return false;
+  }
+  nvs_handle_t handle = 0;
+  if (nvs_open(kProfileNvsNamespace, NVS_READWRITE, &handle) != ESP_OK) {
+    return false;
+  }
+  handle_ = handle;
+  initialized_ = true;
+  return true;
+}
+
+BackendLoadResult EspNvsProfileBackend::load(ExtractionProfiles& profiles) {
+  if (!initialized_) {
+    return BackendLoadResult::kError;
+  }
+  std::array<std::uint8_t, kProfileBlobSize> stored{};
+  std::size_t stored_size = stored.size();
+  const auto result =
+      nvs_get_blob(handle_, kProfilesKey, stored.data(), &stored_size);
+  if (result == ESP_ERR_NVS_NOT_FOUND) {
+    return BackendLoadResult::kNotFound;
+  }
+  if (result != ESP_OK || stored_size != stored.size() ||
+      !std::equal(kProfileBlobMagic.begin(), kProfileBlobMagic.end(),
+                  stored.begin()) ||
+      stored[kProfileBlobMagic.size()] != kProfileBlobVersion) {
+    return BackendLoadResult::kError;
+  }
+
+  std::size_t offset = kProfileBlobMagic.size() + 1U;
+  for (auto& profile : profiles) {
+    profile = {};
+    const auto configured = stored[offset++];
+    if (configured > 1U) {
+      return BackendLoadResult::kError;
+    }
+    profile.configured = configured == 1U;
+    for (auto& character : profile.name) {
+      character = static_cast<char>(stored[offset++]);
+    }
+    profile.pre_infusion_seconds = stored[offset++];
+    profile.soak_seconds = stored[offset++];
+    profile.main_extraction_seconds = stored[offset++];
+  }
+  return BackendLoadResult::kOk;
+}
+
+bool EspNvsProfileBackend::save(const ExtractionProfiles& profiles) {
+  if (!initialized_ || !extraction_profiles_are_valid(profiles)) {
+    return false;
+  }
+  std::array<std::uint8_t, kProfileBlobSize> stored{};
+  std::copy(kProfileBlobMagic.begin(), kProfileBlobMagic.end(), stored.begin());
+  stored[kProfileBlobMagic.size()] = kProfileBlobVersion;
+  std::size_t offset = kProfileBlobMagic.size() + 1U;
+  for (const auto& profile : profiles) {
+    stored[offset++] = profile.configured ? 1U : 0U;
+    for (const auto character : profile.name) {
+      stored[offset++] = static_cast<std::uint8_t>(character);
+    }
+    stored[offset++] = profile.pre_infusion_seconds;
+    stored[offset++] = profile.soak_seconds;
+    stored[offset++] = profile.main_extraction_seconds;
+  }
+  return nvs_set_blob(handle_, kProfilesKey, stored.data(), stored.size()) ==
+             ESP_OK &&
          nvs_commit(handle_) == ESP_OK;
 }
 

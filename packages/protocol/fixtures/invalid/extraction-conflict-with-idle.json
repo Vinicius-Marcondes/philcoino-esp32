@@ -1,0 +1,15 @@
+{
+  "error": {
+    "code": "extraction_active",
+    "message": "A different extraction is already active."
+  },
+  "activeExtraction": {
+    "status": "idle",
+    "extractionId": null,
+    "selection": null,
+    "phase": "idle",
+    "elapsedMs": 0,
+    "remainingMs": null,
+    "pumpCommand": "off"
+  }
+}

@@ -20,8 +20,10 @@ Status: DRAFT — NOT ELECTRICALLY OR MAINS-SAFETY APPROVED
 | MAX6675 #2 | SCK | GPIO0 (temporary isolated-bus diagnostic mapping) |
 | MAX6675 #2 | CS | GPIO5 (temporary low-voltage test mapping) |
 | MAX6675 #2 | SO | GPIO1 (temporary separate-SO diagnostic mapping) |
-| SSR input | Positive | GPIO20, direct active-high drive, human-approved without external pull-down |
-| SSR input | Negative | GND |
+| Heater SSR input | Positive | GPIO20, direct active-high drive, human-approved without external pull-down |
+| Heater SSR input | Negative | GND |
+| Pump SSR input | Positive | GPIO10, active-high command; software configuration approved, physical wiring not approved |
+| Pump SSR input | Negative | GND |
 
 ## Preliminary review
 
@@ -60,6 +62,14 @@ An SSR's common dangerous failure mode is an output short, which leaves the heat
 
 Its exact part number, marked trip point, tolerance, reset behavior, electrical rating, placement, and wiring must be verified. A 120°C software target cannot be accepted against an approximately 120°C hardware cutoff without a validated safety margin for overshoot, measurement error, thermal lag, and component tolerance.
 
+### Pump output
+
+GPIO10 is reserved for an active-high pump SSR command. Firmware commands it low before configuring it as an output and again immediately after configuration; it never restores a running command at boot. PUMP-005 does not connect this output to extraction policy or HTTP, so current firmware has no runtime path that commands the pump on.
+
+`running` and `off` describe only the requested GPIO10 command. There is no pump-current, SSR-output, switch-position, pressure, or flow feedback, so software cannot confirm pump operation or physical de-energization. A GPIO write failure leaves the reported firmware command at `off`, records initialization failure where applicable, and must not be interpreted as proof that the pin or load is low.
+
+The original series pump switch, the exact pump SSR, active-high 3.3 V drive, reset/boot behavior, mounting, ratings, wiring, and failure behavior remain subject to disconnected low-voltage checks and separate qualified physical approval. GPIO10 is uncontrolled during reset and early boot before application initialization, so the firmware ordering does not remove that hardware risk.
+
 ### Temperature sensors
 
 - MAX6675 #1 thermocouple is mounted at the boiler base and is the brew-mode control sensor.
@@ -83,6 +93,7 @@ The manufacturer's application guidance identifies a 1 A/250 VAC slow-blow input
 - Exact ESP32-C3 Super Mini vendor or schematic.
 - Reset and power-cycle verification of the OLED pull-ups on the GPIO8/GPIO9 strapping pins.
 - FOTEK SSR-40 DA terminal verification, reliable 3.3 V drive test, current derating, mounting, and heat sink.
+- Pump SSR identity/rating, original series-switch wiring, reliable 3.3 V drive, and reset/power-cycle GPIO10 behavior with the mains load disconnected.
 - Original over-temperature fuse/thermostat identity, trip tolerance, reset behavior, electrical rating, placement, and proof that it interrupts a shorted SSR's heater current.
 - Verified HLK-5M05B input protection, PCB layout, enclosure, and 5 V connection to the chosen Super Mini board.
 - Validated thermocouple mounting, control limits, sensor-disagreement thresholds, and over-temperature limits.

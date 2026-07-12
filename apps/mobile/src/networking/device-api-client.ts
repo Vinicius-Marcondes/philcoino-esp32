@@ -1,13 +1,20 @@
 import {
+  ApiV2ErrorResponseSchema,
   DeviceResponseSchema,
   ErrorResponseSchema,
+  ExtractionActiveConflictResponseSchema,
   HeaterSettingsRequestSchema,
   HeaterSettingsResponseSchema,
   HealthResponseSchema,
   MachineStateSchema,
+  MachineStateV2Schema,
   ModeRequestSchema,
   ModeResponseSchema,
   OverTemperatureDismissResponseSchema,
+  ProfileSetSchema,
+  StartExtractionRequestSchema,
+  StartExtractionResponseSchema,
+  StopExtractionResponseSchema,
   TemperatureSettingsRequestSchema,
   TemperatureSettingsResponseSchema,
   type DeviceResponse,
@@ -15,9 +22,14 @@ import {
   type HeaterSettingsResponse,
   type HealthResponse,
   type MachineState,
+  type MachineStateV2,
   type ModeRequest,
   type ModeResponse,
   type OverTemperatureDismissResponse,
+  type ProfileSet,
+  type StartExtractionRequest,
+  type StartExtractionResponse,
+  type StopExtractionResponse,
   type TemperatureSettingsRequest,
   type TemperatureSettingsResponse,
 } from "@philcoino/protocol";
@@ -97,6 +109,83 @@ export class DeviceApiClient {
       "/api/v1/state",
       MachineStateSchema,
       { authenticated: true },
+      options,
+    );
+  }
+
+  getStateV2(options: RequestOptions = {}): Promise<MachineStateV2> {
+    return this.request(
+      "/api/v2/state",
+      MachineStateV2Schema,
+      { authenticated: true, errorVersion: "v2" },
+      options,
+    );
+  }
+
+  getProfiles(options: RequestOptions = {}): Promise<ProfileSet> {
+    return this.request(
+      "/api/v2/profiles",
+      ProfileSetSchema,
+      { authenticated: true, errorVersion: "v2" },
+      options,
+    );
+  }
+
+  async replaceProfiles(
+    profiles: ProfileSet,
+    options: RequestOptions = {},
+  ): Promise<ProfileSet> {
+    const parsed = ProfileSetSchema.safeParse(profiles);
+    if (!parsed.success) {
+      throw new ApiClientError(
+        "invalid-request",
+        "The complete profile set is invalid.",
+      );
+    }
+    return await this.request(
+      "/api/v2/profiles",
+      ProfileSetSchema,
+      {
+        authenticated: true,
+        body: parsed.data,
+        errorVersion: "v2",
+        method: "PUT",
+      },
+      options,
+    );
+  }
+
+  async startExtraction(
+    request: StartExtractionRequest,
+    options: RequestOptions = {},
+  ): Promise<StartExtractionResponse> {
+    const parsed = StartExtractionRequestSchema.safeParse(request);
+    if (!parsed.success) {
+      throw new ApiClientError(
+        "invalid-request",
+        "The extraction Start request is invalid.",
+      );
+    }
+    return await this.request(
+      "/api/v2/extractions/start",
+      StartExtractionResponseSchema,
+      {
+        authenticated: true,
+        body: parsed.data,
+        errorVersion: "v2",
+        method: "POST",
+      },
+      options,
+    );
+  }
+
+  stopExtraction(
+    options: RequestOptions = {},
+  ): Promise<StopExtractionResponse> {
+    return this.request(
+      "/api/v2/extractions/stop",
+      StopExtractionResponseSchema,
+      { authenticated: true, errorVersion: "v2", method: "POST" },
       options,
     );
   }
@@ -190,6 +279,7 @@ export class DeviceApiClient {
     request: {
       authenticated?: boolean;
       body?: unknown;
+      errorVersion?: "v1" | "v2";
       method?: "GET" | "PATCH" | "POST" | "PUT";
     },
     options: RequestOptions,
@@ -221,7 +311,7 @@ export class DeviceApiClient {
       });
 
       if (!response.ok) {
-        await throwResponseError(response);
+        await throwResponseError(response, request.errorVersion ?? "v1");
       }
 
       return await parseResponse(response, schema);
@@ -260,6 +350,7 @@ async function parseResponse<T>(
 
 async function throwResponseError(
   response: DeviceFetchResponse,
+  version: "v1" | "v2",
 ): Promise<never> {
   if (response.status === 404) {
     throw new ApiClientError("not-found", "No Philcoino device was found.", {
@@ -268,7 +359,10 @@ async function throwResponseError(
   }
 
   const body = await readJson(response);
-  const parsed = ErrorResponseSchema.safeParse(body);
+  const parsed =
+    version === "v1"
+      ? ErrorResponseSchema.safeParse(body)
+      : parseV2ErrorResponse(body);
   if (!parsed.success) {
     throw new ApiClientError(
       "protocol",
@@ -295,6 +389,14 @@ async function throwResponseError(
     response: parsed.data,
     status: response.status,
   });
+}
+
+function parseV2ErrorResponse(body: unknown) {
+  const activeConflict = ExtractionActiveConflictResponseSchema.safeParse(body);
+  if (activeConflict.success) {
+    return activeConflict;
+  }
+  return ApiV2ErrorResponseSchema.safeParse(body);
 }
 
 async function readJson(response: DeviceFetchResponse): Promise<unknown> {
