@@ -13,6 +13,7 @@
       "bundleIdentifier": "dev.viniciuslab.philcoino",
       "supportsTablet": true,
       "infoPlist": {
+        "CFBundleAllowMixedLocalizations": true,
         "NSLocalNetworkUsageDescription": "Philcoino uses your local network to discover and connect to your espresso machine.",
         "NSBonjourServices": [
           "_philcoino._tcp"
@@ -21,6 +22,10 @@
           "NSAllowsLocalNetworking": true
         }
       }
+    },
+    "locales": {
+      "en": "./locales/en.json",
+      "pt-BR": "./locales/pt-BR.json"
     },
     "android": {
       "adaptiveIcon": {
@@ -47,6 +52,21 @@
     "plugins": [
       "expo-router",
       "expo-secure-store",
+      [
+        "expo-localization",
+        {
+          "supportedLocales": {
+            "ios": [
+              "en",
+              "pt-BR"
+            ],
+            "android": [
+              "en",
+              "pt-BR"
+            ]
+          }
+        }
+      ],
       "./plugins/with-android-cleartext",
       [
         "expo-splash-screen",

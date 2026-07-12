@@ -13,6 +13,7 @@ import {
   connectionStateFromError,
   type ConnectionState,
 } from "../networking/connection-state";
+import { translate } from "../localization/i18n";
 
 export type DashboardMutationKind = "fault" | "heater" | "mode" | "temperatures";
 export type DashboardMutationStatus =
@@ -130,9 +131,11 @@ export class DashboardMutationSession {
       (signal) => this.client.setMode({ mode }, { signal }),
       (response) => {
         this.onModeAcknowledged(response.mode);
-        return `Machine acknowledged ${capitalize(response.mode)} mode.`;
+        return translate("mutation.modeAcknowledged", {
+          mode: localizedMode(response.mode),
+        });
       },
-      `Waiting for the machine to acknowledge ${capitalize(mode)} mode…`,
+      translate("mutation.modePending", { mode: localizedMode(mode) }),
     );
   }
 
@@ -143,12 +146,12 @@ export class DashboardMutationSession {
       (response) => {
         this.onHeaterAcknowledged(response);
         return response.heaterEnabled
-          ? "Machine allowed automatic heater control."
-          : "Machine turned heater output off.";
+          ? translate("mutation.heaterAllowed")
+          : translate("mutation.heaterOff");
       },
       heaterEnabled
-        ? "Waiting for the machine to allow heater control..."
-        : "Waiting for the machine to turn heater output off...",
+        ? translate("mutation.heaterAllowPending")
+        : translate("mutation.heaterOffPending"),
     );
   }
 
@@ -162,7 +165,10 @@ export class DashboardMutationSession {
         ),
       (response) => {
         this.onTemperatureSettingsAcknowledged(response);
-        return `Machine saved Brew ${response.brewTargetC}°C and Steam ${response.steamTargetC}°C.`;
+        return translate("mutation.targetsSaved", {
+          brew: response.brewTargetC,
+          steam: response.steamTargetC,
+        });
       },
       pendingTemperatureMessage(settings),
     );
@@ -174,9 +180,9 @@ export class DashboardMutationSession {
       (signal) => this.client.dismissOverTemperature({ signal }),
       (response) => {
         this.onOverTemperatureDismissed(response);
-        return "Machine dismissed the over-temperature limit and resumed normal control.";
+        return translate("mutation.faultDismissed");
       },
-      "Waiting for the machine to dismiss the over-temperature limit…",
+      translate("mutation.faultPending"),
     );
   }
 
@@ -258,7 +264,7 @@ export function mutationOutcomeFromError(error: unknown): {
       state: {
         message:
           error.response?.error.message ??
-          "The machine rejected the requested change.",
+          translate("mutation.rejected"),
         status: "rejected",
       },
     };
@@ -278,26 +284,26 @@ function disconnectedMutationMessage(error: unknown): string {
   if (error instanceof ApiClientError) {
     switch (error.kind) {
       case "timeout":
-        return "The machine did not acknowledge the change before the request timed out. No change is shown.";
+        return translate("mutation.timeout");
       case "unauthorized":
-        return "The saved token was rejected before the change was acknowledged. No change is shown.";
+        return translate("mutation.unauthorized");
       case "protocol":
-        return "The acknowledgement did not match API v1. No change is shown.";
+        return translate("mutation.protocol");
       case "not-found":
       case "offline":
-        return "Connection to the machine was lost before acknowledgement. No change is shown.";
+        return translate("mutation.offline");
       case "cancelled":
-        return "The change was cancelled before acknowledgement. No change is shown.";
+        return translate("mutation.cancelled");
       case "http":
       case "invalid-request":
         break;
     }
   }
-  return "The change could not be acknowledged. No change is shown.";
+  return translate("mutation.generic");
 }
 
-function capitalize(value: string): string {
-  return `${value.charAt(0).toUpperCase()}${value.slice(1)}`;
+function localizedMode(mode: Mode): string {
+  return translate(mode === "brew" ? "viewModel.mode.brew" : "viewModel.mode.steam");
 }
 
 function pendingTemperatureMessage(
@@ -306,10 +312,12 @@ function pendingTemperatureMessage(
   const targets = [
     settings.brewTargetC === undefined
       ? null
-      : `Brew ${settings.brewTargetC}°C`,
+      : translate("mutation.brewTarget", { value: settings.brewTargetC }),
     settings.steamTargetC === undefined
       ? null
-      : `Steam ${settings.steamTargetC}°C`,
+      : translate("mutation.steamTarget", { value: settings.steamTargetC }),
   ].filter((target): target is string => target !== null);
-  return `Waiting for the machine to validate and save ${targets.join(" and ")}…`;
+  return translate("mutation.targetsPending", {
+    targets: targets.join(translate("mutation.and")),
+  });
 }

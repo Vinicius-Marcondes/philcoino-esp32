@@ -1,64 +1,73 @@
-# Philcoino documentation
+# Documentação do Philcoino
 
-This directory explains the implemented Philcoino system, the approved product scope, and the safety work that is still incomplete. Read documents by authority rather than assuming every historical plan describes current code.
+[English](en/DOCUMENTATION.md)
 
-## Start here
+Este diretório explica o sistema Philcoino implementado, o escopo aprovado do produto e o trabalho de segurança que ainda está incompleto. Leia os documentos conforme sua autoridade, sem presumir que todo plano histórico descreve o código atual.
 
-| Document | Use it for |
+## Idiomas
+
+- Português do Brasil é o idioma padrão dos documentos gerais para leitores: visão do projeto, contribuição, índice e segurança.
+- As versões equivalentes em inglês ficam em [`docs/en`](en).
+- Documentos técnicos voltados a software engineers e AI agents permanecem em inglês nos caminhos atuais, incluindo Architecture, Development, protocolo, hardware, PRDs, tracker, referências e regras Git.
+- Quando um comportamento público mudar, atualize as versões em português e inglês na mesma alteração.
+
+## Comece por aqui
+
+| Documento | Quando usar |
 | --- | --- |
-| [Project README](../README.md) | Public overview, current capabilities, and quickest simulator/debug start |
-| [Architecture](ARCHITECTURE.md) | Runtime components, ownership, data flows, state transitions, and failure behavior |
-| [Development](DEVELOPMENT.md) | Prerequisites, package workflows, simulator controls, firmware setup, and verification |
-| [Safety](SAFETY.md) | Prototype restrictions, known software/hardware risks, and the physical-acceptance boundary |
-| [Contributing](../CONTRIBUTING.md) | Change process, contract workflow, validation expectations, and pull-request checklist |
-| [PRD-001 tracker](TRACKER.md) | Supervised task state, recorded evidence, approvals, and work still awaiting acceptance |
-| [Codebase review](../CODEBASE_REVIEW_REPORT.md) | Detailed current BLOCKER/MAJOR/MINOR findings and quality-gate results |
+| [README do projeto](../README.md) | Visão pública, capacidades atuais e início rápido com simulador/debug |
+| [Architecture](ARCHITECTURE.md) | Componentes em runtime, ownership, data flows, state transitions e comportamento de falha |
+| [Development](DEVELOPMENT.md) | Pré-requisitos, workflows dos packages, controles do simulador, configuração do firmware e verificação |
+| [Segurança](SAFETY.md) | Restrições do protótipo, riscos conhecidos de software/hardware e boundary de aceitação física |
+| [Como contribuir](../CONTRIBUTING.md) | Processo de mudança, workflow do contrato, expectativas de validação e checklist de pull request |
+| [Tracker da PRD-001](TRACKER.md) | Estado supervisionado das tasks, evidências, aprovações e trabalho ainda aguardando aceitação |
+| [Revisão do codebase](../CODEBASE_REVIEW_REPORT.md) | Findings atuais detalhados de BLOCKER/MAJOR/MINOR e resultados dos quality gates |
 
 ## Sources of truth
 
-When documents disagree, use this order:
+Quando os documentos divergirem, use esta ordem:
 
-1. `packages/protocol/openapi.yaml` for the HTTP wire contract.
-2. Current source and tests for implemented runtime behavior.
-3. Approved decisions under `docs/decisions` and the active PRD for intended boundaries.
-4. `docs/TRACKER.md` for supervised task acceptance—not merely whether code exists.
-5. Hardware and side-note documents for physical constraints and deferred checks.
+1. `packages/protocol/openapi.yaml` para o contrato HTTP no wire.
+2. Source e testes atuais para o comportamento implementado em runtime.
+3. Decisões aprovadas em `docs/decisions` e a PRD ativa para as boundaries pretendidas.
+4. `docs/TRACKER.md` para aceitação supervisionada das tasks — não apenas para saber se o código existe.
+5. Documentos de hardware e side notes para restrições físicas e checks adiados.
 
-Do not silently resolve a safety, hardware, security, or scope conflict. Record it and request a human decision.
+Não resolva silenciosamente um conflito de safety, hardware, security ou escopo. Registre-o e solicite uma decisão humana.
 
-## Architecture and protocol
+## Architecture e protocolo
 
-- [`ARCHITECTURE.md`](ARCHITECTURE.md): current mobile, protocol, simulator, and firmware architecture.
-- [`architecture/repository-layout.md`](architecture/repository-layout.md): durable repository boundaries and placement guidance.
-- [`protocol/api-v1-outline.md`](protocol/api-v1-outline.md): human-readable API rationale and examples; OpenAPI remains authoritative.
-- [`decisions/firmware-foundation.md`](decisions/firmware-foundation.md): approved firmware/toolchain/foundation decisions.
+- [`ARCHITECTURE.md`](ARCHITECTURE.md): architecture atual de mobile, protocolo, simulador e firmware.
+- [`architecture/repository-layout.md`](architecture/repository-layout.md): boundaries duráveis do repositório e orientações de organização.
+- [`protocol/api-v1-outline.md`](protocol/api-v1-outline.md): justificativas e exemplos da API para leitura humana; o OpenAPI continua autoritativo.
+- [`decisions/firmware-foundation.md`](decisions/firmware-foundation.md): decisões aprovadas de firmware, toolchain e foundation.
 
-## Product and delivery
+## Produto e entrega
 
-- [`prds/PRD-001/PRD-001.md`](prds/PRD-001/PRD-001.md): approved local monitoring and temperature-control requirements.
-- [`prds/PRD-001/tasks`](prds/PRD-001/tasks): supervised task definitions and acceptance criteria.
-- [`TRACKER.md`](TRACKER.md): current execution state and evidence.
+- [`prds/PRD-001/PRD-001.md`](prds/PRD-001/PRD-001.md): requisitos aprovados para monitoramento local e controle de temperatura.
+- [`prds/PRD-001/tasks`](prds/PRD-001/tasks): definições supervisionadas das tasks e acceptance criteria.
+- [`TRACKER.md`](TRACKER.md): estado atual de execução e evidências.
 
-The PRD and task files are historical/approval records. If implementation has moved ahead of the tracker, do not mark acceptance complete without the required reviewer.
+A PRD e os arquivos de task são registros históricos/de aprovação. Se a implementação estiver à frente do tracker, não marque a aceitação como concluída sem o reviewer necessário.
 
-## Hardware and safety
+## Hardware e segurança
 
-- [`SAFETY.md`](SAFETY.md): public safety status and contribution rules.
-- [`hardware/esp32-c3-wiring.md`](hardware/esp32-c3-wiring.md): GPIO assignments, module wiring, and unresolved electrical checks.
-- [`hardware/temperature-control-tuning.md`](hardware/temperature-control-tuning.md): implemented duty curve and tuning considerations.
-- [`side-notes.md`](side-notes.md): deferred physical iPhone, hardware, relay, cutoff, and mains checks.
-- [`references/README.md`](references/README.md): exact-version framework, firmware, component, and safety references.
+- [`SAFETY.md`](SAFETY.md): status público de segurança e regras de contribuição.
+- [`hardware/esp32-c3-wiring.md`](hardware/esp32-c3-wiring.md): GPIOs, ligações dos módulos e checks elétricos não resolvidos.
+- [`hardware/temperature-control-tuning.md`](hardware/temperature-control-tuning.md): duty curve implementada e considerações de tuning.
+- [`side-notes.md`](side-notes.md): checks adiados de iPhone físico, hardware, relay, cutoff e rede elétrica.
+- [`references/README.md`](references/README.md): referências de versões exatas para framework, firmware, componentes e safety.
 
-No repository document constitutes electrical, thermal, regulatory, or unattended-operation approval.
+Nenhum documento do repositório representa aprovação elétrica, térmica, regulatória ou para operação sem supervisão.
 
-## Keeping documentation current
+## Mantendo a documentação atualizada
 
-Update public docs in the same change when any of these move:
+Atualize os documentos públicos na mesma mudança sempre que houver alterações em:
 
-- setup prerequisites, commands, platforms, or package layout;
-- API paths, schemas, authentication, limits, or error mapping;
-- discovery, pairing, persistence, polling, or mutation behavior;
-- firmware state transitions, target ranges, timeouts, fault behavior, or hardware configuration;
-- safety status, known review findings, or deferred physical checks.
+- pré-requisitos de setup, comandos, plataformas ou layout dos packages;
+- paths, schemas, autenticação, limites ou error mapping da API;
+- comportamento de discovery, pairing, persistência, polling ou mutations;
+- state transitions do firmware, intervalos de target, timeouts, comportamento de fault ou configuração do hardware;
+- status de segurança, findings conhecidos da revisão ou checks físicos adiados.
 
-Use present tense only for behavior observable in current source. Label proposed, pending, diagnostic, simulated, and human-approved behavior explicitly.
+Use o tempo presente somente para comportamento observável no source atual. Identifique explicitamente comportamento proposed, pending, diagnostic, simulated e human-approved.
