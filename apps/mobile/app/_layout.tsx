@@ -14,6 +14,7 @@ export const unstable_settings = {
 export default function RootLayout() {
   const colorScheme = useColorScheme();
   const locales = useLocales();
+  const hideNativeHeader = process.env.EXPO_OS === 'android';
   setAppLocale(locales[0]?.languageCode ?? null);
 
   return (
@@ -23,7 +24,7 @@ export default function RootLayout() {
           contentStyle: { backgroundColor: '#F4F0E8' },
           headerBlurEffect: undefined,
           headerShadowVisible: true,
-          headerShown: true,
+          headerShown: !hideNativeHeader,
           headerTitle: '',
           headerTransparent: true,
         }}>
@@ -35,7 +36,7 @@ export default function RootLayout() {
           }}
         />
       </Stack>
-      <StatusBar style="auto" />
+      <StatusBar style={hideNativeHeader ? 'dark' : 'auto'} />
     </ThemeProvider>
   );
 }

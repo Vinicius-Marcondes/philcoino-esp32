@@ -488,6 +488,7 @@ function MachineSnapshot({
   onDismissOverTemperature: () => void;
   snapshot: MachineState;
 }) {
+  const useAndroidStatusLayout = process.env.EXPO_OS === "android";
   const canDismissOverTemperature =
     snapshot.status === "fault" &&
     snapshot.fault.code === "over_temperature" &&
@@ -512,9 +513,20 @@ function MachineSnapshot({
     <>
       <View style={styles.machineStateCard}>
         <Text selectable style={styles.cardLabel}>{translate("dashboard.machineStatus")}</Text>
-        <View style={styles.machineStateRow}>
-          <View style={styles.machineStatePrimary}>
+        <View
+          style={[
+            styles.machineStateRow,
+            useAndroidStatusLayout && styles.machineStateRowAndroid,
+          ]}>
+          <View
+            style={[
+              styles.machineStatePrimary,
+              useAndroidStatusLayout && styles.machineStatePrimaryAndroid,
+            ]}>
             <Text
+              adjustsFontSizeToFit={useAndroidStatusLayout}
+              minimumFontScale={0.8}
+              numberOfLines={useAndroidStatusLayout ? 1 : undefined}
               selectable
               style={[
                 styles.machineStateValue,
@@ -522,23 +534,18 @@ function MachineSnapshot({
               ]}>
               {machineActivityLabel(snapshot)}
             </Text>
-            <Text selectable style={styles.machineStateDetail}>
-              {translate("dashboard.mode", { mode: modeLabel(snapshot.activeMode) })}
-            </Text>
+            {!useAndroidStatusLayout ? (
+              <MachineModeLabel mode={snapshot.activeMode} />
+            ) : null}
           </View>
-          <View style={styles.heaterPill}>
-            <View
-              style={[
-                styles.heaterDot,
-                snapshot.heaterActive ? styles.heaterOn : styles.heaterOff,
-              ]}
-            />
-            <Text selectable style={styles.heaterText}>
-              {translate("dashboard.heaterState", {
-                state: translate(snapshot.heaterActive ? "dashboard.on" : "dashboard.off"),
-              })}
-            </Text>
-          </View>
+          {useAndroidStatusLayout ? (
+            <View style={styles.machineStateFooterAndroid}>
+              <MachineModeLabel mode={snapshot.activeMode} />
+              <HeaterStatusPill heaterActive={snapshot.heaterActive} />
+            </View>
+          ) : (
+            <HeaterStatusPill heaterActive={snapshot.heaterActive} />
+          )}
         </View>
       </View>
 
@@ -608,6 +615,32 @@ function MachineSnapshot({
         />
       </View>
     </>
+  );
+}
+
+function MachineModeLabel({ mode }: { mode: MachineState["activeMode"] }) {
+  return (
+    <Text selectable style={styles.machineStateDetail}>
+      {translate("dashboard.mode", { mode: modeLabel(mode) })}
+    </Text>
+  );
+}
+
+function HeaterStatusPill({ heaterActive }: { heaterActive: boolean }) {
+  return (
+    <View style={styles.heaterPill}>
+      <View
+        style={[
+          styles.heaterDot,
+          heaterActive ? styles.heaterOn : styles.heaterOff,
+        ]}
+      />
+      <Text selectable style={styles.heaterText}>
+        {translate("dashboard.heaterState", {
+          state: translate(heaterActive ? "dashboard.on" : "dashboard.off"),
+        })}
+      </Text>
+    </View>
   );
 }
 
@@ -755,7 +788,10 @@ const styles = StyleSheet.create({
   },
   cardLabel: { color: "#CDBFB5", fontSize: 11, fontWeight: "800", letterSpacing: 1.3 },
   machineStateRow: { alignItems: "flex-end", flexDirection: "row", gap: 14, justifyContent: "space-between" },
+  machineStateRowAndroid: { alignItems: "stretch", flexDirection: "column", gap: 8 },
   machineStatePrimary: { flex: 1, gap: 4 },
+  machineStatePrimaryAndroid: { flex: undefined },
+  machineStateFooterAndroid: { alignItems: "center", flexDirection: "row", gap: 12, justifyContent: "space-between" },
   machineStateValue: { color: "#FFF9F1", fontSize: 34, fontWeight: "800", letterSpacing: -0.7 },
   machineStateDetail: { color: "#D9CBC1", fontSize: 16, fontWeight: "600" },
   faultText: { color: "#FFB5A5" },
