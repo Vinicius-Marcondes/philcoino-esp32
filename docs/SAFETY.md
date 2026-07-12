@@ -8,7 +8,7 @@ Philcoino é um controller experimental para máquina de espresso que trabalha p
 
 - As tasks de software da PRD-001 avançaram até o monitoramento mobile e controles com acknowledgement, mas o tracker ainda registra tasks posteriores de revisão/validação física como incompletas.
 - A revisão atual do codebase contém findings BLOCKER e MAJOR não resolvidos sobre timing do firmware, monitoramento dos sensores, comportamento de timeout, certeza da saída física, transporte e identidade/credenciais do dispositivo.
-- O source atual do firmware usa uma leitura de thermocouple para brew e steam (`kDualThermocouplesEnabled = false`), o que não atende à aceitação final de dois sensores.
+- O firmware usa permanentemente uma leitura de thermocouple na base da boiler para brew e steam. Isso mantém um único ponto de falha de controle e não oferece cross-check independente entre sensores.
 - O source atual do firmware habilita o OLED (`kOledEnabled = true`), enquanto o tracker registra um estado temporário com OLED desabilitado. Trate isso como uma divergência não resolvida entre documentação e configuração, não como um estado de hardware aprovado.
 - Discovery físico no iPhone, comportamento final dos sensores, instalação do relay/SSR, cutoff independente e validação energizada supervisionada continuam sendo checks humanos.
 
@@ -97,29 +97,8 @@ Sempre informe qual nível produziu uma afirmação.
 
 No mínimo:
 
-<<<<<<< HEAD
-1. close every relevant BLOCKER and MAJOR finding with adversarial tests;
-2. validate the single sensor's mounting, lag, error, and failure behavior against an independent instrument, and retain an independent hardware thermal cutoff;
-3. make heater-off timing independent of blocking network/storage/display/control-loop work;
-4. represent and escalate unknown physical output state;
-5. prevent client traffic from extending safety deadlines;
-6. resolve device identity, token strength, throttling, transport, and recovery security;
-7. complete the pinned ESP-IDF build and target-runtime checks;
-8. verify independent cutoff, SSR drive/current/thermal behavior, wiring, enclosure, and protection with qualified supervision;
-9. record explicit human acceptance for the exact hardware configuration.
-||||||| 2610c05
-1. close every relevant BLOCKER and MAJOR finding with adversarial tests;
-2. restore and validate independent dual-sensor monitoring and disagreement behavior;
-3. make heater-off timing independent of blocking network/storage/display/control-loop work;
-4. represent and escalate unknown physical output state;
-5. prevent client traffic from extending safety deadlines;
-6. resolve device identity, token strength, throttling, transport, and recovery security;
-7. complete the pinned ESP-IDF build and target-runtime checks;
-8. verify independent cutoff, SSR drive/current/thermal behavior, wiring, enclosure, and protection with qualified supervision;
-9. record explicit human acceptance for the exact hardware configuration.
-=======
 1. fechar todos os findings BLOCKER e MAJOR relevantes com testes adversariais;
-2. restaurar e validar monitoramento independente entre dois sensores e comportamento de disagreement;
+2. validar montagem, atraso, erro e comportamento de falha do sensor único contra um instrumento independente, mantendo um cutoff térmico de hardware independente;
 3. tornar o timing de heater-off independente de trabalho bloqueante em rede/storage/display/control loop;
 4. representar e escalar estado físico desconhecido da saída;
 5. impedir que tráfego do cliente prolongue safety deadlines;
@@ -127,7 +106,6 @@ No mínimo:
 7. concluir o build ESP-IDF fixado e os checks em runtime no target;
 8. verificar cutoff independente, drive/corrente/comportamento térmico do SSR, wiring, enclosure e proteções com supervisão qualificada;
 9. registrar aceitação humana explícita para a configuração exata do hardware.
->>>>>>> main
 
 Concluir esta lista ainda não representa certificação regulatória.
 
