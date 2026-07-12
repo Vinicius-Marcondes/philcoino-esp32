@@ -302,10 +302,8 @@ std::string serialize_state(const control::ControlSnapshot& snapshot,
   output.imbue(std::locale::classic());
   output << std::setprecision(6) << "{\"status\":\""
          << status_name(snapshot.status) << "\",\"activeMode\":\""
-         << mode_name(snapshot.mode) << "\",\"brewTemperatureC\":"
-         << json_temperature(snapshot.readings.brew.temperature_c)
-         << ",\"steamTemperatureC\":"
-         << json_temperature(snapshot.readings.steam.temperature_c)
+         << mode_name(snapshot.mode) << "\",\"boilerTemperatureC\":"
+         << json_temperature(snapshot.boiler_temperature.temperature_c)
          << ",\"brewTargetC\":"
          << snapshot.targets.brew_c << ",\"steamTargetC\":"
          << snapshot.targets.steam_c << ",\"heaterEnabled\":"

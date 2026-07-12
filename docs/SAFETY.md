@@ -8,7 +8,7 @@ Philcoino é um controller experimental para máquina de espresso que trabalha p
 
 - As tasks de software da PRD-001 avançaram até o monitoramento mobile e controles com acknowledgement, mas o tracker ainda registra tasks posteriores de revisão/validação física como incompletas.
 - A revisão atual do codebase contém findings BLOCKER e MAJOR não resolvidos sobre timing do firmware, monitoramento dos sensores, comportamento de timeout, certeza da saída física, transporte e identidade/credenciais do dispositivo.
-- O source atual do firmware usa uma leitura de thermocouple para brew e steam (`kDualThermocouplesEnabled = false`), o que não atende à aceitação final de dois sensores.
+- O firmware usa permanentemente uma leitura de thermocouple na base da boiler para brew e steam. Isso mantém um único ponto de falha de controle e não oferece cross-check independente entre sensores.
 - O source atual do firmware habilita o OLED (`kOledEnabled = true`), enquanto o tracker registra um estado temporário com OLED desabilitado. Trate isso como uma divergência não resolvida entre documentação e configuração, não como um estado de hardware aprovado.
 - Discovery físico no iPhone, comportamento final dos sensores, instalação do relay/SSR, cutoff independente e validação energizada supervisionada continuam sendo checks humanos.
 
@@ -98,7 +98,7 @@ Sempre informe qual nível produziu uma afirmação.
 No mínimo:
 
 1. fechar todos os findings BLOCKER e MAJOR relevantes com testes adversariais;
-2. restaurar e validar monitoramento independente entre dois sensores e comportamento de disagreement;
+2. validar montagem, atraso, erro e comportamento de falha do sensor único contra um instrumento independente, mantendo um cutoff térmico de hardware independente;
 3. tornar o timing de heater-off independente de trabalho bloqueante em rede/storage/display/control loop;
 4. representar e escalar estado físico desconhecido da saída;
 5. impedir que tráfego do cliente prolongue safety deadlines;

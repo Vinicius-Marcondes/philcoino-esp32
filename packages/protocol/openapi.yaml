@@ -319,8 +319,7 @@
         "required": [
           "status",
           "activeMode",
-          "brewTemperatureC",
-          "steamTemperatureC",
+          "boilerTemperatureC",
           "brewTargetC",
           "steamTargetC",
           "heaterEnabled",
@@ -332,8 +331,7 @@
         "properties": {
           "status": { "$ref": "#/components/schemas/MachineStatus" },
           "activeMode": { "$ref": "#/components/schemas/Mode" },
-          "brewTemperatureC": { "type": "number" },
-          "steamTemperatureC": { "type": "number" },
+          "boilerTemperatureC": { "type": "number" },
           "brewTargetC": { "$ref": "#/components/schemas/BrewTarget" },
           "steamTargetC": { "$ref": "#/components/schemas/SteamTarget" },
           "heaterEnabled": { "type": "boolean" },
@@ -375,8 +373,7 @@
           {
             "status": "heating",
             "activeMode": "brew",
-            "brewTemperatureC": 87.4,
-            "steamTemperatureC": 103.8,
+            "boilerTemperatureC": 87.4,
             "brewTargetC": 93,
             "steamTargetC": 115,
             "heaterEnabled": true,
@@ -388,15 +385,14 @@
           {
             "status": "fault",
             "activeMode": "brew",
-            "brewTemperatureC": 24.5,
-            "steamTemperatureC": 24.7,
+            "boilerTemperatureC": 24.5,
             "brewTargetC": 93,
             "steamTargetC": 115,
             "heaterEnabled": false,
             "heaterActive": false,
             "fault": {
               "code": "sensor_failure",
-              "message": "Brew thermocouple is unavailable."
+              "message": "The boiler thermocouple reading is unavailable."
             },
             "steamTimeoutRemainingMs": null,
             "uptimeMs": 185000
@@ -480,8 +476,7 @@
           {
             "status": "heating",
             "activeMode": "brew",
-            "brewTemperatureC": 93,
-            "steamTemperatureC": 103.8,
+            "boilerTemperatureC": 93,
             "brewTargetC": 93,
             "steamTargetC": 115,
             "heaterEnabled": true,

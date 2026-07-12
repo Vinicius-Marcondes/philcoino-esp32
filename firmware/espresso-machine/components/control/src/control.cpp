@@ -17,16 +17,12 @@ bool reading_ok(const peripherals::ThermocoupleReading& reading) {
          std::isfinite(reading.temperature_c);
 }
 
-bool over_temperature(const peripherals::ThermocoupleReadings& readings,
-                      ControlMode mode, bool dual_thermocouples_enabled) {
-  if (!dual_thermocouples_enabled) {
-    const auto limit = mode == ControlMode::kBrew
-                           ? config::kBrewOverTemperatureC
-                           : config::kSteamOverTemperatureC;
-    return readings.brew.temperature_c >= static_cast<float>(limit);
-  }
-  return readings.brew.temperature_c >= config::kBrewOverTemperatureC ||
-         readings.steam.temperature_c >= config::kSteamOverTemperatureC;
+bool over_temperature(const peripherals::ThermocoupleReading& reading,
+                      ControlMode mode) {
+  const auto limit = mode == ControlMode::kBrew
+                         ? config::kBrewOverTemperatureC
+                         : config::kSteamOverTemperatureC;
+  return reading.temperature_c >= static_cast<float>(limit);
 }
 
 }  // namespace
@@ -44,9 +40,9 @@ const char* fault_code_name(FaultCode code) {
 const char* fault_message(FaultCode code) {
   switch (code) {
     case FaultCode::kSensorFailure:
-      return "A thermocouple reading is unavailable, invalid, or implausible.";
+      return "The boiler thermocouple reading is unavailable, invalid, or implausible.";
     case FaultCode::kOverTemperature:
-      return "A monitored temperature exceeded the configured safety limit.";
+      return "The boiler temperature exceeded the active mode safety limit.";
     case FaultCode::kHeatingTimeout:
       return "The active boiler sensor did not reach readiness in time.";
     case FaultCode::kInternalError:
@@ -56,11 +52,8 @@ const char* fault_message(FaultCode code) {
 }
 
 TemperatureController::TemperatureController(
-    peripherals::TemperatureTargets targets, peripherals::FailOffSsr& heater,
-    bool dual_thermocouples_enabled)
-    : heater_(heater),
-      targets_(targets),
-      dual_thermocouples_enabled_(dual_thermocouples_enabled) {
+    peripherals::TemperatureTargets targets, peripherals::FailOffSsr& heater)
+    : heater_(heater), targets_(targets) {
   if (!peripherals::targets_are_valid(targets_)) {
     targets_ = {};
     latch_fault(FaultCode::kInternalError);
@@ -169,8 +162,8 @@ bool TemperatureController::update_steam_target(
 
 bool TemperatureController::dismiss_over_temperature(std::uint32_t now_ms) {
   if (!fault_latched_ || fault_code_ != FaultCode::kOverTemperature ||
-      !monitored_readings_ok() || !active_temperature_back_at_target() ||
-      over_temperature(readings_, mode_, dual_thermocouples_enabled_)) {
+      !boiler_reading_ok() || !active_temperature_back_at_target() ||
+      over_temperature(boiler_temperature_, mode_)) {
     return false;
   }
   fault_latched_ = false;
@@ -178,12 +171,12 @@ bool TemperatureController::dismiss_over_temperature(std::uint32_t now_ms) {
   reset_heater_control_window(now_ms);
   heating_demand_active_ = false;
   reset_recovery_heat();
-  return !update(readings_, now_ms).fault_active;
+  return !update(boiler_temperature_, now_ms).fault_active;
 }
 
 ControlSnapshot TemperatureController::update(
-    const peripherals::ThermocoupleReadings& readings, std::uint32_t now_ms) {
-  readings_ = readings;
+    const peripherals::ThermocoupleReading& reading, std::uint32_t now_ms) {
+  boiler_temperature_ = reading;
 
   if (heater_.safety_cutoff_tripped()) {
     latch_fault(FaultCode::kInternalError);
@@ -241,7 +234,7 @@ ControlSnapshot TemperatureController::snapshot(std::uint32_t now_ms) const {
   value.status = fault_latched_ ? ControlStatus::kFault : status_;
   value.mode = mode_;
   value.targets = targets_;
-  value.readings = readings_;
+  value.boiler_temperature = boiler_temperature_;
   value.heater_enabled_permission = heater_enabled_permission_;
   value.heater_enabled =
       !fault_latched_ && heater_enabled_permission_ && heater_.is_enabled();
@@ -263,11 +256,7 @@ std::int32_t TemperatureController::active_target() const {
 }
 
 float TemperatureController::active_temperature() const {
-  if (!dual_thermocouples_enabled_) {
-    return readings_.brew.temperature_c;
-  }
-  return mode_ == ControlMode::kBrew ? readings_.brew.temperature_c
-                                     : readings_.steam.temperature_c;
+  return boiler_temperature_.temperature_c;
 }
 
 bool TemperatureController::active_temperature_in_ready_band() const {
@@ -279,9 +268,8 @@ bool TemperatureController::active_temperature_demands_heat() const {
   return active_temperature() < static_cast<float>(active_target());
 }
 
-bool TemperatureController::monitored_readings_ok() const {
-  return reading_ok(readings_.brew) &&
-         (!dual_thermocouples_enabled_ || reading_ok(readings_.steam));
+bool TemperatureController::boiler_reading_ok() const {
+  return reading_ok(boiler_temperature_);
 }
 
 bool TemperatureController::active_temperature_back_at_target() const {
@@ -377,13 +365,12 @@ void TemperatureController::return_to_brew(std::uint32_t now_ms) {
 }
 
 bool TemperatureController::validate_readings(std::uint32_t) {
-  if (!reading_ok(readings_.brew) ||
-      (dual_thermocouples_enabled_ && !reading_ok(readings_.steam))) {
+  if (!boiler_reading_ok()) {
     latch_fault(FaultCode::kSensorFailure);
     return false;
   }
 
-  if (over_temperature(readings_, mode_, dual_thermocouples_enabled_)) {
+  if (over_temperature(boiler_temperature_, mode_)) {
     latch_fault(FaultCode::kOverTemperature);
     return false;
   }

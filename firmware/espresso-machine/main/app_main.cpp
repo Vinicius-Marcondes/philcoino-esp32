@@ -46,13 +46,10 @@ bool active_temperature_above_target(
     const philcoino::control::ControlSnapshot& control) {
   using philcoino::control::ControlMode;
 
-  const auto temperature =
-      control.mode == ControlMode::kBrew ? control.readings.brew.temperature_c
-                                         : control.readings.steam.temperature_c;
   const auto target = control.mode == ControlMode::kBrew
                           ? control.targets.brew_c
                           : control.targets.steam_c;
-  return temperature >
+  return control.boiler_temperature.temperature_c >
          static_cast<float>(target + philcoino::config::kReadyBandC);
 }
 
@@ -67,13 +64,9 @@ philcoino::peripherals::DisplaySnapshot display_snapshot(
   using philcoino::peripherals::ThermocoupleStatus;
 
   philcoino::peripherals::DisplaySnapshot display{};
-  display.brew = {
-      control.readings.brew.status == ThermocoupleStatus::kOk,
-      control.readings.brew.temperature_c,
-  };
-  display.steam = {
-      control.readings.steam.status == ThermocoupleStatus::kOk,
-      control.readings.steam.temperature_c,
+  display.boiler = {
+      control.boiler_temperature.status == ThermocoupleStatus::kOk,
+      control.boiler_temperature.temperature_c,
   };
   display.targets = control.targets;
   display.mode = control.mode == ControlMode::kBrew ? DisplayMode::kBrew
@@ -142,10 +135,6 @@ extern "C" void app_main() {
     ESP_LOGW(kLogTag,
              "Wi-Fi and bearer-token secrets are not configured; values are never logged");
   }
-  if (!philcoino::config::kDualThermocouplesEnabled) {
-    ESP_LOGW(kLogTag,
-             "Single-thermocouple mode enabled; brew sensor controls brew and steam");
-  }
   if (!philcoino::config::kOledEnabled) {
     ESP_LOGW(kLogTag, "OLED display disabled; boot continues without SSD1306");
   }
@@ -172,9 +161,7 @@ extern "C" void app_main() {
     ssr.force_off();
     return;
   }
-  static DualMax6675 thermocouples(
-      max6675_transport, uptime_ms(),
-      philcoino::config::kDualThermocouplesEnabled);
+  static Max6675 thermocouple(max6675_transport, uptime_ms());
 
   static EspOledTransport oled_transport;
   static Ssd1306Display display(oled_transport);
@@ -194,10 +181,9 @@ extern "C" void app_main() {
     }
   }
 
-  static philcoino::control::TemperatureController controller(
-      targets, ssr, philcoino::config::kDualThermocouplesEnabled);
+  static philcoino::control::TemperatureController controller(targets, ssr);
   vTaskDelay(pdMS_TO_TICKS(kMax6675SampleIntervalMs));
-  auto snapshot = controller.update(thermocouples.read(uptime_ms()), uptime_ms());
+  auto snapshot = controller.update(thermocouple.read(uptime_ms()), uptime_ms());
   if (philcoino::config::kOledEnabled) {
     if (!display.render(display_snapshot(snapshot))) {
       ESP_LOGE(kLogTag, "SSD1306 sensor-state render failed");
@@ -237,13 +223,13 @@ extern "C" void app_main() {
 
   while (true) {
     vTaskDelay(pdMS_TO_TICKS(kMax6675SampleIntervalMs));
-    const auto readings = thermocouples.read(uptime_ms());
+    const auto reading = thermocouple.read(uptime_ms());
     if (xSemaphoreTake(api_mutex, portMAX_DELAY) != pdTRUE) {
       ssr.force_off();
       ESP_LOGE(kLogTag, "Temperature controller synchronization failed");
       return;
     }
-    snapshot = controller.update(readings, uptime_ms());
+    snapshot = controller.update(reading, uptime_ms());
     xSemaphoreGive(api_mutex);
     if (philcoino::config::kOledEnabled) {
       if (!display.render(display_snapshot(

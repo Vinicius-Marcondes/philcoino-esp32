@@ -1,13 +1,13 @@
 {
   "status": "heating",
   "activeMode": "brew",
-  "boilerTemperatureC": 87.4,
+  "brewTemperatureC": 87.4,
+  "steamTemperatureC": 103.8,
   "brewTargetC": 93,
   "steamTargetC": 115,
   "heaterEnabled": true,
   "heaterActive": true,
   "fault": null,
   "steamTimeoutRemainingMs": null,
-  "uptimeMs": 184220,
-  "unexpected": true
+  "uptimeMs": 184220
 }

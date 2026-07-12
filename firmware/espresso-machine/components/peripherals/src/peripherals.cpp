@@ -99,44 +99,27 @@ void format_temperature_line(char* output, std::size_t length,
 
 }  // namespace
 
-DualMax6675::DualMax6675(Max6675Transport& transport,
-                         std::uint32_t started_at_ms,
-                         bool dual_thermocouples_enabled)
+Max6675::Max6675(Max6675Transport& transport, std::uint32_t started_at_ms)
     : transport_(transport),
-      ready_at_ms_(started_at_ms + kMax6675ConversionMs),
-      dual_thermocouples_enabled_(dual_thermocouples_enabled) {}
+      ready_at_ms_(started_at_ms + kMax6675ConversionMs) {}
 
-ThermocoupleReadings DualMax6675::read(std::uint32_t now_ms) {
+ThermocoupleReading Max6675::read(std::uint32_t now_ms) {
   if (!deadline_reached(now_ms, ready_at_ms_)) {
     return {};
   }
 
-  ThermocoupleReadings readings{};
+  ThermocoupleReading reading{};
   std::uint16_t frame = 0;
-  if (transport_.read_frame(ThermocoupleChannel::kBrew, frame)) {
-    readings.brew = decode(frame);
+  if (transport_.read_frame(frame)) {
+    reading = decode(frame);
   } else {
-    readings.brew.status = ThermocoupleStatus::kTransportError;
+    reading.status = ThermocoupleStatus::kTransportError;
   }
-
-  if (!dual_thermocouples_enabled_) {
-    readings.steam = readings.brew;
-    ready_at_ms_ = now_ms + kMax6675ConversionMs;
-    return readings;
-  }
-
-  frame = 0;
-  if (transport_.read_frame(ThermocoupleChannel::kSteam, frame)) {
-    readings.steam = decode(frame);
-  } else {
-    readings.steam.status = ThermocoupleStatus::kTransportError;
-  }
-
   ready_at_ms_ = now_ms + kMax6675ConversionMs;
-  return readings;
+  return reading;
 }
 
-ThermocoupleReading DualMax6675::decode(std::uint16_t frame) {
+ThermocoupleReading Max6675::decode(std::uint16_t frame) {
   ThermocoupleReading reading{};
   reading.raw_frame = frame;
   if ((frame & 0x0004U) != 0U) {
@@ -285,11 +268,13 @@ bool Ssd1306Display::render(const DisplaySnapshot& snapshot) {
 
   Framebuffer buffer{};
   std::array<char, 24> line{};
-  format_temperature_line(line.data(), line.size(), "B", snapshot.brew,
-                          snapshot.targets.brew_c);
+  format_temperature_line(line.data(), line.size(), "TEMP", snapshot.boiler,
+                          snapshot.mode == DisplayMode::kSteam
+                              ? snapshot.targets.steam_c
+                              : snapshot.targets.brew_c);
   draw_text(buffer, 0, line.data());
-  format_temperature_line(line.data(), line.size(), "S", snapshot.steam,
-                          snapshot.targets.steam_c);
+  std::snprintf(line.data(), line.size(), "B %" PRId32 " S %" PRId32,
+                snapshot.targets.brew_c, snapshot.targets.steam_c);
   draw_text(buffer, 1, line.data());
   std::snprintf(line.data(), line.size(), "MODE %s %s", mode_name(snapshot.mode),
                 status_name(snapshot.status));

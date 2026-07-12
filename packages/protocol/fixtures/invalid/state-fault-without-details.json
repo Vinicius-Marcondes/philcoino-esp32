@@ -1,8 +1,7 @@
 {
   "status": "fault",
   "activeMode": "brew",
-  "brewTemperatureC": 87.4,
-  "steamTemperatureC": 103.8,
+  "boilerTemperatureC": 87.4,
   "brewTargetC": 93,
   "steamTargetC": 115,
   "heaterEnabled": false,

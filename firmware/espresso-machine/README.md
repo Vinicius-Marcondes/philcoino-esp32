@@ -51,18 +51,18 @@ bun run firmware/espresso-machine/host-tests/validate_contract.ts \
 
 The suite covers identity/configuration, MAX6675 decoding, target persistence policy, fail-off SSR behavior, OLED serialization, control transitions/timeouts/faults, bearer/API parsing, and contract response captures. It does not exercise ESP-IDF scheduling, physical sensors, GPIO, SSRs, or thermal behavior.
 
-## Current diagnostic configuration
+## Current hardware configuration
 
 Current source has:
 
-- `kDualThermocouplesEnabled = false`: only the brew MAX6675 is read and its value is mirrored for steam control;
+- one boiler-base MAX6675 is read on SCK/SO/CS GPIO4/GPIO6/GPIO7 and controls both brew and steam modes;
 - `kOledEnabled = true`: SSD1306 initialization/render failure stops control startup;
 - `kWifiEnabled = true`.
 
-Single-sensor mode does not satisfy final dual-sensor acceptance. The OLED flag also conflicts with tracker text describing a temporary disabled-display state. Resolve the intended hardware configuration explicitly before device testing.
+The single sensor is a deliberate control-authority choice and provides no independent software cross-check. Physical validation against an independent instrument and the independent thermal cutoff remain required before any energized consideration.
 
 ## Low-voltage checks only
 
-Keep the mains heater disconnected. With qualified supervision, power only the ESP32 and 3.3 V peripherals to check boot, thermocouple readings, open-probe handling, OLED status, network API/discovery, and GPIO20's inactive level through reset and induced failures.
+Keep the mains heater disconnected. With qualified supervision, power only the ESP32 and 3.3 V peripherals to check boot, the boiler thermocouple reading, open-probe handling, OLED status, network API/discovery, and GPIO20's inactive level through reset and induced failures.
 
 This does not authorize mains operation and cannot validate SSR load behavior, independent cutoff wiring, thermal response, enclosure, grounding, or regulatory compliance.

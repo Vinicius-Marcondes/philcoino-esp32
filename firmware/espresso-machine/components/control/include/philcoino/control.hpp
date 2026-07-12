@@ -30,7 +30,7 @@ struct ControlSnapshot {
   ControlStatus status{ControlStatus::kHeating};
   ControlMode mode{ControlMode::kBrew};
   peripherals::TemperatureTargets targets{};
-  peripherals::ThermocoupleReadings readings{};
+  peripherals::ThermocoupleReading boiler_temperature{};
   bool heater_enabled_permission{true};
   bool heater_enabled{false};
   bool fault_active{false};
@@ -44,8 +44,7 @@ const char* fault_message(FaultCode code);
 class TemperatureController {
  public:
   TemperatureController(peripherals::TemperatureTargets targets,
-                        peripherals::FailOffSsr& heater,
-                        bool dual_thermocouples_enabled = true);
+                        peripherals::FailOffSsr& heater);
 
   ControlMode mode() const;
   ControlStatus status() const;
@@ -68,7 +67,7 @@ class TemperatureController {
                            std::uint32_t now_ms);
   bool dismiss_over_temperature(std::uint32_t now_ms);
 
-  ControlSnapshot update(const peripherals::ThermocoupleReadings& readings,
+  ControlSnapshot update(const peripherals::ThermocoupleReading& reading,
                          std::uint32_t now_ms);
   ControlSnapshot snapshot(std::uint32_t now_ms) const;
   void latch_fault(FaultCode code);
@@ -78,7 +77,7 @@ class TemperatureController {
   float active_temperature() const;
   bool active_temperature_in_ready_band() const;
   bool active_temperature_demands_heat() const;
-  bool monitored_readings_ok() const;
+  bool boiler_reading_ok() const;
   bool active_temperature_back_at_target() const;
   float active_heat_ramp_band() const;
   float active_recovery_trigger_drop() const;
@@ -96,8 +95,7 @@ class TemperatureController {
 
   peripherals::FailOffSsr& heater_;
   peripherals::TemperatureTargets targets_{};
-  peripherals::ThermocoupleReadings readings_{};
-  bool dual_thermocouples_enabled_{true};
+  peripherals::ThermocoupleReading boiler_temperature_{};
   ControlMode mode_{ControlMode::kBrew};
   ControlStatus status_{ControlStatus::kHeating};
   FaultCode fault_code_{FaultCode::kInternalError};
