@@ -3,7 +3,7 @@
 ESP-IDF C++ firmware for the ESP32-C3 Super Mini. It owns sensor sampling, persisted targets, brew/steam control state, SSR commands, OLED status, bearer-authenticated HTTP, and `_philcoino._tcp` mDNS advertising.
 
 > [!CAUTION]
-> This firmware is not approved for production, unattended, or mains-powered heater operation. Keep the heater/load disconnected for development and read [Safety](../../docs/SAFETY.md) plus the [current review](../../CODEBASE_REVIEW_REPORT.md).
+> This firmware is not approved for production, unattended, or mains-powered heater operation. Keep the heater/load disconnected for development and read [Safety](../../docs/en/SAFETY.md) plus the [current review](../../CODEBASE_REVIEW_REPORT.md).
 
 ## Architecture
 

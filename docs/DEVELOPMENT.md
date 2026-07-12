@@ -137,7 +137,7 @@ idf.py build
 
 Configure Wi-Fi SSID, Wi-Fi password, and bearer token through `idf.py menuconfig` under `PhilcoINO`. Values belong only in generated, ignored `sdkconfig`; never put them in source, defaults, logs, screenshots, tests, or documentation.
 
-Current source uses diagnostic single-thermocouple mode (`kDualThermocouplesEnabled = false`) and has OLED support enabled (`kOledEnabled = true`). Check [Safety](SAFETY.md), the tracker, and hardware documents before any device test; documentation currently records unresolved configuration/acceptance issues.
+Current source uses diagnostic single-thermocouple mode (`kDualThermocouplesEnabled = false`) and has OLED support enabled (`kOledEnabled = true`). Check [Safety](en/SAFETY.md), the tracker, and hardware documents before any device test; documentation currently records unresolved configuration/acceptance issues.
 
 ### Low-voltage only
 

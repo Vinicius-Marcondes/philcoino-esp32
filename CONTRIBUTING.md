@@ -1,94 +1,96 @@
-# Contributing to Philcoino
+# Como contribuir com o Philcoino
 
-Thank you for helping improve Philcoino. This repository crosses mobile networking, an HTTP contract, embedded firmware, and mains-adjacent temperature control, so a good contribution keeps ownership and safety boundaries visible.
+[English](docs/en/CONTRIBUTING.md)
+
+Obrigado por ajudar a melhorar o Philcoino. Este repositório envolve rede mobile, um contrato HTTP, firmware embarcado e controle de temperatura próximo à rede elétrica. Uma boa contribuição mantém visíveis as responsabilidades e boundaries de segurança.
 
 > [!IMPORTANT]
-> Philcoino is a prototype and is not approved for production, unattended, or mains-powered heater operation. Read [docs/SAFETY.md](docs/SAFETY.md) and the [current review findings](CODEBASE_REVIEW_REPORT.md) before changing firmware, control logic, sensors, SSR behavior, networking security, or hardware guidance.
+> Philcoino é um protótipo e não está aprovado para produção, uso sem supervisão ou operação do heater ligado à rede elétrica. Leia [docs/SAFETY.md](docs/SAFETY.md) e os [findings da revisão atual](CODEBASE_REVIEW_REPORT.md) antes de alterar firmware, control logic, sensores, comportamento do SSR, segurança de rede ou orientações de hardware.
 
-## Before you start
+## Antes de começar
 
-1. Read the [project overview](README.md), [architecture](docs/ARCHITECTURE.md), and [development guide](docs/DEVELOPMENT.md).
-2. Check [docs/TRACKER.md](docs/TRACKER.md) and the relevant PRD/task. Code presence does not imply human acceptance.
-3. Read the relevant decision, protocol, hardware, reference, and side-note documents.
-4. Before any Git operation, read [docs/GIT_RULES.md](docs/GIT_RULES.md).
-5. For AI-assisted changes, follow [AGENTS.md](AGENTS.md).
+1. Leia a [visão geral do projeto](README.md), [Architecture](docs/ARCHITECTURE.md) e o guia de [Development](docs/DEVELOPMENT.md).
+2. Consulte [docs/TRACKER.md](docs/TRACKER.md) e a PRD/task relevante. A presença de código não significa aceitação humana.
+3. Leia as decisões e os documentos de protocolo, hardware, referências e side notes relacionados.
+4. Antes de qualquer operação Git, leia [docs/GIT_RULES.md](docs/GIT_RULES.md).
+5. Para mudanças assistidas por AI, siga [AGENTS.md](AGENTS.md).
 
-Discuss first when a change affects product scope, API compatibility, physical hardware, security assumptions, persistent data, or safety behavior. Never infer authorization for energized testing.
+Converse antes quando uma mudança afetar o escopo do produto, compatibilidade da API, hardware físico, premissas de segurança, dados persistidos ou comportamento de safety. Nunca presuma autorização para testes energizados.
 
-## Development setup
+## Configuração do ambiente de desenvolvimento
 
-The TypeScript workspaces use Bun. Expo SDK 54 requires Node.js 20.19 or newer. Install declared dependencies only after reviewing the manifest change:
+Os workspaces TypeScript usam Bun. Expo SDK 54 exige Node.js 20.19 ou mais recente. Instale as dependências declaradas somente depois de revisar qualquer alteração no manifest:
 
 ```bash
 bun install
 ```
 
-Firmware is independent and pinned to ESP-IDF 6.0.2 / ESP32-C3. Its host tests need CMake and a C++17 compiler; target builds need the pinned ESP-IDF environment. See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for exact workflows.
+O firmware é independente e está fixado em ESP-IDF 6.0.2 / ESP32-C3. Os host tests exigem CMake e um compilador C++17; target builds exigem o ambiente ESP-IDF fixado. Consulte [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) para os workflows exatos.
 
-Do not commit `.env` values, bearer tokens, Wi-Fi credentials, `sdkconfig`, generated native projects, dependency folders, build output, caches, coverage, or local databases.
+Não faça commit de valores `.env`, bearer tokens, credenciais Wi-Fi, `sdkconfig`, projetos nativos gerados, diretórios de dependências, build output, caches, coverage ou bancos de dados locais.
 
-## Choose the owning boundary
+## Escolha a boundary responsável
 
-- Routes and navigation belong in `apps/mobile/app`; reusable UI belongs in `apps/mobile/components`.
-- Discovery, pairing, networking, storage, polling, and mutation orchestration stay in their existing `apps/mobile/src/*` boundaries.
-- API changes begin in `packages/protocol/openapi.yaml`.
-- Deterministic contract/UI behavior belongs in `tools/device-simulator`; simulator-only controls stay under `/_simulator`.
-- Pure firmware policy belongs in host-testable components. ESP-IDF calls stay in `esp_*` adapters or `main` wiring.
-- Product, architecture, development, and safety claims belong under `docs` and must match current source.
+- Routes e navigation pertencem a `apps/mobile/app`; UI reutilizável pertence a `apps/mobile/components`.
+- Discovery, pairing, networking, storage, polling e orchestration de mutations permanecem nas boundaries existentes em `apps/mobile/src/*`.
+- Mudanças na API começam em `packages/protocol/openapi.yaml`.
+- Comportamento determinístico de contrato/UI pertence a `tools/device-simulator`; controles exclusivos do simulador permanecem sob `/_simulator`.
+- Policy pura do firmware pertence a componentes testáveis no host. Chamadas ESP-IDF permanecem nos adapters `esp_*` ou no wiring de `main`.
+- Afirmações sobre produto, architecture, development e safety pertencem a `docs` e devem corresponder ao source atual.
 
-Avoid adding a new abstraction when the owning boundary already exists. Keep new functions small, single-purpose, and near their consumers.
+Evite criar uma nova abstraction quando já existe uma boundary responsável. Mantenha funções novas pequenas, com uma única responsabilidade e próximas de seus consumidores.
 
-## Changing the API
+## Alterando a API
 
-Treat an API change as one coordinated change:
+Trate uma mudança de API como uma alteração coordenada:
 
-1. Update `packages/protocol/openapi.yaml`.
-2. Align Zod schemas/types and valid/invalid fixtures.
-3. Update simulator request handling and responses.
-4. Update the mobile client, error mapping, and affected sessions/UI.
-5. Update firmware parsing, serialization, and route registration independently in C++.
-6. Extend contract, simulator, mobile, and firmware-capture tests.
-7. Update human-readable protocol and architecture docs.
+1. Atualize `packages/protocol/openapi.yaml`.
+2. Alinhe schemas/types Zod e fixtures válidas/inválidas.
+3. Atualize o tratamento de requests e responses no simulador.
+4. Atualize o cliente mobile, error mapping e as sessions/UI afetadas.
+5. Atualize parsing, serialization e route registration do firmware de forma independente em C++.
+6. Amplie os testes de contrato, simulador, mobile e captures do firmware.
+7. Atualize os documentos de protocolo e architecture destinados a pessoas.
 
-Unknown properties are rejected. Do not weaken runtime validation to absorb drift silently.
+Propriedades desconhecidas são rejeitadas. Não enfraqueça a validação em runtime para absorver drift silenciosamente.
 
-## Preserving runtime behavior
+## Preservando o comportamento em runtime
 
-- Firmware owns sensors, target validation, NVS persistence, readiness, timeouts, heater permission/output, and faults.
-- Mobile mutations must remain pending until a valid acknowledgement. Never optimistically publish a requested mode, target, or heater state as live.
-- Pause polling while a mutation is in flight and ignore stale work after cancellation/generation changes.
-- Clear live snapshots when the connection becomes unavailable; do not present cached values as current machine state.
-- Keep first-cause timeout versus caller-cancellation semantics.
-- Preserve deterministic manual time in the simulator. Do not claim the simulator models the firmware's real-time duty loop or safety response.
-- Firmware failure paths must attempt to command the SSR off, but documentation must not equate a software command with confirmed physical de-energization.
+- O firmware é responsável por sensores, validação de targets, persistência NVS, readiness, timeouts, permissão/saída do heater e faults.
+- Mutations mobile devem permanecer pending até um acknowledgement válido. Nunca publique de forma otimista um mode, target ou heater state solicitado como estado real.
+- Pause o polling enquanto uma mutation estiver em andamento e ignore trabalho obsoleto após mudanças de cancellation/generation.
+- Limpe snapshots reais quando a conexão ficar indisponível; não apresente valores em cache como estado atual da máquina.
+- Preserve a semântica de first cause entre timeout e cancellation solicitada pelo caller.
+- Preserve o tempo manual determinístico no simulador. Não afirme que o simulador representa o duty loop em tempo real ou a resposta de segurança do firmware.
+- Caminhos de falha do firmware devem tentar comandar o SSR para off, mas a documentação não deve equiparar um comando de software à desenergização física confirmada.
 
-## Validation
+## Validação
 
-Run checks for every affected area, not just the package you edited. The complete command matrix is in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
+Execute os checks de toda área afetada, não apenas do package editado. A matriz completa de comandos está em [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
-At minimum:
+No mínimo:
 
-| Changed area | Required checks |
+| Área alterada | Checks obrigatórios |
 | --- | --- |
-| Mobile | mobile typecheck, tests, lint; exercise affected native/web behavior where applicable |
-| Protocol | OpenAPI validation, protocol typecheck/tests, every dependent package check |
-| Simulator | simulator typecheck/tests plus protocol checks |
-| Firmware policy/API | native host build/tests and contract capture validation |
-| ESP-IDF adapters/config | host checks plus pinned `idf.py build` when the toolchain is available |
-| Documentation | commands and claims checked against manifests/source; local Markdown links checked |
+| Mobile | mobile typecheck, tests e lint; exercitar o comportamento native/web afetado quando aplicável |
+| Protocol | validação OpenAPI, protocol typecheck/tests e checks de todos os packages dependentes |
+| Simulator | simulator typecheck/tests mais os checks de protocolo |
+| Firmware policy/API | native host build/tests e validação dos contract captures |
+| ESP-IDF adapters/config | host checks mais o `idf.py build` fixado quando o toolchain estiver disponível |
+| Documentation | comandos e afirmações conferidos contra manifests/source; links Markdown locais verificados |
 
-Report checks that could not run. Passing simulator or host tests are not physical hardware acceptance.
+Informe os checks que não puderam ser executados. Testes aprovados no simulador ou host não representam aceitação do hardware físico.
 
 ## Pull requests
 
-Keep one clear goal per pull request and use the GitHub Connector or `gh` to create it. Include:
+Mantenha um objetivo claro por pull request e use o GitHub Connector ou `gh` para criá-lo. Inclua:
 
-- what changed and why;
-- affected packages and runtime flows;
-- API compatibility and persisted-data impact;
-- safety or hardware impact;
-- automated and manual verification, including omissions;
-- assumptions, deferred human checks, and remaining blockers;
-- documentation updated with the behavior.
+- o que mudou e por quê;
+- packages e runtime flows afetados;
+- impacto na compatibilidade da API e em dados persistidos;
+- impacto em safety ou hardware;
+- verificação automatizada e manual, incluindo omissões;
+- premissas, checks humanos adiados e blockers restantes;
+- documentação atualizada com o comportamento.
 
-Never push directly to `master`, discard unrelated work, or include generated/dependency output.
+Nunca faça push direto para `master`, descarte trabalho não relacionado ou inclua output gerado/de dependências.
