@@ -62,9 +62,13 @@ class TemperatureController {
   bool heater_enabled_permission() const;
   bool heater_enabled() const;
   bool extraction_compensation_active() const;
+  bool cooldown_inhibited() const;
 
   bool set_mode(ControlMode mode, std::uint32_t now_ms);
   void set_extraction_phase(ExtractionPhase phase, std::uint32_t now_ms);
+  bool begin_cooldown_inhibit(std::uint32_t now_ms);
+  bool force_cooldown_heater_off();
+  bool end_cooldown_inhibit(std::uint32_t now_ms);
   bool set_heater_enabled(bool enabled, std::uint32_t now_ms);
   bool update_targets(const peripherals::TemperatureTargets& targets,
                       peripherals::TargetStorage& storage,
@@ -112,6 +116,7 @@ class TemperatureController {
   FaultCode fault_code_{FaultCode::kInternalError};
   bool heater_enabled_permission_{true};
   ExtractionPhase extraction_phase_{ExtractionPhase::kIdle};
+  bool cooldown_inhibited_{false};
   bool fault_latched_{false};
   bool ready_band_active_{false};
   std::uint32_t ready_band_since_ms_{0};
@@ -197,6 +202,77 @@ class ExtractionController {
   ExtractionSelection selection_{};
   peripherals::ExtractionProfile active_profile_{};
   ExtractionPhase phase_{ExtractionPhase::kIdle};
+};
+
+enum class CooldownStatus { kIdle, kPumping, kStabilizing };
+enum class CooldownOutcome { kNone, kTargetReached, kCutoff, kStopped, kFailed };
+
+struct CooldownInput {
+  bool sensor_valid{false};
+  bool fault_active{false};
+  bool extraction_active{false};
+  float boiler_temperature_c{0.0F};
+};
+
+struct CooldownSnapshot {
+  CooldownStatus status{CooldownStatus::kIdle};
+  std::string cooldown_id{};
+  std::int32_t brew_target_c{0};
+  std::uint32_t elapsed_ms{0};
+  std::uint32_t remaining_ms{0};
+  peripherals::PumpCommand pump_command{peripherals::PumpCommand::kOff};
+  bool heater_inhibited{false};
+  CooldownOutcome outcome{CooldownOutcome::kNone};
+};
+
+enum class StartCooldownResult {
+  kStarted,
+  kReplay,
+  kConflict,
+  kInvalidRequest,
+  kSensorUnavailable,
+  kMachineFault,
+  kExtractionActive,
+  kNotRequired,
+  kOutputFailure,
+};
+
+enum class CooldownUpdateResult { kOk, kCompleted, kFailed };
+
+class CooldownController {
+ public:
+  CooldownController(TemperatureController& temperature,
+                     peripherals::FailOffPump& pump);
+
+  CooldownSnapshot snapshot(std::uint32_t now_ms) const;
+  bool active() const;
+  StartCooldownResult start(const std::string& idempotency_key,
+                            const CooldownInput& input,
+                            std::uint32_t now_ms);
+  CooldownUpdateResult update(const CooldownInput& input,
+                              std::uint32_t now_ms);
+  CooldownUpdateResult stop(std::uint32_t now_ms);
+  bool reset(std::uint32_t now_ms);
+
+ private:
+  static bool valid_idempotency_key(const std::string& key);
+  CooldownUpdateResult enter_stabilization(CooldownOutcome outcome,
+                                            std::uint32_t started_ms,
+                                            std::uint32_t now_ms);
+  CooldownUpdateResult fail(FaultCode fault, std::uint32_t now_ms);
+  CooldownUpdateResult complete(std::uint32_t now_ms);
+
+  TemperatureController& temperature_;
+  peripherals::FailOffPump& pump_;
+  CooldownStatus status_{CooldownStatus::kIdle};
+  CooldownOutcome outcome_{CooldownOutcome::kNone};
+  std::uint32_t started_at_ms_{0};
+  std::uint32_t stabilization_started_at_ms_{0};
+  std::uint32_t terminal_elapsed_ms_{0};
+  std::uint32_t cooldown_counter_{0};
+  std::int32_t brew_target_c_{0};
+  std::string cooldown_id_{};
+  std::string idempotency_key_{};
 };
 
 }  // namespace philcoino::control

@@ -56,6 +56,11 @@ class MemoryBackend final : public TargetBackend {
 class FakeDigitalOutput final : public DigitalOutput {
  public:
   bool set_level(bool high) override {
+    if (high && cooldown_guard != nullptr) {
+      running_started_after_heater_inhibit =
+          cooldown_guard->cooldown_inhibited() &&
+          !cooldown_guard->heater_enabled();
+    }
     level = high;
     events.push_back(high);
     if (high && fail_high) {
@@ -78,6 +83,8 @@ class FakeDigitalOutput final : public DigitalOutput {
   bool fail_low{false};
   bool fail_high{false};
   bool fail_configure{false};
+  const TemperatureController* cooldown_guard{nullptr};
+  bool running_started_after_heater_inhibit{false};
 };
 
 class FakeProfileBackend final : public ProfileBackend {
@@ -169,6 +176,25 @@ struct ExtractionHarness {
   FailOffPump pump;
   ExtractionController controller;
 };
+
+struct CooldownHarness {
+  explicit CooldownHarness(TemperatureTargets targets = {})
+      : temperature(targets), pump(pump_output), cooldown(temperature.controller, pump) {
+    assert(pump.initialize());
+    pump_output.cooldown_guard = &temperature.controller;
+    assert(cooldown.reset(0));
+  }
+
+  ControllerHarness temperature;
+  FakeDigitalOutput pump_output{};
+  FailOffPump pump;
+  CooldownController cooldown;
+};
+
+CooldownInput cooldown_input(float temperature_c,
+                             bool extraction_active = false) {
+  return {true, false, extraction_active, temperature_c};
+}
 
 constexpr char kStartKey[] = "start-01J2ABCDEF1234";
 constexpr char kOtherStartKey[] = "start-01J2OTHERKEY99";
@@ -1036,6 +1062,195 @@ void test_pump_output_failures_end_extraction_off() {
   assert(transition_failure.pump.command() == PumpCommand::kOff);
 }
 
+void test_cooldown_start_orders_outputs_and_preserves_permission() {
+  CooldownHarness harness({93, 115});
+  assert(harness.temperature.controller.set_mode(ControlMode::kSteam, 0));
+  assert(harness.temperature.controller.set_heater_enabled(false, 0));
+
+  assert(harness.cooldown.start("cooldown-start-key-01", cooldown_input(110.0F),
+                                1000) == StartCooldownResult::kStarted);
+  const auto snapshot = harness.cooldown.snapshot(1000);
+  assert(snapshot.status == CooldownStatus::kPumping);
+  assert(snapshot.brew_target_c == 93);
+  assert(snapshot.remaining_ms == 45000U);
+  assert(snapshot.pump_command == PumpCommand::kRunning);
+  assert(snapshot.heater_inhibited);
+  assert(harness.pump_output.running_started_after_heater_inhibit);
+  assert(harness.temperature.controller.mode() == ControlMode::kBrew);
+  assert(!harness.temperature.controller.heater_enabled_permission());
+  assert(!harness.temperature.controller.heater_enabled());
+}
+
+void test_cooldown_replay_conflict_target_snapshot_and_threshold() {
+  CooldownHarness harness({93, 115});
+  assert(harness.cooldown.start("cooldown-replay-key-1", cooldown_input(110.0F),
+                                1000) == StartCooldownResult::kStarted);
+  const auto id = harness.cooldown.snapshot(1000).cooldown_id;
+  assert(harness.cooldown.start("cooldown-replay-key-1", cooldown_input(110.0F),
+                                9000) == StartCooldownResult::kReplay);
+  assert(harness.cooldown.snapshot(9000).elapsed_ms == 8000U);
+  assert(harness.cooldown.snapshot(9000).cooldown_id == id);
+  assert(harness.cooldown.start("cooldown-compete-key-1", cooldown_input(110.0F),
+                                9000) == StartCooldownResult::kConflict);
+
+  MemoryState memory;
+  memory.targets = {93, 115};
+  MemoryBackend backend(memory);
+  TargetStorage storage(backend);
+  assert(harness.temperature.controller.update_brew_target(95, storage, 9500));
+  assert(harness.cooldown.snapshot(9500).brew_target_c == 93);
+  assert(harness.cooldown.update(cooldown_input(93.01F), 10000) ==
+         CooldownUpdateResult::kOk);
+  assert(harness.cooldown.snapshot(10000).status == CooldownStatus::kPumping);
+  assert(harness.cooldown.update(cooldown_input(93.0F), 10001) ==
+         CooldownUpdateResult::kOk);
+  auto snapshot = harness.cooldown.snapshot(10001);
+  assert(snapshot.status == CooldownStatus::kStabilizing);
+  assert(snapshot.outcome == CooldownOutcome::kTargetReached);
+  assert(snapshot.remaining_ms == 5000U);
+  assert(snapshot.pump_command == PumpCommand::kOff);
+  assert(snapshot.heater_inhibited);
+  assert(harness.cooldown.update(cooldown_input(93.0F), 15000) ==
+         CooldownUpdateResult::kOk);
+  assert(harness.cooldown.snapshot(15000).remaining_ms == 1U);
+  assert(harness.cooldown.update(cooldown_input(93.0F), 15001) ==
+         CooldownUpdateResult::kCompleted);
+  snapshot = harness.cooldown.snapshot(15001);
+  assert(snapshot.status == CooldownStatus::kIdle);
+  assert(snapshot.outcome == CooldownOutcome::kTargetReached);
+  assert(!snapshot.heater_inhibited);
+  assert(snapshot.brew_target_c == 93);
+  assert(harness.cooldown.start("cooldown-replay-key-1", cooldown_input(110.0F),
+                                20000) == StartCooldownResult::kReplay);
+}
+
+void test_cooldown_cutoff_stop_delayed_update_and_wraparound() {
+  CooldownHarness cutoff;
+  assert(cutoff.cooldown.start("cooldown-cutoff-key-1", cooldown_input(1000.0F),
+                               0) == StartCooldownResult::kStarted);
+  assert(cutoff.cooldown.update(cooldown_input(1000.0F), 44999) ==
+         CooldownUpdateResult::kOk);
+  assert(cutoff.cooldown.snapshot(44999).remaining_ms == 1U);
+  assert(cutoff.cooldown.update(cooldown_input(1000.0F), 45000) ==
+         CooldownUpdateResult::kOk);
+  assert(cutoff.cooldown.snapshot(45000).outcome == CooldownOutcome::kCutoff);
+  assert(cutoff.cooldown.snapshot(45000).remaining_ms == 5000U);
+  assert(cutoff.cooldown.update(cooldown_input(1000.0F), 50000) ==
+         CooldownUpdateResult::kCompleted);
+
+  CooldownHarness stopped;
+  assert(stopped.cooldown.start("cooldown-stopped-key1", cooldown_input(110.0F),
+                                1000) == StartCooldownResult::kStarted);
+  assert(stopped.cooldown.stop(13345) == CooldownUpdateResult::kOk);
+  const auto first = stopped.cooldown.snapshot(13345);
+  assert(first.status == CooldownStatus::kStabilizing);
+  assert(first.outcome == CooldownOutcome::kStopped);
+  assert(stopped.cooldown.stop(14000) == CooldownUpdateResult::kOk);
+  assert(stopped.cooldown.snapshot(14000).remaining_ms == 4345U);
+  assert(stopped.cooldown.stop(18344) == CooldownUpdateResult::kOk);
+  assert(stopped.cooldown.snapshot(18344).remaining_ms == 1U);
+  assert(stopped.cooldown.stop(18345) == CooldownUpdateResult::kCompleted);
+  assert(stopped.cooldown.stop(20000) == CooldownUpdateResult::kOk);
+
+  CooldownHarness delayed;
+  assert(delayed.cooldown.start("cooldown-delayed-key1", cooldown_input(1000.0F),
+                                0) == StartCooldownResult::kStarted);
+  assert(delayed.cooldown.update(cooldown_input(1000.0F), 50000) ==
+         CooldownUpdateResult::kCompleted);
+  assert(delayed.cooldown.snapshot(50000).outcome == CooldownOutcome::kCutoff);
+  assert(delayed.cooldown.snapshot(50000).elapsed_ms == 50000U);
+
+  CooldownHarness wrapped;
+  constexpr std::uint32_t started = UINT32_MAX - 999U;
+  assert(wrapped.cooldown.start("cooldown-wrapped-key1", cooldown_input(1000.0F),
+                                started) == StartCooldownResult::kStarted);
+  assert(wrapped.cooldown.update(cooldown_input(1000.0F), started + 44999U) ==
+         CooldownUpdateResult::kOk);
+  assert(wrapped.cooldown.update(cooldown_input(1000.0F), started + 45000U) ==
+         CooldownUpdateResult::kOk);
+  assert(wrapped.cooldown.update(cooldown_input(1000.0F), started + 50000U) ==
+         CooldownUpdateResult::kCompleted);
+}
+
+void test_cooldown_eligibility_failures_reset_and_output_fail_off() {
+  CooldownHarness eligibility;
+  assert(eligibility.cooldown.start("short", cooldown_input(110.0F), 0) ==
+         StartCooldownResult::kInvalidRequest);
+  assert(eligibility.cooldown.start("cooldown-sensor-key01",
+                                    {false, false, false, 110.0F}, 0) ==
+         StartCooldownResult::kSensorUnavailable);
+  assert(eligibility.cooldown.start("cooldown-extract-key1",
+                                    cooldown_input(110.0F, true), 0) ==
+         StartCooldownResult::kExtractionActive);
+  assert(eligibility.cooldown.start("cooldown-notneed-key1",
+                                    cooldown_input(93.0F), 0) ==
+         StartCooldownResult::kNotRequired);
+  eligibility.temperature.controller.latch_fault(FaultCode::kSensorFailure);
+  assert(eligibility.cooldown.start("cooldown-faulted-key1",
+                                    {true, true, false, 110.0F}, 0) ==
+         StartCooldownResult::kMachineFault);
+
+  CooldownHarness sensor_failure;
+  assert(sensor_failure.cooldown.start("cooldown-abort-key-01",
+                                       cooldown_input(110.0F), 0) ==
+         StartCooldownResult::kStarted);
+  assert(sensor_failure.cooldown.update({false, true, false, 0.0F}, 1000) ==
+         CooldownUpdateResult::kFailed);
+  auto snapshot = sensor_failure.cooldown.snapshot(1000);
+  assert(snapshot.status == CooldownStatus::kIdle);
+  assert(snapshot.outcome == CooldownOutcome::kFailed);
+  assert(snapshot.pump_command == PumpCommand::kOff);
+  assert(!snapshot.heater_inhibited);
+  assert(sensor_failure.temperature.controller.fault_code() ==
+         FaultCode::kSensorFailure);
+
+  CooldownHarness start_failure;
+  start_failure.pump_output.fail_high = true;
+  assert(start_failure.cooldown.start("cooldown-startfail-01",
+                                      cooldown_input(110.0F), 0) ==
+         StartCooldownResult::kOutputFailure);
+  snapshot = start_failure.cooldown.snapshot(0);
+  assert(snapshot.outcome == CooldownOutcome::kFailed);
+  assert(snapshot.pump_command == PumpCommand::kOff);
+  assert(start_failure.temperature.controller.has_fault());
+
+  CooldownHarness off_failure;
+  assert(off_failure.cooldown.start("cooldown-offfail-key1",
+                                    cooldown_input(110.0F), 0) ==
+         StartCooldownResult::kStarted);
+  off_failure.pump_output.fail_low = true;
+  assert(off_failure.cooldown.stop(1000) == CooldownUpdateResult::kFailed);
+  assert(off_failure.cooldown.snapshot(1000).outcome == CooldownOutcome::kFailed);
+  assert(off_failure.pump.command() == PumpCommand::kOff);
+  assert(off_failure.temperature.controller.has_fault());
+
+  CooldownHarness heater_off_failure;
+  assert(heater_off_failure.cooldown.start(
+             "cooldown-heaterfail-1", cooldown_input(110.0F), 0) ==
+         StartCooldownResult::kStarted);
+  heater_off_failure.temperature.output.fail_low = true;
+  assert(heater_off_failure.cooldown.update(cooldown_input(110.0F), 500) ==
+         CooldownUpdateResult::kFailed);
+  snapshot = heater_off_failure.cooldown.snapshot(500);
+  assert(snapshot.status == CooldownStatus::kIdle);
+  assert(snapshot.outcome == CooldownOutcome::kFailed);
+  assert(snapshot.pump_command == PumpCommand::kOff);
+  assert(heater_off_failure.temperature.controller.has_fault());
+
+  CooldownHarness reset;
+  assert(reset.temperature.controller.set_heater_enabled(false, 0));
+  assert(reset.cooldown.start("cooldown-reset-key-01", cooldown_input(110.0F),
+                              0) == StartCooldownResult::kStarted);
+  assert(reset.cooldown.reset(1000));
+  snapshot = reset.cooldown.snapshot(1000);
+  assert(snapshot.status == CooldownStatus::kIdle);
+  assert(snapshot.cooldown_id.empty());
+  assert(snapshot.outcome == CooldownOutcome::kNone);
+  assert(snapshot.pump_command == PumpCommand::kOff);
+  assert(!snapshot.heater_inhibited);
+  assert(!reset.temperature.controller.heater_enabled_permission());
+}
+
 }  // namespace
 
 int main() {
@@ -1076,5 +1291,9 @@ int main() {
   test_profile_snapshot_export_and_empty_slot_rules();
   test_extraction_wraparound_disconnect_and_heater_fault_independence();
   test_pump_output_failures_end_extraction_off();
+  test_cooldown_start_orders_outputs_and_preserves_permission();
+  test_cooldown_replay_conflict_target_snapshot_and_threshold();
+  test_cooldown_cutoff_stop_delayed_update_and_wraparound();
+  test_cooldown_eligibility_failures_reset_and_output_fail_off();
   return 0;
 }
