@@ -9,7 +9,9 @@ import {
   STEAM_TARGET_MIN_C,
   TemperatureSettingsRequestSchema,
   StartExtractionRequestSchema,
+  StartCooldownRequestSchema,
   type DeviceResponse,
+  type CooldownState,
   type HeaterSettingsRequest,
   type HeaterSettingsResponse,
   type HealthResponse,
@@ -21,6 +23,9 @@ import {
   type ProfileSet,
   type StartExtractionRequest,
   type StartExtractionResponse,
+  type StartCooldownRequest,
+  type StartCooldownResponse,
+  type StopCooldownResponse,
   type StopExtractionResponse,
   type TemperatureSettingsRequest,
   type TemperatureSettingsResponse,
@@ -62,7 +67,7 @@ export class DebugDeviceApiClient
     remainingMs: null,
     pumpCommand: "off",
   });
-  private readonly cooldown = CooldownStateSchema.parse({
+  private cooldown: CooldownState = CooldownStateSchema.parse({
     status: "idle",
     cooldownId: null,
     brewTargetC: null,
@@ -73,6 +78,7 @@ export class DebugDeviceApiClient
     outcome: null,
   });
   private activeStartKey: string | null = null;
+  private activeCooldownStartKey: string | null = null;
 
   async getHealth(options: { signal?: AbortSignal } = {}): Promise<HealthResponse> {
     throwIfAborted(options.signal);
@@ -96,7 +102,14 @@ export class DebugDeviceApiClient
     return MachineStateV2Schema.parse({
       machine: this.state,
       extraction: this.extraction,
-      compensation: { status: "inactive", phase: null },
+      compensation:
+        this.extraction.status === "running" &&
+        (this.extraction.phase === "manual" ||
+          this.extraction.phase === "main-extraction") &&
+        this.state.heaterEnabled &&
+        this.state.status !== "fault"
+          ? { status: "active", phase: this.extraction.phase }
+          : { status: "inactive", phase: null },
       cooldown: this.cooldown,
     });
   }
@@ -129,6 +142,9 @@ export class DebugDeviceApiClient
         status: 409,
       });
     }
+    if (this.cooldown.status !== "idle") {
+      throw cooldownActiveError(this.cooldown);
+    }
     this.profiles = cloneProfileSet(parsed.data);
     return cloneProfileSet(this.profiles);
   }
@@ -153,6 +169,20 @@ export class DebugDeviceApiClient
             message: "A different extraction is already active.",
           },
           activeExtraction: this.extraction,
+        },
+        status: 409,
+      });
+    }
+    if (this.cooldown.status !== "idle") {
+      throw cooldownActiveError(this.cooldown);
+    }
+    if (this.state.activeMode !== "brew") {
+      throw new ApiClientError("http", "Brew mode is required.", {
+        response: {
+          error: {
+            code: "brew_mode_required",
+            message: "Switch the machine to Brew before starting extraction.",
+          },
         },
         status: 409,
       });
@@ -226,6 +256,75 @@ export class DebugDeviceApiClient
     return this.extraction;
   }
 
+  async startCooldown(
+    request: StartCooldownRequest,
+    options: { signal?: AbortSignal } = {},
+  ): Promise<StartCooldownResponse> {
+    throwIfAborted(options.signal);
+    const parsed = StartCooldownRequestSchema.safeParse(request);
+    if (!parsed.success) {
+      throw new ApiClientError("invalid-request", "The cooldown Start request is invalid.");
+    }
+    if (this.extraction.status === "running") {
+      throw new ApiClientError("http", "Extraction is active.", {
+        response: {
+          error: {
+            code: "extraction_active",
+            message: "Cooldown cannot start while extraction is active.",
+          },
+          activeExtraction: this.extraction,
+        },
+        status: 409,
+      });
+    }
+    if (
+      this.cooldown.status !== "idle" &&
+      this.activeCooldownStartKey !== parsed.data.idempotencyKey
+    ) {
+      throw cooldownActiveError(this.cooldown);
+    }
+    if (this.activeCooldownStartKey === parsed.data.idempotencyKey) {
+      return this.cooldown;
+    }
+    this.activeCooldownStartKey = parsed.data.idempotencyKey;
+    this.state = createDebugState({
+      activeMode: "brew",
+      brewTargetC: this.state.brewTargetC,
+      heaterEnabled: this.state.heaterEnabled,
+      steamTargetC: this.state.steamTargetC,
+    });
+    this.cooldown = CooldownStateSchema.parse({
+      status: "pumping",
+      cooldownId: "debug-cooldown-1",
+      brewTargetC: this.state.brewTargetC,
+      elapsedMs: 0,
+      remainingMs: 45_000,
+      pumpCommand: "running",
+      heaterInhibited: true,
+      outcome: null,
+    });
+    return this.cooldown;
+  }
+
+  async stopCooldown(
+    options: { signal?: AbortSignal } = {},
+  ): Promise<StopCooldownResponse> {
+    throwIfAborted(options.signal);
+    if (this.cooldown.status === "pumping") {
+      this.cooldown = CooldownStateSchema.parse({
+        status: "stabilizing",
+        cooldownId: this.cooldown.cooldownId,
+        brewTargetC: this.cooldown.brewTargetC,
+        elapsedMs: this.cooldown.elapsedMs,
+        remainingMs: 5_000,
+        pumpCommand: "off",
+        heaterInhibited: true,
+        outcome: "stopped",
+      });
+    }
+    return this.cooldown;
+  }
+
   async updateTemperatureSettings(
     settings: TemperatureSettingsRequest,
     options: { signal?: AbortSignal } = {},
@@ -259,6 +358,21 @@ export class DebugDeviceApiClient
     const parsed = ModeRequestSchema.safeParse(request);
     if (!parsed.success) {
       throw new ApiClientError("invalid-request", "The mode request is invalid.");
+    }
+
+    if (
+      parsed.data.mode === "steam" &&
+      (this.extraction.status === "running" || this.cooldown.status !== "idle")
+    ) {
+      throw new ApiClientError("http", "A workflow is active.", {
+        response: {
+          error: {
+            code: "sensor_unavailable",
+            message: "Steam cannot be selected while extraction or cooldown is active.",
+          },
+        },
+        status: 409,
+      });
     }
 
     this.state = createDebugState({
@@ -298,6 +412,22 @@ export class DebugDeviceApiClient
     throwIfAborted(options.signal);
     return this.state;
   }
+}
+
+function cooldownActiveError(cooldown: CooldownState): ApiClientError {
+  if (cooldown.status === "idle") {
+    throw new Error("A cooldown conflict requires active cooldown state.");
+  }
+  return new ApiClientError("http", "Cooldown is active.", {
+    response: {
+      error: {
+        code: "cooldown_active",
+        message: "A cooldown workflow is already active.",
+      },
+      activeCooldown: cooldown,
+    },
+    status: 409,
+  });
 }
 
 export function createDebugDeviceApiClient(): DebugDeviceApiClient {

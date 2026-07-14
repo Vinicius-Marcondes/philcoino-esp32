@@ -42,6 +42,8 @@ interface ExtractionPreviewProps {
   onStateChange?: Dispatch<SetStateAction<ExtractionPreviewState>>;
   state?: ExtractionPreviewState;
   view?: "all" | "profiles" | "quick";
+  workflowBlock?: "cooldown" | "steam" | null;
+  workflowMutationPending?: boolean;
 }
 
 export function ExtractionPreview({
@@ -50,6 +52,8 @@ export function ExtractionPreview({
   onStateChange,
   state: controlledState,
   view = "all",
+  workflowBlock = null,
+  workflowMutationPending = false,
 }: ExtractionPreviewProps) {
   const [localState, setLocalState] = useState(
     () => initialState ?? createExtractionPreviewState(),
@@ -58,10 +62,12 @@ export function ExtractionPreview({
   const setState = onStateChange ?? setLocalState;
   const interactivePreview = controlledState === undefined;
   const synchronized = profilesAreSynchronized(state);
-  const startEnabled = canStartPreview(state);
+  const startEnabled =
+    canStartPreview(state) && workflowBlock === null && !workflowMutationPending;
   const active = state.extraction.status === "running";
   const customStartBlocked =
-    !active && state.selected.kind === "profile" && !startEnabled;
+    !active && state.selected.kind === "profile" && !canStartPreview(state);
+  const workflowStartBlocked = !active && workflowBlock !== null;
   const activeProfile = selectedProfile(state);
   const selectedProfileId =
     state.selected.kind === "profile" ? state.selected.profileId : null;
@@ -145,7 +151,12 @@ export function ExtractionPreview({
           {translate("extractionPreview.syncHelp")}
         </Text>
         <ActionButton
-          disabled={active || synchronized}
+          disabled={
+            active ||
+            synchronized ||
+            workflowBlock === "cooldown" ||
+            workflowMutationPending
+          }
           label={translate("extractionPreview.export")}
           onPress={() => setState(exportProfilesPreview)}
         />
@@ -154,6 +165,12 @@ export function ExtractionPreview({
         ) : null}
         {state.notice === "export-blocked" ? (
           <Notice text={translate("extractionPreview.exportBlocked")} warning />
+        ) : null}
+        {workflowBlock === "cooldown" ? (
+          <Notice
+            text={translate("extractionPreview.cooldownExportBlocked")}
+            warning
+          />
         ) : null}
       </View> : null}
 
@@ -220,6 +237,15 @@ export function ExtractionPreview({
             {activeProfile === null
               ? translate("extractionPreview.emptyStartBlocked")
               : translate("extractionPreview.startBlocked")}
+          </Text>
+        ) : null}
+        {workflowStartBlocked ? (
+          <Text accessibilityLiveRegion="polite" selectable style={styles.blockedText}>
+            {translate(
+              workflowBlock === "steam"
+                ? "extractionPreview.steamStartBlocked"
+                : "extractionPreview.cooldownStartBlocked",
+            )}
           </Text>
         ) : null}
         <View style={styles.actionRow}>

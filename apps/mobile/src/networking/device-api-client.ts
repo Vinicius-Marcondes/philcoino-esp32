@@ -1,5 +1,6 @@
 import {
   ApiV2ErrorResponseSchema,
+  CooldownActiveConflictResponseSchema,
   DeviceResponseSchema,
   ErrorResponseSchema,
   ExtractionActiveConflictResponseSchema,
@@ -12,9 +13,12 @@ import {
   ModeResponseSchema,
   OverTemperatureDismissResponseSchema,
   ProfileSetSchema,
+  StartCooldownRequestSchema,
+  StartCooldownResponseSchema,
   StartExtractionRequestSchema,
   StartExtractionResponseSchema,
   StopExtractionResponseSchema,
+  StopCooldownResponseSchema,
   TemperatureSettingsRequestSchema,
   TemperatureSettingsResponseSchema,
   type DeviceResponse,
@@ -27,9 +31,12 @@ import {
   type ModeResponse,
   type OverTemperatureDismissResponse,
   type ProfileSet,
+  type StartCooldownRequest,
+  type StartCooldownResponse,
   type StartExtractionRequest,
   type StartExtractionResponse,
   type StopExtractionResponse,
+  type StopCooldownResponse,
   type TemperatureSettingsRequest,
   type TemperatureSettingsResponse,
 } from "@philcoino/protocol";
@@ -185,6 +192,39 @@ export class DeviceApiClient {
     return this.request(
       "/api/v2/extractions/stop",
       StopExtractionResponseSchema,
+      { authenticated: true, errorVersion: "v2", method: "POST" },
+      options,
+    );
+  }
+
+  async startCooldown(
+    request: StartCooldownRequest,
+    options: RequestOptions = {},
+  ): Promise<StartCooldownResponse> {
+    const parsed = StartCooldownRequestSchema.safeParse(request);
+    if (!parsed.success) {
+      throw new ApiClientError(
+        "invalid-request",
+        "The cooldown Start request is invalid.",
+      );
+    }
+    return await this.request(
+      "/api/v2/cooldowns/start",
+      StartCooldownResponseSchema,
+      {
+        authenticated: true,
+        body: parsed.data,
+        errorVersion: "v2",
+        method: "POST",
+      },
+      options,
+    );
+  }
+
+  stopCooldown(options: RequestOptions = {}): Promise<StopCooldownResponse> {
+    return this.request(
+      "/api/v2/cooldowns/stop",
+      StopCooldownResponseSchema,
       { authenticated: true, errorVersion: "v2", method: "POST" },
       options,
     );
@@ -392,6 +432,10 @@ async function throwResponseError(
 }
 
 function parseV2ErrorResponse(body: unknown) {
+  const cooldownConflict = CooldownActiveConflictResponseSchema.safeParse(body);
+  if (cooldownConflict.success) {
+    return cooldownConflict;
+  }
   const activeConflict = ExtractionActiveConflictResponseSchema.safeParse(body);
   if (activeConflict.success) {
     return activeConflict;

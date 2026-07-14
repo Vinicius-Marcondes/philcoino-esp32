@@ -155,4 +155,27 @@ describe("thermal workflow design preview model", () => {
     expect(source).not.toContain("fetch(");
     expect(source).not.toContain("numberOfLines");
   });
+
+  test("production presentation consumes acknowledged workflow state and exposes conflict controls", async () => {
+    const componentSource = await Bun.file(
+      new URL("../components/thermal-workflow-preview.tsx", import.meta.url),
+    ).text();
+    const dashboardSource = await Bun.file(
+      new URL("../components/dashboard-screen.tsx", import.meta.url),
+    ).text();
+    const hookSource = await Bun.file(
+      new URL("../hooks/use-machine-dashboard.ts", import.meta.url),
+    ).text();
+
+    expect(componentSource).toContain("export function ThermalWorkflowStatus");
+    expect(componentSource).toContain("snapshot.cooldown.status");
+    expect(componentSource).toContain("snapshot.compensation.status");
+    expect(componentSource).toContain("accessibilityState={{ disabled }}");
+    expect(dashboardSource).toContain("onStartCooldown={startCooldown}");
+    expect(dashboardSource).toContain("onStopCooldown={stopCooldown}");
+    expect(dashboardSource).toContain('workflowBlock={cooldownActive ? "cooldown" : null}');
+    expect(dashboardSource).toContain("steamWorkflowBlocked=");
+    expect(hookSource).toContain("setCooldown(nextSnapshot?.cooldown ?? null)");
+    expect(hookSource).toContain("setCompensation(null)");
+  });
 });

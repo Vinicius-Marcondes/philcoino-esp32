@@ -1,4 +1,6 @@
 import type {
+  CompensationState,
+  CooldownState,
   ExtractionSelection,
   ExtractionState,
   MachineState,
@@ -30,6 +32,10 @@ import type { MobileProfileRepository } from "@/src/storage/mobile-profile-repos
 
 export interface MachineDashboardState {
   connection: ConnectionState;
+  compensation: CompensationState | null;
+  cooldown: CooldownState | null;
+  cooldownStartMutation: DashboardMutationState;
+  cooldownStopMutation: DashboardMutationState;
   dismissMutation: (kind: DashboardMutationKind) => void;
   dismissOverTemperature: () => void;
   faultMutation: DashboardMutationState;
@@ -46,6 +52,8 @@ export interface MachineDashboardState {
   exportProfiles: () => void;
   saveMobileProfiles: (profiles: ProfileSet) => Promise<boolean>;
   startExtraction: (selection: ExtractionSelection) => void;
+  startCooldown: () => void;
+  stopCooldown: () => void;
   stopExtraction: () => void;
   setMode: (mode: Mode) => void;
   setHeaterEnabled: (heaterEnabled: boolean) => void;
@@ -59,6 +67,12 @@ export function useMachineDashboard(
   profileRepository: MobileProfileRepository,
 ): MachineDashboardState {
   const [connection, setConnection] = useState<ConnectionState>(connectingState);
+  const [compensation, setCompensation] = useState<CompensationState | null>(null);
+  const [cooldown, setCooldown] = useState<CooldownState | null>(null);
+  const [cooldownStartMutation, setCooldownStartMutation] =
+    useState<DashboardMutationState>(idleMutationState);
+  const [cooldownStopMutation, setCooldownStopMutation] =
+    useState<DashboardMutationState>(idleMutationState);
   const [faultMutation, setFaultMutation] =
     useState<DashboardMutationState>(idleMutationState);
   const [heaterMutation, setHeaterMutation] =
@@ -92,13 +106,36 @@ export function useMachineDashboard(
         onSnapshotChange: (nextSnapshot) => {
           setSnapshot(nextSnapshot?.machine ?? null);
           setExtraction(nextSnapshot?.extraction ?? null);
+          setCompensation(nextSnapshot?.compensation ?? null);
+          setCooldown(nextSnapshot?.cooldown ?? null);
         },
       });
       const mutations = new DashboardMutationSession({
         client,
+        onCooldownAcknowledged: (nextCooldown) => {
+          setCooldown(nextCooldown);
+          if (nextCooldown.status !== "idle") {
+            setSnapshot((current) =>
+              current === null
+                ? null
+                : {
+                    ...current,
+                    activeMode: "brew",
+                    heaterActive: false,
+                    steamTimeoutRemainingMs: null,
+                  },
+            );
+            setCompensation({
+              status: "inactive",
+              phase: null,
+            });
+          }
+        },
         onConnectionLost: (nextConnection) => {
           setSnapshot(null);
           setExtraction(null);
+          setCompensation(null);
+          setCooldown(null);
           setConnection(nextConnection);
         },
         onExtractionAcknowledged: setExtraction,
@@ -138,7 +175,11 @@ export function useMachineDashboard(
           );
         },
         onMutationChange: (kind, state) => {
-          if (kind === "extraction-start") {
+          if (kind === "cooldown-start") {
+            setCooldownStartMutation(state);
+          } else if (kind === "cooldown-stop") {
+            setCooldownStopMutation(state);
+          } else if (kind === "extraction-start") {
             setExtractionStartMutation(state);
           } else if (kind === "extraction-stop") {
             setExtractionStopMutation(state);
@@ -282,8 +323,20 @@ export function useMachineDashboard(
     mutationSession.current?.stopExtraction();
   }, []);
 
+  const startCooldown = useCallback(() => {
+    mutationSession.current?.startCooldown();
+  }, []);
+
+  const stopCooldown = useCallback(() => {
+    mutationSession.current?.stopCooldown();
+  }, []);
+
   return {
     connection,
+    compensation,
+    cooldown,
+    cooldownStartMutation,
+    cooldownStopMutation,
     dismissMutation,
     dismissOverTemperature,
     faultMutation,
@@ -300,7 +353,9 @@ export function useMachineDashboard(
     exportProfiles,
     saveMobileProfiles,
     startExtraction,
+    startCooldown,
     stopExtraction,
+    stopCooldown,
     setHeaterEnabled,
     setMode,
     snapshot,

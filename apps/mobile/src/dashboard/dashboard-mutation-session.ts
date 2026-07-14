@@ -1,4 +1,5 @@
 import type {
+  CooldownState,
   ExtractionSelection,
   ExtractionState,
   HeaterSettingsResponse,
@@ -21,6 +22,8 @@ import {
 import { translate } from "../localization/i18n";
 
 export type DashboardMutationKind =
+  | "cooldown-start"
+  | "cooldown-stop"
   | "extraction-start"
   | "extraction-stop"
   | "fault"
@@ -46,6 +49,8 @@ export const idleMutationState: DashboardMutationState = {
 };
 
 const mutationKinds: DashboardMutationKind[] = [
+  "cooldown-start",
+  "cooldown-stop",
   "extraction-start",
   "extraction-stop",
   "fault",
@@ -56,6 +61,11 @@ const mutationKinds: DashboardMutationKind[] = [
 ];
 
 export interface DashboardMutationClient {
+  startCooldown(
+    request: { idempotencyKey: string },
+    options?: { signal?: AbortSignal },
+  ): Promise<CooldownState>;
+  stopCooldown(options?: { signal?: AbortSignal }): Promise<CooldownState>;
   dismissOverTemperature(
     options?: { signal?: AbortSignal },
   ): Promise<OverTemperatureDismissResponse>;
@@ -92,6 +102,7 @@ interface DashboardPollingControl {
 interface DashboardMutationSessionOptions {
   client: DashboardMutationClient;
   onConnectionLost: (connection: ConnectionState) => void;
+  onCooldownAcknowledged: (cooldown: CooldownState) => void;
   onHeaterAcknowledged: (settings: HeaterSettingsResponse) => void;
   onExtractionAcknowledged: (extraction: ExtractionState) => void;
   onModeAcknowledged: (mode: Mode) => void;
@@ -106,10 +117,12 @@ interface DashboardMutationSessionOptions {
   ) => void;
   polling: DashboardPollingControl;
   startKeyFactory?: () => string;
+  cooldownStartKeyFactory?: () => string;
 }
 
 export class DashboardMutationSession {
   private readonly client: DashboardMutationClient;
+  private readonly onCooldownAcknowledged: (cooldown: CooldownState) => void;
   private readonly onConnectionLost: (connection: ConnectionState) => void;
   private readonly onHeaterAcknowledged: (settings: HeaterSettingsResponse) => void;
   private readonly onExtractionAcknowledged: (extraction: ExtractionState) => void;
@@ -120,6 +133,7 @@ export class DashboardMutationSession {
   private readonly onTemperatureSettingsAcknowledged: DashboardMutationSessionOptions["onTemperatureSettingsAcknowledged"];
   private readonly polling: DashboardPollingControl;
   private readonly startKeyFactory: () => string;
+  private readonly cooldownStartKeyFactory: () => string;
 
   private activeController: AbortController | null = null;
   private generation = 0;
@@ -129,9 +143,11 @@ export class DashboardMutationSession {
     idempotencyKey: string;
     selection: ExtractionSelection;
   } | null = null;
+  private pendingCooldownStartKey: string | null = null;
 
   constructor(options: DashboardMutationSessionOptions) {
     this.client = options.client;
+    this.onCooldownAcknowledged = options.onCooldownAcknowledged;
     this.onConnectionLost = options.onConnectionLost;
     this.onHeaterAcknowledged = options.onHeaterAcknowledged;
     this.onExtractionAcknowledged = options.onExtractionAcknowledged;
@@ -143,6 +159,8 @@ export class DashboardMutationSession {
       options.onTemperatureSettingsAcknowledged;
     this.polling = options.polling;
     this.startKeyFactory = options.startKeyFactory ?? createStartKey;
+    this.cooldownStartKeyFactory =
+      options.cooldownStartKeyFactory ?? createCooldownStartKey;
   }
 
   start(): void {
@@ -273,6 +291,46 @@ export class DashboardMutationSession {
     );
   }
 
+  startCooldown(): void {
+    this.pendingCooldownStartKey ??= this.cooldownStartKeyFactory();
+    const idempotencyKey = this.pendingCooldownStartKey;
+    void this.perform(
+      "cooldown-start",
+      (signal) => this.client.startCooldown({ idempotencyKey }, { signal }),
+      (response) => {
+        this.pendingCooldownStartKey = null;
+        this.onCooldownAcknowledged(response);
+        return translate("mutation.cooldownStarted");
+      },
+      translate("mutation.cooldownStartPending"),
+      (error) => {
+        if (
+          error instanceof ApiClientError &&
+          (error.kind === "http" || error.kind === "invalid-request")
+        ) {
+          this.pendingCooldownStartKey = null;
+        }
+      },
+    );
+  }
+
+  stopCooldown(): void {
+    void this.perform(
+      "cooldown-stop",
+      (signal) => this.client.stopCooldown({ signal }),
+      (response) => {
+        this.pendingCooldownStartKey = null;
+        this.onCooldownAcknowledged(response);
+        return translate(
+          response.status === "stabilizing"
+            ? "mutation.cooldownStopped"
+            : "mutation.cooldownStopAcknowledged",
+        );
+      },
+      translate("mutation.cooldownStopPending"),
+    );
+  }
+
   dismissMutation(kind: DashboardMutationKind): void {
     if (!this.running) {
       return;
@@ -286,6 +344,7 @@ export class DashboardMutationSession {
     request: (signal: AbortSignal) => Promise<T>,
     acknowledge: (response: T) => string,
     pendingMessage: string,
+    onFailure?: (error: unknown) => void,
   ): Promise<void> {
     if (!this.running || this.pending) {
       return;
@@ -320,6 +379,7 @@ export class DashboardMutationSession {
       }
 
       const outcome = mutationOutcomeFromError(error);
+      onFailure?.(error);
       this.onMutationChange(kind, outcome.state);
       if (outcome.connection !== null) {
         this.onConnectionLost(outcome.connection);
@@ -345,6 +405,10 @@ function createStartKey(): string {
     .padEnd(12, "0")
     .slice(0, 12);
   return `start-${Date.now().toString(36)}-${random}`;
+}
+
+function createCooldownStartKey(): string {
+  return createStartKey().replace(/^start-/, "cooldown-");
 }
 
 function sameExtractionSelection(

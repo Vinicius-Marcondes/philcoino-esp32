@@ -24,6 +24,7 @@ interface MachineControlsProps {
     settings: TemperatureSettingsRequest,
   ) => void;
   snapshot: MachineState;
+  steamWorkflowBlocked?: boolean;
   temperatureMutation: DashboardMutationState;
 }
 
@@ -34,6 +35,7 @@ export function MachineControls({
   onSetMode,
   onUpdateTemperatureSettings,
   snapshot,
+  steamWorkflowBlocked = false,
   temperatureMutation,
 }: MachineControlsProps) {
   const [brewTargetC, setBrewTargetC] = useState(snapshot.brewTargetC);
@@ -162,7 +164,7 @@ export function MachineControls({
           />
           <ModeButton
             active={snapshot.activeMode === "steam"}
-            disabled={mutationPending}
+            disabled={mutationPending || steamWorkflowBlocked}
             mode="steam"
             onPress={onSetMode}
           />
@@ -170,6 +172,11 @@ export function MachineControls({
         <Text selectable style={styles.helpText}>
           {translate("controls.modeHelp")}
         </Text>
+        {steamWorkflowBlocked ? (
+          <Text accessibilityLiveRegion="polite" selectable style={styles.blockedText}>
+            {translate("controls.steamWorkflowBlocked")}
+          </Text>
+        ) : null}
       </View>
     </View>
   );
@@ -550,5 +557,6 @@ const styles = StyleSheet.create({
   },
   feedbackMessage: { color: "#5B4D44", fontSize: 14, lineHeight: 20 },
   disabled: { opacity: 0.42 },
+  blockedText: { color: "#8B3A2B", fontSize: 14, fontWeight: "800", lineHeight: 20 },
   pressed: { opacity: 0.7 },
 });

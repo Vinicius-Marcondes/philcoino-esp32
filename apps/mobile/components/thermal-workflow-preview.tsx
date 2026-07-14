@@ -30,6 +30,66 @@ interface ThermalWorkflowPreviewProps {
   onOpenMachine: () => void;
 }
 
+interface ThermalWorkflowStatusProps {
+  mutationPending: boolean;
+  onOpenMachine: () => void;
+  onStartCooldown: () => void;
+  onStopCooldown: () => void;
+  snapshot: MachineStateV2;
+}
+
+export function ThermalWorkflowStatus({
+  mutationPending,
+  onOpenMachine,
+  onStartCooldown,
+  onStopCooldown,
+  snapshot,
+}: ThermalWorkflowStatusProps) {
+  const [confirmingCooldown, setConfirmingCooldown] = useState(false);
+  const cooldownActive = snapshot.cooldown.status !== "idle";
+  const startBlocked =
+    mutationPending ||
+    snapshot.extraction.status === "running" ||
+    snapshot.machine.status === "fault";
+
+  const confirmCooldown = () => {
+    if (startBlocked || cooldownActive) {
+      return;
+    }
+    setConfirmingCooldown(false);
+    onStartCooldown();
+  };
+
+  return (
+    <View style={styles.section}>
+      <CompensationCard snapshot={snapshot} />
+      {snapshot.machine.activeMode === "steam" && !cooldownActive ? (
+        <SteamBlockedCard onOpenMachine={onOpenMachine} />
+      ) : null}
+      {snapshot.cooldown.status === "idle" &&
+      snapshot.cooldown.outcome === "failed" ? (
+        <FailureCard snapshot={snapshot} />
+      ) : null}
+      {confirmingCooldown && snapshot.cooldown.status === "idle" ? (
+        <ConfirmationCard
+          confirmDisabled={startBlocked}
+          onCancel={() => setConfirmingCooldown(false)}
+          onConfirm={confirmCooldown}
+          snapshot={snapshot}
+        />
+      ) : (
+        <CooldownCard
+          actionDisabled={startBlocked}
+          onOpenConfirmation={() => setConfirmingCooldown(true)}
+          onStop={onStopCooldown}
+          snapshot={snapshot}
+          stopDisabled={mutationPending}
+        />
+      )}
+    </View>
+  );
+}
+
 export function ThermalWorkflowPreview({
   onOpenMachine,
 }: ThermalWorkflowPreviewProps) {
@@ -117,19 +177,23 @@ function CompensationCard({ snapshot }: { snapshot: MachineStateV2 }) {
 }
 
 function CooldownCard({
+  actionDisabled = false,
   onFinish,
   onOpenConfirmation,
   onShowCutoff,
   onShowTarget,
   onStop,
   snapshot,
+  stopDisabled = false,
 }: {
-  onFinish: () => void;
+  actionDisabled?: boolean;
+  onFinish?: () => void;
   onOpenConfirmation: () => void;
-  onShowCutoff: () => void;
-  onShowTarget: () => void;
+  onShowCutoff?: () => void;
+  onShowTarget?: () => void;
   onStop: () => void;
   snapshot: MachineStateV2;
+  stopDisabled?: boolean;
 }) {
   const cooldown = snapshot.cooldown;
   if (cooldown.status === "idle") {
@@ -148,6 +212,7 @@ function CooldownCard({
           {translate("thermalPreview.cooldownActionDetail")}
         </Text>
         <PrimaryButton
+          disabled={actionDisabled}
           label={translate("thermalPreview.cooldownButton")}
           onPress={onOpenConfirmation}
         />
@@ -211,35 +276,40 @@ function CooldownCard({
         <>
           <PrimaryButton
             destructive
+            disabled={stopDisabled}
             label={translate("thermalPreview.stop")}
             onPress={onStop}
           />
-          <View style={styles.secondaryActions}>
-            <SecondaryButton
-              label={translate("thermalPreview.reviewTargetReached")}
-              onPress={onShowTarget}
-            />
-            <SecondaryButton
-              label={translate("thermalPreview.reviewCutoff")}
-              onPress={onShowCutoff}
-            />
-          </View>
+          {onShowTarget && onShowCutoff ? (
+            <View style={styles.secondaryActions}>
+              <SecondaryButton
+                label={translate("thermalPreview.reviewTargetReached")}
+                onPress={onShowTarget}
+              />
+              <SecondaryButton
+                label={translate("thermalPreview.reviewCutoff")}
+                onPress={onShowCutoff}
+              />
+            </View>
+          ) : null}
         </>
-      ) : (
+      ) : onFinish ? (
         <PrimaryButton
           label={translate("thermalPreview.finishStabilization")}
           onPress={onFinish}
         />
-      )}
+      ) : null}
     </View>
   );
 }
 
 function ConfirmationCard({
+  confirmDisabled = false,
   onCancel,
   onConfirm,
   snapshot,
 }: {
+  confirmDisabled?: boolean;
   onCancel: () => void;
   onConfirm: () => void;
   snapshot: MachineStateV2;
@@ -280,6 +350,7 @@ function ConfirmationCard({
           onPress={onCancel}
         />
         <PrimaryButton
+          disabled={confirmDisabled}
           label={translate("thermalPreview.confirmStart")}
           onPress={onConfirm}
         />
@@ -492,20 +563,25 @@ function WarningRow({ text }: { text: string }) {
 
 function PrimaryButton({
   destructive = false,
+  disabled = false,
   label,
   onPress,
 }: {
   destructive?: boolean;
+  disabled?: boolean;
   label: string;
   onPress: () => void;
 }) {
   return (
     <Pressable
       accessibilityRole="button"
+      accessibilityState={{ disabled }}
+      disabled={disabled}
       onPress={onPress}
       style={({ pressed }) => [
         styles.primaryButton,
         destructive && styles.stopButton,
+        disabled && styles.disabledButton,
         pressed && styles.pressed,
       ]}>
       <Text style={[styles.primaryButtonText, destructive && styles.stopButtonText]}>
@@ -597,6 +673,7 @@ const styles = StyleSheet.create({
   primaryButtonText: { color: "#5E2118", fontSize: 16, fontWeight: "900", textAlign: "center" },
   stopButton: { backgroundColor: "#C63F32", borderColor: "#FF9A8F", minHeight: 60 },
   stopButtonText: { color: "#FFFFFF" },
+  disabledButton: { opacity: 0.45 },
   activeCooldownCard: {
     backgroundColor: "#241B17",
     borderColor: "#4B3A31",
