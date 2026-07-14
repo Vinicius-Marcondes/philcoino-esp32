@@ -1,5 +1,6 @@
 #include <cassert>
 #include <cstdint>
+#include <limits>
 #include <vector>
 
 #include "philcoino/config.hpp"
@@ -211,12 +212,12 @@ void test_steam_timeout_returns_to_brew_after_first_ready() {
   ControllerHarness harness({93, 115});
   assert(harness.controller.set_mode(ControlMode::kSteam, 0));
 
-  auto snapshot = harness.controller.update(reading(115.0F), 0);
+  auto snapshot = harness.controller.update(reading(110.0F), 0);
   assert(snapshot.mode == ControlMode::kSteam);
   assert(snapshot.status == ControlStatus::kHeating);
   assert(!snapshot.steam_timeout.active);
 
-  snapshot = harness.controller.update(reading(115.0F),
+  snapshot = harness.controller.update(reading(110.0F),
                                        philcoino::config::kReadyStabilityMs);
   assert(snapshot.mode == ControlMode::kSteam);
   assert(snapshot.status == ControlStatus::kReady);
@@ -226,7 +227,7 @@ void test_steam_timeout_returns_to_brew_after_first_ready() {
 
   const auto ready_at = philcoino::config::kReadyStabilityMs;
   snapshot = harness.controller.update(
-      reading(110.0F),
+      reading(105.0F),
       ready_at + philcoino::config::kSteamReadyTimeoutMs - 1U);
   assert(snapshot.mode == ControlMode::kSteam);
   assert(snapshot.status == ControlStatus::kHeating);
@@ -234,11 +235,116 @@ void test_steam_timeout_returns_to_brew_after_first_ready() {
   assert(snapshot.steam_timeout.remaining_ms == 1U);
 
   snapshot = harness.controller.update(
-      reading(110.0F),
+      reading(105.0F),
       ready_at + philcoino::config::kSteamReadyTimeoutMs);
   assert(snapshot.mode == ControlMode::kBrew);
   assert(snapshot.status == ControlStatus::kHeating);
   assert(!snapshot.steam_timeout.active);
+}
+
+void test_steam_offset_is_applied_once_for_cutoff_readiness_and_snapshot() {
+  ControllerHarness harness({93, 120});
+  assert(harness.controller.set_mode(ControlMode::kSteam, 0));
+
+  auto snapshot = harness.controller.update(reading(115.0F), 0);
+  assert(snapshot.mode == ControlMode::kSteam);
+  assert(snapshot.boiler_temperature.temperature_c == 120.0F);
+  assert(snapshot.status == ControlStatus::kHeating);
+  assert(!snapshot.heater_enabled);
+  assert(!harness.output.level);
+  assert(!snapshot.steam_timeout.active);
+
+  snapshot = harness.controller.update(
+      reading(115.0F), philcoino::config::kReadyStabilityMs - 1U);
+  assert(snapshot.status == ControlStatus::kHeating);
+  assert(!snapshot.steam_timeout.active);
+
+  snapshot = harness.controller.update(
+      reading(115.0F), philcoino::config::kReadyStabilityMs);
+  assert(snapshot.boiler_temperature.temperature_c == 120.0F);
+  assert(snapshot.status == ControlStatus::kReady);
+  assert(!snapshot.heater_enabled);
+  assert(snapshot.steam_timeout.active);
+  assert(snapshot.steam_timeout.remaining_ms ==
+         philcoino::config::kSteamReadyTimeoutMs);
+}
+
+void test_steam_offset_is_applied_once_to_duty_and_recovery() {
+  ControllerHarness duty({93, 120});
+  assert(duty.controller.set_mode(ControlMode::kSteam, 0));
+  auto snapshot = duty.controller.update(reading(114.0F), 0);
+  assert(snapshot.boiler_temperature.temperature_c == 119.0F);
+  assert(snapshot.heater_enabled);
+  snapshot = duty.controller.update(
+      reading(114.0F), philcoino::config::kMinimumHeaterPulseMs - 1U);
+  assert(snapshot.heater_enabled);
+  snapshot = duty.controller.update(
+      reading(114.0F), philcoino::config::kMinimumHeaterPulseMs);
+  assert(!snapshot.heater_enabled);
+
+  ControllerHarness recovery({93, 120});
+  assert(recovery.controller.set_mode(ControlMode::kSteam, 0));
+  snapshot = recovery.controller.update(reading(115.0F), 0);
+  assert(!snapshot.heater_enabled);
+  snapshot = recovery.controller.update(reading(112.0F), 1000);
+  assert(snapshot.boiler_temperature.temperature_c == 117.0F);
+  assert(snapshot.heater_enabled);
+  snapshot = recovery.controller.update(reading(112.0F), 4999);
+  assert(snapshot.heater_enabled);
+  snapshot = recovery.controller.update(reading(112.0F), 5000);
+  assert(!snapshot.heater_enabled);
+}
+
+void test_steam_heating_timeout_tracks_corrected_demand() {
+  ControllerHarness harness({93, 120});
+  assert(harness.controller.set_mode(ControlMode::kSteam, 0));
+
+  auto snapshot = harness.controller.update(reading(115.0F), 0);
+  assert(!snapshot.heater_enabled);
+  snapshot = harness.controller.update(
+      reading(115.0F), philcoino::config::kHeatingTimeoutMs + 1U);
+  assert(!snapshot.fault_active);
+  assert(snapshot.status == ControlStatus::kReady);
+
+  const auto reset_at_ms = philcoino::config::kHeatingTimeoutMs + 2U;
+  assert(harness.controller.set_mode(ControlMode::kBrew, reset_at_ms));
+  assert(harness.controller.set_mode(ControlMode::kSteam, reset_at_ms + 1U));
+  const auto demand_started_ms = reset_at_ms + 2U;
+  snapshot = harness.controller.update(reading(113.5F), demand_started_ms);
+  assert(snapshot.heater_enabled);
+  snapshot = harness.controller.update(
+      reading(113.5F),
+      demand_started_ms + philcoino::config::kHeatingTimeoutMs - 1U);
+  assert(!snapshot.fault_active);
+  snapshot = harness.controller.update(
+      reading(113.5F),
+      demand_started_ms + philcoino::config::kHeatingTimeoutMs);
+  assert(snapshot.status == ControlStatus::kFault);
+  assert(snapshot.fault.code == FaultCode::kHeatingTimeout);
+  assert(!snapshot.heater_enabled);
+}
+
+void test_mode_changes_recompute_effective_temperature_and_reset_steam_state() {
+  ControllerHarness harness({93, 120});
+  auto snapshot = harness.controller.update(reading(92.0F), 0);
+  assert(snapshot.mode == ControlMode::kBrew);
+  assert(snapshot.boiler_temperature.temperature_c == 92.0F);
+
+  assert(harness.controller.set_mode(ControlMode::kSteam, 1000));
+  snapshot = harness.controller.snapshot(1000);
+  assert(snapshot.mode == ControlMode::kSteam);
+  assert(snapshot.status == ControlStatus::kHeating);
+  assert(snapshot.boiler_temperature.temperature_c == 97.0F);
+  assert(!snapshot.steam_timeout.active);
+  assert(!snapshot.heater_enabled);
+
+  assert(harness.controller.set_mode(ControlMode::kBrew, 2000));
+  snapshot = harness.controller.snapshot(2000);
+  assert(snapshot.mode == ControlMode::kBrew);
+  assert(snapshot.status == ControlStatus::kHeating);
+  assert(snapshot.boiler_temperature.temperature_c == 92.0F);
+  assert(!snapshot.steam_timeout.active);
+  assert(!snapshot.heater_enabled);
 }
 
 void test_target_updates_validate_and_persist_before_state_change() {
@@ -458,12 +564,45 @@ void test_boiler_sensor_fault_latches_off() {
   assert(!snapshot.heater_enabled);
 }
 
+void test_steam_raw_sensor_failures_precede_offset_and_over_temperature() {
+  for (const auto reading_value : {
+           ThermocoupleReading{ThermocoupleStatus::kOpenCircuit, 125.0F, 0},
+           ThermocoupleReading{ThermocoupleStatus::kInvalidFrame, 125.0F, 0},
+           ThermocoupleReading{ThermocoupleStatus::kTransportError, 125.0F, 0},
+           ThermocoupleReading{ThermocoupleStatus::kOk,
+                               std::numeric_limits<float>::quiet_NaN(), 0},
+           ThermocoupleReading{ThermocoupleStatus::kOk,
+                               std::numeric_limits<float>::infinity(), 0},
+       }) {
+    ControllerHarness harness({93, 120});
+    assert(harness.controller.set_mode(ControlMode::kSteam, 0));
+    const auto snapshot = harness.controller.update(reading_value, 0);
+    assert(snapshot.status == ControlStatus::kFault);
+    assert(snapshot.fault.code == FaultCode::kSensorFailure);
+    assert(!snapshot.heater_enabled);
+    assert(!harness.output.level);
+  }
+}
+
 void test_steam_mode_uses_steam_over_temperature_limit() {
-  ControllerHarness harness({93, 115});
+  ControllerHarness harness({93, 120});
   assert(harness.controller.set_mode(ControlMode::kSteam, 0));
   auto snapshot = harness.controller.update(
-      reading(static_cast<float>(philcoino::config::kSteamOverTemperatureC)),
+      reading(static_cast<float>(
+                  philcoino::config::kSteamOverTemperatureC -
+                  philcoino::config::kSteamTemperatureOffsetC) -
+              0.25F),
       0);
+  assert(snapshot.boiler_temperature.temperature_c == 129.75F);
+  assert(!snapshot.fault_active);
+  assert(!snapshot.heater_enabled);
+
+  snapshot = harness.controller.update(
+      reading(static_cast<float>(
+          philcoino::config::kSteamOverTemperatureC -
+          philcoino::config::kSteamTemperatureOffsetC)),
+      500);
+  assert(snapshot.boiler_temperature.temperature_c == 130.0F);
   assert(snapshot.status == ControlStatus::kFault);
   assert(snapshot.fault.code == FaultCode::kOverTemperature);
   assert(!snapshot.heater_enabled);
@@ -491,24 +630,33 @@ void test_over_temperature_dismissal_uses_active_mode_limit() {
   ControllerHarness harness({93, 115});
   assert(harness.controller.set_mode(ControlMode::kSteam, 0));
   auto snapshot = harness.controller.update(
-      reading(static_cast<float>(philcoino::config::kSteamOverTemperatureC)),
+      reading(static_cast<float>(
+          philcoino::config::kSteamOverTemperatureC -
+          philcoino::config::kSteamTemperatureOffsetC)),
       0);
   assert(snapshot.status == ControlStatus::kFault);
   assert(snapshot.fault.code == FaultCode::kOverTemperature);
   snapshot = harness.controller.update(
-      reading(static_cast<float>(philcoino::config::kSteamOverTemperatureC)),
+      reading(static_cast<float>(
+          philcoino::config::kSteamOverTemperatureC -
+          philcoino::config::kSteamTemperatureOffsetC)),
       1000);
   assert(snapshot.status == ControlStatus::kFault);
   assert(!harness.controller.dismiss_over_temperature(2000));
 
   snapshot = harness.controller.update(
-      reading(static_cast<float>(philcoino::config::kSteamOverTemperatureC) -
+      reading(static_cast<float>(
+                  philcoino::config::kSteamOverTemperatureC -
+                  philcoino::config::kSteamTemperatureOffsetC) -
               1.0F),
       3000);
   assert(snapshot.status == ControlStatus::kFault);
   assert(!harness.controller.dismiss_over_temperature(4000));
 
-  snapshot = harness.controller.update(reading(115.0F), 5000);
+  snapshot = harness.controller.update(
+      reading(115.0F - static_cast<float>(
+                           philcoino::config::kSteamTemperatureOffsetC)),
+      5000);
   assert(snapshot.status == ControlStatus::kFault);
   assert(harness.controller.dismiss_over_temperature(6000));
 }
@@ -731,6 +879,10 @@ int main() {
   test_boot_selects_brew_and_keeps_targets();
   test_ready_requires_three_continuous_seconds();
   test_steam_timeout_returns_to_brew_after_first_ready();
+  test_steam_offset_is_applied_once_for_cutoff_readiness_and_snapshot();
+  test_steam_offset_is_applied_once_to_duty_and_recovery();
+  test_steam_heating_timeout_tracks_corrected_demand();
+  test_mode_changes_recompute_effective_temperature_and_reset_steam_state();
   test_target_updates_validate_and_persist_before_state_change();
   test_safety_lease_renews_without_normal_off_transition();
   test_safety_lease_expiry_latches_internal_fault_until_reboot();
@@ -742,6 +894,7 @@ int main() {
   test_brew_recovery_heat_does_not_start_during_initial_warmup();
   test_brew_recovery_heat_latches_after_extraction_drop();
   test_boiler_sensor_fault_latches_off();
+  test_steam_raw_sensor_failures_precede_offset_and_over_temperature();
   test_steam_mode_uses_steam_over_temperature_limit();
   test_over_temperature_can_be_dismissed_after_cooldown();
   test_over_temperature_dismissal_uses_active_mode_limit();

@@ -1,6 +1,6 @@
 # STEAM-002 — Implement the firmware Steam temperature correction
 
-Status: Todo
+Status: Done
 Review Mode: Agent
 Review Reason: Raw validation, mode-specific conversion, heater decisions,
 readiness, timeouts, and fault boundaries can be proven with pure C++ host tests
@@ -45,25 +45,25 @@ safety decisions while leaving Brew and raw sensor validation unchanged.
 
 ## Acceptance Criteria
 
-- [ ] The existing configuration header defines one Steam offset constant equal
+- [x] The existing configuration header defines one Steam offset constant equal
   to `5°C` and no runtime configuration path exists.
-- [ ] A raw `115°C` sample in Steam is effective `120°C`, requests no further
+- [x] A raw `115°C` sample in Steam is effective `120°C`, requests no further
   heat at a `120°C` target, and becomes ready only after three continuous
   seconds.
-- [ ] Steam readiness starts the existing five-minute timeout from the corrected
+- [x] Steam readiness starts the existing five-minute timeout from the corrected
   temperature.
-- [ ] Duty, recovery, and heating-timeout demand use the correction exactly
+- [x] Duty, recovery, and heating-timeout demand use the correction exactly
   once.
-- [ ] A raw `125°C` Steam sample reaches the existing effective `130°C` limit,
+- [x] A raw `125°C` Steam sample reaches the existing effective `130°C` limit,
   latches `over_temperature`, and commands the heater off.
-- [ ] Over-temperature dismissal uses the corrected Steam temperature and all
+- [x] Over-temperature dismissal uses the corrected Steam temperature and all
   existing validity/cooldown gates.
-- [ ] Invalid, open, non-finite, or failed raw samples latch `sensor_failure`
+- [x] Invalid, open, non-finite, or failed raw samples latch `sensor_failure`
   before correction can influence control.
-- [ ] The same raw samples remain unchanged in Brew behavior and snapshots.
-- [ ] Mode changes retain the existing readiness, timeout, recovery, demand,
+- [x] The same raw samples remain unchanged in Brew behavior and snapshots.
+- [x] Mode changes retain the existing readiness, timeout, recovery, demand,
   and heater-window resets.
-- [ ] Firmware configuration and controller host tests pass.
+- [x] Firmware configuration and controller host tests pass.
 
 ## Verification Strategy
 
@@ -85,3 +85,25 @@ STEAM-001.
 - `firmware/espresso-machine/components/control/src/control.cpp`
 - `firmware/espresso-machine/host-tests/firmware_config_test.cpp`
 - `firmware/espresso-machine/host-tests/control_test.cpp`
+
+## Implementation Record
+
+- Completed: 2026-07-14.
+- Evidence: strict C++17 host CMake build completed in
+  `/tmp/philcoino-prd003-steam002-host`; CTest passed 4/4 tests
+  (`firmware_config_test`, `peripherals_test`, `control_test`, and
+  `firmware_api_test`).
+- Decision: `kSteamTemperatureOffsetC` is the only production offset constant
+  and equals `5`. `TemperatureController` retains a private raw reading,
+  validates status and finiteness first, and converts it through the single
+  `active_temperature()` path. Valid snapshots expose the effective value;
+  callers do not add a correction.
+- Boundary coverage: raw Steam `115°C` at target `120°C`, adjacent duty and
+  recovery points, heating-demand timing, readiness/Steam timeout, raw
+  open/invalid/transport/non-finite failures, raw `124.75/125°C`
+  over-temperature boundaries, corrected dismissal, Brew preservation, and
+  mode-reset recomputation.
+- Safety evidence: host results establish software behavior only and do not
+  validate physical calibration, SSR output, heater de-energization, or safe
+  energized operation.
+- Commit: This commit.

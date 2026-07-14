@@ -1,13 +1,14 @@
 # PRD-003 Tracker
 
 PRD Status: Active
-Current Task: STEAM-002
+Current Task: STEAM-003
 
-Implementation Boundary: STEAM-001 is complete. The wire shape remains
-backward compatible and `boilerTemperatureC` is documented as raw in Brew and
-firmware-offset-adjusted in Steam. STEAM-002 is the current firmware task.
-STEAM-004 physical calibration remains separately authorization-gated and does
-not block STEAM-001 through STEAM-003.
+Implementation Boundary: STEAM-001 and STEAM-002 are complete. The wire shape
+remains backward compatible; firmware now validates the raw sample and applies
+one controller-owned `+5°C` correction in Steam for control, safety, and valid
+snapshots while Brew remains raw. STEAM-003 is the current surface,
+documentation, and regression task. STEAM-004 physical calibration remains
+separately authorization-gated.
 
 ## Summary
 
@@ -40,8 +41,8 @@ PRD: `docs/prds/PRD-003/PRD-003.md`
 
 | Task | Review | Status | Evidence | Decision Log | Commit | Blocked Reason | Requested Decision |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| [STEAM-001](prds/PRD-003/tasks/STEAM-001.md) | Agent | Done | OpenAPI validation, 71 protocol tests/147 expectations, and protocol typecheck passed | `boilerTemperatureC` remains the sole unchanged numeric field; OpenAPI now defines validated raw Brew and one firmware-configured `+5°C` Steam correction, while simulator input is already-effective logical temperature and is not physical evidence | This commit | None | None |
-| [STEAM-002](prds/PRD-003/tasks/STEAM-002.md) | Agent | Todo | Pending | Pending | Pending | None | None |
+| [STEAM-001](prds/PRD-003/tasks/STEAM-001.md) | Agent | Done | OpenAPI validation, 71 protocol tests/147 expectations, and protocol typecheck passed | `boilerTemperatureC` remains the sole unchanged numeric field; OpenAPI now defines validated raw Brew and one firmware-configured `+5°C` Steam correction, while simulator input is already-effective logical temperature and is not physical evidence | `84e87ca` | None | None |
+| [STEAM-002](prds/PRD-003/tasks/STEAM-002.md) | Agent | Done | Strict C++17 host build passed and CTest passed 4/4, covering exact and adjacent Steam offset boundaries, duty, recovery, readiness/timeouts, sensor-failure ordering, over-temperature/dismissal, Brew behavior, and mode resets | One `kSteamTemperatureOffsetC = 5` constant feeds the controller's sole raw-to-effective conversion after raw validity checks; valid snapshots expose the effective value and callers add nothing | This commit | None | None |
 | [STEAM-003](prds/PRD-003/tasks/STEAM-003.md) | Agent | Todo | Pending | Pending | Pending | None | None |
 | [STEAM-004](prds/PRD-003/tasks/STEAM-004.md) | Human | Todo | Pending | Pending | Pending | None | None |
 
