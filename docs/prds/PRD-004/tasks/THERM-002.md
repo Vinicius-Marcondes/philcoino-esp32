@@ -1,6 +1,6 @@
 # THERM-002 — Approve the mobile thermal-workflow design
 
-Status: Awaiting Human Approval
+Status: Review Deferred — Software Continuation Authorized
 Review Mode: Human
 
 ## Goal
@@ -137,8 +137,11 @@ Build and approve the Dashboard experience for Steam-blocked extraction, acknowl
 
 ### Remaining blockers and human acceptance
 
-- THERM-002 remains open until Vinicius explicitly approves or requests
-  in-scope revisions to Dashboard placement, confirmation clarity, Stop
-  prominence, phase/outcome wording, non-color-only feedback, large-text
+- Final THERM-002 acceptance remains open until Vinicius explicitly approves or
+  requests in-scope revisions to Dashboard placement, confirmation clarity,
+  Stop prominence, phase/outcome wording, non-color-only feedback, large-text
   behavior, and accessibility semantics.
-- THERM-003 is blocked by this Human gate and has not started.
+- On 2026-07-14, Vinicius explicitly authorized the supervised software
+  workflow to continue while all Human-review items are collected in
+  `docs/prds/PRD-004/HUMAN_REVIEW.md`. This authorization advances THERM-003
+  without representing the design as Human-approved.
