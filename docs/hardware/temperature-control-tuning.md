@@ -56,6 +56,37 @@ to upper-boiler difference. It is not a calibration result, scaling curve, or
 proof of heater safety. Changing it requires a source edit, rebuild, and
 reflash; do not add runtime configuration under PRD-003.
 
+## Extraction heater-duty bias
+
+Brew extraction has a separate compile-time duty-only hypothesis:
+
+```cpp
+kPreInfusionHeaterDutyOffsetC = 0;
+kExtractionHeaterDutyOffsetC = 2;
+```
+
+The controller receives the current extraction phase and derives a private
+heater-duty target. Pre-infusion, soak, idle, and Steam use their unchanged
+base target. Manual and profile main extraction use:
+
+```text
+heater duty target = min(brewTargetC + 2°C, brewOverTemperatureC - 1°C)
+```
+
+Only heater demand and pulse duration use this private target. Persisted/API/
+OLED targets, the displayed boiler temperature, readiness, heating and Steam
+deadlines, recovery ownership, over-temperature limits, and extraction profile
+data continue to use the base target and existing active temperature. Heater
+permission, sensor/control faults, safety-lease trips, and output failures
+still suppress the heater command; they do not independently stop extraction.
+
+Phase changes update eligibility and begin a new heater-duty window without
+resetting readiness, heating timeout, Steam timeout, or extraction deadlines.
+The `+2°C` value is an owner-selected software hypothesis, not a measured
+thermal result. Host tests establish deterministic command policy only and do
+not prove heater output, water flow, cooling, SSR operation, calibration, or
+energized safety.
+
 ## GPTimer fail-off safety lease
 
 Every heater-on control update arms or renews a 1500 ms one-shot GPTimer safety

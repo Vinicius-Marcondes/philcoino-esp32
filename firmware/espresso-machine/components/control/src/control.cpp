@@ -87,6 +87,24 @@ bool TemperatureController::heater_enabled_permission() const {
 
 bool TemperatureController::heater_enabled() const { return heater_.is_enabled(); }
 
+bool TemperatureController::extraction_compensation_active() const {
+  const bool eligible_phase = extraction_phase_ == ExtractionPhase::kManual ||
+                              extraction_phase_ ==
+                                  ExtractionPhase::kMainExtraction;
+  return mode_ == ControlMode::kBrew && eligible_phase &&
+         heater_enabled_permission_ && !fault_latched_ &&
+         !heater_.safety_cutoff_tripped();
+}
+
+void TemperatureController::set_extraction_phase(ExtractionPhase phase,
+                                                 std::uint32_t now_ms) {
+  if (extraction_phase_ == phase) {
+    return;
+  }
+  extraction_phase_ = phase;
+  reset_heater_control_window(now_ms);
+}
+
 bool TemperatureController::set_mode(ControlMode mode, std::uint32_t now_ms) {
   if (mode_ == mode) {
     return true;
@@ -267,6 +285,24 @@ std::int32_t TemperatureController::active_target() const {
   return mode_ == ControlMode::kBrew ? targets_.brew_c : targets_.steam_c;
 }
 
+std::int32_t TemperatureController::heater_duty_target() const {
+  if (mode_ != ControlMode::kBrew) {
+    return active_target();
+  }
+
+  std::int32_t offset_c = 0;
+  if (extraction_phase_ == ExtractionPhase::kPreInfusion) {
+    offset_c = config::kPreInfusionHeaterDutyOffsetC;
+  } else if (extraction_phase_ == ExtractionPhase::kManual ||
+             extraction_phase_ == ExtractionPhase::kMainExtraction) {
+    offset_c = config::kExtractionHeaterDutyOffsetC;
+  }
+  const auto compensated_target = targets_.brew_c + offset_c;
+  const auto maximum_duty_target = config::kBrewOverTemperatureC - 1;
+  return compensated_target < maximum_duty_target ? compensated_target
+                                                   : maximum_duty_target;
+}
+
 float TemperatureController::active_temperature() const {
   const float raw_temperature_c = raw_boiler_temperature_.temperature_c;
   return mode_ == ControlMode::kSteam
@@ -339,7 +375,7 @@ void TemperatureController::update_recovery_heat() {
 
 std::uint32_t TemperatureController::heater_pulse_ms() const {
   const float temperature_error =
-      static_cast<float>(active_target()) - active_temperature();
+      static_cast<float>(heater_duty_target()) - active_temperature();
   if (temperature_error <= 0.0F) {
     return 0;
   }
@@ -414,7 +450,7 @@ bool TemperatureController::update_heater(std::uint32_t now_ms) {
     reset_heater_control_window(now_ms);
     return heater_.set_enabled(false);
   }
-  if (!active_temperature_demands_heat()) {
+  if (active_temperature() >= static_cast<float>(heater_duty_target())) {
     reset_heater_control_window(now_ms);
     return heater_.set_enabled(false);
   }

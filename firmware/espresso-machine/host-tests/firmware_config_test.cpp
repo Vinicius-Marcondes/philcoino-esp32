@@ -15,6 +15,8 @@ int main() {
   static_assert(kBrewTargetMinimumC < kBrewTargetMaximumC);
   static_assert(kSteamTargetMinimumC <= kSteamTargetMaximumC);
   static_assert(kSteamTemperatureOffsetC == 5);
+  static_assert(kPreInfusionHeaterDutyOffsetC == 0);
+  static_assert(kExtractionHeaterDutyOffsetC == 2);
   static_assert(kBrewOverTemperatureC > kBrewTargetMaximumC);
   static_assert(kSteamOverTemperatureC > kSteamTargetMaximumC);
   static_assert(kHeatingTimeoutMs == 600000U);

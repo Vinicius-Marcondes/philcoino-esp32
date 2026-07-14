@@ -10,6 +10,7 @@ namespace philcoino::control {
 
 enum class ControlMode { kBrew, kSteam };
 enum class ControlStatus { kHeating, kReady, kFault };
+enum class ExtractionPhase { kIdle, kManual, kPreInfusion, kSoak, kMainExtraction };
 
 enum class FaultCode {
   kSensorFailure,
@@ -60,8 +61,10 @@ class TemperatureController {
   FaultCode fault_code() const;
   bool heater_enabled_permission() const;
   bool heater_enabled() const;
+  bool extraction_compensation_active() const;
 
   bool set_mode(ControlMode mode, std::uint32_t now_ms);
+  void set_extraction_phase(ExtractionPhase phase, std::uint32_t now_ms);
   bool set_heater_enabled(bool enabled, std::uint32_t now_ms);
   bool update_targets(const peripherals::TemperatureTargets& targets,
                       peripherals::TargetStorage& storage,
@@ -81,6 +84,7 @@ class TemperatureController {
 
  private:
   std::int32_t active_target() const;
+  std::int32_t heater_duty_target() const;
   float active_temperature() const;
   bool active_temperature_in_ready_band() const;
   bool active_temperature_demands_heat() const;
@@ -107,6 +111,7 @@ class TemperatureController {
   ControlStatus status_{ControlStatus::kHeating};
   FaultCode fault_code_{FaultCode::kInternalError};
   bool heater_enabled_permission_{true};
+  ExtractionPhase extraction_phase_{ExtractionPhase::kIdle};
   bool fault_latched_{false};
   bool ready_band_active_{false};
   std::uint32_t ready_band_since_ms_{0};
@@ -120,7 +125,6 @@ class TemperatureController {
 };
 
 enum class ExtractionStatus { kIdle, kRunning };
-enum class ExtractionPhase { kIdle, kManual, kPreInfusion, kSoak, kMainExtraction };
 enum class ExtractionSelectionKind { kManual, kProfile };
 
 struct ExtractionSelection {

@@ -555,6 +555,158 @@ void test_brew_recovery_heat_latches_after_extraction_drop() {
   assert(!snapshot.heater_enabled);
 }
 
+void test_extraction_compensation_is_phase_exact_and_duty_only() {
+  ControllerHarness harness({93, 115});
+
+  auto snapshot = harness.controller.update(reading(93.0F), 0);
+  assert(!harness.controller.extraction_compensation_active());
+  assert(!snapshot.heater_enabled);
+
+  harness.controller.set_extraction_phase(ExtractionPhase::kPreInfusion, 100);
+  snapshot = harness.controller.update(reading(93.0F), 100);
+  assert(!harness.controller.extraction_compensation_active());
+  assert(!snapshot.heater_enabled);
+
+  harness.controller.set_extraction_phase(ExtractionPhase::kSoak, 200);
+  snapshot = harness.controller.update(reading(93.0F), 200);
+  assert(!harness.controller.extraction_compensation_active());
+  assert(!snapshot.heater_enabled);
+
+  harness.controller.set_extraction_phase(ExtractionPhase::kManual, 300);
+  snapshot = harness.controller.update(reading(93.0F), 300);
+  assert(harness.controller.extraction_compensation_active());
+  assert(snapshot.heater_enabled);
+  assert(snapshot.targets.brew_c == 93);
+  assert(snapshot.boiler_temperature.temperature_c == 93.0F);
+
+  snapshot = harness.controller.update(
+      reading(93.0F), 300 + philcoino::config::kReadyStabilityMs);
+  assert(snapshot.status == ControlStatus::kReady);
+  assert(snapshot.targets.brew_c == 93);
+
+  harness.controller.set_extraction_phase(ExtractionPhase::kMainExtraction,
+                                          4000);
+  snapshot = harness.controller.update(reading(93.0F), 4000);
+  assert(harness.controller.extraction_compensation_active());
+  assert(snapshot.heater_enabled);
+
+  harness.controller.set_extraction_phase(ExtractionPhase::kIdle, 4500);
+  snapshot = harness.controller.update(reading(93.0F), 4500);
+  assert(!harness.controller.extraction_compensation_active());
+  assert(!snapshot.heater_enabled);
+}
+
+void test_extraction_compensation_clamps_below_brew_over_temperature() {
+  ControllerHarness harness({95, 115});
+  harness.controller.set_extraction_phase(ExtractionPhase::kManual, 0);
+
+  auto snapshot = harness.controller.update(reading(96.99F), 0);
+  assert(harness.controller.extraction_compensation_active());
+  assert(snapshot.heater_enabled);
+  assert(!snapshot.fault_active);
+
+  snapshot = harness.controller.update(reading(97.0F), 500);
+  assert(!snapshot.heater_enabled);
+  assert(!snapshot.fault_active);
+
+  snapshot = harness.controller.update(reading(97.99F), 1000);
+  assert(!snapshot.heater_enabled);
+  assert(!snapshot.fault_active);
+
+  snapshot = harness.controller.update(
+      reading(static_cast<float>(philcoino::config::kBrewOverTemperatureC)),
+      1500);
+  assert(snapshot.fault.code == FaultCode::kOverTemperature);
+  assert(!harness.controller.extraction_compensation_active());
+  assert(!snapshot.heater_enabled);
+}
+
+void test_extraction_compensation_is_suppressed_by_steam_permission_and_faults() {
+  ControllerHarness steam({93, 115});
+  steam.controller.set_extraction_phase(ExtractionPhase::kMainExtraction, 0);
+  assert(steam.controller.set_mode(ControlMode::kSteam, 0));
+  auto snapshot = steam.controller.update(reading(110.0F), 0);
+  assert(!steam.controller.extraction_compensation_active());
+  assert(!snapshot.heater_enabled);
+
+  ControllerHarness permission({93, 115});
+  permission.controller.set_extraction_phase(ExtractionPhase::kManual, 0);
+  assert(permission.controller.set_heater_enabled(false, 0));
+  snapshot = permission.controller.update(reading(93.0F), 0);
+  assert(!permission.controller.extraction_compensation_active());
+  assert(!snapshot.heater_enabled);
+
+  assert(permission.controller.set_heater_enabled(true, 100));
+  snapshot = permission.controller.update(reading(93.0F), 100);
+  assert(permission.controller.extraction_compensation_active());
+  assert(snapshot.heater_enabled);
+
+  permission.output.fail_high = true;
+  permission.controller.set_extraction_phase(ExtractionPhase::kMainExtraction,
+                                             200);
+  snapshot = permission.controller.update(reading(93.0F), 200);
+  assert(snapshot.fault.code == FaultCode::kInternalError);
+  assert(!permission.controller.extraction_compensation_active());
+  assert(!snapshot.heater_enabled);
+
+  ControllerHarness sensor({93, 115});
+  sensor.controller.set_extraction_phase(ExtractionPhase::kManual, 0);
+  snapshot = sensor.controller.update(open_boiler(), 0);
+  assert(snapshot.fault.code == FaultCode::kSensorFailure);
+  assert(!sensor.controller.extraction_compensation_active());
+  assert(!snapshot.heater_enabled);
+}
+
+void test_extraction_phase_changes_preserve_wrap_safe_heating_deadline() {
+  ControllerHarness harness({93, 115});
+  constexpr std::uint32_t started_ms = UINT32_MAX - 1000U;
+  auto snapshot = harness.controller.update(reading(80.0F), started_ms);
+  assert(snapshot.heater_enabled);
+
+  harness.controller.set_extraction_phase(ExtractionPhase::kPreInfusion,
+                                          started_ms + 100U);
+  harness.controller.set_extraction_phase(ExtractionPhase::kSoak,
+                                          started_ms + 200U);
+  harness.controller.set_extraction_phase(ExtractionPhase::kMainExtraction,
+                                          started_ms + 300U);
+  snapshot = harness.controller.update(
+      reading(80.0F), started_ms + philcoino::config::kHeatingTimeoutMs - 1U);
+  assert(!snapshot.fault_active);
+
+  snapshot = harness.controller.update(
+      reading(80.0F), started_ms + philcoino::config::kHeatingTimeoutMs);
+  assert(snapshot.fault.code == FaultCode::kHeatingTimeout);
+  assert(!snapshot.heater_enabled);
+}
+
+void test_extraction_phase_changes_preserve_steam_deadline() {
+  ControllerHarness harness({93, 115});
+  constexpr std::uint32_t started_ms = UINT32_MAX - 2000U;
+  assert(harness.controller.set_mode(ControlMode::kSteam, started_ms));
+  auto snapshot = harness.controller.update(reading(110.0F), started_ms);
+  assert(snapshot.status == ControlStatus::kHeating);
+
+  const auto ready_at = started_ms + philcoino::config::kReadyStabilityMs;
+  snapshot = harness.controller.update(reading(110.0F), ready_at);
+  assert(snapshot.status == ControlStatus::kReady);
+  assert(snapshot.steam_timeout.active);
+
+  harness.controller.set_extraction_phase(ExtractionPhase::kManual,
+                                          ready_at + 100U);
+  assert(!harness.controller.extraction_compensation_active());
+  snapshot = harness.controller.update(
+      reading(110.0F),
+      ready_at + philcoino::config::kSteamReadyTimeoutMs - 1U);
+  assert(snapshot.mode == ControlMode::kSteam);
+  assert(snapshot.steam_timeout.remaining_ms == 1U);
+
+  snapshot = harness.controller.update(
+      reading(110.0F),
+      ready_at + philcoino::config::kSteamReadyTimeoutMs);
+  assert(snapshot.mode == ControlMode::kBrew);
+  assert(!snapshot.steam_timeout.active);
+}
+
 void test_boiler_sensor_fault_latches_off() {
   ControllerHarness harness({93, 115});
   auto snapshot = harness.controller.update(open_boiler(), 0);
@@ -846,7 +998,12 @@ void test_extraction_wraparound_disconnect_and_heater_fault_independence() {
   assert(extraction.controller.start(
              kStartKey, {ExtractionSelectionKind::kProfile, 1}, started) ==
          StartExtractionResult::kStarted);
-  heater.controller.latch_fault(FaultCode::kOverTemperature);
+  heater.controller.set_extraction_phase(ExtractionPhase::kPreInfusion,
+                                         started);
+  auto heater_snapshot = heater.controller.update(open_boiler(), started);
+  assert(heater_snapshot.fault.code == FaultCode::kSensorFailure);
+  assert(!heater.controller.extraction_compensation_active());
+  assert(extraction.controller.active());
   assert(extraction.controller.update(2000U) == ExtractionUpdateResult::kOk);
   assert(extraction.controller.snapshot(2000U).phase == ExtractionPhase::kSoak);
   assert(extraction.controller.update(7000U) == ExtractionUpdateResult::kOk);
@@ -899,6 +1056,11 @@ int main() {
   test_brew_heat_ramp_uses_full_heat_far_below_target();
   test_brew_recovery_heat_does_not_start_during_initial_warmup();
   test_brew_recovery_heat_latches_after_extraction_drop();
+  test_extraction_compensation_is_phase_exact_and_duty_only();
+  test_extraction_compensation_clamps_below_brew_over_temperature();
+  test_extraction_compensation_is_suppressed_by_steam_permission_and_faults();
+  test_extraction_phase_changes_preserve_wrap_safe_heating_deadline();
+  test_extraction_phase_changes_preserve_steam_deadline();
   test_boiler_sensor_fault_latches_off();
   test_steam_raw_sensor_failures_precede_offset_and_over_temperature();
   test_steam_mode_uses_steam_over_temperature_limit();

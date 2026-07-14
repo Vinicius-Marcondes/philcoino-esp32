@@ -1,13 +1,13 @@
 # PRD-004 Tracker
 
 PRD Status: Active
-Current Task: THERM-005 (Agent review)
+Current Task: THERM-006 (Agent review)
 
 Implementation Boundary: THERM-001 is complete. THERM-002 software and web
 evidence are complete, but Human acceptance remains deferred in
 `prds/PRD-004/HUMAN_REVIEW.md`. On 2026-07-14, Vinicius explicitly authorized
 the supervised software workflow to continue without treating deferred review
-as approval. THERM-003 and THERM-004 are complete; THERM-005 is the current
+as approval. THERM-003 through THERM-005 are complete; THERM-006 is the current
 Agent task.
 THERM-010 remains a separate disconnected low-voltage/visual gate, and THERM-011
 requires separate authorization before any physical or energized work.
@@ -49,7 +49,7 @@ PRD: `docs/prds/PRD-004/PRD-004.md`
 | [THERM-002](prds/PRD-004/tasks/THERM-002.md) | Human | Review Deferred | 89 mobile tests/286 expectations; lint; typecheck; Expo SDK 54 config; debug web export; interactive 390×844 QA passed | Debug-only pure state machine; explicit confirmation and command-only boundaries; owner authorized software continuation on 2026-07-14 without granting Human acceptance | `9933bd0` | Final owner visual/Dynamic Type/screen-reader acceptance remains pending in the Human Review Ledger | Approve or request in-scope revisions to hierarchy, copy, interactions, large-text behavior, and accessibility |
 | [THERM-003](prds/PRD-004/tasks/THERM-003.md) | Agent | Done | OpenAPI; protocol 111/224; simulator 59/359 plus typecheck; mobile 89/286 plus typecheck/lint passed | Manual/main compensation only; Brew-only extraction; deterministic target/45s/Stop plus 5s stabilization; retained replay; reset never resumes; output failures are injectable command-state evidence only | This commit | None | Deferred THERM-002 review remains in `HUMAN_REVIEW.md` |
 | [THERM-004](prds/PRD-004/tasks/THERM-004.md) | Agent | Done | Mobile 96 tests/326 expectations, typecheck, lint, Expo SDK 54 config, web export, and mobile-to-simulator Start/replay/reconnect/Stop/threshold/cutoff/stabilization/failure passed | Strict acknowledged v2 state only; serialized mutations; unknown-outcome Start retains its key while definitive rejection gets a fresh key; cooldown conflicts disable extraction/profile export/Steam without moving firmware authority into the UI | This commit | None | Deferred THERM-002 review remains in `HUMAN_REVIEW.md` |
-| [THERM-005](prds/PRD-004/tasks/THERM-005.md) | Agent | Todo | Pending | Pending | Pending | None | None |
+| [THERM-005](prds/PRD-004/tasks/THERM-005.md) | Agent | Done | Strict C++17 `-Wall -Wextra -Werror` build and 4/4 host tests passed with phase, clamp, readiness/deadline, permission/fault, output-failure, independence, and wraparound coverage | Controller-owned phase input derives only a clamped private duty target; base targets/readiness/recovery/deadlines/limits remain unchanged; exact phase changes reset only the duty window | This commit | None | Runtime coordination remains ordered for THERM-007/THERM-008; Human gates remain deferred |
 | [THERM-006](prds/PRD-004/tasks/THERM-006.md) | Agent | Todo | Pending | Pending | Pending | None | None |
 | [THERM-007](prds/PRD-004/tasks/THERM-007.md) | Agent | Todo | Pending | Pending | Pending | None | None |
 | [THERM-008](prds/PRD-004/tasks/THERM-008.md) | Agent | Todo | Pending | Pending | Pending | None | None |

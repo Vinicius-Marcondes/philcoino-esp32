@@ -20,6 +20,8 @@ inline constexpr std::int32_t kBrewTargetMaximumC = 95;
 inline constexpr std::int32_t kSteamTargetMinimumC = 110;
 inline constexpr std::int32_t kSteamTargetMaximumC = 120;
 inline constexpr std::int32_t kSteamTemperatureOffsetC = 5;
+inline constexpr std::int32_t kPreInfusionHeaterDutyOffsetC = 0;
+inline constexpr std::int32_t kExtractionHeaterDutyOffsetC = 2;
 inline constexpr std::int32_t kBrewOverTemperatureC = 98;
 inline constexpr std::int32_t kSteamOverTemperatureC = 130;
 
