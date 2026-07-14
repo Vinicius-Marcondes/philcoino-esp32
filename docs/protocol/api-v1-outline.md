@@ -79,11 +79,16 @@ A state payload contains the single boiler thermocouple temperature:
 }
 ```
 
-`boilerTemperatureC` is the retained boiler-base control-sensor reading used in
-both modes. `activeMode` selects the target and mode-specific safety policy and
-is `brew` or `steam`. `uptimeMs` is monotonic device uptime and does not require
-internet time synchronization. `fault` is `null` while status is `heating` or
-`ready`, and contains a stable code and message while status is `fault`.
+`boilerTemperatureC` is the firmware-authoritative active effective control
+temperature. After the raw boiler-base thermocouple sample is validated, Brew
+reports it unchanged while Steam reports it with the firmware-configured
+`+5°C` correction. A mode change can therefore change the reported value by
+exactly `5°C` without a new physical sensor sample. The API does not expose
+the raw Steam reading or offset as separate fields. `activeMode` selects the
+target and mode-specific safety policy and is `brew` or `steam`. `uptimeMs` is
+monotonic device uptime and does not require internet time synchronization.
+`fault` is `null` while status is `heating` or `ready`, and contains a stable
+code and message while status is `fault`.
 `heaterEnabled` is the volatile operator permission for automatic heater output.
 `heaterActive` is the firmware's SSR command state at the time of the snapshot;
 it is not independent confirmation that GPIO, SSR, wiring, or heater current is

@@ -1,4 +1,55 @@
-# PRD-002 Tracker
+# PRD-003 Tracker
+
+PRD Status: Software Complete — Physical Acceptance Deferred
+Current Task: STEAM-004 (Deferred Human)
+
+Implementation Boundary: STEAM-001 through STEAM-003 are complete. The wire
+shape remains backward compatible; firmware validates the raw sample and
+applies one controller-owned `+5°C` correction in Steam for control, safety,
+API, and OLED while Brew remains raw. STEAM-004 is the current deferred Human
+task and remains separately authorization-gated; no physical evidence was
+produced.
+
+## Summary
+
+Apply one firmware-configured `+5°C` correction to the validated boiler-base
+reading in Steam mode for control, safety, API, and OLED behavior while keeping
+Brew raw and preserving all existing physical-safety limitations.
+
+PRD: `docs/prds/PRD-003/PRD-003.md`
+
+## Safety Boundary
+
+- The offset is an owner-selected correction, not proof of calibrated boiler
+  temperature or safe energized operation.
+- Raw sensor validity is checked before correction; firmware remains the sole
+  authority for heating, readiness, timeouts, targets, and faults.
+- Existing independent-cutoff, single-sensor, SSR, timing, security, wiring,
+  enclosure, and mains findings remain unresolved.
+- STEAM-004 requires separate explicit authorization and human supervision; no
+  software, simulator, host, or build evidence substitutes for physical
+  measurement.
+
+## Git
+
+- Branch: `feature/PRD-003-steam-temperature-offset`
+- Base: `main` at `ae29a7b` (owner-approved because `develop` did not exist
+  locally or on GitHub at task start)
+- Merge target: `main` (owner approved proceeding from `main` because
+  `develop` did not exist locally or on GitHub)
+
+## Execution State
+
+| Task | Review | Status | Evidence | Decision Log | Commit | Blocked Reason | Requested Decision |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| [STEAM-001](prds/PRD-003/tasks/STEAM-001.md) | Agent | Done | OpenAPI validation, 71 protocol tests/147 expectations, and protocol typecheck passed | `boilerTemperatureC` remains the sole unchanged numeric field; OpenAPI now defines validated raw Brew and one firmware-configured `+5°C` Steam correction, while simulator input is already-effective logical temperature and is not physical evidence | `84e87ca` | None | None |
+| [STEAM-002](prds/PRD-003/tasks/STEAM-002.md) | Agent | Done | Strict C++17 host build passed and CTest passed 4/4, covering exact and adjacent Steam offset boundaries, duty, recovery, readiness/timeouts, sensor-failure ordering, over-temperature/dismissal, Brew behavior, and mode resets | One `kSteamTemperatureOffsetC = 5` constant feeds the controller's sole raw-to-effective conversion after raw validity checks; valid snapshots expose the effective value and callers add nothing | `ea20bca` | None | None |
+| [STEAM-003](prds/PRD-003/tasks/STEAM-003.md) | Agent | Done | OpenAPI validation; 71 protocol tests/147 expectations and typecheck; 44 simulator tests/215 expectations and typecheck; 79 mobile tests/254 expectations, lint, and typecheck; strict C++17 build and 4/4 CTest; 14 firmware captures all passed. ESP-IDF target build unavailable because `idf.py`/`IDF_PATH` are absent | API v1/v2 and OLED consume the controller snapshot unchanged; mobile consumes acknowledged API values unchanged; simulator temperature is already-effective logical state; physical calibration and heater safety remain deferred | This commit | None | None |
+| [STEAM-004](prds/PRD-003/tasks/STEAM-004.md) | Human | Deferred | No physical work performed; written procedure, instrument/calibration record, probe placement, build/setup context, and repeated paired rise/steady/recovery measurements at raw `110/115/120°C` remain required | Software scope does not accept the physical `5°C` gradient; the Human reviewer must retain it, defer judgment, or request a separate calibration PRD | Pending | Separate explicit authorization, instrumentation, qualified supervision, and unresolved physical-safety prerequisites | Authorize and review the exact STEAM-004 procedure before any physical or energized work |
+
+---
+
+# PRD-002 Tracker (preserved prior work)
 
 PRD Status: Active
 Current Task: None in requested range; PUMP-009 human functional review accepted, with broader PRD evidence deferred

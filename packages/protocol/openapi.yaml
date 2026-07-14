@@ -495,7 +495,10 @@
         "properties": {
           "status": { "$ref": "#/components/schemas/MachineStatus" },
           "activeMode": { "$ref": "#/components/schemas/Mode" },
-          "boilerTemperatureC": { "type": "number" },
+          "boilerTemperatureC": {
+            "type": "number",
+            "description": "The firmware-authoritative active effective control temperature. For a valid thermocouple sample, Brew mode reports the raw boiler-base reading and Steam mode reports that raw reading plus the firmware-configured Steam offset (currently +5 degrees Celsius). A mode change can therefore change this value by 5 degrees Celsius without a new physical sensor reading."
+          },
           "brewTargetC": { "$ref": "#/components/schemas/BrewTarget" },
           "steamTargetC": { "$ref": "#/components/schemas/SteamTarget" },
           "heaterEnabled": { "type": "boolean" },

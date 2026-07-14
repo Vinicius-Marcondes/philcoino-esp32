@@ -39,11 +39,17 @@ Requests, success responses, and error bodies are validated against `@philcoino/
 These controls are intentionally outside `/api/v1` and must not appear in firmware:
 
 - `POST /_simulator/advance` with `{ "milliseconds": 3000 }` advances manual time by at most one simulated hour per request.
-- `PUT /_simulator/temperatures` sets the single `boilerTemperatureC` reading.
+- `PUT /_simulator/temperatures` sets the already-effective logical
+  `boilerTemperatureC` control value. The simulator does not add the firmware
+  Steam offset or model a physical top-to-bottom boiler gradient.
 - `PUT /_simulator/fault` latches a contract fault code.
 - `POST /_simulator/power-cycle` clears volatile mode, readings, heater permission, uptime, timers, and faults while preserving targets.
 - `POST /_simulator/reset` also restores default targets.
 
 Readiness requires three simulated seconds in the target band. The five-minute steam timeout begins at readiness and returns the model to brew. Time never advances in the background.
+
+Simulator temperature scenarios are API/UI evidence only. They do not validate
+the owner-selected `+5°C` firmware correction, physical calibration, or heater
+safety.
 
 See [Development](../../docs/DEVELOPMENT.md), [Architecture](../../docs/ARCHITECTURE.md), and [Safety](../../docs/en/SAFETY.md).

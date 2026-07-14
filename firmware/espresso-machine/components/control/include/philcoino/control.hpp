@@ -32,6 +32,8 @@ struct ControlSnapshot {
   ControlStatus status{ControlStatus::kHeating};
   ControlMode mode{ControlMode::kBrew};
   peripherals::TemperatureTargets targets{};
+  // Valid readings contain the active effective control temperature: raw in
+  // Brew and corrected once by the controller in Steam.
   peripherals::ThermocoupleReading boiler_temperature{};
   bool heater_enabled_permission{true};
   bool heater_enabled{false};
@@ -39,6 +41,9 @@ struct ControlSnapshot {
   FaultSnapshot fault{};
   SteamTimeoutSnapshot steam_timeout{};
 };
+
+peripherals::DisplayTemperature display_temperature(
+    const ControlSnapshot& snapshot);
 
 const char* fault_code_name(FaultCode code);
 const char* fault_message(FaultCode code);
@@ -97,7 +102,7 @@ class TemperatureController {
 
   peripherals::FailOffSsr& heater_;
   peripherals::TemperatureTargets targets_{};
-  peripherals::ThermocoupleReading boiler_temperature_{};
+  peripherals::ThermocoupleReading raw_boiler_temperature_{};
   ControlMode mode_{ControlMode::kBrew};
   ControlStatus status_{ControlStatus::kHeating};
   FaultCode fault_code_{FaultCode::kInternalError};

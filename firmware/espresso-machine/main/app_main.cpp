@@ -62,13 +62,9 @@ philcoino::peripherals::DisplaySnapshot display_snapshot(
   using philcoino::control::ControlStatus;
   using philcoino::peripherals::DisplayMode;
   using philcoino::peripherals::DisplayStatus;
-  using philcoino::peripherals::ThermocoupleStatus;
 
   philcoino::peripherals::DisplaySnapshot display{};
-  display.boiler = {
-      control.boiler_temperature.status == ThermocoupleStatus::kOk,
-      control.boiler_temperature.temperature_c,
-  };
+  display.boiler = philcoino::control::display_temperature(control);
   display.targets = control.targets;
   display.mode = control.mode == ControlMode::kBrew ? DisplayMode::kBrew
                                                      : DisplayMode::kSteam;

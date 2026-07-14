@@ -251,6 +251,63 @@ void test_state_and_mutations_delegate_to_control() {
   assert(harness.controller.heater_enabled_permission());
 }
 
+void test_effective_temperature_serializes_once_across_v1_v2_and_modes() {
+  const char* authorization = "Bearer test-secret";
+
+  ApiHarness steam;
+  assert(steam.controller.set_mode(ControlMode::kSteam, 2000));
+  steam.controller.update(ok(115.0F), 2500);
+  auto response = steam.request(HttpMethod::kGet, "/api/v1/state",
+                                authorization, "", 2500);
+  assert(response.status == 200);
+  assert(response.body.find("\"activeMode\":\"steam\"") !=
+         std::string::npos);
+  assert(response.body.find("\"boilerTemperatureC\":120") !=
+         std::string::npos);
+  assert(response.body.find("\"boilerTemperatureC\":125") ==
+         std::string::npos);
+
+  response = steam.request(HttpMethod::kGet, "/api/v2/state", authorization,
+                           "", 2500);
+  assert(response.status == 200);
+  assert(response.body.find("\"boilerTemperatureC\":120") !=
+         std::string::npos);
+  assert(response.body.find("\"boilerTemperatureC\":125") ==
+         std::string::npos);
+
+  ApiHarness brew;
+  brew.controller.update(ok(115.0F), 2500);
+  response = brew.request(HttpMethod::kGet, "/api/v1/state", authorization,
+                          "", 2500);
+  assert(response.status == 200);
+  assert(response.body.find("\"activeMode\":\"brew\"") !=
+         std::string::npos);
+  assert(response.body.find("\"boilerTemperatureC\":115") !=
+         std::string::npos);
+
+  ApiHarness switching;
+  response = switching.request(HttpMethod::kGet, "/api/v1/state",
+                               authorization, "", 3000);
+  assert(response.body.find("\"boilerTemperatureC\":87.5") !=
+         std::string::npos);
+  assert(switching.request(HttpMethod::kPut, "/api/v1/mode", authorization,
+                           "{\"mode\":\"steam\"}", 3000)
+             .status == 200);
+  response = switching.request(HttpMethod::kGet, "/api/v1/state",
+                               authorization, "", 3000);
+  assert(response.body.find("\"boilerTemperatureC\":92.5") !=
+         std::string::npos);
+  assert(response.body.find("\"heaterActive\":false") !=
+         std::string::npos);
+  assert(switching.request(HttpMethod::kPut, "/api/v1/mode", authorization,
+                           "{\"mode\":\"brew\"}", 3000)
+             .status == 200);
+  response = switching.request(HttpMethod::kGet, "/api/v1/state",
+                               authorization, "", 3000);
+  assert(response.body.find("\"boilerTemperatureC\":87.5") !=
+         std::string::npos);
+}
+
 void test_over_temperature_dismissal_endpoint_is_guarded() {
   ApiHarness harness;
   const char* authorization = "Bearer test-secret";
@@ -451,6 +508,14 @@ void capture_contract_payloads(const std::filesystem::path& directory) {
   write_capture(directory, "state-v2.json",
                 harness.request(HttpMethod::kGet, "/api/v2/state",
                                 authorization).body);
+  ApiHarness steam_harness;
+  assert(steam_harness.controller.set_mode(ControlMode::kSteam, 2000));
+  steam_harness.controller.update(ok(115.0F), 2500);
+  write_capture(directory, "state-steam.json",
+                steam_harness
+                    .request(HttpMethod::kGet, "/api/v1/state",
+                             authorization, "", 2500)
+                    .body);
   write_capture(directory, "profiles-v2.json",
                 harness.request(HttpMethod::kGet, "/api/v2/profiles",
                                 authorization).body);
@@ -487,6 +552,7 @@ void capture_contract_payloads(const std::filesystem::path& directory) {
 int main(int argc, char** argv) {
   test_public_contract_and_authentication();
   test_state_and_mutations_delegate_to_control();
+  test_effective_temperature_serializes_once_across_v1_v2_and_modes();
   test_over_temperature_dismissal_endpoint_is_guarded();
   test_malformed_and_domain_failures_do_not_bypass_validation();
   test_api_v2_profiles_and_extraction_contract();

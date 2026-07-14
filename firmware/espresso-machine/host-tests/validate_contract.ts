@@ -25,6 +25,7 @@ const captures = [
   ["health.json", HealthResponseSchema],
   ["device.json", DeviceResponseSchema],
   ["state.json", MachineStateSchema],
+  ["state-steam.json", MachineStateSchema],
   ["state-fault.json", MachineStateSchema],
   ["temperatures-response.json", TemperatureSettingsResponseSchema],
   ["mode-response.json", ModeResponseSchema],

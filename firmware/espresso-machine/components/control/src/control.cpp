@@ -18,15 +18,23 @@ bool reading_ok(const peripherals::ThermocoupleReading& reading) {
          std::isfinite(reading.temperature_c);
 }
 
-bool over_temperature(const peripherals::ThermocoupleReading& reading,
-                      ControlMode mode) {
+bool over_temperature(float active_temperature_c, ControlMode mode) {
   const auto limit = mode == ControlMode::kBrew
                          ? config::kBrewOverTemperatureC
                          : config::kSteamOverTemperatureC;
-  return reading.temperature_c >= static_cast<float>(limit);
+  return active_temperature_c >= static_cast<float>(limit);
 }
 
 }  // namespace
+
+peripherals::DisplayTemperature display_temperature(
+    const ControlSnapshot& snapshot) {
+  return {
+      snapshot.boiler_temperature.status ==
+          peripherals::ThermocoupleStatus::kOk,
+      snapshot.boiler_temperature.temperature_c,
+  };
+}
 
 const char* fault_code_name(FaultCode code) {
   switch (code) {
@@ -164,7 +172,7 @@ bool TemperatureController::update_steam_target(
 bool TemperatureController::dismiss_over_temperature(std::uint32_t now_ms) {
   if (!fault_latched_ || fault_code_ != FaultCode::kOverTemperature ||
       !boiler_reading_ok() || !active_temperature_back_at_target() ||
-      over_temperature(boiler_temperature_, mode_)) {
+      over_temperature(active_temperature(), mode_)) {
     return false;
   }
   fault_latched_ = false;
@@ -172,12 +180,12 @@ bool TemperatureController::dismiss_over_temperature(std::uint32_t now_ms) {
   reset_heater_control_window(now_ms);
   heating_demand_active_ = false;
   reset_recovery_heat();
-  return !update(boiler_temperature_, now_ms).fault_active;
+  return !update(raw_boiler_temperature_, now_ms).fault_active;
 }
 
 ControlSnapshot TemperatureController::update(
     const peripherals::ThermocoupleReading& reading, std::uint32_t now_ms) {
-  boiler_temperature_ = reading;
+  raw_boiler_temperature_ = reading;
 
   if (heater_.safety_cutoff_tripped()) {
     latch_fault(FaultCode::kInternalError);
@@ -235,7 +243,10 @@ ControlSnapshot TemperatureController::snapshot(std::uint32_t now_ms) const {
   value.status = fault_latched_ ? ControlStatus::kFault : status_;
   value.mode = mode_;
   value.targets = targets_;
-  value.boiler_temperature = boiler_temperature_;
+  value.boiler_temperature = raw_boiler_temperature_;
+  if (boiler_reading_ok()) {
+    value.boiler_temperature.temperature_c = active_temperature();
+  }
   value.heater_enabled_permission = heater_enabled_permission_;
   value.heater_enabled =
       !fault_latched_ && heater_enabled_permission_ && heater_.is_enabled();
@@ -257,7 +268,11 @@ std::int32_t TemperatureController::active_target() const {
 }
 
 float TemperatureController::active_temperature() const {
-  return boiler_temperature_.temperature_c;
+  const float raw_temperature_c = raw_boiler_temperature_.temperature_c;
+  return mode_ == ControlMode::kSteam
+             ? raw_temperature_c +
+                   static_cast<float>(config::kSteamTemperatureOffsetC)
+             : raw_temperature_c;
 }
 
 bool TemperatureController::active_temperature_in_ready_band() const {
@@ -270,7 +285,7 @@ bool TemperatureController::active_temperature_demands_heat() const {
 }
 
 bool TemperatureController::boiler_reading_ok() const {
-  return reading_ok(boiler_temperature_);
+  return reading_ok(raw_boiler_temperature_);
 }
 
 bool TemperatureController::active_temperature_back_at_target() const {
@@ -371,7 +386,7 @@ bool TemperatureController::validate_readings(std::uint32_t) {
     return false;
   }
 
-  if (over_temperature(boiler_temperature_, mode_)) {
+  if (over_temperature(active_temperature(), mode_)) {
     latch_fault(FaultCode::kOverTemperature);
     return false;
   }

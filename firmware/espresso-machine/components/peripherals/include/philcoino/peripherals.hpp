@@ -189,6 +189,10 @@ struct DisplaySnapshot {
   const char* extraction_phase{"IDLE"};
 };
 
+void format_display_temperature_line(char* output, std::size_t length,
+                                     const DisplayTemperature& temperature,
+                                     std::int32_t target);
+
 class OledTransport {
  public:
   virtual ~OledTransport() = default;

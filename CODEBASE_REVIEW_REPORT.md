@@ -50,6 +50,30 @@ or separately authorized energized evidence was supplied. The review decision
 therefore remains REQUEST CHANGES and no electrical, energized, or
 production-safe claim is made.
 
+### PRD-003 implementation addendum — 2026-07-14
+
+STEAM-001 through STEAM-003 define and implement one compile-time, owner-selected
+`+5°C` correction after raw sensor validation and only while Steam mode is
+active. The controller uses the effective value for duty, recovery, readiness,
+timeouts, over-temperature policy, API snapshots, and OLED input; Brew remains
+raw. The API shape, target ranges, persisted targets, and mobile mutation flows
+remain unchanged.
+
+This does not close or downgrade any finding below. In particular, B2 remains
+open because the correction still relies on one sensor and cannot detect a
+plausible incorrect reading. API/OLED agreement, host tests, simulator tests,
+contract captures, and a target build establish software behavior only. The
+physical gradient, sensor mounting/lag/error, independent cutoff, SSR behavior,
+and energized safety require the separately authorized STEAM-004 instrumented
+human review.
+
+The final affected software matrix passed OpenAPI validation, 71 protocol
+tests, 44 simulator tests, 79 mobile tests, all configured TypeScript
+typechecks/mobile lint, the strict C++17 build and 4/4 firmware host tests, and
+14 generated firmware response captures. The ESP-IDF 6.0.2 target build was not
+run because no configured `idf.py`/`IDF_PATH` environment was available. These
+results do not change the REQUEST CHANGES assessment.
+
 ## Findings
 
 ### BLOCKER
@@ -74,6 +98,9 @@ The ten-second duty window is enforced only by periodically revisiting the GPIO.
 **Evidence:**
 
 - Firmware now permanently reads one boiler-base MAX6675 on GPIO4/GPIO6/GPIO7 and uses that reading in both brew and steam modes.
+- Steam software adds the fixed `+5°C` correction after raw validity checks,
+  but this compensation provides no second measurement or plausibility
+  cross-check.
 - Open, invalid, non-finite, and transport-failed samples latch `sensor_failure`, but a plausible incorrect value remains indistinguishable from a correct value.
 - The dual-sensor flag, second GPIO set, paired readings, mirroring, and disagreement constants have been removed by explicit owner decision after physical interference made two boiler-mounted probes unreliable.
 

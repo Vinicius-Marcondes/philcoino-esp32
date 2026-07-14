@@ -108,6 +108,11 @@ curl http://localhost:3000/api/v1/state \
 
 Manual time never advances in the background. Power-cycle clears volatile state and preserves targets; reset also restores default targets. The simple temperature model is for deterministic app/contract scenarios only.
 
+The simulator treats `boilerTemperatureC` as the already-effective logical
+control temperature in either mode. It does not add the firmware Steam offset,
+model separate boiler-base and upper-boiler temperatures, or validate that the
+owner-selected physical correction is accurate.
+
 The simulator also serves authenticated API v2 state, complete profile-set
 read/replace, and extraction Start/Stop. Manual time owns extraction progress;
 power-cycle preserves profiles but always returns extraction to idle. The
@@ -156,7 +161,7 @@ idf.py build
 
 Configure Wi-Fi SSID, Wi-Fi password, and bearer token through `idf.py menuconfig` under `PhilcoINO`. Values belong only in generated, ignored `sdkconfig`; never put them in source, defaults, logs, screenshots, tests, or documentation.
 
-Current source permanently uses one boiler-base thermocouple on GPIO4/GPIO6/GPIO7 for both control modes and has OLED support enabled (`kOledEnabled = true`). Check [Safety](SAFETY.md), the tracker, and hardware documents before any device test; physical acceptance remains incomplete.
+Current source permanently uses one boiler-base thermocouple on GPIO4/GPIO6/GPIO7 for both control modes and has OLED support enabled (`kOledEnabled = true`). Firmware validates the raw sample, reports it unchanged in Brew, and applies the compile-time `kSteamTemperatureOffsetC = 5` correction once in Steam before control, safety, API, and OLED use. The value is not configurable through NVS, HTTP, mDNS, simulator controls, OLED, or mobile. Check [Safety](SAFETY.md), the tracker, and hardware documents before any device test; physical acceptance remains incomplete.
 
 ### Low-voltage only
 

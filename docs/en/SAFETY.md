@@ -9,6 +9,10 @@ Philcoino is an experimental, mains-adjacent espresso-machine controller. The re
 - PRD-001 software tasks have progressed through mobile monitoring and acknowledged controls, but the tracker still lists later review/physical tasks as incomplete.
 - The current codebase review contains unresolved BLOCKER and MAJOR findings in firmware timing, sensor monitoring, timeout behavior, physical output certainty, transport, and credential/device identity.
 - Current firmware permanently uses one boiler-base thermocouple for both brew and steam. It is a single point of control failure and provides no independent sensor cross-check.
+- PRD-003 implements an owner-selected fixed `+5°C` correction only after raw
+  validation and only in Steam. The corrected value drives control, limits,
+  API, and OLED behavior, but still depends on the same single sensor and awaits
+  repeatable instrumented physical validation in STEAM-004.
 - Current firmware source enables the OLED (`kOledEnabled = true`), while tracker text records a temporary disabled-OLED state. Treat this as an unresolved documentation/configuration discrepancy, not an approved hardware state.
 - Physical iPhone discovery, final sensor behavior, relay/SSR installation, independent cutoff, and supervised energized validation remain human checks.
 
@@ -19,6 +23,8 @@ See the [codebase review](../../CODEBASE_REVIEW_REPORT.md), [tracker](../TRACKER
 Firmware owns the temperature-control loop and does not rely on app connectivity. Its policy code:
 
 - validates MAX6675 status and finite readings;
+- uses the raw reading in Brew and applies one compile-time `+5°C` correction
+  in Steam before decisions and snapshots;
 - applies mode-specific target and over-temperature limits;
 - requires a three-second ready hold;
 - applies a heating timeout and five-minute steam-ready timeout;
@@ -30,6 +36,10 @@ Firmware owns the temperature-control loop and does not rely on app connectivity
 - starts critical hardware in a fail-off order.
 
 These are design intentions and tested software behaviors, not proof of physical de-energization or thermal safety.
+
+Agreement between control, API, and OLED establishes only software consistency.
+It does not prove that `+5°C` represents the physical boiler gradient or
+replace independent measurement, a thermal cutoff, or energized review.
 
 ## Known high-risk limitations
 

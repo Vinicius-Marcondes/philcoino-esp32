@@ -483,6 +483,7 @@ describe("deterministic machine controls", () => {
 
     let state = await getState();
     expect(state.status).toBe("ready");
+    expect(state.boilerTemperatureC).toBe(115);
     expect(state.steamTimeoutRemainingMs).toBe(STEAM_TIMEOUT_MS);
 
     await control("POST", "/_simulator/advance", {
