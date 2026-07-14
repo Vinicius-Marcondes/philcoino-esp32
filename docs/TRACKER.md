@@ -1,4 +1,53 @@
-# PRD-002 Tracker
+# PRD-003 Tracker
+
+PRD Status: Active
+Current Task: STEAM-002
+
+Implementation Boundary: STEAM-001 is complete. The wire shape remains
+backward compatible and `boilerTemperatureC` is documented as raw in Brew and
+firmware-offset-adjusted in Steam. STEAM-002 is the current firmware task.
+STEAM-004 physical calibration remains separately authorization-gated and does
+not block STEAM-001 through STEAM-003.
+
+## Summary
+
+Apply one firmware-configured `+5°C` correction to the validated boiler-base
+reading in Steam mode for control, safety, API, and OLED behavior while keeping
+Brew raw and preserving all existing physical-safety limitations.
+
+PRD: `docs/prds/PRD-003/PRD-003.md`
+
+## Safety Boundary
+
+- The offset is an owner-selected correction, not proof of calibrated boiler
+  temperature or safe energized operation.
+- Raw sensor validity is checked before correction; firmware remains the sole
+  authority for heating, readiness, timeouts, targets, and faults.
+- Existing independent-cutoff, single-sensor, SSR, timing, security, wiring,
+  enclosure, and mains findings remain unresolved.
+- STEAM-004 requires separate explicit authorization and human supervision; no
+  software, simulator, host, or build evidence substitutes for physical
+  measurement.
+
+## Git
+
+- Branch: `feature/PRD-003-steam-temperature-offset`
+- Base: `main` at `ae29a7b` (owner-approved because `develop` did not exist
+  locally or on GitHub at task start)
+- Merge target: `develop`
+
+## Execution State
+
+| Task | Review | Status | Evidence | Decision Log | Commit | Blocked Reason | Requested Decision |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| [STEAM-001](prds/PRD-003/tasks/STEAM-001.md) | Agent | Done | OpenAPI validation, 71 protocol tests/147 expectations, and protocol typecheck passed | `boilerTemperatureC` remains the sole unchanged numeric field; OpenAPI now defines validated raw Brew and one firmware-configured `+5°C` Steam correction, while simulator input is already-effective logical temperature and is not physical evidence | This commit | None | None |
+| [STEAM-002](prds/PRD-003/tasks/STEAM-002.md) | Agent | Todo | Pending | Pending | Pending | None | None |
+| [STEAM-003](prds/PRD-003/tasks/STEAM-003.md) | Agent | Todo | Pending | Pending | Pending | None | None |
+| [STEAM-004](prds/PRD-003/tasks/STEAM-004.md) | Human | Todo | Pending | Pending | Pending | None | None |
+
+---
+
+# PRD-002 Tracker (preserved prior work)
 
 PRD Status: Active
 Current Task: None in requested range; PUMP-009 human functional review accepted, with broader PRD evidence deferred

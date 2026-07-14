@@ -45,10 +45,12 @@ import {
 } from "../src/index.ts";
 
 type OpenApiSchema = {
+  description?: string;
   enum?: unknown[];
   examples?: unknown[];
   maximum?: number;
   minimum?: number;
+  properties?: Record<string, OpenApiSchema>;
 };
 
 type OpenApiDocument = {
@@ -222,6 +224,20 @@ describe("documented OpenAPI examples", () => {
 });
 
 describe("temperature boundaries and drift", () => {
+  test("documents mode-dependent effective boiler temperature semantics", () => {
+    const description =
+      openApi.components.schemas.MachineState.properties?.boilerTemperatureC
+        ?.description;
+
+    expect(description).toContain("Brew mode reports the raw boiler-base reading");
+    expect(description).toContain(
+      "Steam mode reports that raw reading plus the firmware-configured Steam offset",
+    );
+    expect(description).toContain(
+      "change this value by 5 degrees Celsius without a new physical sensor reading",
+    );
+  });
+
   test("accepts every inclusive whole-degree boundary", () => {
     expect(BrewTargetSchema.parse(BREW_TARGET_MIN_C)).toBe(85);
     expect(BrewTargetSchema.parse(BREW_TARGET_MAX_C)).toBe(95);

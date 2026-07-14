@@ -108,6 +108,11 @@ curl http://localhost:3000/api/v1/state \
 
 Manual time never advances in the background. Power-cycle clears volatile state and preserves targets; reset also restores default targets. The simple temperature model is for deterministic app/contract scenarios only.
 
+The simulator treats `boilerTemperatureC` as the already-effective logical
+control temperature in either mode. It does not add the firmware Steam offset,
+model separate boiler-base and upper-boiler temperatures, or validate that the
+owner-selected physical correction is accurate.
+
 The simulator also serves authenticated API v2 state, complete profile-set
 read/replace, and extraction Start/Stop. Manual time owns extraction progress;
 power-cycle preserves profiles but always returns extraction to idle. The

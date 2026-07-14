@@ -6,6 +6,12 @@ The authoritative wire contract is
 [`packages/protocol/openapi.yaml`](../../packages/protocol/openapi.yaml). API v2
 is additive: every API v1 temperature endpoint remains available and unchanged.
 
+The nested `machine.boilerTemperatureC` retains the API v1 semantics: it is the
+validated raw boiler-base reading in Brew and the active effective reading with
+the firmware-configured `+5°C` correction in Steam. Switching modes can change
+the reported value by exactly `5°C` without a new physical sensor sample. API
+v2 adds no raw-temperature or offset field.
+
 ## Authenticated endpoints
 
 - `GET /api/v2/state` returns one acknowledged machine/extraction snapshot.
