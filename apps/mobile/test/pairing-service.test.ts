@@ -30,7 +30,7 @@ describe("pairing flow with the device simulator", () => {
       address: simulatorAddress,
       apiVersion: "1",
       deviceId: "philcoino-simulator",
-      firmwareVersion: "simulator-0.1.0",
+      firmwareVersion: "simulator-0.2.0",
       model: "philcoino-simulator",
       name: "Philcoino simulator",
     });
@@ -104,7 +104,7 @@ describe("pairing flow with the device simulator", () => {
         address: simulatorAddress,
         apiVersion: "1",
         deviceId,
-        firmwareVersion: "simulator-0.1.0",
+        firmwareVersion: "simulator-0.2.0",
         model: "philcoino-simulator",
         name: "Philcoino simulator",
       }),

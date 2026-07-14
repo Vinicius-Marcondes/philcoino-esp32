@@ -14,19 +14,18 @@ using namespace philcoino::peripherals;
 
 class FakeMax6675Transport final : public Max6675Transport {
  public:
-  bool read_frame(ThermocoupleChannel channel, std::uint16_t& frame) override {
+  bool read_frame(std::uint16_t& frame) override {
     assert(!read_active);
     read_active = true;
-    channels.push_back(channel);
-    const auto index = channel == ThermocoupleChannel::kBrew ? 0U : 1U;
-    frame = frames[index];
+    ++read_count;
+    frame = next_frame;
     read_active = false;
-    return succeeds[index];
+    return succeeds;
   }
 
-  std::array<std::uint16_t, 2> frames{};
-  std::array<bool, 2> succeeds{true, true};
-  std::vector<ThermocoupleChannel> channels{};
+  std::uint16_t next_frame{0};
+  bool succeeds{true};
+  std::size_t read_count{0};
   bool read_active{false};
 };
 
@@ -187,42 +186,43 @@ class FakeOledTransport final : public OledTransport {
   bool succeed{true};
 };
 
-void test_thermocouples() {
+void test_thermocouple() {
   static_assert(kMax6675SampleIntervalMs >= kMax6675ConversionMs);
 
   FakeMax6675Transport transport;
-  transport.frames = {
-      static_cast<std::uint16_t>(373U << 3U),
-      static_cast<std::uint16_t>(460U << 3U),
-  };
-  DualMax6675 sensors(transport, 0);
+  transport.next_frame = static_cast<std::uint16_t>(373U << 3U);
+  Max6675 sensor(transport, 0);
 
-  const auto early = sensors.read(219);
-  assert(early.brew.status == ThermocoupleStatus::kNotReady);
-  assert(early.steam.status == ThermocoupleStatus::kNotReady);
-  assert(transport.channels.empty());
+  const auto early = sensor.read(219);
+  assert(early.status == ThermocoupleStatus::kNotReady);
+  assert(transport.read_count == 0);
 
-  const auto first = sensors.read(220);
-  assert(first.brew.status == ThermocoupleStatus::kOk);
-  assert(first.brew.temperature_c == 93.25F);
-  assert(first.steam.status == ThermocoupleStatus::kOk);
-  assert(first.steam.temperature_c == 115.0F);
-  assert((transport.channels ==
-          std::vector<ThermocoupleChannel>{ThermocoupleChannel::kBrew,
-                                          ThermocoupleChannel::kSteam}));
+  const auto first = sensor.read(220);
+  assert(first.status == ThermocoupleStatus::kOk);
+  assert(first.temperature_c == 93.25F);
+  assert(transport.read_count == 1);
 
-  sensors.read(439);
-  assert(transport.channels.size() == 2);
+  sensor.read(439);
+  assert(transport.read_count == 1);
 
-  transport.frames = {0x0004, 0x0002};
-  const auto faults = sensors.read(440);
-  assert(faults.brew.status == ThermocoupleStatus::kOpenCircuit);
-  assert(faults.steam.status == ThermocoupleStatus::kInvalidFrame);
+  transport.next_frame = 0x0004;
+  const auto open = sensor.read(440);
+  assert(open.status == ThermocoupleStatus::kOpenCircuit);
 
-  transport.succeeds[1] = false;
-  const auto transport_error = sensors.read(660);
-  assert(transport_error.steam.status ==
-         ThermocoupleStatus::kTransportError);
+  transport.next_frame = 0x0002;
+  const auto invalid = sensor.read(660);
+  assert(invalid.status == ThermocoupleStatus::kInvalidFrame);
+
+  transport.succeeds = false;
+  const auto transport_error = sensor.read(880);
+  assert(transport_error.status == ThermocoupleStatus::kTransportError);
+
+  FakeMax6675Transport rollover_transport;
+  rollover_transport.next_frame = static_cast<std::uint16_t>(400U << 3U);
+  Max6675 rollover_sensor(rollover_transport, 0xFFFFFF80U);
+  assert(rollover_sensor.read(0x0000005BU).status ==
+         ThermocoupleStatus::kNotReady);
+  assert(rollover_sensor.read(0x0000005CU).status == ThermocoupleStatus::kOk);
 }
 
 void test_target_storage() {
@@ -486,8 +486,8 @@ void test_oled() {
   FakeOledTransport transport;
   Ssd1306Display display(transport);
   DisplaySnapshot snapshot{};
-  snapshot.brew = {true, 93.25F};
-  snapshot.steam = {true, 115.0F};
+  snapshot.boiler = {true, 93.25F};
+  snapshot.targets = {93, 115};
   snapshot.mode = DisplayMode::kBrew;
   snapshot.status = DisplayStatus::kReady;
   snapshot.heater_enabled = true;
@@ -534,7 +534,7 @@ void test_oled() {
 }  // namespace
 
 int main() {
-  test_thermocouples();
+  test_thermocouple();
   test_target_storage();
   test_profile_storage();
   test_fail_off_pump();

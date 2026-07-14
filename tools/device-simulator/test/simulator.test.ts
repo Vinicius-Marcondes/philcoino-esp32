@@ -428,11 +428,11 @@ describe("API v1 state and mutations", () => {
     let state = await getState();
     expect(state.heaterEnabled).toBe(false);
     expect(state.heaterActive).toBe(false);
-    const initialTemperature = state.brewTemperatureC;
+    const initialTemperature = state.boilerTemperatureC;
 
     await control("POST", "/_simulator/advance", { milliseconds: 1_000 });
     state = await getState();
-    expect(state.brewTemperatureC).toBeLessThanOrEqual(initialTemperature);
+    expect(state.boilerTemperatureC).toBeLessThanOrEqual(initialTemperature);
     expect(state.heaterActive).toBe(false);
 
     response = await simulator.app.request(
@@ -461,7 +461,7 @@ describe("API v1 state and mutations", () => {
 describe("deterministic machine controls", () => {
   it("simulates temperature movement and three-second readiness", async () => {
     await control("PUT", "/_simulator/temperatures", {
-      brewTemperatureC: 92,
+      boilerTemperatureC: 92,
     });
 
     await control("POST", "/_simulator/advance", { milliseconds: 2_999 });
@@ -470,14 +470,14 @@ describe("deterministic machine controls", () => {
     await control("POST", "/_simulator/advance", { milliseconds: 1 });
     const ready = await getState();
     expect(ready.status).toBe("ready");
-    expect(ready.brewTemperatureC).toBe(93);
+    expect(ready.boilerTemperatureC).toBe(93);
     expect(ready.heaterActive).toBe(false);
   });
 
   it("starts the steam timer on readiness and returns to brew at expiry", async () => {
     await setMode("steam");
     await control("PUT", "/_simulator/temperatures", {
-      steamTemperatureC: 115,
+      boilerTemperatureC: 115,
     });
     await control("POST", "/_simulator/advance", { milliseconds: 3_000 });
 
@@ -524,7 +524,7 @@ describe("deterministic machine controls", () => {
 
   it("dismisses only cooled over-temperature faults", async () => {
     await control("PUT", "/_simulator/temperatures", {
-      brewTemperatureC: 99,
+      boilerTemperatureC: 99,
     });
     await control("PUT", "/_simulator/fault", { code: "over_temperature" });
 
@@ -538,7 +538,7 @@ describe("deterministic machine controls", () => {
     );
 
     await control("PUT", "/_simulator/temperatures", {
-      brewTemperatureC: 93,
+      boilerTemperatureC: 93,
     });
     response = await simulator.app.request(
       "/api/v1/faults/over-temperature/dismiss",
@@ -549,6 +549,17 @@ describe("deterministic machine controls", () => {
     expect(state.status).toBe("heating");
     expect(state.fault).toBeNull();
     expect(state.heaterActive).toBe(false);
+  });
+
+  it("rejects legacy dual-temperature simulator controls", async () => {
+    const response = await simulator.app.request(
+      "/_simulator/temperatures",
+      jsonRequest("PUT", { brewTemperatureC: 93, steamTemperatureC: 115 }),
+    );
+    expect(response.status).toBe(400);
+    expect(ErrorResponseSchema.parse(await response.json()).error.code).toBe(
+      "malformed_request",
+    );
   });
 
   it("full reset restores default persisted targets", async () => {

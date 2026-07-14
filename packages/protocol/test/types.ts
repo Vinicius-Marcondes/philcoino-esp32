@@ -16,15 +16,14 @@ const heaterUpdate: HeaterSettingsRequest = { heaterEnabled: false };
 const faultState: MachineState = {
   status: "fault",
   activeMode: "brew",
-  brewTemperatureC: 24.5,
-  steamTemperatureC: 24.7,
+  boilerTemperatureC: 24.5,
   brewTargetC: 93,
   steamTargetC: 115,
   heaterEnabled: false,
   heaterActive: false,
   fault: {
     code: "sensor_failure",
-    message: "Brew thermocouple is unavailable.",
+    message: "The boiler thermocouple reading is unavailable.",
   },
   steamTimeoutRemainingMs: null,
   uptimeMs: 185000,

@@ -42,16 +42,15 @@ implement peripheral and control behavior.
 | --- | --- |
 | SSD1306 OLED | 128×32, I2C address `0x3C`, no dedicated reset configured |
 | OLED SDA / SCL | GPIO8 / GPIO9; module-provided pull-ups retained |
-| MAX6675 brew SCK/SO / steam SCK/SO | GPIO4/GPIO6 / GPIO0/GPIO1; fully isolated digital buses are a temporary diagnostic amendment |
-| Brew / steam MAX6675 CS | GPIO7 / GPIO5; temporary diagnostic mapping with explicit CS verification and a 500 ms sample interval |
+| Boiler MAX6675 SCK/SO | GPIO4/GPIO6 with a 500 ms sample interval |
+| Boiler MAX6675 CS | GPIO7 with explicit CS verification |
 | SSR command | GPIO20, active high, direct 3.3 V connection |
 
-Wi-Fi is enabled. `kDualThermocouplesEnabled` is temporarily disabled after
-dual-sensor low-voltage diagnosis. Single-sensor mode reads the brew channel
-every 500 ms and mirrors that measurement for steam control. `kOledEnabled` is
-temporarily disabled so the device can boot while the SSD1306 OLED is
-disconnected. These degraded diagnostic configurations are not final dual-sensor
-or OLED acceptance.
+Wi-Fi is enabled. The owner superseded the original dual-sensor decision after
+two boiler-mounted thermocouples interfered with reliable readings. Firmware now
+permanently reads one boiler-base sensor every 500 ms and applies its measurement
+to both control modes without mirroring or alternate sensor GPIOs. `kOledEnabled`
+is enabled; OLED and single-sensor physical acceptance remain part of PHIL-013.
 
 The human owner explicitly approved direct GPIO20 drive with no external pull-down
 resistor available. Firmware must configure the output low at the earliest possible

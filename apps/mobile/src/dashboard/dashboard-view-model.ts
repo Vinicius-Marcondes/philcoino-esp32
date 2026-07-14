@@ -64,10 +64,9 @@ export const TEMPERATURE_HISTORY_LIMIT = 180;
 export interface TemperatureSample {
   activeMode: Mode;
   brewTargetC: number;
-  brewTemperatureC: number;
+  boilerTemperatureC: number;
   heaterActive: boolean;
   steamTargetC: number;
-  steamTemperatureC: number;
   uptimeMs: number;
 }
 
@@ -138,9 +137,7 @@ export function steamCountdownContext(snapshot: MachineState): string {
 export function boilerTemperatureC(
   sample: MachineState | TemperatureSample,
 ): number {
-  return sample.activeMode === "brew"
-    ? sample.brewTemperatureC
-    : sample.steamTemperatureC;
+  return sample.boilerTemperatureC;
 }
 
 export function boilerTargetC(sample: MachineState | TemperatureSample): number {
@@ -155,10 +152,9 @@ export function appendTemperatureSample(
   const sample: TemperatureSample = {
     activeMode: snapshot.activeMode,
     brewTargetC: snapshot.brewTargetC,
-    brewTemperatureC: snapshot.brewTemperatureC,
+    boilerTemperatureC: snapshot.boilerTemperatureC,
     heaterActive: snapshot.heaterActive,
     steamTargetC: snapshot.steamTargetC,
-    steamTemperatureC: snapshot.steamTemperatureC,
     uptimeMs: snapshot.uptimeMs,
   };
   const previous = history.at(-1);

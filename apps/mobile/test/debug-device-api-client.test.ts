@@ -36,11 +36,10 @@ describe("debug device mode", () => {
     expect(state).toMatchObject({
       activeMode: "brew",
       brewTargetC: BREW_TARGET_MIN_C,
-      brewTemperatureC: 0,
+      boilerTemperatureC: 0,
       heaterEnabled: true,
       heaterActive: false,
       steamTargetC: STEAM_TARGET_MIN_C,
-      steamTemperatureC: 0,
       steamTimeoutRemainingMs: null,
       uptimeMs: 0,
     });
@@ -67,10 +66,9 @@ describe("debug device mode", () => {
     await expect(client.getState()).resolves.toMatchObject({
       activeMode: "steam",
       brewTargetC: 94,
-      brewTemperatureC: 0,
+      boilerTemperatureC: 0,
       heaterEnabled: false,
       steamTargetC: 116,
-      steamTemperatureC: 0,
       steamTimeoutRemainingMs: 0,
       uptimeMs: 0,
     });

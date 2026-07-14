@@ -111,8 +111,7 @@ export class SimulatorMachine {
   private readonly device: DeviceResponse;
 
   private activeMode: Mode = "brew";
-  private brewTemperatureC = AMBIENT_TEMPERATURE_C;
-  private steamTemperatureC = AMBIENT_TEMPERATURE_C;
+  private boilerTemperatureC = AMBIENT_TEMPERATURE_C;
   private brewTargetC: number;
   private steamTargetC: number;
   private heaterEnabled = true;
@@ -152,7 +151,7 @@ export class SimulatorMachine {
       name: "Philcoino simulator",
       model: "philcoino-simulator",
       apiVersion: "1",
-      firmwareVersion: "simulator-0.1.0",
+      firmwareVersion: "simulator-0.2.0",
       ...options.device,
     });
   }
@@ -175,8 +174,7 @@ export class SimulatorMachine {
     return MachineStateSchema.parse({
       status,
       activeMode: this.activeMode,
-      brewTemperatureC: roundTemperature(this.brewTemperatureC),
-      steamTemperatureC: roundTemperature(this.steamTemperatureC),
+      boilerTemperatureC: roundTemperature(this.boilerTemperatureC),
       brewTargetC: this.brewTargetC,
       steamTargetC: this.steamTargetC,
       heaterEnabled: this.heaterEnabled,
@@ -360,14 +358,8 @@ export class SimulatorMachine {
     return HeaterSettingsResponseSchema.parse({ heaterEnabled });
   }
 
-  setTemperatures(temperatures: {
-    brewTemperatureC?: number;
-    steamTemperatureC?: number;
-  }): void {
-    this.brewTemperatureC =
-      temperatures.brewTemperatureC ?? this.brewTemperatureC;
-    this.steamTemperatureC =
-      temperatures.steamTemperatureC ?? this.steamTemperatureC;
+  setTemperature(boilerTemperatureC: number): void {
+    this.boilerTemperatureC = boilerTemperatureC;
 
     if (!this.isActiveTemperatureReady()) {
       this.readyElapsedMs = 0;
@@ -387,8 +379,7 @@ export class SimulatorMachine {
     if (
       this.fault?.code !== "over_temperature" ||
       !this.activeTemperatureBackAtTarget() ||
-      this.brewTemperatureC >= BREW_OVER_TEMPERATURE_C ||
-      this.steamTemperatureC >= STEAM_OVER_TEMPERATURE_C
+      this.activeModeOverTemperature()
     ) {
       return null;
     }
@@ -430,20 +421,15 @@ export class SimulatorMachine {
     const seconds = milliseconds / 1_000;
 
     if (this.fault) {
-      this.brewTemperatureC = moveToward(
-        this.brewTemperatureC,
-        AMBIENT_TEMPERATURE_C,
-        COOLING_RATE_C_PER_SECOND * seconds,
-      );
-      this.steamTemperatureC = moveToward(
-        this.steamTemperatureC,
+      this.boilerTemperatureC = moveToward(
+        this.boilerTemperatureC,
         AMBIENT_TEMPERATURE_C,
         COOLING_RATE_C_PER_SECOND * seconds,
       );
     } else if (this.heaterEnabled) {
-      this.advanceTemperatures(seconds);
+      this.advanceTemperature(seconds);
     } else {
-      this.coolTemperatures(seconds);
+      this.coolTemperature(seconds);
     }
 
     this.uptimeMs += milliseconds;
@@ -490,58 +476,27 @@ export class SimulatorMachine {
     this.activeExtraction.elapsedMs = nextElapsedMs;
   }
 
-  private advanceTemperatures(seconds: number): void {
-    if (this.activeMode === "brew") {
-      this.brewTemperatureC = moveToward(
-        this.brewTemperatureC,
-        this.brewTargetC,
-        (this.brewTemperatureC < this.brewTargetC
-          ? HEATING_RATE_C_PER_SECOND
-          : COOLING_RATE_C_PER_SECOND) * seconds,
-      );
-      this.steamTemperatureC = moveToward(
-        this.steamTemperatureC,
-        AMBIENT_TEMPERATURE_C,
-        COOLING_RATE_C_PER_SECOND * seconds,
-      );
-      return;
-    }
-
-    this.steamTemperatureC = moveToward(
-      this.steamTemperatureC,
-      this.steamTargetC,
-      (this.steamTemperatureC < this.steamTargetC
+  private advanceTemperature(seconds: number): void {
+    const target = this.activeTarget();
+    this.boilerTemperatureC = moveToward(
+      this.boilerTemperatureC,
+      target,
+      (this.boilerTemperatureC < target
         ? HEATING_RATE_C_PER_SECOND
         : COOLING_RATE_C_PER_SECOND) * seconds,
     );
-    this.brewTemperatureC = moveToward(
-      this.brewTemperatureC,
-      AMBIENT_TEMPERATURE_C,
-      COOLING_RATE_C_PER_SECOND * seconds,
-    );
   }
 
-  private coolTemperatures(seconds: number): void {
-    this.brewTemperatureC = moveToward(
-      this.brewTemperatureC,
-      AMBIENT_TEMPERATURE_C,
-      COOLING_RATE_C_PER_SECOND * seconds,
-    );
-    this.steamTemperatureC = moveToward(
-      this.steamTemperatureC,
+  private coolTemperature(seconds: number): void {
+    this.boilerTemperatureC = moveToward(
+      this.boilerTemperatureC,
       AMBIENT_TEMPERATURE_C,
       COOLING_RATE_C_PER_SECOND * seconds,
     );
   }
 
   private isActiveTemperatureReady(): boolean {
-    const temperature =
-      this.activeMode === "brew"
-        ? this.brewTemperatureC
-        : this.steamTemperatureC;
-    const target =
-      this.activeMode === "brew" ? this.brewTargetC : this.steamTargetC;
-    return Math.abs(temperature - target) <= READY_BAND_C;
+    return Math.abs(this.boilerTemperatureC - this.activeTarget()) <= READY_BAND_C;
   }
 
   private isHeaterActive(): boolean {
@@ -549,29 +504,28 @@ export class SimulatorMachine {
       return false;
     }
 
-    const temperature =
-      this.activeMode === "brew"
-        ? this.brewTemperatureC
-        : this.steamTemperatureC;
-    const target =
-      this.activeMode === "brew" ? this.brewTargetC : this.steamTargetC;
-    return temperature < target;
+    return this.boilerTemperatureC < this.activeTarget();
   }
 
   private activeTemperatureBackAtTarget(): boolean {
-    const temperature =
+    return this.boilerTemperatureC <= this.activeTarget();
+  }
+
+  private activeTarget(): number {
+    return this.activeMode === "brew" ? this.brewTargetC : this.steamTargetC;
+  }
+
+  private activeModeOverTemperature(): boolean {
+    const limit =
       this.activeMode === "brew"
-        ? this.brewTemperatureC
-        : this.steamTemperatureC;
-    const target =
-      this.activeMode === "brew" ? this.brewTargetC : this.steamTargetC;
-    return temperature <= target;
+        ? BREW_OVER_TEMPERATURE_C
+        : STEAM_OVER_TEMPERATURE_C;
+    return this.boilerTemperatureC >= limit;
   }
 
   private resetVolatileState(): void {
     this.activeMode = "brew";
-    this.brewTemperatureC = AMBIENT_TEMPERATURE_C;
-    this.steamTemperatureC = AMBIENT_TEMPERATURE_C;
+    this.boilerTemperatureC = AMBIENT_TEMPERATURE_C;
     this.heaterEnabled = true;
     this.fault = null;
     this.readyElapsedMs = 0;

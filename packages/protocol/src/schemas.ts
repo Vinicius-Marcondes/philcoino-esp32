@@ -69,8 +69,7 @@ export const FaultSchema = z.strictObject({
 
 const machineStateShape = {
   activeMode: ModeSchema,
-  brewTemperatureC: z.number(),
-  steamTemperatureC: z.number(),
+  boilerTemperatureC: z.number(),
   brewTargetC: BrewTargetSchema,
   steamTargetC: SteamTargetSchema,
   heaterEnabled: z.boolean(),

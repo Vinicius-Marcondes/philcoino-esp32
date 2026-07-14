@@ -10,16 +10,11 @@ Status: DRAFT — NOT ELECTRICALLY OR MAINS-SAFETY APPROVED
 | OLED 128×32 I2C | GND | GND |
 | OLED 128×32 I2C (`0x3C`) | SDA | GPIO8 |
 | OLED 128×32 I2C (`0x3C`) | SCL | GPIO9 |
-| MAX6675 #1 | VCC | 3V3 |
-| MAX6675 #1 | GND | GND |
-| MAX6675 #1 | SCK | GPIO4 |
-| MAX6675 #1 | CS | GPIO7 (temporary low-voltage test mapping) |
-| MAX6675 #1 | SO | GPIO6 |
-| MAX6675 #2 | VCC | 3V3 |
-| MAX6675 #2 | GND | GND |
-| MAX6675 #2 | SCK | GPIO0 (temporary isolated-bus diagnostic mapping) |
-| MAX6675 #2 | CS | GPIO5 (temporary low-voltage test mapping) |
-| MAX6675 #2 | SO | GPIO1 (temporary separate-SO diagnostic mapping) |
+| Boiler MAX6675 | VCC | 3V3 |
+| Boiler MAX6675 | GND | GND |
+| Boiler MAX6675 | SCK | GPIO4 |
+| Boiler MAX6675 | CS | GPIO7 |
+| Boiler MAX6675 | SO | GPIO6 |
 | Heater SSR input | Positive | GPIO20, direct active-high drive, human-approved without external pull-down |
 | Heater SSR input | Negative | GND |
 | Pump SSR input | Positive | GPIO10, active-high command; software configuration approved, physical wiring not approved |
@@ -29,9 +24,9 @@ Status: DRAFT — NOT ELECTRICALLY OR MAINS-SAFETY APPROVED
 
 ### MAX6675 interface
 
-The two tested MAX6675 modules use fully separate SCK, SO, and active-low CS signals because they produced corrupted readings when either SCK or SO was shared. Brew uses SCK GPIO4, SO GPIO6, and CS GPIO7. Steam uses SCK GPIO0, SO GPIO1, and CS GPIO5. Firmware keeps both CS pins high during conversion, samples both completed frames sequentially, and waits 500 ms before the next sample cycle. This applies to both dual- and single-sensor mode so a slow converter is not repeatedly interrupted before completing.
+The permanent boiler sensor uses SCK GPIO4, SO GPIO6, and active-low CS GPIO7. Firmware waits 500 ms between samples, which exceeds the MAX6675's maximum conversion time. No second MAX6675 bus or GPIO configuration remains in firmware.
 
-Low-voltage testing on 2026-07-05 confirmed that both MAX6675 modules return valid readings when individually selected through GPIO7. Using GPIO10 as a CS returned only zero frames. GPIO3 used first as CS alternated between `0x0000` and `0xFFFF`; when reused as a dedicated steam SO input it returned `0x0008`, while GPIO7/GPIO6 remained valid. Reversing read order ruled out conversion concurrency. A later shared-SO test showed plausible individual readings but corrupted values when both modules drove GPIO6, so the 2026-07-06 diagnostic mapping gives each module a separate SO input and uses previously untested GPIO1 for steam.
+Earlier low-voltage experiments with two modules produced unreliable readings when both thermocouples were attached to the metal boiler. The permanent design therefore retains only the boiler-base sensor and its proven GPIO4/GPIO6/GPIO7 interface. The removed second-sensor wiring must remain disconnected.
 
 Disabling Wi-Fi did not correct the simultaneous-reading failure, so Wi-Fi is enabled again.
 Because the router is expected to be very close to the machine, firmware now
@@ -42,9 +37,7 @@ power. If discovery, HTTP polling, or reconnects become worse, raise this value
 before changing sensor or heater control behavior. This setting does not replace
 antenna placement, supply decoupling, or low-voltage noise checks.
 
-`kDualThermocouplesEnabled` is temporarily `false`. Firmware reads only the brew MAX6675 on SCK/SO/CS GPIO4/GPIO6/GPIO7 every 500 ms, mirrors that measurement into both protocol/display fields, and uses it for brew and steam control. The steam converter is not selected or clocked. This single-sensor mode remains a degraded diagnostic configuration and does not satisfy final dual-sensor acceptance.
-
-The MAX6675 supports a 3.0 V through 5.5 V supply, has 0.25°C resolution, detects an open thermocouple, and requires as much as 220 ms for a conversion. Each converter should have the datasheet-recommended 0.1 µF ceramic bypass capacitor close to its supply pin. Firmware should schedule reads no faster than the conversion behavior allows and must treat open-thermocouple indications as a latched `sensor_failure`.
+The API and OLED expose one boiler temperature. Brew and steam modes apply different targets and safety limits to that same measurement. The MAX6675 supports a 3.0 V through 5.5 V supply, has 0.25°C resolution, detects an open thermocouple, and requires as much as 220 ms for a conversion. The converter should have the datasheet-recommended 0.1 µF ceramic bypass capacitor close to its supply pin. Firmware treats open-thermocouple indications as a latched `sensor_failure`.
 
 ### OLED pins
 
@@ -74,11 +67,11 @@ On 2026-07-14, the owner accepted the target functional matrix after reporting s
 
 ### Temperature sensors
 
-- MAX6675 #1 thermocouple is mounted at the boiler base and is the brew-mode control sensor.
-- MAX6675 #2 thermocouple is mounted at the boiler top and is the steam-mode control sensor.
-- Both sensors should be monitored in every mode so cross-sensor disagreement, implausible readings, and open thermocouples can force a latched fault.
+- The one MAX6675 thermocouple is mounted at the boiler base and controls both brew and steam modes.
+- Open, invalid, non-finite, or transport-failed readings force a latched `sensor_failure` and an off command.
+- Because there is no redundant sensor, a plausible but incorrect reading cannot be detected through disagreement; independent physical temperature protection is mandatory.
 
-Exact mounting, thermal lag, disagreement thresholds, and over-temperature limits still require validation on the physical boiler.
+Exact mounting, thermal lag, measurement error, and over-temperature limits still require validation on the physical boiler against an independent instrument.
 
 ### Display
 
@@ -98,4 +91,4 @@ The manufacturer's application guidance identifies a 1 A/250 VAC slow-blow input
 - Pump SSR identity/rating, original series-switch wiring, reliable 3.3 V drive, and reset/power-cycle GPIO10 behavior with the mains load disconnected.
 - Original over-temperature fuse/thermostat identity, trip tolerance, reset behavior, electrical rating, placement, and proof that it interrupts a shorted SSR's heater current.
 - Verified HLK-5M05B input protection, PCB layout, enclosure, and 5 V connection to the chosen Super Mini board.
-- Validated thermocouple mounting, control limits, sensor-disagreement thresholds, and over-temperature limits.
+- Validated thermocouple mounting, control limits, measurement error, thermal lag, and over-temperature limits.

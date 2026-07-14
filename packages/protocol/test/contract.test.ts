@@ -112,6 +112,7 @@ const validFixtures = [
 const invalidFixtures = [
   ["invalid/device-api-version.json", DeviceResponseSchema],
   ["invalid/state-extra-property.json", MachineStateSchema],
+  ["invalid/state-legacy-temperatures.json", MachineStateSchema],
   ["invalid/state-fault-heater-active.json", MachineStateSchema],
   ["invalid/state-fault-without-details.json", MachineStateSchema],
   ["invalid/temperatures-request-empty.json", TemperatureSettingsRequestSchema],

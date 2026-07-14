@@ -22,7 +22,7 @@ This review covers authored firmware control/peripheral/networking code, firmwar
 | MINOR | 7 |
 | NIT | 2 |
 
-The code has several strong foundations: strict runtime schemas, bounded temperature targets, firmware-owned state, acknowledged mobile mutations, completion-driven polling, latched faults, wrap-safe elapsed-time arithmetic, and useful host/unit coverage. However, the most important safety guarantees are not yet robust against task stalls, sensor disagreement, repeated authenticated commands, or hostile LAN conditions.
+The code has several strong foundations: strict runtime schemas, bounded temperature targets, firmware-owned state, acknowledged mobile mutations, completion-driven polling, latched faults, wrap-safe elapsed-time arithmetic, and useful host/unit coverage. However, the most important safety guarantees are not yet robust against task stalls, single-sensor failure modes, repeated authenticated commands, or hostile LAN conditions.
 
 ### PRD-002 implementation addendum — 2026-07-12
 
@@ -69,18 +69,17 @@ The ten-second duty window is enforced only by periodically revisiting the GPIO.
 
 **Required direction:** Drive heater pulses through a fail-off hardware timer/one-shot or dedicated high-priority control task whose deadline cannot be extended by networking, display, or NVS. Use bounded lock acquisition; force off before any persistence/blocking operation; keep flash and HTTP work outside the real-time control lock; enable watchdog recovery. The independent physical thermal cutoff remains mandatory.
 
-#### B2. Cross-sensor disagreement is configured and documented but never enforced
+#### B2. The permanent single control sensor has no independent plausibility cross-check
 
 **Evidence:**
 
-- `firmware/espresso-machine/components/firmware_config/include/philcoino/config.hpp:25-29` defines a 10 C disagreement threshold lasting five minutes.
-- `firmware/espresso-machine/components/control/src/control.cpp:367-379` validates only per-reading status/finite values and over-temperature.
-- Repository search finds no control use of either disagreement constant; only the constants and a static assertion exist.
-- `firmware/espresso-machine/components/firmware_config/include/philcoino/config.hpp:16` currently disables dual thermocouples, so steam control mirrors the brew sensor and cannot provide independent cross-checking.
+- Firmware now permanently reads one boiler-base MAX6675 on GPIO4/GPIO6/GPIO7 and uses that reading in both brew and steam modes.
+- Open, invalid, non-finite, and transport-failed samples latch `sensor_failure`, but a plausible incorrect value remains indistinguishable from a correct value.
+- The dual-sensor flag, second GPIO set, paired readings, mirroring, and disagreement constants have been removed by explicit owner decision after physical interference made two boiler-mounted probes unreliable.
 
-Two individually valid but diverging sensors can remain accepted indefinitely after dual mode is re-enabled. In the current diagnostic configuration, the single sensor is also the sole authority for both brew and steam.
+The sensor, its mounting, converter, wiring, and thermal coupling are therefore a single point of control failure. Software tests cannot establish the accuracy of that physical measurement.
 
-**Required direction:** Implement continuous disagreement timing with recovery/hysteresis and a latched fail-off fault; test boundary, interruption, rollover, and inactive-sensor cases. Do not approve dual-sensor or energized operation until both physical sensors are enabled, independently validated, and the disagreement path is proven.
+**Required direction:** Validate the retained sensor across brew and steam ranges against an independent calibrated instrument, quantify lag/error/overshoot, and verify open-probe fail-off behavior. Retain a correctly rated independent thermal cutoff in series with the heater. Do not treat the single-sensor architecture or passing software tests as evidence for energized safety.
 
 #### B3. A reusable physical-control credential and commands travel over cleartext HTTP
 
@@ -155,7 +154,7 @@ The commit titled “Allow firmware boot without OLED” added the flag as `true
 
 #### M8. The simulator does not simulate the firmware’s critical control behavior
 
-**Evidence:** `tools/device-simulator/src/model.ts:229-343` uses a simple move-toward-target model. It does not implement the ten-second duty curve, recovery ramp, heating timeout, automatic over-temperature detection, sensor invalidity/disagreement, mutex/task stalls, or output-write failures. Faults are manually injected at `model.ts:181-188`.
+**Evidence:** `tools/device-simulator/src/model.ts` uses a simple move-toward-target model. It does not implement the ten-second duty curve, recovery ramp, heating timeout, automatic over-temperature detection, physical sensor invalidity, mutex/task stalls, or output-write failures. Faults are manually injected.
 
 The simulator is useful for mobile contract/UI tests, but its green tests cannot validate firmware safety or timing behavior and can conceal contract-level behavioral drift.
 
@@ -175,9 +174,9 @@ The simulator is useful for mobile contract/UI tests, but its green tests cannot
 
 `firmware/espresso-machine/components/networking/src/api.cpp:331-367` hard-codes 85/95/110/120 instead of using `config.hpp`. Current values match, but future tuning can silently drift between domain validation and HTTP error classification. Use the authoritative constants.
 
-#### m4. Critical-path tests omit diagnostic single-sensor and stall scenarios
+#### m4. Critical-path tests omit stall and physical single-sensor scenarios
 
-`firmware/espresso-machine/host-tests/control_test.cpp:93-101` constructs the controller in default dual-sensor mode. There are no tests for `dual_thermocouples_enabled=false`, disagreement timing, control-loop starvation, no-op deadline resets, target-crossing-without-readiness, NVS stalls while on, or stuck-high off-write failures.
+Host tests now cover the permanent single-reading controller, open-circuit failure, mode-specific limits, and rollover conversion timing. They still cannot cover physical sensor detachment/thermal lag, and there are no tests for control-loop starvation, no-op deadline resets, target-crossing-without-readiness, NVS stalls while on, or stuck-high off-write failures.
 
 #### m5. Mobile screens are oversized and mix orchestration, presentation, and styling
 
@@ -234,7 +233,7 @@ Passing tests do not cover the blocker/major failure sequences listed above.
 ## Prioritized remediation
 
 1. Replace loop-dependent SSR pulse shutoff with a fail-off timer/task architecture and bound every shared-control wait.
-2. Implement/test sensor disagreement and restore true independent dual-sensor monitoring before energized approval.
+2. Validate the permanent single sensor against an independent instrument and verify the independent thermal cutoff before any energized consideration.
 3. Make heating and steam deadlines monotonic against no-op/remote-reset traffic and require readiness to clear heating timeout.
 4. Move NVS/network/display work outside the real-time control boundary; force off before blocking work.
 5. Secure pairing and transport with cryptographic device identity plus encrypted authenticated commands; enforce strong rotating credentials.

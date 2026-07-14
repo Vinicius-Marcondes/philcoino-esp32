@@ -280,7 +280,7 @@ export function createSimulator(
     if (!body.ok || !isTemperatureControlRequest(body.value)) {
       return contractError(c, 400, "malformed_request", MALFORMED_REQUEST_MESSAGE);
     }
-    machine.setTemperatures(body.value);
+    machine.setTemperature(body.value.boilerTemperatureC);
     return c.json(machine.getState());
   });
 
@@ -375,22 +375,12 @@ function isAdvanceRequest(value: unknown): value is { milliseconds: number } {
 }
 
 function isTemperatureControlRequest(value: unknown): value is {
-  brewTemperatureC?: number;
-  steamTemperatureC?: number;
+  boilerTemperatureC: number;
 } {
-  if (!isRecord(value)) {
-    return false;
-  }
-
-  const keys = Object.keys(value);
   return (
-    keys.length > 0 &&
-    keys.every(
-      (key) => key === "brewTemperatureC" || key === "steamTemperatureC",
-    ) &&
-    keys.every(
-      (key) => typeof value[key] === "number" && Number.isFinite(value[key]),
-    )
+    isExactObject(value, ["boilerTemperatureC"]) &&
+    typeof value.boilerTemperatureC === "number" &&
+    Number.isFinite(value.boilerTemperatureC)
   );
 }
 

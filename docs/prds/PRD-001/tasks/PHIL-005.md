@@ -4,6 +4,8 @@ Status: Done
 Review Mode: Agent
 Review Reason: Drivers can be verified with fakes, low-voltage bench tests, and deterministic persistence tests without energizing the heater.
 
+> Superseded hardware note: the completed dual-thermocouple scope records the original implementation. The owner later approved one permanent boiler-base sensor; current architecture and PHIL-013 acceptance use that single sensor.
+
 ## Goal
 
 Implement dual thermocouple, OLED, NVS settings, and fail-off SSR output abstractions.

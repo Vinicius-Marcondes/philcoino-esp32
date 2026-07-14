@@ -8,7 +8,7 @@ Philcoino is an experimental, mains-adjacent espresso-machine controller. The re
 
 - PRD-001 software tasks have progressed through mobile monitoring and acknowledged controls, but the tracker still lists later review/physical tasks as incomplete.
 - The current codebase review contains unresolved BLOCKER and MAJOR findings in firmware timing, sensor monitoring, timeout behavior, physical output certainty, transport, and credential/device identity.
-- Current firmware source uses one thermocouple reading for both brew and steam (`kDualThermocouplesEnabled = false`), which does not satisfy final dual-sensor acceptance.
+- Current firmware permanently uses one boiler-base thermocouple for both brew and steam. It is a single point of control failure and provides no independent sensor cross-check.
 - Current firmware source enables the OLED (`kOledEnabled = true`), while tracker text records a temporary disabled-OLED state. Treat this as an unresolved documentation/configuration discrepancy, not an approved hardware state.
 - Physical iPhone discovery, final sensor behavior, relay/SSR installation, independent cutoff, and supervised energized validation remain human checks.
 
@@ -36,7 +36,7 @@ These are design intentions and tested software behaviors, not proof of physical
 The current review identifies, among others:
 
 - heater pulse shutoff and shared-control access can be delayed by loop stalls or unbounded mutex/I/O work;
-- diagnostic single-sensor mode removes independent dual-sensor monitoring and disagreement detection is not implemented;
+- the permanent single control sensor cannot detect a plausible but incorrect reading through sensor disagreement;
 - some valid remote/no-op writes can reset heating deadlines, allowing a client to extend timeout protection;
 - a failed GPIO off-write can still be presented as heater off even when physical state is unknown;
 - the pump has no current, SSR, flow, or series-switch feedback; `running` and
@@ -103,7 +103,7 @@ Always state which level produced a claim.
 At minimum:
 
 1. close every relevant BLOCKER and MAJOR finding with adversarial tests;
-2. restore and validate independent dual-sensor monitoring and disagreement behavior;
+2. validate the single sensor's mounting, lag, error, and failure behavior against an independent instrument, and retain an independent hardware thermal cutoff;
 3. make heater-off timing independent of blocking network/storage/display/control-loop work;
 4. represent and escalate unknown physical output state;
 5. prevent client traffic from extending safety deadlines;

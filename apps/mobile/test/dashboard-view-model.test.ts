@@ -21,13 +21,12 @@ import {
 const steamState: MachineState = {
   activeMode: "steam",
   brewTargetC: 93,
-  brewTemperatureC: 91.2,
+  boilerTemperatureC: 115,
   fault: null,
   heaterEnabled: true,
   heaterActive: false,
   status: "ready",
   steamTargetC: 115,
-  steamTemperatureC: 115,
   steamTimeoutRemainingMs: 299_001,
   uptimeMs: 3_661_000,
 };
@@ -55,7 +54,7 @@ describe("dashboard view model", () => {
         ...steamState,
         activeMode: "brew",
         brewTargetC: 85,
-        brewTemperatureC: 92,
+        boilerTemperatureC: 92,
         heaterActive: false,
         status: "heating",
       }),
@@ -65,20 +64,19 @@ describe("dashboard view model", () => {
         ...steamState,
         activeMode: "brew",
         brewTargetC: 85,
-        brewTemperatureC: 84,
+        boilerTemperatureC: 84,
         heaterActive: true,
         status: "heating",
       }),
     ).toBe("Heating");
   });
 
-  test("uses active mode as the unified boiler reading", () => {
+  test("uses one boiler reading and the active mode target", () => {
     expect(
       boilerTemperatureC({
         ...steamState,
         activeMode: "brew",
-        brewTemperatureC: 85,
-        steamTemperatureC: 110,
+        boilerTemperatureC: 85,
       }),
     ).toBe(85);
     expect(boilerTemperatureC(steamState)).toBe(115);
@@ -97,16 +95,16 @@ describe("dashboard view model", () => {
   test("keeps bounded in-memory temperature samples", () => {
     const first = appendTemperatureSample([], {
       ...steamState,
-      brewTemperatureC: 85,
+      boilerTemperatureC: 85,
       uptimeMs: 1_000,
     });
     const replaced = appendTemperatureSample(first, {
       ...steamState,
-      brewTemperatureC: 86,
+      boilerTemperatureC: 86,
       uptimeMs: 1_000,
     });
     expect(replaced).toHaveLength(1);
-    expect(replaced[0].brewTemperatureC).toBe(86);
+    expect(replaced[0].boilerTemperatureC).toBe(86);
 
     const capped = appendTemperatureSample(
       appendTemperatureSample(replaced, { ...steamState, uptimeMs: 2_000 }),

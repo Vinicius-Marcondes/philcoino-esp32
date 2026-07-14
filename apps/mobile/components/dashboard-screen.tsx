@@ -544,10 +544,9 @@ function TemperatureCurve({
   const currentSample: TemperatureSample = {
     activeMode: snapshot.activeMode,
     brewTargetC: snapshot.brewTargetC,
-    brewTemperatureC: snapshot.brewTemperatureC,
+    boilerTemperatureC: snapshot.boilerTemperatureC,
     heaterActive: snapshot.heaterActive,
     steamTargetC: snapshot.steamTargetC,
-    steamTemperatureC: snapshot.steamTemperatureC,
     uptimeMs: snapshot.uptimeMs,
   };
   const displayHistory =

@@ -13,8 +13,7 @@ namespace philcoino::peripherals {
 class EspMax6675Transport final : public Max6675Transport {
  public:
   bool initialize();
-  bool read_frame(ThermocoupleChannel channel,
-                  std::uint16_t& frame) override;
+  bool read_frame(std::uint16_t& frame) override;
 
  private:
   bool initialized_{false};

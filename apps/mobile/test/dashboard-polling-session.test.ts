@@ -24,13 +24,12 @@ import {
 const validState: MachineState = {
   activeMode: "brew",
   brewTargetC: 93,
-  brewTemperatureC: 87.4,
+  boilerTemperatureC: 87.4,
   fault: null,
   heaterEnabled: true,
   heaterActive: true,
   status: "heating",
   steamTargetC: 115,
-  steamTemperatureC: 103.8,
   steamTimeoutRemainingMs: null,
   uptimeMs: 184_220,
 };
