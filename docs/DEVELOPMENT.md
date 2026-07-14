@@ -80,7 +80,8 @@ Local HTTP is deliberately enabled for this device protocol. Do not generalize t
 ## Device simulator
 
 Production-compatible routes include the temperature-only API v1 and additive
-profile/extraction API v2. Development controls are separate:
+profile/extraction/compensation/cooldown API v2. Development controls are
+separate:
 
 ```text
 POST /_simulator/advance
@@ -114,11 +115,13 @@ model separate boiler-base and upper-boiler temperatures, or validate that the
 owner-selected physical correction is accurate.
 
 The simulator also serves authenticated API v2 state, complete profile-set
-read/replace, and extraction Start/Stop. Manual time owns extraction progress;
-power-cycle preserves profiles but always returns extraction to idle. The
-one-shot `fail-next-profile-save` control makes the next complete profile
-replacement fail without changing the previous set. These behaviors support
-API/mobile integration and are not firmware timing or physical-pump evidence.
+read/replace, extraction Start/Stop, and cooldown Start/Stop. Manual time owns
+extraction and cooldown progress; power-cycle preserves profiles but always
+returns both workflows to idle. Cooldown deterministically stops at the first
+sample at/below its target snapshot, at 45 seconds, or on Stop, followed by five
+seconds of stabilization. Failure controls and temperature injection support
+API/mobile integration only; they are not firmware scheduling, GPIO, pump-flow,
+cooling, SSR, or heater-safety evidence.
 
 ## Protocol workflow
 
@@ -150,6 +153,11 @@ bun run firmware/espresso-machine/host-tests/validate_contract.ts \
 
 Use a temporary build directory outside the repository to avoid generated output in the worktree.
 
+The generated capture set includes unchanged API v1 responses plus strict API
+v2 extraction, compensation, cooldown Start/replay/conflict/Stop/terminal,
+eligibility errors, and failed terminal state. Capture validation proves only
+that independent C++ serialization matches the wire schemas.
+
 ### ESP-IDF target
 
 Activate the pinned ESP-IDF 6.0.2 environment, then run from `firmware/espresso-machine`:
@@ -161,7 +169,17 @@ idf.py build
 
 Configure Wi-Fi SSID, Wi-Fi password, and bearer token through `idf.py menuconfig` under `PhilcoINO`. Values belong only in generated, ignored `sdkconfig`; never put them in source, defaults, logs, screenshots, tests, or documentation.
 
-Current source permanently uses one boiler-base thermocouple on GPIO4/GPIO6/GPIO7 for both control modes and has OLED support enabled (`kOledEnabled = true`). Firmware validates the raw sample, reports it unchanged in Brew, and applies the compile-time `kSteamTemperatureOffsetC = 5` correction once in Steam before control, safety, API, and OLED use. The value is not configurable through NVS, HTTP, mDNS, simulator controls, OLED, or mobile. Check [Safety](SAFETY.md), the tracker, and hardware documents before any device test; physical acceptance remains incomplete.
+Current source permanently uses one boiler-base thermocouple on
+GPIO4/GPIO6/GPIO7 for both control modes and has OLED support enabled
+(`kOledEnabled = true`). Firmware validates the raw sample, reports it unchanged
+in Brew, and applies the compile-time `kSteamTemperatureOffsetC = 5` correction
+once in Steam before control, safety, API, and OLED use. Manual/main extraction
+adds a separate compile-time `+2°C` bias only to the private heater-duty target;
+pre-infusion uses `0°C`. Cooldown uses the validated Brew-effective sample,
+fixed 45-second pump cutoff, and fixed five-second stabilization. None of these
+values is configurable through NVS, HTTP, mDNS, simulator controls, OLED, or
+mobile. Check [Safety](SAFETY.md), the tracker, and hardware documents before
+any device test; physical acceptance remains incomplete.
 
 ### Low-voltage only
 

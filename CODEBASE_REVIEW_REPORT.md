@@ -74,24 +74,81 @@ typechecks/mobile lint, the strict C++17 build and 4/4 firmware host tests, and
 run because no configured `idf.py`/`IDF_PATH` environment was available. These
 results do not change the REQUEST CHANGES assessment.
 
+### PRD-004 implementation addendum — 2026-07-14
+
+THERM-001 through THERM-009 add strict additive API v2 compensation/cooldown
+state, deterministic simulator/mobile flows, phase-exact firmware duty bias,
+volatile cooldown policy, one bounded workflow mutex, a high-priority 10 ms
+workflow task, independent C++ routes/captures, and command-only OLED wording.
+Target NVS now occurs after a bounded heater-off preparation and outside the
+workflow mutex. The existing 1500 ms GPTimer safety lease remains independent
+of HTTP/display/NVS and is renewed by healthy control updates.
+
+These changes materially supersede some historical B1 evidence below: current
+source no longer uses an unbounded temperature/extraction mutex split, and
+target persistence no longer holds the workflow mutex or waits to request
+heater off until after NVS. B1 nevertheless remains open pending the pinned
+ESP-IDF target build, target-runtime lock/stall/watchdog evidence, physical
+GPIO/SSR observation, and verification of the independent thermal cutoff. A
+software GPIO-low command or timer callback cannot interrupt an SSR failed
+shorted or prove heater current stopped.
+
+No other BLOCKER or MAJOR is closed or downgraded:
+
+- B2 remains because Steam `+5°C`, extraction `+2°C`, and cooldown all depend on
+  the same single physical sensor without an independent plausibility channel.
+- B3/M4/M5 now cover cooldown and extraction commands as well as temperature
+  control, increasing the impact of stolen, weak, or cloned bearer authority.
+- M1/M2 remain because PRD-004 deliberately does not redesign readiness or
+  remote target/deadline reset semantics.
+- M3 also applies to cooldown heater/pump off attempts: API/OLED expose command
+  state, not confirmed electrical or mechanical state.
+- M8 remains: deterministic simulator coverage is API/UI evidence, not firmware
+  scheduling, GPIO, SSR, water-flow, or thermal evidence.
+
+The final Agent matrix passed OpenAPI validation, 111 protocol tests/224
+expectations, 59 simulator tests/359 expectations, 96 mobile tests/326
+expectations, all configured TypeScript typechecks and mobile lint, Expo SDK 54
+config, debug web export, strict C++17 build and 4/4 firmware host tests, and 26
+strict generated firmware response captures. The ESP-IDF 6.0.2 target build was
+not run because `idf.py`/`IDF_PATH` were unavailable, and no toolchain was
+installed. THERM-002, THERM-010, and THERM-011 Human evidence remains pending;
+the REQUEST CHANGES and non-production/non-energized assessment is unchanged.
+
 ## Findings
 
 ### BLOCKER
 
-#### B1. Software-timed SSR pulses can remain on indefinitely if the control task stalls
+#### B1. Heater timing still lacks complete target-runtime and physical validation
 
 **Evidence:**
 
-- `firmware/espresso-machine/components/control/src/control.cpp:394-413` changes the SSR only when `TemperatureController::update_heater()` is called.
-- `firmware/espresso-machine/main/app_main.cpp:235-258` runs sensor/control updates in the main loop and also performs display work there.
-- `firmware/espresso-machine/main/app_main.cpp:238` waits on the shared API mutex with `portMAX_DELAY`.
-- `firmware/espresso-machine/components/networking/src/esp_networking.cpp:301-309` holds that mutex while the API handles mutations.
-- `firmware/espresso-machine/components/control/src/control.cpp:125-143` persists target changes before forcing the SSR off.
-- `firmware/espresso-machine/components/peripherals/src/esp_peripherals.cpp:253-257` performs synchronous NVS write/commit.
+- `FailOffSsr` now arms a 1500 ms GPTimer safety lease before a heater-high
+  command; its cache-safe callback requests GPIO20 low and latches a trip for
+  the boot.
+- `main/app_main.cpp` uses one 50 ms bounded workflow mutex, a high-priority 10
+  ms pump-workflow task, and an atomic fail-safe handoff. Missed acquisition
+  attempts both commands off.
+- Temperature target mutation now requests heater off before synchronous NVS,
+  releases the workflow mutex for persistence, then reacquires it to acknowledge
+  the saved targets. OLED rendering and HTTP transmission are also outside.
+- The ESP-IDF 6.0.2 target build and target-runtime stall/priority/watchdog
+  matrix were unavailable for PRD-004 Agent review. Host tests cannot execute
+  FreeRTOS scheduling, flash stalls, cache/interrupt behavior, or actual GPIO.
+- A GPIO-low request still cannot interrupt an SSR whose AC output is failed
+  shorted; the independent physical thermal cutoff remains unverified.
 
-The ten-second duty window is enforced only by periodically revisiting the GPIO. If the loop is delayed while the SSR is on—because of a stuck mutex, stalled flash commit, task starvation, or another blocking path—the output remains high past the calculated pulse, with no independent one-shot forcing it low. Over-temperature sampling and the ten-minute timeout stop progressing at the same time.
+The prior unbounded-mutex/NVS pulse-extension path is materially mitigated in
+source, but the complete target timing and physical fail-off claim is not
+established. A stalled sampling/control path also stops sensor validation,
+over-temperature detection, readiness, and heating-timeout progress even when
+the safety lease bounds the commanded GPIO-high interval.
 
-**Required direction:** Drive heater pulses through a fail-off hardware timer/one-shot or dedicated high-priority control task whose deadline cannot be extended by networking, display, or NVS. Use bounded lock acquisition; force off before any persistence/blocking operation; keep flash and HTTP work outside the real-time control lock; enable watchdog recovery. The independent physical thermal cutoff remains mandatory.
+**Required direction:** Build and exercise the pinned target with controlled
+task/lock/flash/display/network stalls, verify the GPTimer deadline and latched
+fault at logic level, add watchdog recovery evidence, and preserve the bounded
+no-I/O workflow boundary. Independently verify the correctly rated thermal
+cutoff and SSR failure behavior before any energized consideration.
 
 #### B2. The permanent single control sensor has no independent plausibility cross-check
 
@@ -259,10 +316,13 @@ Passing tests do not cover the blocker/major failure sequences listed above.
 
 ## Prioritized remediation
 
-1. Replace loop-dependent SSR pulse shutoff with a fail-off timer/task architecture and bound every shared-control wait.
+1. Validate the implemented GPTimer fail-off lease and bounded workflow
+   coordination under pinned-target stalls, add watchdog evidence, and retain
+   the independent physical cutoff.
 2. Validate the permanent single sensor against an independent instrument and verify the independent thermal cutoff before any energized consideration.
 3. Make heating and steam deadlines monotonic against no-op/remote-reset traffic and require readiness to clear heating timeout.
-4. Move NVS/network/display work outside the real-time control boundary; force off before blocking work.
+4. Preserve the implemented NVS/network/display exclusion and heater-off-before-
+   persistence ordering; add adversarial target-runtime evidence.
 5. Secure pairing and transport with cryptographic device identity plus encrypted authenticated commands; enforce strong rotating credentials.
 6. Correct the OLED diagnostic flag and keep manual HTTP available when mDNS fails.
 7. Add the missing adversarial firmware tests and behavioral conformance suite; then rerun all gates plus ESP-IDF target build.

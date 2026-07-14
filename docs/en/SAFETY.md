@@ -13,6 +13,11 @@ Philcoino is an experimental, mains-adjacent espresso-machine controller. The re
   validation and only in Steam. The corrected value drives control, limits,
   API, and OLED behavior, but still depends on the same single sensor and awaits
   repeatable instrumented physical validation in STEAM-004.
+- PRD-004 software adds a fixed Manual/main `+2°C` heater-duty-only bias and a
+  firmware-owned cooldown command workflow with a 45-second pump cutoff and
+  five-second stabilization. THERM-002 visual/accessibility review and all
+  THERM-010/THERM-011 target/physical acceptance remain pending in the Human
+  Review Ledger; no physical cooling or energized claim was produced.
 - Current firmware source enables the OLED (`kOledEnabled = true`), while tracker text records a temporary disabled-OLED state. Treat this as an unresolved documentation/configuration discrepancy, not an approved hardware state.
 - Physical iPhone discovery, final sensor behavior, relay/SSR installation, independent cutoff, and supervised energized validation remain human checks.
 
@@ -29,23 +34,35 @@ Firmware owns the temperature-control loop and does not rely on app connectivity
 - requires a three-second ready hold;
 - applies a heating timeout and five-minute steam-ready timeout;
 - computes heater duty in ten-second windows;
+- applies the fixed extraction bias only to Manual/main heater-duty
+  calculations while leaving targets, readiness, deadlines, limits, and
+  profile data unchanged;
 - latches faults and commands the SSR output off;
 - persists validated targets and complete four-slot extraction profile sets;
 - runs Manual and persisted profiles in a dedicated monotonic controller,
   initializes GPIO10 `off`, and never restores `running` at boot;
+- runs mutually exclusive cooldown through a bounded 10 ms workflow task,
+  orders heater inhibit/off before pump Start, and never restores cooldown at
+  boot;
+- uses a 1500 ms GPTimer heater-command safety lease and one bounded workflow
+  mutex, with NVS, display, and HTTP transmission outside that boundary;
 - starts critical hardware in a fail-off order.
 
 These are design intentions and tested software behaviors, not proof of physical de-energization or thermal safety.
 
 Agreement between control, API, and OLED establishes only software consistency.
-It does not prove that `+5°C` represents the physical boiler gradient or
-replace independent measurement, a thermal cutoff, or energized review.
+It does not prove that `+5°C` represents the physical boiler gradient, that
+`+2°C` improves extraction, or that a cooldown command produces flow or cooling.
+It does not replace independent measurement, a thermal cutoff, or energized
+review.
 
 ## Known high-risk limitations
 
 The current review identifies, among others:
 
-- heater pulse shutoff and shared-control access can be delayed by loop stalls or unbounded mutex/I/O work;
+- the GPTimer lease and bounded workflow mutex reduce software-command timing
+  exposure, but the pinned target build/runtime stall matrix, watchdog recovery,
+  physical GPIO/SSR response, and independent cutoff remain unverified;
 - the permanent single control sensor cannot detect a plausible but incorrect reading through sensor disagreement;
 - some valid remote/no-op writes can reset heating deadlines, allowing a client to extend timeout protection;
 - a failed GPIO off-write can still be presented as heater off even when physical state is unknown;
@@ -114,7 +131,9 @@ At minimum:
 
 1. close every relevant BLOCKER and MAJOR finding with adversarial tests;
 2. validate the single sensor's mounting, lag, error, and failure behavior against an independent instrument, and retain an independent hardware thermal cutoff;
-3. make heater-off timing independent of blocking network/storage/display/control-loop work;
+3. verify the heater safety lease and bounded workflow timing on the pinned
+   target, add watchdog/stall evidence, and retain the independent physical
+   cutoff;
 4. represent and escalate unknown physical output state;
 5. prevent client traffic from extending safety deadlines;
 6. resolve device identity, token strength, throttling, transport, and recovery security;

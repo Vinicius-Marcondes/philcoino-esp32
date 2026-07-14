@@ -87,6 +87,29 @@ thermal result. Host tests establish deterministic command policy only and do
 not prove heater output, water flow, cooling, SSR operation, calibration, or
 energized safety.
 
+## Firmware cooldown policy
+
+Cooldown is a separate fixed workflow, not a tuning control. A new Start
+requires a valid Brew-effective sample above the current Brew target, idle
+extraction/cooldown, and no machine fault. Firmware snapshots the Brew target,
+switches to Brew, establishes a transient heater inhibit and heater-off command,
+then requests the pump-running command. It never changes the user's heater
+permission.
+
+The pump-running command ends at the first validated sample at or below the
+snapshot, at exactly 45 seconds, or on Stop. Firmware then holds pump-off and
+heater-inhibited command state for exactly five seconds before returning to
+normal Brew control when the existing permission/fault rules allow it. Same-key
+replay preserves the original deadline; reset and power loss return to initial
+idle/off rather than resuming.
+
+The Brew threshold, 45-second cutoff, and five-second stabilization are
+owner-selected software hypotheses. API, OLED, simulator, host, and target-build
+agreement cannot establish physical flow, water use, cooling rate, SSR state,
+heater current, or safe thermal behavior. Changing any fixed constant based on
+physical observations requires separately authorized, repeatable THERM-011
+measurement and a new scoped product decision.
+
 ## GPTimer fail-off safety lease
 
 Every heater-on control update arms or renews a 1500 ms one-shot GPTimer safety
@@ -216,7 +239,13 @@ The heater command is the authoritative value for whether firmware is requesting
 heat. If the heater command is off and the temperature still rises, that is
 thermal inertia, sensor lag, or hardware current flow outside firmware control.
 
-## How to tune
+## Future tuning boundary
+
+The notes below are hypotheses for a separately authorized, supervised tuning
+session. They are not authorization to flash, connect loads, run water, or
+energize the machine. THERM-011 must first record the exact build, setup,
+instruments/calibration, independent cutoff, qualified supervision, and stop
+conditions.
 
 Make one small change at a time, flash, and observe at least several full heat
 cycles. For brew tuning, focus on the brew constants first.

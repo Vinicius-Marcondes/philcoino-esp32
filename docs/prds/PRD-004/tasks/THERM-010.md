@@ -1,6 +1,6 @@
 # THERM-010 — Review target behavior and final mobile experience
 
-Status: Todo
+Status: Review Deferred
 Review Mode: Human
 
 ## Goal
@@ -55,3 +55,13 @@ Validate the exact target build, disconnected low-voltage command behavior, and 
 ## Stop Conditions
 
 - Stop before any mains connection, energized load, wiring modification, or thermal test not separately authorized under THERM-011.
+
+## Gate Preparation
+
+- The exact disconnected target/mobile checklist is prepared in
+  `docs/prds/PRD-004/HUMAN_REVIEW.md`.
+- No target build/flash log, board/setup/instrument record, disconnected
+  logic-level observation, physical-device accessibility review, or Human
+  disposition has been supplied for PRD-004.
+- Checklist preparation and Agent software evidence are not acceptance. This
+  task remains at its Human gate and THERM-011 has not advanced.

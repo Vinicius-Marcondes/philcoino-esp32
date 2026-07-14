@@ -1,14 +1,14 @@
 # PRD-004 Tracker
 
-PRD Status: Active
-Current Task: THERM-009 (Agent review)
+PRD Status: Software Complete — Human Review Deferred
+Current Task: THERM-010 (Deferred Human review)
 
 Implementation Boundary: THERM-001 is complete. THERM-002 software and web
 evidence are complete, but Human acceptance remains deferred in
 `prds/PRD-004/HUMAN_REVIEW.md`. On 2026-07-14, Vinicius explicitly authorized
 the supervised software workflow to continue without treating deferred review
-as approval. THERM-003 through THERM-008 are complete; THERM-009 is the current
-Agent task.
+as approval. THERM-003 through THERM-009 are complete. THERM-010 is the current
+deferred Human gate; its exact checklist is in the Human Review Ledger.
 THERM-010 remains a separate disconnected low-voltage/visual gate, and THERM-011
 requires separate authorization before any physical or energized work.
 
@@ -53,9 +53,9 @@ PRD: `docs/prds/PRD-004/PRD-004.md`
 | [THERM-006](prds/PRD-004/tasks/THERM-006.md) | Agent | Done | Strict C++17 host build and 4/4 tests passed with ordering, eligibility, replay/conflict, target snapshot, exact cutoff/stabilization, Stop, delayed update, wraparound, reset, and sensor/output failures | Volatile controller owns absolute cooldown timing; Brew/heater inhibit precedes pump Start; user permission is independent; failure attempts both commands off and latches temperature fault without physical claims | This commit | None | Runtime/API integration remains ordered for later tasks; Human gates remain deferred |
 | [THERM-007](prds/PRD-004/tasks/THERM-007.md) | Agent | Done | Strict C++17 build and 4/4 host tests passed; static review found one bounded workflow mutex, atomic fail-safe handoff, and no NVS/render/HTTP work inside it; ESP-IDF target build unavailable (`idf.py`/`IDF_PATH` absent) | Temperature/extraction/cooldown share one non-nested boundary; 10 ms task advances workflows/compensation; missed locks issue both off commands then latch fault; target NVS is prepared/adopted around an unlocked save; Brew/Steam mutual exclusion is firmware-authoritative | This commit | None | THERM-008 owns exact cooldown route/serialization/OLED completion; Human gates remain deferred |
 | [THERM-008](prds/PRD-004/tasks/THERM-008.md) | Agent | Done | Strict C++17 build and 4/4 host tests; 26 strict firmware captures; OpenAPI; protocol 111/224; protocol typecheck passed | Independent C++ cooldown Start/Stop and exact conflicts; atomic v2 machine/extraction/compensation/cooldown snapshot; active cooldown owns shared pump observation; OLED uses command-only compensation/cooldown wording; v1 unchanged | This commit | None | ESP-IDF target build unavailable; physical OLED/GPIO acceptance remains Human-only |
-| [THERM-009](prds/PRD-004/tasks/THERM-009.md) | Agent | Todo | Pending | Pending | Pending | None | None |
-| [THERM-010](prds/PRD-004/tasks/THERM-010.md) | Human | Todo | Pending | Pending | Pending | None | None |
-| [THERM-011](prds/PRD-004/tasks/THERM-011.md) | Human | Todo | Pending | Pending | Pending | None | None |
+| [THERM-009](prds/PRD-004/tasks/THERM-009.md) | Agent | Done | OpenAPI; protocol 111/224 plus typecheck; simulator 59/359 plus typecheck; mobile 96/326 plus typecheck/lint/Expo SDK 54 config/debug web export; strict C++17 and 4/4 host; 26 captures passed | All layers agree on strict state/timing/replay/conflict/reset/failure semantics; docs preserve command/observation boundaries and every unresolved safety/security finding; exact Human checklists are written but unperformed | This commit | None | THERM-002/010 Human disposition and separately authorized THERM-011 remain pending |
+| [THERM-010](prds/PRD-004/tasks/THERM-010.md) | Human | Review Deferred | Exact disconnected target/mobile checklist prepared in `prds/PRD-004/HUMAN_REVIEW.md`; no target, low-voltage, or native-device evidence supplied | Software completion and checklist preparation are not Human acceptance; every item must be classified as observed, owner-reported, inferred, or deferred | Pending | Requires exact target/setup record and Vinicius's review; no physical evidence supplied | Review the ledger, provide evidence, and approve or request in-scope revisions for THERM-002/010 only |
+| [THERM-011](prds/PRD-004/tasks/THERM-011.md) | Human | Todo | Authorization prerequisites are written in `prds/PRD-004/HUMAN_REVIEW.md`; no procedure or physical evidence exists | No energized steps may be drafted or performed until limited THERM-010 acceptance and a separate exact setup/procedure authorization | Pending | THERM-010 is unaccepted and no exact energized authorization was supplied | After THERM-010 review, provide every ledger prerequisite and separately authorize the exact procedure/setup, or leave deferred |
 
 ---
 

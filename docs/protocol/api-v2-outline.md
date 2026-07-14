@@ -1,4 +1,4 @@
-# ESP32 API v2 profile and extraction outline
+# ESP32 API v2 workflow outline
 
 Status: IMPLEMENTED; PHYSICAL ACCEPTANCE PENDING
 
@@ -14,17 +14,25 @@ v2 adds no raw-temperature or offset field.
 
 ## Authenticated endpoints
 
-- `GET /api/v2/state` returns one acknowledged machine/extraction snapshot.
+- `GET /api/v2/state` returns one acknowledged
+  machine/extraction/compensation/cooldown snapshot.
 - `GET /api/v2/profiles` returns all four ordered custom slots.
 - `PUT /api/v2/profiles` atomically persists and acknowledges the complete set
-  only while extraction is idle.
+  only while extraction and cooldown are idle.
 - `POST /api/v2/extractions/start` starts Manual or one persisted slot with a
   client idempotency key.
 - `POST /api/v2/extractions/stop` idempotently commands off and returns idle.
+- `POST /api/v2/cooldowns/start` idempotently starts or replays the
+  firmware-owned cooldown workflow.
+- `POST /api/v2/cooldowns/stop` idempotently requests pump off and returns the
+  current stabilization/terminal acknowledgement.
 
 All endpoints require the same bearer authentication as API v1. Unknown fields,
 invalid slot order/IDs, invalid names or durations, malformed selections, and
 invalid idempotency keys are rejected independently by firmware C++.
+Extraction Start requires acknowledged Brew mode and idle cooldown. Steam mode
+is rejected during extraction or cooldown. Conflict bodies include the active
+workflow snapshot when the contract requires it.
 
 ## Authority and timing
 
@@ -35,21 +43,40 @@ active extraction without restarting it; another key conflicts. Stop is
 idempotent. Heater mode, readiness, and temperature faults do not stop the pump,
 while GPIO/synchronization failure ends extraction with an off command.
 
-Profile persistence occurs only while idle and outside the extraction lock.
-Phone disconnection cannot interrupt an acknowledged extraction. Reset or power
-loss clears volatile extraction/idempotency state and boot never restores a
-running command.
+The fixed extraction compensation is not a request value. Firmware reports it
+active only during Manual or profile main extraction while its existing heater
+permission/fault rules allow the duty policy. The private duty target is
+`min(brewTargetC + 2°C, brewOverTemperatureC - 1°C)`; pre-infusion uses a fixed
+`0°C` bias, and soak/idle use none. Persisted/displayed targets, readiness,
+deadlines, limits, and profile data do not change.
+
+Cooldown Start uses the validated Brew-effective sample, requires it to be
+above the current Brew target, snapshots that target, switches to Brew,
+establishes a transient heater inhibit and heater-off command, then requests
+the pump-running command. Target crossing, the exact 45-second cutoff, or Stop
+requests pump off and holds the heater inhibit through five seconds of
+stabilization. User heater permission is separate. Same-key active or terminal
+replay preserves identity and never restarts a deadline; reset/power loss never
+resumes the RAM-only workflow.
+
+Profile and target persistence occur outside the single bounded workflow mutex.
+Phone disconnection cannot interrupt an acknowledged extraction or cooldown.
+Reset or power loss clears volatile workflow/idempotency state and boot never
+restores a running command.
 
 ## Command-state boundary
 
-`pumpCommand: "running"` and `pumpCommand: "off"` describe only the firmware's
-GPIO10 command. The device has no pump-current, SSR-output, original-switch,
-pressure, or flow feedback. Neither state proves physical pump operation or
-de-energization, and an SSR may fail shorted.
+`pumpCommand: "running"`, `pumpCommand: "off"`, `heaterActive`, and
+`heaterInhibited` describe firmware command/policy state only. The device has no
+pump-current, SSR-output, original-switch, pressure, flow, or verified cooling
+feedback. These fields do not prove physical pump/heater operation,
+de-energization, or temperature reduction, and an SSR may fail shorted.
 
 ## Evidence boundary
 
 OpenAPI/Zod tests, simulator scenarios, mobile integration tests, C++ host tests,
 and firmware captures establish software/contract behavior at their respective
-levels. The ESP-IDF target build and disconnected low-voltage GPIO10 matrix remain
-PUMP-009 human acceptance work; no software result authorizes energized testing.
+levels. The PRD-004 target build, disconnected low-voltage command matrix, and
+final physical-device UI review remain THERM-010 Human work. Energized and
+instrumented thermal measurement remains separately authorization-gated under
+THERM-011; no software result authorizes it.

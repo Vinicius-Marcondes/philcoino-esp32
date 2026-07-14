@@ -13,6 +13,12 @@ Philcoino é um controller experimental para máquina de espresso que trabalha p
   Steam, depois da validação da leitura raw. O valor corrigido orienta control,
   limits, API e OLED, mas ainda depende do mesmo sensor único e aguarda
   validação física instrumentada e repetível na STEAM-004.
+- O software da PRD-004 adiciona bias fixo de `+2°C` somente ao cálculo de duty
+  durante Manual/main e um workflow de comando de cooldown do firmware com
+  cutoff da pump em 45 segundos e estabilização de cinco segundos. A revisão
+  visual/accessibility da THERM-002 e toda aceitação target/física das
+  THERM-010/THERM-011 continuam pendentes no Human Review Ledger; nenhuma
+  evidência de cooling físico ou operação energizada foi produzida.
 - O source atual do firmware habilita o OLED (`kOledEnabled = true`), enquanto o tracker registra um estado temporário com OLED desabilitado. Trate isso como uma divergência não resolvida entre documentação e configuração, não como um estado de hardware aprovado.
 - Discovery físico no iPhone, comportamento final dos sensores, instalação do relay/SSR, cutoff independente e validação energizada supervisionada continuam sendo checks humanos.
 - Em 2026-07-14, o owner aceitou a matriz funcional da pump no target após relatar discovery HTTP/mDNS, Manual/profiles, Stop/cutoff, continuidade sem app e boot sem retomada. Isso é evidência funcional reportada pelo owner; não inclui captures elétricos independentes, injeção de falha GPIO, timer-wrap no target nem aprovação energizada.
@@ -30,22 +36,34 @@ O firmware controla o temperature-control loop e não depende da conectividade d
 - exige três segundos contínuos na ready band;
 - aplica um heating timeout e um timeout de cinco minutos após steam-ready;
 - calcula o duty do heater em janelas de dez segundos;
+- aplica o bias fixo de extração somente ao duty em Manual/main, sem alterar
+  targets, readiness, deadlines, limits ou profiles;
 - faz latch de faults e comanda a saída do SSR para off;
 - persiste apenas targets e conjuntos completos de profiles validados;
 - executa Manual e profiles em um controller monotônico dedicado, inicializa GPIO10 como `off` e não restaura `running` no boot;
+- executa cooldown mutuamente exclusivo em uma task de workflow de 10 ms,
+  ordena inhibit/off do heater antes do Start da pump e nunca restaura cooldown
+  no boot;
+- usa uma safety lease GPTimer de 1500 ms para o comando do heater e um único
+  mutex de workflow bounded, mantendo NVS, display e transmissão HTTP fora
+  desse boundary;
 - inicializa hardware crítico em ordem fail-off.
 
 Esses itens são intenções de design e comportamentos de software cobertos por testes, não prova de desenergização física ou segurança térmica.
 
 A concordância entre control, API e OLED demonstra somente consistência de
 software. Ela não comprova que `+5°C` representa a diferença física da boiler,
-nem substitui medição independente, cutoff térmico ou revisão energizada.
+que `+2°C` melhora a extração ou que um comando de cooldown produz fluxo ou
+resfriamento. Também não substitui medição independente, cutoff térmico ou
+revisão energizada.
 
 ## Limitações conhecidas de alto risco
 
 A revisão atual identifica, entre outros pontos:
 
-- o desligamento de pulsos do heater e o acesso ao controle compartilhado podem atrasar por stalls no loop ou trabalho mutex/I/O sem limite;
+- a lease GPTimer e o mutex bounded reduzem exposição do timing do comando de
+  software, mas o build/runtime matrix no target fixado, recovery por watchdog,
+  resposta física GPIO/SSR e cutoff independente continuam sem verificação;
 - o mode diagnóstico com um sensor remove monitoramento independente entre dois sensores, e a detecção de disagreement não está implementada;
 - alguns writes remotos válidos ou no-op podem reiniciar deadlines de aquecimento, permitindo que um cliente prolongue a proteção de timeout;
 - uma falha ao escrever off no GPIO ainda pode ser apresentada como heater desligado, mesmo quando o estado físico é desconhecido;
@@ -112,7 +130,8 @@ No mínimo:
 
 1. fechar todos os findings BLOCKER e MAJOR relevantes com testes adversariais;
 2. validar montagem, atraso, erro e comportamento de falha do sensor único contra um instrumento independente, mantendo um cutoff térmico de hardware independente;
-3. tornar o timing de heater-off independente de trabalho bloqueante em rede/storage/display/control loop;
+3. verificar safety lease e timing bounded no target fixado, adicionar evidência
+   de watchdog/stalls e manter o cutoff físico independente;
 4. representar e escalar estado físico desconhecido da saída;
 5. impedir que tráfego do cliente prolongue safety deadlines;
 6. resolver identidade do dispositivo, força do token, throttling, transporte e segurança de recovery;
