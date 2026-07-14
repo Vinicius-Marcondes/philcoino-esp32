@@ -106,9 +106,10 @@ struct ApiHarness {
         profile_storage(profile_backend),
         pump(pump_output),
         extraction(profile_backend.saved, pump),
+        cooldown(controller, pump),
         api({"philcoino-0102AF", "PhilcoINO", "ESP32-C3 Super Mini", "0.2.0"},
-            "test-secret", controller, storage, extraction, profile_storage,
-            synchronization) {
+            "test-secret", controller, storage, extraction, cooldown,
+            profile_storage, synchronization) {
     assert(ssr.initialize());
     assert(pump.initialize());
     controller.update(ok(87.5F), 1000);
@@ -132,6 +133,7 @@ struct ApiHarness {
   FakeDigitalOutput pump_output{};
   FailOffPump pump;
   ExtractionController extraction;
+  CooldownController cooldown;
   FakeApiSynchronization synchronization;
   FirmwareApi api;
 };
@@ -482,6 +484,47 @@ void test_api_v2_rejects_malformed_nested_shapes_and_lock_failure() {
                500, "internal_error");
 }
 
+void test_workflow_mode_coordination_is_authoritative() {
+  const char* authorization = "Bearer test-secret";
+
+  ApiHarness extracting;
+  auto response = extracting.request(
+      HttpMethod::kPost, "/api/v2/extractions/start", authorization,
+      "{\"idempotencyKey\":\"start-01J2MODELOCK01\",\"selection\":{\"kind\":\"manual\"}}",
+      2000);
+  assert(response.status == 200);
+  response = extracting.request(HttpMethod::kPut, "/api/v1/mode",
+                                authorization, "{\"mode\":\"steam\"}", 2000);
+  expect_error(response, 409, "sensor_unavailable");
+  assert(extracting.controller.mode() == ControlMode::kBrew);
+
+  ApiHarness steam;
+  assert(steam.request(HttpMethod::kPut, "/api/v1/mode", authorization,
+                       "{\"mode\":\"steam\"}", 2000)
+             .status == 200);
+  response = steam.request(
+      HttpMethod::kPost, "/api/v2/extractions/start", authorization,
+      "{\"idempotencyKey\":\"start-01J2STEAMLOCK1\",\"selection\":{\"kind\":\"manual\"}}",
+      2000);
+  expect_error(response, 409, "brew_mode_required");
+  assert(!steam.extraction.active());
+
+  ApiHarness cooling;
+  cooling.controller.update(ok(96.0F), 2000);
+  const CooldownInput input{true, false, false, 96.0F};
+  assert(cooling.cooldown.start("cooldown-01J2MODELOCK", input, 2000) ==
+         StartCooldownResult::kStarted);
+  response = cooling.request(
+      HttpMethod::kPost, "/api/v2/extractions/start", authorization,
+      "{\"idempotencyKey\":\"start-01J2COOLLOCK01\",\"selection\":{\"kind\":\"manual\"}}",
+      2000);
+  expect_error(response, 409, "cooldown_active");
+  response = cooling.request(HttpMethod::kPut, "/api/v1/mode", authorization,
+                             "{\"mode\":\"steam\"}", 2000);
+  expect_error(response, 409, "sensor_unavailable");
+  assert(cooling.controller.mode() == ControlMode::kBrew);
+}
+
 void capture_contract_payloads(const std::filesystem::path& directory) {
   ApiHarness harness;
   const char* authorization = "Bearer test-secret";
@@ -557,6 +600,7 @@ int main(int argc, char** argv) {
   test_malformed_and_domain_failures_do_not_bypass_validation();
   test_api_v2_profiles_and_extraction_contract();
   test_api_v2_rejects_malformed_nested_shapes_and_lock_failure();
+  test_workflow_mode_coordination_is_authoritative();
   if (argc == 2) {
     capture_contract_payloads(argv[1]);
   }

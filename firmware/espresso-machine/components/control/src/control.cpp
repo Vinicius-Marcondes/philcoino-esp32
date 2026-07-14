@@ -185,6 +185,14 @@ bool TemperatureController::set_heater_enabled(bool enabled,
 bool TemperatureController::update_targets(
     const peripherals::TemperatureTargets& targets,
     peripherals::TargetStorage& storage, std::uint32_t now_ms) {
+  if (!prepare_target_update(targets) || !storage.save(targets)) {
+    return false;
+  }
+  return adopt_persisted_targets(targets, now_ms);
+}
+
+bool TemperatureController::prepare_target_update(
+    const peripherals::TemperatureTargets& targets) {
   if (!peripherals::targets_are_valid(targets)) {
     return false;
   }
@@ -192,7 +200,13 @@ bool TemperatureController::update_targets(
     latch_fault(FaultCode::kInternalError);
     return false;
   }
-  if (!storage.save(targets)) {
+  return true;
+}
+
+bool TemperatureController::adopt_persisted_targets(
+    const peripherals::TemperatureTargets& targets, std::uint32_t now_ms) {
+  if (!peripherals::targets_are_valid(targets)) {
+    latch_fault(FaultCode::kInternalError);
     return false;
   }
   targets_ = targets;

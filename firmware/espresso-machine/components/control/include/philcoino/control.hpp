@@ -73,6 +73,11 @@ class TemperatureController {
   bool update_targets(const peripherals::TemperatureTargets& targets,
                       peripherals::TargetStorage& storage,
                       std::uint32_t now_ms);
+  bool prepare_target_update(
+      const peripherals::TemperatureTargets& targets);
+  bool adopt_persisted_targets(
+      const peripherals::TemperatureTargets& targets,
+      std::uint32_t now_ms);
   bool update_brew_target(std::int32_t brew_c,
                           peripherals::TargetStorage& storage,
                           std::uint32_t now_ms);

@@ -729,6 +729,7 @@ FirmwareApi::FirmwareApi(DeviceIdentity identity, std::string bearer_token,
                          control::TemperatureController& controller,
                          peripherals::TargetStorage& target_storage,
                          control::ExtractionController& extraction_controller,
+                         control::CooldownController& cooldown_controller,
                          peripherals::ProfileStorage& profile_storage,
                          ApiSynchronization& synchronization)
     : identity_(std::move(identity)),
@@ -736,6 +737,7 @@ FirmwareApi::FirmwareApi(DeviceIdentity identity, std::string bearer_token,
       controller_(controller),
       target_storage_(target_storage),
       extraction_controller_(extraction_controller),
+      cooldown_controller_(cooldown_controller),
       profile_storage_(profile_storage),
       synchronization_(synchronization) {}
 
@@ -787,6 +789,9 @@ HttpResponse FirmwareApi::handle(HttpMethod method, const std::string& path,
   if (path == "/api/v2/extractions/stop") {
     return stop_extraction(uptime_ms);
   }
+  if (method == HttpMethod::kPatch) {
+    return update_temperatures(body, uptime_ms);
+  }
   ScopedApiLock lock(synchronization_, ApiDomain::kTemperature);
   if (!lock.locked()) {
     return error_response(500, "internal_error",
@@ -794,9 +799,6 @@ HttpResponse FirmwareApi::handle(HttpMethod method, const std::string& path,
   }
   if (method == HttpMethod::kGet) {
     return state(uptime_ms);
-  }
-  if (method == HttpMethod::kPatch) {
-    return update_temperatures(body, uptime_ms);
   }
   if (method == HttpMethod::kPut && path == "/api/v1/mode") {
     return update_mode(body, uptime_ms);
@@ -832,10 +834,18 @@ HttpResponse FirmwareApi::state(std::uint64_t uptime_ms) const {
 
 HttpResponse FirmwareApi::update_temperatures(const std::string& body,
                                               std::uint64_t uptime_ms) {
+  peripherals::TemperatureTargets current{};
+  {
+    ScopedApiLock lock(synchronization_, ApiDomain::kTemperature);
+    if (!lock.locked()) {
+      return error_response(500, "internal_error",
+                            "Temperature control synchronization failed.");
+    }
+    current = controller_.targets();
+  }
   peripherals::TemperatureTargets updated{};
   bool constraint_violation = false;
-  if (!parse_temperatures(body, controller_.targets(), updated,
-                          constraint_violation)) {
+  if (!parse_temperatures(body, current, updated, constraint_violation)) {
     return error_response(400, "malformed_request", kMalformedMessage);
   }
   if (constraint_violation) {
@@ -843,14 +853,28 @@ HttpResponse FirmwareApi::update_temperatures(const std::string& body,
         400, "temperature_out_of_range",
         "Temperature targets must be whole values within their allowed ranges.");
   }
-  if (!controller_.update_targets(updated, target_storage_,
-                                  static_cast<std::uint32_t>(uptime_ms))) {
+  {
+    ScopedApiLock lock(synchronization_, ApiDomain::kTemperature);
+    if (!lock.locked() || !controller_.prepare_target_update(updated)) {
+      return error_response(500, "internal_error",
+                            "Temperature control synchronization failed.");
+    }
+  }
+  if (!target_storage_.save(updated)) {
     return error_response(500, "persistence_failure",
                           "Temperature targets could not be persisted.");
   }
+  {
+    ScopedApiLock lock(synchronization_, ApiDomain::kTemperature);
+    if (!lock.locked() || !controller_.adopt_persisted_targets(
+                              updated, static_cast<std::uint32_t>(uptime_ms))) {
+      return error_response(500, "internal_error",
+                            "Persisted targets could not be acknowledged.");
+    }
+  }
   std::ostringstream output;
-  output << "{\"brewTargetC\":" << controller_.targets().brew_c
-         << ",\"steamTargetC\":" << controller_.targets().steam_c << '}';
+  output << "{\"brewTargetC\":" << updated.brew_c
+         << ",\"steamTargetC\":" << updated.steam_c << '}';
   return json_response(200, output.str());
 }
 
@@ -864,6 +888,12 @@ HttpResponse FirmwareApi::update_mode(const std::string& body,
     return error_response(
         409, "sensor_unavailable",
         "Mode cannot be changed while a machine fault is latched.");
+  }
+  if (mode == control::ControlMode::kSteam &&
+      (extraction_controller_.active() || cooldown_controller_.active())) {
+    return error_response(
+        409, "sensor_unavailable",
+        "Steam mode is unavailable while extraction or cooldown is active.");
   }
   if (!controller_.set_mode(mode, static_cast<std::uint32_t>(uptime_ms))) {
     return error_response(500, "internal_error",
@@ -904,6 +934,7 @@ HttpResponse FirmwareApi::dismiss_over_temperature(std::uint64_t uptime_ms) {
 
 HttpResponse FirmwareApi::state_v2(std::uint64_t uptime_ms) const {
   control::ControlSnapshot machine{};
+  control::ExtractionSnapshot extraction{};
   {
     ScopedApiLock lock(synchronization_, ApiDomain::kTemperature);
     if (!lock.locked()) {
@@ -911,14 +942,6 @@ HttpResponse FirmwareApi::state_v2(std::uint64_t uptime_ms) const {
                             "Temperature control synchronization failed.");
     }
     machine = controller_.snapshot(static_cast<std::uint32_t>(uptime_ms));
-  }
-  control::ExtractionSnapshot extraction{};
-  {
-    ScopedApiLock lock(synchronization_, ApiDomain::kExtraction);
-    if (!lock.locked()) {
-      return error_response(500, "internal_error",
-                            "Extraction control synchronization failed.");
-    }
     extraction_controller_.update(static_cast<std::uint32_t>(uptime_ms));
     extraction = extraction_controller_.snapshot(
         static_cast<std::uint32_t>(uptime_ms));
@@ -992,6 +1015,16 @@ HttpResponse FirmwareApi::start_extraction(const std::string& body,
                           "Extraction control synchronization failed.");
   }
   extraction_controller_.update(static_cast<std::uint32_t>(uptime_ms));
+  if (controller_.mode() != control::ControlMode::kBrew) {
+    return error_response(
+        409, "brew_mode_required",
+        "Extraction can start only while Brew mode is acknowledged.");
+  }
+  if (cooldown_controller_.active()) {
+    return error_response(
+        409, "cooldown_active",
+        "Extraction cannot start while cooldown is active.");
+  }
   const auto result = extraction_controller_.start(
       key, selection, static_cast<std::uint32_t>(uptime_ms));
   const auto snapshot = extraction_controller_.snapshot(

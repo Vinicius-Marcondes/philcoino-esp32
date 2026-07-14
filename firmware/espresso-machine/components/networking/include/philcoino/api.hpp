@@ -55,6 +55,7 @@ class FirmwareApi {
               control::TemperatureController& controller,
               peripherals::TargetStorage& target_storage,
               control::ExtractionController& extraction_controller,
+              control::CooldownController& cooldown_controller,
               peripherals::ProfileStorage& profile_storage,
               ApiSynchronization& synchronization);
 
@@ -86,6 +87,7 @@ class FirmwareApi {
   control::TemperatureController& controller_;
   peripherals::TargetStorage& target_storage_;
   control::ExtractionController& extraction_controller_;
+  control::CooldownController& cooldown_controller_;
   peripherals::ProfileStorage& profile_storage_;
   ApiSynchronization& synchronization_;
 };
