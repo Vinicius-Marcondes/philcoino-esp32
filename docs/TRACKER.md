@@ -1,13 +1,13 @@
 # PRD-004 Tracker
 
 PRD Status: Active
-Current Task: THERM-008 (Agent review)
+Current Task: THERM-009 (Agent review)
 
 Implementation Boundary: THERM-001 is complete. THERM-002 software and web
 evidence are complete, but Human acceptance remains deferred in
 `prds/PRD-004/HUMAN_REVIEW.md`. On 2026-07-14, Vinicius explicitly authorized
 the supervised software workflow to continue without treating deferred review
-as approval. THERM-003 through THERM-007 are complete; THERM-008 is the current
+as approval. THERM-003 through THERM-008 are complete; THERM-009 is the current
 Agent task.
 THERM-010 remains a separate disconnected low-voltage/visual gate, and THERM-011
 requires separate authorization before any physical or energized work.
@@ -52,7 +52,7 @@ PRD: `docs/prds/PRD-004/PRD-004.md`
 | [THERM-005](prds/PRD-004/tasks/THERM-005.md) | Agent | Done | Strict C++17 `-Wall -Wextra -Werror` build and 4/4 host tests passed with phase, clamp, readiness/deadline, permission/fault, output-failure, independence, and wraparound coverage | Controller-owned phase input derives only a clamped private duty target; base targets/readiness/recovery/deadlines/limits remain unchanged; exact phase changes reset only the duty window | This commit | None | Runtime coordination remains ordered for THERM-007/THERM-008; Human gates remain deferred |
 | [THERM-006](prds/PRD-004/tasks/THERM-006.md) | Agent | Done | Strict C++17 host build and 4/4 tests passed with ordering, eligibility, replay/conflict, target snapshot, exact cutoff/stabilization, Stop, delayed update, wraparound, reset, and sensor/output failures | Volatile controller owns absolute cooldown timing; Brew/heater inhibit precedes pump Start; user permission is independent; failure attempts both commands off and latches temperature fault without physical claims | This commit | None | Runtime/API integration remains ordered for later tasks; Human gates remain deferred |
 | [THERM-007](prds/PRD-004/tasks/THERM-007.md) | Agent | Done | Strict C++17 build and 4/4 host tests passed; static review found one bounded workflow mutex, atomic fail-safe handoff, and no NVS/render/HTTP work inside it; ESP-IDF target build unavailable (`idf.py`/`IDF_PATH` absent) | Temperature/extraction/cooldown share one non-nested boundary; 10 ms task advances workflows/compensation; missed locks issue both off commands then latch fault; target NVS is prepared/adopted around an unlocked save; Brew/Steam mutual exclusion is firmware-authoritative | This commit | None | THERM-008 owns exact cooldown route/serialization/OLED completion; Human gates remain deferred |
-| [THERM-008](prds/PRD-004/tasks/THERM-008.md) | Agent | Todo | Pending | Pending | Pending | None | None |
+| [THERM-008](prds/PRD-004/tasks/THERM-008.md) | Agent | Done | Strict C++17 build and 4/4 host tests; 26 strict firmware captures; OpenAPI; protocol 111/224; protocol typecheck passed | Independent C++ cooldown Start/Stop and exact conflicts; atomic v2 machine/extraction/compensation/cooldown snapshot; active cooldown owns shared pump observation; OLED uses command-only compensation/cooldown wording; v1 unchanged | This commit | None | ESP-IDF target build unavailable; physical OLED/GPIO acceptance remains Human-only |
 | [THERM-009](prds/PRD-004/tasks/THERM-009.md) | Agent | Todo | Pending | Pending | Pending | None | None |
 | [THERM-010](prds/PRD-004/tasks/THERM-010.md) | Human | Todo | Pending | Pending | Pending | None | None |
 | [THERM-011](prds/PRD-004/tasks/THERM-011.md) | Human | Todo | Pending | Pending | Pending | None | None |

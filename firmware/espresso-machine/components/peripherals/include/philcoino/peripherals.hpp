@@ -171,6 +171,7 @@ class FailOffPump {
 enum class DisplayMode { kUnknown, kBrew, kSteam };
 enum class DisplayStatus { kBoot, kHeating, kCooling, kReady, kFault };
 enum class DisplayWifiStatus { kOff, kConnecting, kConnected, kRetrying, kFailed };
+enum class DisplayCooldownStatus { kIdle, kPumping, kStabilizing };
 
 struct DisplayTemperature {
   bool valid{false};
@@ -185,6 +186,8 @@ struct DisplaySnapshot {
   bool heater_enabled{false};
   DisplayWifiStatus wifi_status{DisplayWifiStatus::kOff};
   bool extraction_active{false};
+  bool compensation_active{false};
+  DisplayCooldownStatus cooldown_status{DisplayCooldownStatus::kIdle};
   PumpCommand pump_command{PumpCommand::kOff};
   const char* extraction_phase{"IDLE"};
 };
@@ -192,6 +195,8 @@ struct DisplaySnapshot {
 void format_display_temperature_line(char* output, std::size_t length,
                                      const DisplayTemperature& temperature,
                                      std::int32_t target);
+void format_display_workflow_line(char* output, std::size_t length,
+                                  const DisplaySnapshot& snapshot);
 
 class OledTransport {
  public:

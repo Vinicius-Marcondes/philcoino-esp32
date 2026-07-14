@@ -1160,6 +1160,27 @@ void test_cooldown_cutoff_stop_delayed_update_and_wraparound() {
   assert(delayed.cooldown.snapshot(50000).outcome == CooldownOutcome::kCutoff);
   assert(delayed.cooldown.snapshot(50000).elapsed_ms == 50000U);
 
+  CooldownHarness delayed_stabilization;
+  assert(delayed_stabilization.cooldown.start(
+             "cooldown-late-stab-1", cooldown_input(110.0F), 0) ==
+         StartCooldownResult::kStarted);
+  assert(delayed_stabilization.cooldown.stop(1000) ==
+         CooldownUpdateResult::kOk);
+  assert(delayed_stabilization.cooldown.update(cooldown_input(110.0F),
+                                                100000) ==
+         CooldownUpdateResult::kCompleted);
+  assert(delayed_stabilization.cooldown.snapshot(100000).elapsed_ms ==
+         50000U);
+
+  CooldownHarness delayed_failure;
+  assert(delayed_failure.cooldown.start("cooldown-late-fail-1",
+                                        cooldown_input(110.0F), 0) ==
+         StartCooldownResult::kStarted);
+  assert(delayed_failure.cooldown.update({false, false, false, 0.0F},
+                                         100000) ==
+         CooldownUpdateResult::kFailed);
+  assert(delayed_failure.cooldown.snapshot(100000).elapsed_ms == 50000U);
+
   CooldownHarness wrapped;
   constexpr std::uint32_t started = UINT32_MAX - 999U;
   assert(wrapped.cooldown.start("cooldown-wrapped-key1", cooldown_input(1000.0F),

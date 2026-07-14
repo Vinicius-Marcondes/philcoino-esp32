@@ -1,5 +1,6 @@
 #include "philcoino/control.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <utility>
 
@@ -86,6 +87,15 @@ bool TemperatureController::heater_enabled_permission() const {
 }
 
 bool TemperatureController::heater_enabled() const { return heater_.is_enabled(); }
+
+bool TemperatureController::brew_effective_temperature(
+    float& temperature_c) const {
+  if (!reading_ok(raw_boiler_temperature_)) {
+    return false;
+  }
+  temperature_c = raw_boiler_temperature_.temperature_c;
+  return true;
+}
 
 bool TemperatureController::extraction_compensation_active() const {
   const bool eligible_phase = extraction_phase_ == ExtractionPhase::kManual ||
@@ -733,7 +743,9 @@ CooldownSnapshot CooldownController::snapshot(std::uint32_t now_ms) const {
   value.status = status_;
   value.cooldown_id = cooldown_id_;
   value.brew_target_c = brew_target_c_;
-  value.pump_command = pump_.command();
+  value.pump_command = status_ == CooldownStatus::kIdle
+                           ? peripherals::PumpCommand::kOff
+                           : pump_.command();
   value.heater_inhibited = temperature_.cooldown_inhibited();
   value.outcome = outcome_;
   if (cooldown_id_.empty()) {
@@ -926,14 +938,19 @@ CooldownUpdateResult CooldownController::fail(FaultCode fault,
   outcome_ = CooldownOutcome::kFailed;
   terminal_elapsed_ms_ =
       cooldown_id_.empty() ? 0U
-                           : static_cast<std::uint32_t>(now_ms - started_at_ms_);
+                           : std::min(
+                                 static_cast<std::uint32_t>(now_ms - started_at_ms_),
+                                 config::kCooldownPumpLimitMs +
+                                     config::kCooldownStabilizationMs);
   return CooldownUpdateResult::kFailed;
 }
 
 CooldownUpdateResult CooldownController::complete(std::uint32_t now_ms) {
   const bool pump_off = pump_.force_off();
   const bool heater_off = temperature_.end_cooldown_inhibit(now_ms);
-  terminal_elapsed_ms_ = static_cast<std::uint32_t>(now_ms - started_at_ms_);
+  terminal_elapsed_ms_ = std::min(
+      static_cast<std::uint32_t>(now_ms - started_at_ms_),
+      config::kCooldownPumpLimitMs + config::kCooldownStabilizationMs);
   status_ = CooldownStatus::kIdle;
   if (!pump_off || !heater_off) {
     temperature_.latch_fault(FaultCode::kInternalError);

@@ -58,6 +58,8 @@ bool active_temperature_above_target(
 philcoino::peripherals::DisplaySnapshot display_snapshot(
     const philcoino::control::ControlSnapshot& control,
     const philcoino::control::ExtractionSnapshot& extraction = {},
+    const philcoino::control::CooldownSnapshot& cooldown = {},
+    bool compensation_active = false,
     philcoino::peripherals::DisplayWifiStatus wifi_status =
         philcoino::peripherals::DisplayWifiStatus::kOff) {
   using philcoino::control::ControlMode;
@@ -84,10 +86,28 @@ philcoino::peripherals::DisplaySnapshot display_snapshot(
   display.wifi_status = wifi_status;
   display.extraction_active =
       extraction.status == philcoino::control::ExtractionStatus::kRunning;
-  display.pump_command = extraction.pump_command;
+  display.compensation_active = compensation_active;
+  display.pump_command = cooldown.status ==
+                                 philcoino::control::CooldownStatus::kIdle
+                             ? extraction.pump_command
+                             : cooldown.pump_command;
+  switch (cooldown.status) {
+    case philcoino::control::CooldownStatus::kIdle:
+      display.cooldown_status =
+          philcoino::peripherals::DisplayCooldownStatus::kIdle;
+      break;
+    case philcoino::control::CooldownStatus::kPumping:
+      display.cooldown_status =
+          philcoino::peripherals::DisplayCooldownStatus::kPumping;
+      break;
+    case philcoino::control::CooldownStatus::kStabilizing:
+      display.cooldown_status =
+          philcoino::peripherals::DisplayCooldownStatus::kStabilizing;
+      break;
+  }
   switch (extraction.phase) {
     case philcoino::control::ExtractionPhase::kManual:
-      display.extraction_phase = "MANUAL";
+      display.extraction_phase = "MAN";
       break;
     case philcoino::control::ExtractionPhase::kPreInfusion:
       display.extraction_phase = "PRE";
@@ -435,10 +455,14 @@ extern "C" void app_main() {
     }
     snapshot = controller.update(reading, uptime_ms());
     const auto extraction_snapshot = extraction_controller.snapshot(uptime_ms());
+    const auto cooldown_snapshot = cooldown_controller.snapshot(uptime_ms());
+    const bool compensation_active =
+        controller.extraction_compensation_active();
     synchronization.unlock(philcoino::networking::ApiDomain::kTemperature);
     if (philcoino::config::kOledEnabled) {
       if (!display.render(display_snapshot(
-              snapshot, extraction_snapshot,
+              snapshot, extraction_snapshot, cooldown_snapshot,
+              compensation_active,
               display_wifi_status(network.wifi_status())))) {
         ESP_LOGE(kLogTag, "SSD1306 state render failed");
         if (synchronization.lock(

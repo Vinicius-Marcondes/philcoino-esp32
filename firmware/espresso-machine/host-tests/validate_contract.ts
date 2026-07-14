@@ -4,6 +4,8 @@ import { join } from "node:path";
 import {
   DeviceResponseSchema,
   ErrorResponseSchema,
+  ApiV2ErrorResponseSchema,
+  CooldownActiveConflictResponseSchema,
   HeaterSettingsResponseSchema,
   HealthResponseSchema,
   MachineStateSchema,
@@ -13,6 +15,8 @@ import {
   ExtractionActiveConflictResponseSchema,
   StartExtractionResponseSchema,
   StopExtractionResponseSchema,
+  StartCooldownResponseSchema,
+  StopCooldownResponseSchema,
   TemperatureSettingsResponseSchema,
 } from "../../../packages/protocol/src/schemas.ts";
 
@@ -36,6 +40,18 @@ const captures = [
   ["extraction-running-v2.json", StartExtractionResponseSchema],
   ["extraction-conflict-v2.json", ExtractionActiveConflictResponseSchema],
   ["extraction-idle-v2.json", StopExtractionResponseSchema],
+  ["state-compensation-v2.json", MachineStateV2Schema],
+  ["cooldown-start-v2.json", StartCooldownResponseSchema],
+  ["cooldown-replay-v2.json", StartCooldownResponseSchema],
+  ["cooldown-conflict-v2.json", CooldownActiveConflictResponseSchema],
+  ["cooldown-stop-v2.json", StopCooldownResponseSchema],
+  ["state-cooldown-v2.json", MachineStateV2Schema],
+  ["cooldown-terminal-v2.json", StartCooldownResponseSchema],
+  ["cooldown-not-required-v2.json", ApiV2ErrorResponseSchema],
+  ["cooldown-sensor-unavailable-v2.json", ApiV2ErrorResponseSchema],
+  ["cooldown-machine-faulted-v2.json", ApiV2ErrorResponseSchema],
+  ["brew-mode-required-v2.json", ApiV2ErrorResponseSchema],
+  ["state-cooldown-failed-v2.json", MachineStateV2Schema],
 ] as const;
 
 for (const [filename, schema] of captures) {

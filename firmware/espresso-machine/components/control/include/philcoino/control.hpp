@@ -61,6 +61,7 @@ class TemperatureController {
   FaultCode fault_code() const;
   bool heater_enabled_permission() const;
   bool heater_enabled() const;
+  bool brew_effective_temperature(float& temperature_c) const;
   bool extraction_compensation_active() const;
   bool cooldown_inhibited() const;
 

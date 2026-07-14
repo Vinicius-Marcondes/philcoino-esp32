@@ -81,6 +81,9 @@ class FirmwareApi {
   HttpResponse start_extraction(const std::string& body,
                                 std::uint64_t uptime_ms);
   HttpResponse stop_extraction(std::uint64_t uptime_ms);
+  HttpResponse start_cooldown(const std::string& body,
+                              std::uint64_t uptime_ms);
+  HttpResponse stop_cooldown(std::uint64_t uptime_ms);
 
   DeviceIdentity identity_;
   std::string bearer_token_;
