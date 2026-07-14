@@ -79,7 +79,8 @@ Local HTTP is deliberately enabled for this device protocol. Do not generalize t
 
 ## Device simulator
 
-Production-compatible routes match API v1. Development controls are separate:
+Production-compatible routes include the temperature-only API v1 and additive
+profile/extraction API v2. Development controls are separate:
 
 ```text
 POST /_simulator/advance
@@ -215,7 +216,7 @@ Run the host commands above for pure C++ changes. Run the pinned `idf.py build` 
 
 ### The app reports protocol error
 
-The host answered, but the success/error body failed strict API v1 validation. Compare it with `packages/protocol/openapi.yaml`; do not weaken the app schema as a workaround.
+The host answered, but the success/error body failed strict API v1/v2 validation. Compare it with `packages/protocol/openapi.yaml`; do not weaken the app schema as a workaround.
 
 ### A mutation is not shown
 

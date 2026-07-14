@@ -7,7 +7,12 @@ import {
   HeaterSettingsResponseSchema,
   HealthResponseSchema,
   MachineStateSchema,
+  MachineStateV2Schema,
   ModeResponseSchema,
+  ProfileSetSchema,
+  ExtractionActiveConflictResponseSchema,
+  StartExtractionResponseSchema,
+  StopExtractionResponseSchema,
   TemperatureSettingsResponseSchema,
 } from "../../../packages/protocol/src/schemas.ts";
 
@@ -25,6 +30,11 @@ const captures = [
   ["mode-response.json", ModeResponseSchema],
   ["heater-response.json", HeaterSettingsResponseSchema],
   ["error.json", ErrorResponseSchema],
+  ["state-v2.json", MachineStateV2Schema],
+  ["profiles-v2.json", ProfileSetSchema],
+  ["extraction-running-v2.json", StartExtractionResponseSchema],
+  ["extraction-conflict-v2.json", ExtractionActiveConflictResponseSchema],
+  ["extraction-idle-v2.json", StopExtractionResponseSchema],
 ] as const;
 
 for (const [filename, schema] of captures) {

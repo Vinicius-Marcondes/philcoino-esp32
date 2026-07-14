@@ -24,6 +24,32 @@ This review covers authored firmware control/peripheral/networking code, firmwar
 
 The code has several strong foundations: strict runtime schemas, bounded temperature targets, firmware-owned state, acknowledged mobile mutations, completion-driven polling, latched faults, wrap-safe elapsed-time arithmetic, and useful host/unit coverage. However, the most important safety guarantees are not yet robust against task stalls, sensor disagreement, repeated authenticated commands, or hostile LAN conditions.
 
+### PRD-002 implementation addendum — 2026-07-12
+
+PUMP-006 through PUMP-008 add a dedicated monotonic extraction controller,
+strict firmware API v2 parsing/serialization, separate bounded extraction
+synchronization, GPIO10 fail-off handling, OLED command labels, and cross-layer
+contract tests. This does not close or downgrade the findings below:
+
+- B1 remains open for heater GPIO20 timing; the dedicated pump task is not
+  evidence that the heater control architecture is fixed.
+- B3, M4, and M5 now also protect API v2 extraction commands, increasing the
+  consequence of a stolen, replayed, weak, or misdirected bearer token.
+- M3's physical-output uncertainty also applies conceptually to GPIO10:
+  `running`/`off` are command state only and cannot prove pump current or SSR
+  output state.
+- M8 remains open. Simulator extraction scenarios are UI/contract evidence, not
+  ESP-IDF scheduling, GPIO, SSR, or physical timing evidence.
+
+The owner completed and accepted the PUMP-009 target functional review on
+2026-07-14, reporting successful rebuilt HTTP/mDNS reachability, Manual and
+profile execution, Stop/cutoff, disconnect continuation, and reset/power-cycle
+non-resumption. No independently reviewed GPIO waveform, exact
+board/build/instrument record, injected GPIO failure, target timer-wrap capture,
+or separately authorized energized evidence was supplied. The review decision
+therefore remains REQUEST CHANGES and no electrical, energized, or
+production-safe claim is made.
+
 ## Findings
 
 ### BLOCKER

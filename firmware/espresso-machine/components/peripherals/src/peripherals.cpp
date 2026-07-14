@@ -31,6 +31,8 @@ std::array<std::uint8_t, 5> glyph(char value) {
     case 'M': return {0x7F, 0x02, 0x0C, 0x02, 0x7F};
     case 'N': return {0x7F, 0x04, 0x08, 0x10, 0x7F};
     case 'O': return {0x3E, 0x41, 0x41, 0x41, 0x3E};
+    case 'P': return {0x7F, 0x09, 0x09, 0x09, 0x06};
+    case 'K': return {0x7F, 0x08, 0x14, 0x22, 0x41};
     case 'R': return {0x7F, 0x09, 0x19, 0x29, 0x46};
     case 'S': return {0x46, 0x49, 0x49, 0x49, 0x31};
     case 'T': return {0x01, 0x01, 0x7F, 0x01, 0x01};
@@ -434,9 +436,16 @@ bool Ssd1306Display::render(const DisplaySnapshot& snapshot) {
   std::snprintf(line.data(), line.size(), "MODE %s %s", mode_name(snapshot.mode),
                 status_name(snapshot.status));
   draw_text(buffer, 2, line.data());
-  std::snprintf(line.data(), line.size(), "HEATER %s WIFI %s",
-                snapshot.heater_enabled ? "ON" : "OFF",
-                wifi_status_name(snapshot.wifi_status));
+  if (snapshot.extraction_active) {
+    std::snprintf(line.data(), line.size(), "PUMP %s %s",
+                  snapshot.pump_command == PumpCommand::kRunning ? "RUN"
+                                                                  : "OFF",
+                  snapshot.extraction_phase);
+  } else {
+    std::snprintf(line.data(), line.size(), "HEATER %s WIFI %s",
+                  snapshot.heater_enabled ? "ON" : "OFF",
+                  wifi_status_name(snapshot.wifi_status));
+  }
   draw_text(buffer, 3, line.data());
 
   constexpr std::array<std::uint8_t, 6> address_window{0x21, 0x00, 0x7F,

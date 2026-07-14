@@ -1,10 +1,9 @@
 # PRD-002 Tracker
 
 PRD Status: Active
-Current Task: PUMP-006 (not started)
+Current Task: None in requested range; PUMP-009 human functional review accepted, with broader PRD evidence deferred
 
-Implementation Boundary: PUMP-001 through PUMP-005 are complete. PUMP-006
-through PUMP-009 have not started.
+Implementation Boundary: PUMP-001 through PUMP-009 are complete at their recorded review level. PRD-level target fault-injection, timer-wrap waveform, and separately authorized energized evidence remain deferred.
 
 ## Summary
 
@@ -37,10 +36,10 @@ PRD: `docs/prds/PRD-002/PRD-002.md`
 | [PUMP-003](prds/PRD-002/tasks/PUMP-003.md) | Agent | Done | 43 simulator tests/212 expectations, simulator/protocol/mobile typechecks, 69 protocol tests, 69 mobile tests, OpenAPI validation, and mobile lint passed | Manual time owns extraction phases/cutoff; persisted profile is snapshotted at Start; same-key replay preserves elapsed time; profile replacement is whole-set/idle-only with one-shot failure injection; faults remain independent | Pending | None | None |
 | [PUMP-004](prds/PRD-002/tasks/PUMP-004.md) | Agent | Done | 77 mobile tests, mobile lint/typecheck, 43 simulator tests/typecheck, 69 protocol tests/typecheck, OpenAPI validation, Expo SDK 54 config, and web export passed | Strict SecureStore profile set seeds once; one API v2 poll publishes machine/extraction together; all mutations serialize; local/machine sets update only after storage/device acknowledgement; unacknowledged Start retries reuse a key | Pending | None | None |
 | [PUMP-005](prds/PRD-002/tasks/PUMP-005.md) | Agent | Done | Strict C++17 build and 4/4 host tests passed; 8 firmware v1 captures, 77 mobile tests, 43 simulator tests, 69 protocol tests, all configured typechecks/lint/OpenAPI checks, Expo config, and web export passed; ESP-IDF target build unavailable | GPIO10 initializes low before configuration and all noncritical startup; pump command and heater lease remain independent; profiles use one validated versioned NVS blob; failed writes report command `off` without physical claims | Pending | None | Target build and disconnected low-voltage acceptance remain in later tasks |
-| [PUMP-006](prds/PRD-002/tasks/PUMP-006.md) | Agent | Todo | Pending | Pending | Pending | None | None |
-| [PUMP-007](prds/PRD-002/tasks/PUMP-007.md) | Agent | Todo | Pending | Pending | Pending | None | None |
-| [PUMP-008](prds/PRD-002/tasks/PUMP-008.md) | Agent | Todo | Pending | Pending | Pending | None | None |
-| [PUMP-009](prds/PRD-002/tasks/PUMP-009.md) | Human | Todo | Pending | Pending | Pending | None | None |
+| [PUMP-006](prds/PRD-002/tasks/PUMP-006.md) | Agent | Done | Strict C++17 build and 4/4 host tests passed, including exact phase boundaries, delayed completion, same-key replay, conflicts, persistence rollback, output failure, disconnect equivalence, heater-fault independence, and timer wraparound | Dedicated monotonic extraction policy owns immutable profile snapshots, idempotency, phase transitions, and pump fail-off; a high-priority task keeps deadlines independent from heater/network/display/persistence work | Pending | None | Target build and disconnected low-voltage acceptance remain in PUMP-007/PUMP-009 |
+| [PUMP-007](prds/PRD-002/tasks/PUMP-007.md) | Agent | Done | Strict C++17 build and 4/4 host tests, 13 firmware captures, OpenAPI validation, 69 protocol tests, and protocol typecheck passed; device log later exposed and guided correction of the default URI-handler limit; host/capture checks repassed | API v2 uses strict independent C++ parsing; bounded temperature/extraction locks are separate; profile NVS and HTTP transmission occur outside the extraction lock; HTTP handler capacity derives from the 12-route table; OLED labels only the GPIO10 command and phase | Pending | None | Rebuilt target must confirm HTTP/mDNS startup; full pinned target evidence remains PUMP-009 |
+| [PUMP-008](prds/PRD-002/tasks/PUMP-008.md) | Agent | Done | 77 mobile tests/lint/typecheck, 43 simulator tests/typecheck, 69 protocol tests/typecheck, OpenAPI validation, strict C++17 build, 4/4 firmware host tests, and 13 captures passed | Cross-layer scenarios cover acknowledged export/phases/replay/conflict/Stop/fault/reset/failures; public docs distinguish command state and preserve security/mains findings | Pending | None | ESP-IDF target build unavailable and explicitly deferred |
+| [PUMP-009](prds/PRD-002/tasks/PUMP-009.md) | Human | Done | Owner accepted the 2026-07-14 target functional checklist: rebuilt HTTP/mDNS reachability, Manual and seeded profiles, Stop/cutoff, disconnect continuation, reset/power-cycle no-resume, and command-only mobile wording; final regression passed 79 mobile, 69 protocol, 43 simulator, 4/4 firmware host tests, OpenAPI/lint/typechecks, and 13 captures; no agent-observed waveform or energized evidence | Human acceptance closes the functional task while raw GPIO captures, exact board/build/instrument identifiers, injected GPIO failure, target timer-wrap evidence, and any energized safety evidence remain explicitly deferred | Pending | None for task closure; broader PRD/hardware acceptance evidence remains incomplete | Preserve the deferred evidence and unresolved security/mains findings; do not infer physical pump state from `running`/`off` |
 
 ---
 

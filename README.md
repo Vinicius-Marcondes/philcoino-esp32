@@ -2,7 +2,7 @@
 
 [English](docs/en/README.md)
 
-Philcoino é um protótipo local-first para monitoramento e controle de temperatura de uma máquina de espresso. O repositório reúne um aplicativo mobile em Expo, um contrato OpenAPI, um simulador determinístico do dispositivo e firmware para ESP32-C3.
+Philcoino é um protótipo local-first para monitoramento, controle de temperatura e comando de extração de uma máquina de espresso. O repositório reúne um aplicativo mobile em Expo, um contrato OpenAPI, um simulador determinístico do dispositivo e firmware para ESP32-C3.
 
 O celular descobre e autentica uma máquina, exibe o estado em tempo real e envia alterações de target, mode e permissão do heater. O ESP32 continua sendo a autoridade sobre leituras dos sensores, targets persistidos, readiness, saída do heater, timeouts e faults.
 
@@ -15,11 +15,13 @@ O celular descobre e autentica uma máquina, exibe o estado em tempo real e envi
 - Inspeção pública da identidade do dispositivo seguida de autenticação por bearer token.
 - Armazenamento seguro de um dispositivo selecionado, token e último endereço válido.
 - Restauração pelo endereço salvo e redescoberta por stable ID após mudanças de endereço.
-- Validação estrita da API v1 em runtime e estados explícitos para offline, unauthorized, not found, timeout e protocol error.
+- Validação estrita das APIs v1/v2 em runtime e estados explícitos para offline, unauthorized, not found, timeout e protocol error.
 - Polling do dashboard a cada segundo, orientado à conclusão, enquanto a tela e o app estão ativos.
 - Targets de brew/steam, active mode, permissão do heater e dismissal de over-temperature confirmados pelo firmware.
 - Controle pelo ESP32-C3, persistência dos targets em NVS, amostragem MAX6675, saída SSD1306, rede HTTP/mDNS e policy boundaries testáveis no host.
 - Simulador determinístico Bun/Hono para desenvolvimento mobile e do contrato.
+- Profiles locais Manual + quatro slots, export completo e extração reconhecida
+  pelo firmware com pre-infusion, soak, main, Stop e cutoff Manual de 60 s.
 
 O produto ainda é um protótipo. A aceitação da PRD-001 e a validação física estão incompletas; consulte o [tracker](docs/TRACKER.md) e os [findings conhecidos](CODEBASE_REVIEW_REPORT.md).
 
@@ -29,7 +31,7 @@ O produto ainda é um protótipo. A aceitação da PRD-001 e a validação físi
 Expo mobile app
   discovery -> identity check -> bearer authentication -> SecureStore
       |                                                   |
-      +---------------- local HTTP API v1 ----------------+
+      +-------------- local HTTP API v1 + v2 ------------+
                               |
                     ESP32 firmware (authority)
              sensors -> control -> SSR command -> faults
@@ -100,6 +102,16 @@ Endpoints autenticados exigem `Authorization: Bearer <token>`:
 - `PUT /api/v1/heater`
 - `POST /api/v1/faults/over-temperature/dismiss`
 
+A API v2 adiciona, sem remover v1:
+
+- `GET /api/v2/state`
+- `GET` e `PUT /api/v2/profiles`
+- `POST /api/v2/extractions/start`
+- `POST /api/v2/extractions/stop`
+
+`running` e `off` indicam somente o comando GPIO10, não corrente, fluxo,
+posição do switch em série ou desenergização física confirmada.
+
 O simulador também disponibiliza controles `_simulator/*`, que ficam deliberadamente fora da API v1 e nunca devem ser implementados como endpoints do firmware de produção.
 
 ## Regras centrais de design
@@ -119,6 +131,7 @@ O simulador também disponibiliza controles `_simulator/*`, que ficam deliberada
 - [Segurança e status do projeto](docs/SAFETY.md)
 - [Como contribuir](CONTRIBUTING.md)
 - [Descrição da API v1](docs/protocol/api-v1-outline.md)
+- [Descrição da API v2](docs/protocol/api-v2-outline.md)
 - [Ligação do hardware](docs/hardware/esp32-c3-wiring.md)
 - [Ajuste do controle de temperatura](docs/hardware/temperature-control-tuning.md)
 - [Tracker da PRD-001](docs/TRACKER.md)

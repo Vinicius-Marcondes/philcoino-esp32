@@ -308,9 +308,42 @@ describe("DeviceApiClient", () => {
       phase: "pre-infusion",
       pumpCommand: "running",
     });
+    await simulator.app.request("/_simulator/advance", {
+      body: JSON.stringify({ milliseconds: 5_000 }),
+      headers: { "content-type": "application/json" },
+      method: "POST",
+    });
+    await expect(client.getStateV2()).resolves.toMatchObject({
+      extraction: {
+        extractionId: started.extractionId,
+        elapsedMs: 5_000,
+        phase: "soak",
+        pumpCommand: "off",
+      },
+    });
+    await simulator.app.request("/_simulator/fault", {
+      body: JSON.stringify({ code: "sensor_failure" }),
+      headers: { "content-type": "application/json" },
+      method: "PUT",
+    });
+    await simulator.app.request("/_simulator/advance", {
+      body: JSON.stringify({ milliseconds: 5_000 }),
+      headers: { "content-type": "application/json" },
+      method: "POST",
+    });
+    await expect(client.startExtraction({
+      idempotencyKey: "mobile-integration-01",
+      selection: { kind: "manual" },
+    })).resolves.toMatchObject({
+      extractionId: started.extractionId,
+      elapsedMs: 10_000,
+      phase: "main-extraction",
+      pumpCommand: "running",
+      selection: { kind: "profile", profileId: "profile-2" },
+    });
     await expect(client.getStateV2()).resolves.toMatchObject({
       extraction: { extractionId: started.extractionId, status: "running" },
-      machine: { status: "heating" },
+      machine: { status: "fault" },
     });
     await expect(client.stopExtraction()).resolves.toMatchObject({
       status: "idle",

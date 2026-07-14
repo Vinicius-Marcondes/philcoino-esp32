@@ -1,6 +1,7 @@
 #include "philcoino/control.hpp"
 
 #include <cmath>
+#include <utility>
 
 #include "philcoino/config.hpp"
 
@@ -436,6 +437,195 @@ SteamTimeoutSnapshot TemperatureController::steam_timeout_snapshot(
     return {true, 0};
   }
   return {true, config::kSteamReadyTimeoutMs - elapsed_ms};
+}
+
+ExtractionController::ExtractionController(
+    peripherals::ExtractionProfiles profiles, peripherals::FailOffPump& pump)
+    : profiles_(std::move(profiles)), pump_(pump) {
+  if (!peripherals::extraction_profiles_are_valid(profiles_)) {
+    profiles_ = peripherals::default_extraction_profiles();
+  }
+  pump_.force_off();
+}
+
+const peripherals::ExtractionProfiles& ExtractionController::profiles() const {
+  return profiles_;
+}
+
+bool ExtractionController::active() const { return active_; }
+
+ExtractionSnapshot ExtractionController::snapshot(std::uint32_t now_ms) const {
+  if (!active_) {
+    return {};
+  }
+
+  const auto total_ms = total_duration_ms();
+  const auto raw_elapsed_ms = static_cast<std::uint32_t>(now_ms - started_at_ms_);
+  const auto elapsed_ms = raw_elapsed_ms < total_ms ? raw_elapsed_ms : total_ms;
+  return {
+      ExtractionStatus::kRunning,
+      extraction_id_,
+      selection_,
+      phase_at(elapsed_ms),
+      elapsed_ms,
+      total_ms - elapsed_ms,
+      pump_.command(),
+  };
+}
+
+ReplaceProfilesResult ExtractionController::replace_profiles(
+    const peripherals::ExtractionProfiles& profiles,
+    peripherals::ProfileStorage& storage) {
+  if (active_) {
+    return ReplaceProfilesResult::kActive;
+  }
+  if (!peripherals::extraction_profiles_are_valid(profiles)) {
+    return ReplaceProfilesResult::kInvalidProfiles;
+  }
+  if (!storage.save(profiles)) {
+    return ReplaceProfilesResult::kPersistenceFailure;
+  }
+  profiles_ = profiles;
+  return ReplaceProfilesResult::kReplaced;
+}
+
+bool ExtractionController::adopt_persisted_profiles(
+    const peripherals::ExtractionProfiles& profiles) {
+  if (active_ || !peripherals::extraction_profiles_are_valid(profiles)) {
+    return false;
+  }
+  profiles_ = profiles;
+  return true;
+}
+
+StartExtractionResult ExtractionController::start(
+    const std::string& idempotency_key, ExtractionSelection selection,
+    std::uint32_t now_ms) {
+  if (!valid_idempotency_key(idempotency_key) ||
+      (selection.kind == ExtractionSelectionKind::kProfile &&
+       selection.profile_index >= profiles_.size())) {
+    return StartExtractionResult::kInvalidRequest;
+  }
+  if (active_) {
+    return idempotency_key == idempotency_key_
+               ? StartExtractionResult::kReplay
+               : StartExtractionResult::kConflict;
+  }
+
+  peripherals::ExtractionProfile selected_profile{};
+  if (selection.kind == ExtractionSelectionKind::kProfile) {
+    selected_profile = profiles_[selection.profile_index];
+    if (!selected_profile.configured) {
+      return StartExtractionResult::kProfileNotConfigured;
+    }
+  }
+
+  selection_ = selection;
+  active_profile_ = selected_profile;
+  started_at_ms_ = now_ms;
+  idempotency_key_ = idempotency_key;
+  ++extraction_counter_;
+  extraction_id_ = "run-" + std::to_string(extraction_counter_);
+  phase_ = phase_at(0);
+  active_ = true;
+  if (!command_for_phase(phase_)) {
+    clear_active();
+    pump_.force_off();
+    return StartExtractionResult::kOutputFailure;
+  }
+  return StartExtractionResult::kStarted;
+}
+
+bool ExtractionController::stop() {
+  clear_active();
+  return pump_.force_off();
+}
+
+ExtractionUpdateResult ExtractionController::update(std::uint32_t now_ms) {
+  if (!active_) {
+    return pump_.command() == peripherals::PumpCommand::kOff || pump_.force_off()
+               ? ExtractionUpdateResult::kOk
+               : ExtractionUpdateResult::kOutputFailure;
+  }
+
+  const auto elapsed_ms = static_cast<std::uint32_t>(now_ms - started_at_ms_);
+  if (elapsed_ms >= total_duration_ms()) {
+    clear_active();
+    return pump_.force_off() ? ExtractionUpdateResult::kCompleted
+                             : ExtractionUpdateResult::kOutputFailure;
+  }
+
+  const auto next_phase = phase_at(elapsed_ms);
+  if (next_phase != phase_ && !command_for_phase(next_phase)) {
+    clear_active();
+    pump_.force_off();
+    return ExtractionUpdateResult::kOutputFailure;
+  }
+  phase_ = next_phase;
+  return ExtractionUpdateResult::kOk;
+}
+
+bool ExtractionController::valid_idempotency_key(const std::string& key) {
+  if (key.size() < 16U || key.size() > 64U) {
+    return false;
+  }
+  for (std::size_t index = 0; index < key.size(); ++index) {
+    const char value = key[index];
+    const bool alphanumeric = (value >= 'A' && value <= 'Z') ||
+                              (value >= 'a' && value <= 'z') ||
+                              (value >= '0' && value <= '9');
+    if (!alphanumeric && (index == 0U || (value != '.' && value != '_' &&
+                                          value != '~' && value != '-'))) {
+      return false;
+    }
+  }
+  return true;
+}
+
+ExtractionPhase ExtractionController::phase_at(std::uint32_t elapsed_ms) const {
+  if (selection_.kind == ExtractionSelectionKind::kManual) {
+    return ExtractionPhase::kManual;
+  }
+  const auto pre_infusion_ms =
+      static_cast<std::uint32_t>(active_profile_.pre_infusion_seconds) * 1000U;
+  const auto soak_end_ms =
+      pre_infusion_ms +
+      static_cast<std::uint32_t>(active_profile_.soak_seconds) * 1000U;
+  if (elapsed_ms < pre_infusion_ms) {
+    return ExtractionPhase::kPreInfusion;
+  }
+  if (elapsed_ms < soak_end_ms) {
+    return ExtractionPhase::kSoak;
+  }
+  return ExtractionPhase::kMainExtraction;
+}
+
+std::uint32_t ExtractionController::total_duration_ms() const {
+  if (selection_.kind == ExtractionSelectionKind::kManual) {
+    return static_cast<std::uint32_t>(
+               peripherals::kMaximumExtractionDurationSeconds) *
+           1000U;
+  }
+  return (static_cast<std::uint32_t>(active_profile_.pre_infusion_seconds) +
+          static_cast<std::uint32_t>(active_profile_.soak_seconds) +
+          static_cast<std::uint32_t>(active_profile_.main_extraction_seconds)) *
+         1000U;
+}
+
+bool ExtractionController::command_for_phase(ExtractionPhase phase) {
+  return pump_.set_running(phase == ExtractionPhase::kManual ||
+                           phase == ExtractionPhase::kPreInfusion ||
+                           phase == ExtractionPhase::kMainExtraction);
+}
+
+void ExtractionController::clear_active() {
+  active_ = false;
+  started_at_ms_ = 0;
+  extraction_id_.clear();
+  idempotency_key_.clear();
+  selection_ = {};
+  active_profile_ = {};
+  phase_ = ExtractionPhase::kIdle;
 }
 
 }  // namespace philcoino::control

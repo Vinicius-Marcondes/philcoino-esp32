@@ -40,6 +40,7 @@ Não resolva silenciosamente um conflito de safety, hardware, security ou escopo
 - [`ARCHITECTURE.md`](ARCHITECTURE.md): architecture atual de mobile, protocolo, simulador e firmware.
 - [`architecture/repository-layout.md`](architecture/repository-layout.md): boundaries duráveis do repositório e orientações de organização.
 - [`protocol/api-v1-outline.md`](protocol/api-v1-outline.md): justificativas e exemplos da API para leitura humana; o OpenAPI continua autoritativo.
+- [`protocol/api-v2-outline.md`](protocol/api-v2-outline.md): profiles e extração reconhecida pelo firmware; v1 permanece compatível.
 - [`decisions/firmware-foundation.md`](decisions/firmware-foundation.md): decisões aprovadas de firmware, toolchain e foundation.
 
 ## Produto e entrega

@@ -11,14 +11,14 @@ Philcoino has four cooperating codebases:
 3. a deterministic Bun/Hono device simulator for contract and UI development;
 4. independent ESP-IDF C++ firmware that owns machine state and heater/pump command boundaries.
 
-All communication is local-network HTTP. There is no cloud service, account system, remote internet API, Wi-Fi provisioning flow, or multi-device store. The current firmware initializes a pump GPIO boundary but does not yet implement extraction policy or API v2.
+All communication is local-network HTTP. There is no cloud service, account system, remote internet API, Wi-Fi provisioning flow, or multi-device store. Firmware now implements the API v2 extraction policy while retaining every temperature-only API v1 route.
 
 ```text
 user
   |
 Expo screen -> pairing/dashboard services -> DeviceApiClient
   |                                      |
-SecureStore                         HTTP API v1
+SecureStore                       HTTP API v1 + v2
                                          |
                            +-------------+-------------+
                            |                           |
@@ -27,7 +27,7 @@ SecureStore                         HTTP API v1
                                                      |
                                       MAX6675 -> control -> heater SSR
                                                      |
-                                  pump GPIO off boundary + NVS + OLED
+                         pump controller -> GPIO10 command + NVS + OLED
 ```
 
 ## Authority and dependency direction
@@ -48,11 +48,10 @@ The simulator implements the contract and selected product semantics with a manu
 
 `packages/protocol/openapi.yaml` is the language-neutral source of truth. It defines seven API v1/public operations plus five API v2 operations, bearer security, strict object shapes, limits, fault/error codes, and examples. The file uses JSON syntax, which is valid YAML 1.2.
 
-PRD-002 now also defines authenticated API v2 combined state, four-slot profile
-read/replace, and idempotent extraction Start/Stop shapes. API v1 remains
-unchanged and temperature-control-only. At the current implementation boundary,
-the simulator and mobile serve API v2; firmware does not yet serve it. Contract
-presence and simulator behavior are not physical-pump claims.
+API v2 defines authenticated combined state, four-slot profile read/replace, and
+idempotent extraction Start/Stop shapes. Mobile, simulator, and firmware now use
+these routes; API v1 remains unchanged and temperature-control-only. Contract,
+simulator, and host-test agreement does not establish physical pump behavior.
 
 `packages/protocol/src/schemas.ts` mirrors the contract as strict Zod schemas. Mobile and simulator imports come from `@philcoino/protocol`; firmware deliberately does not. C++ request parsing and serialization in `components/networking/src/api.cpp` must be kept aligned through tests and firmware contract captures.
 
@@ -181,7 +180,15 @@ validation.
 
 ### Startup and fail-off ordering
 
-Firmware first constructs and initializes `FailOffPump` on active-high GPIO10, commanding low before and after GPIO output configuration. It then initializes the independent heater `FailOffSsr` with its existing safety lease. Pump initialization failure aborts immediately; later critical startup failures retain/attempt the pump-off and heater-off commands. No current firmware runtime path commands the pump on.
+Firmware first constructs and initializes `FailOffPump` on active-high GPIO10, commanding low before and after GPIO output configuration. It then initializes the independent heater `FailOffSsr` with its existing safety lease. Pump initialization failure aborts immediately; later critical startup failures retain/attempt the pump-off and heater-off commands.
+
+`ExtractionController` owns Manual cutoff, immutable active profile snapshots,
+pre-infusion/soak/main deadlines, replay/conflict behavior, and Stop. A dedicated
+high-priority task advances it with wrap-safe monotonic time. Temperature and
+extraction use separate bounded synchronization; request parsing, profile NVS,
+OLED rendering, and HTTP response transmission do not hold the extraction lock.
+Any missed extraction-lock deadline or GPIO write failure attempts off and ends
+the active extraction. Heater faults do not alter extraction state.
 
 Targets and the ordered four-slot extraction profile set load from separate one-key NVS blobs. Missing data initializes validated defaults; corrupt/invalid data stops startup. A profile replacement is validated as a complete set before its single blob commit, so firmware never deliberately publishes a partially replaced set. The first sensor sample and optional display render happen before networking starts. Wi-Fi/API startup runs in a separate FreeRTOS task so a network failure does not intentionally stop temperature control.
 

@@ -517,7 +517,18 @@ void test_oled() {
                        wifi_off_frame.end(),
                        transport.data.begin() + 3 * Ssd1306Display::kWidth));
   }
-  assert(transport.commands.size() == 55);
+  const auto idle_frame = transport.data;
+  snapshot.extraction_active = true;
+  snapshot.pump_command = PumpCommand::kOff;
+  snapshot.extraction_phase = "SOAK";
+  assert(display.render(snapshot));
+  assert(std::equal(idle_frame.begin(),
+                    idle_frame.begin() + 3 * Ssd1306Display::kWidth,
+                    transport.data.begin()));
+  assert(!std::equal(idle_frame.begin() + 3 * Ssd1306Display::kWidth,
+                     idle_frame.end(),
+                     transport.data.begin() + 3 * Ssd1306Display::kWidth));
+  assert(transport.commands.size() == 61);
 }
 
 }  // namespace

@@ -24,7 +24,9 @@ Firmware owns the temperature-control loop and does not rely on app connectivity
 - applies a heating timeout and five-minute steam-ready timeout;
 - computes heater duty in ten-second windows;
 - latches faults and commands the SSR output off;
-- persists only validated targets;
+- persists validated targets and complete four-slot extraction profile sets;
+- runs Manual and persisted profiles in a dedicated monotonic controller,
+  initializes GPIO10 `off`, and never restores `running` at boot;
 - starts critical hardware in a fail-off order.
 
 These are design intentions and tested software behaviors, not proof of physical de-energization or thermal safety.
@@ -37,6 +39,9 @@ The current review identifies, among others:
 - diagnostic single-sensor mode removes independent dual-sensor monitoring and disagreement detection is not implemented;
 - some valid remote/no-op writes can reset heating deadlines, allowing a client to extend timeout protection;
 - a failed GPIO off-write can still be presented as heater off even when physical state is unknown;
+- the pump has no current, SSR, flow, or series-switch feedback; `running` and
+  `off` describe only GPIO10 command state and a write failure can leave physical
+  state unknown;
 - mDNS startup failure currently tears down the HTTP server, defeating manual-address fallback;
 - pairing verifies a public stable ID rather than a cryptographic device identity;
 - plaintext HTTP bearer credentials lack minimum-strength enforcement, throttling, rotation, and transport confidentiality;
@@ -54,7 +59,7 @@ Software cannot replace:
 - pressure-vessel and dry-boil protections already required by the appliance;
 - qualified review and supervised measurement on the actual unit.
 
-An SSR may fail shorted. A successful API response or low GPIO command does not prove that mains current stopped.
+An SSR may fail shorted. A successful API response or low GPIO command does not prove that heater or pump mains current stopped.
 
 ## Allowed development scope
 
@@ -69,7 +74,7 @@ Do not connect, disconnect, modify, or energize mains wiring based on repository
 
 ## Security model
 
-API v1 uses local plaintext HTTP and a bearer token. Public identity is advertised over mDNS. This may be acceptable for constrained development on an isolated trusted LAN, but it does not defend against a hostile local peer that can observe traffic, clone identity, steal/replay a token, or brute-force a weak token.
+APIs v1 and v2 use local plaintext HTTP and the same bearer token. Public identity is advertised over mDNS. This may be acceptable for constrained development on an isolated trusted LAN, but it does not defend against a hostile local peer that can observe traffic, clone identity, steal/replay a token, or brute-force a weak token. API v2 expands a stolen credential's impact to extraction commands.
 
 Until the known findings are resolved:
 

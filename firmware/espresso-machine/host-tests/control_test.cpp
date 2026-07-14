@@ -79,6 +79,26 @@ class FakeDigitalOutput final : public DigitalOutput {
   bool fail_configure{false};
 };
 
+class FakeProfileBackend final : public ProfileBackend {
+ public:
+  BackendLoadResult load(ExtractionProfiles& profiles) override {
+    profiles = saved;
+    return BackendLoadResult::kOk;
+  }
+  bool save(const ExtractionProfiles& profiles) override {
+    ++save_count;
+    if (fail_save) {
+      return false;
+    }
+    saved = profiles;
+    return true;
+  }
+
+  ExtractionProfiles saved{default_extraction_profiles()};
+  int save_count{0};
+  bool fail_save{false};
+};
+
 class FakeSafetyLease final : public SsrSafetyLease {
  public:
   explicit FakeSafetyLease(FakeDigitalOutput& output) : output_(output) {}
@@ -138,6 +158,20 @@ struct ControllerHarness {
   FailOffSsr ssr{output, safety_lease};
   TemperatureController controller;
 };
+
+struct ExtractionHarness {
+  ExtractionHarness()
+      : pump(output), controller(default_extraction_profiles(), pump) {
+    assert(pump.initialize());
+  }
+
+  FakeDigitalOutput output{};
+  FailOffPump pump;
+  ExtractionController controller;
+};
+
+constexpr char kStartKey[] = "start-01J2ABCDEF1234";
+constexpr char kOtherStartKey[] = "start-01J2OTHERKEY99";
 
 void test_boot_selects_brew_and_keeps_targets() {
   MemoryState state;
@@ -558,6 +592,136 @@ void test_internal_output_failure_latches_fault() {
   assert(!harness.output.level);
 }
 
+void test_manual_extraction_cutoff_replay_conflict_and_stop() {
+  ExtractionHarness harness;
+  assert(harness.controller.start(kStartKey,
+                                  {ExtractionSelectionKind::kManual, 0}, 1000) ==
+         StartExtractionResult::kStarted);
+  const auto started = harness.controller.snapshot(1000);
+  assert(started.status == ExtractionStatus::kRunning);
+  assert(started.phase == ExtractionPhase::kManual);
+  assert(started.pump_command == PumpCommand::kRunning);
+  assert(started.remaining_ms == 60000U);
+
+  assert(harness.controller.start(kStartKey,
+                                  {ExtractionSelectionKind::kManual, 0}, 9000) ==
+         StartExtractionResult::kReplay);
+  assert(harness.controller.snapshot(9000).elapsed_ms == 8000U);
+  assert(harness.controller.start(kOtherStartKey,
+                                  {ExtractionSelectionKind::kManual, 0}, 9000) ==
+         StartExtractionResult::kConflict);
+  assert(harness.controller.update(60999) == ExtractionUpdateResult::kOk);
+  assert(harness.output.level);
+  assert(harness.controller.update(61000) ==
+         ExtractionUpdateResult::kCompleted);
+  assert(!harness.controller.active());
+  assert(!harness.output.level);
+  assert(harness.controller.stop());
+  assert(!harness.output.level);
+}
+
+void test_profile_phases_exact_deadlines_and_delayed_completion() {
+  ExtractionHarness harness;
+  assert(harness.controller.start(
+             kStartKey, {ExtractionSelectionKind::kProfile, 1}, 500) ==
+         StartExtractionResult::kStarted);
+  assert(harness.controller.snapshot(5499).phase ==
+         ExtractionPhase::kPreInfusion);
+  assert(harness.controller.update(5500) == ExtractionUpdateResult::kOk);
+  auto snapshot = harness.controller.snapshot(5500);
+  assert(snapshot.phase == ExtractionPhase::kSoak);
+  assert(snapshot.pump_command == PumpCommand::kOff);
+  assert(!harness.output.level);
+  assert(harness.controller.update(10500) == ExtractionUpdateResult::kOk);
+  snapshot = harness.controller.snapshot(10500);
+  assert(snapshot.phase == ExtractionPhase::kMainExtraction);
+  assert(snapshot.pump_command == PumpCommand::kRunning);
+  assert(harness.output.level);
+  assert(harness.controller.update(35500) ==
+         ExtractionUpdateResult::kCompleted);
+  assert(!harness.output.level);
+
+  assert(harness.controller.start(
+             kOtherStartKey, {ExtractionSelectionKind::kProfile, 0}, 40000) ==
+         StartExtractionResult::kStarted);
+  assert(harness.controller.snapshot(40000).phase ==
+         ExtractionPhase::kMainExtraction);
+  assert(harness.controller.update(80000) ==
+         ExtractionUpdateResult::kCompleted);
+  assert(!harness.output.level);
+}
+
+void test_profile_snapshot_export_and_empty_slot_rules() {
+  ExtractionHarness harness;
+  FakeProfileBackend backend;
+  ProfileStorage storage(backend);
+  auto replacement = default_extraction_profiles();
+  replacement[0].main_extraction_seconds = 20U;
+  assert(harness.controller.replace_profiles(replacement, storage) ==
+         ReplaceProfilesResult::kReplaced);
+  assert(backend.save_count == 1);
+  assert(harness.controller.start(
+             kStartKey, {ExtractionSelectionKind::kProfile, 0}, 0) ==
+         StartExtractionResult::kStarted);
+
+  auto later = replacement;
+  later[0].main_extraction_seconds = 10U;
+  assert(harness.controller.replace_profiles(later, storage) ==
+         ReplaceProfilesResult::kActive);
+  assert(backend.save_count == 1);
+  assert(harness.controller.update(10000) == ExtractionUpdateResult::kOk);
+  assert(harness.controller.snapshot(10000).remaining_ms == 10000U);
+  assert(harness.controller.stop());
+
+  backend.fail_save = true;
+  assert(harness.controller.replace_profiles(later, storage) ==
+         ReplaceProfilesResult::kPersistenceFailure);
+  assert(harness.controller.profiles()[0].main_extraction_seconds == 20U);
+  assert(harness.controller.start(
+             kOtherStartKey, {ExtractionSelectionKind::kProfile, 2}, 0) ==
+         StartExtractionResult::kProfileNotConfigured);
+}
+
+void test_extraction_wraparound_disconnect_and_heater_fault_independence() {
+  ExtractionHarness extraction;
+  ControllerHarness heater;
+  constexpr std::uint32_t started = UINT32_MAX - 2999U;
+  assert(extraction.controller.start(
+             kStartKey, {ExtractionSelectionKind::kProfile, 1}, started) ==
+         StartExtractionResult::kStarted);
+  heater.controller.latch_fault(FaultCode::kOverTemperature);
+  assert(extraction.controller.update(2000U) == ExtractionUpdateResult::kOk);
+  assert(extraction.controller.snapshot(2000U).phase == ExtractionPhase::kSoak);
+  assert(extraction.controller.update(7000U) == ExtractionUpdateResult::kOk);
+  assert(extraction.controller.snapshot(7000U).phase ==
+         ExtractionPhase::kMainExtraction);
+  assert(heater.controller.has_fault());
+  assert(extraction.controller.update(32000U) ==
+         ExtractionUpdateResult::kCompleted);
+  assert(!extraction.output.level);
+}
+
+void test_pump_output_failures_end_extraction_off() {
+  ExtractionHarness start_failure;
+  start_failure.output.fail_high = true;
+  assert(start_failure.controller.start(
+             kStartKey, {ExtractionSelectionKind::kManual, 0}, 0) ==
+         StartExtractionResult::kOutputFailure);
+  assert(!start_failure.controller.active());
+  assert(start_failure.pump.command() == PumpCommand::kOff);
+  assert(!start_failure.output.level);
+
+  ExtractionHarness transition_failure;
+  assert(transition_failure.controller.start(
+             kStartKey, {ExtractionSelectionKind::kProfile, 1}, 0) ==
+         StartExtractionResult::kStarted);
+  transition_failure.output.fail_low = true;
+  assert(transition_failure.controller.update(5000) ==
+         ExtractionUpdateResult::kOutputFailure);
+  assert(!transition_failure.controller.active());
+  assert(transition_failure.pump.command() == PumpCommand::kOff);
+}
+
 }  // namespace
 
 int main() {
@@ -583,5 +747,10 @@ int main() {
   test_manual_heater_disable_forces_off_without_timeout();
   test_manual_heater_toggle_is_allowed_while_faulted();
   test_internal_output_failure_latches_fault();
+  test_manual_extraction_cutoff_replay_conflict_and_stop();
+  test_profile_phases_exact_deadlines_and_delayed_completion();
+  test_profile_snapshot_export_and_empty_slot_rules();
+  test_extraction_wraparound_disconnect_and_heater_fault_independence();
+  test_pump_output_failures_end_extraction_off();
   return 0;
 }

@@ -16,13 +16,15 @@ This concern is retained for later hardware validation and does not block the ap
 
 ## Pump GPIO10 and SSR validation
 
-Status: SOFTWARE CONFIGURATION APPROVED — PHYSICAL VALIDATION DEFERRED
+Status: HUMAN FUNCTIONAL REVIEW ACCEPTED — ELECTRICAL AND ENERGIZED VALIDATION DEFERRED
 
-PRD-002 assigns GPIO10 as an active-high pump SSR command and retains the original pump switch in series. PUMP-005 initializes the command low before output configuration, commands it low again after configuration, and never restores an active command at boot. This task intentionally provides no extraction-policy or HTTP path that can command the pump on.
+PRD-002 assigns GPIO10 as an active-high pump SSR command and retains the original pump switch in series. Firmware initializes the command low before output configuration, commands it low again after configuration, and never restores an active command at boot. API v2 now runs firmware-owned Manual and persisted-profile timing through a dedicated extraction task; host tests and contract captures cover the software behavior only.
 
 The firmware state is command state only. There is no current, SSR-output, switch-position, pressure, or flow feedback, and an SSR or GPIO path may fail independently of the requested command. Consequently, `running` cannot confirm pump operation and `off` cannot confirm physical de-energization.
 
-Before physical approval, identify and rate the pump SSR, verify the original series-switch wiring, measure reliable 3.3 V input behavior, and observe GPIO10 during reset and power cycles with all mains loads disconnected. The application cannot control the pin during boot ROM/reset, and no energized work is authorized by the software implementation or host/target builds.
+The pinned ESP-IDF target build was unavailable during PUMP-007/PUMP-008. Before physical approval, build/flash the exact target, identify and rate the pump SSR, verify the original series-switch wiring, measure reliable 3.3 V input behavior, and observe startup, reset, phases, Stop, cutoff, failure, and power loss with all mains loads disconnected. The application cannot control the pin during boot ROM/reset, and no energized work is authorized by the software implementation or host/target builds.
+
+On 2026-07-14, the owner reported that the rebuilt target became reachable and that discovery, Manual and profile execution, Stop/cutoff, app-disconnection continuation, and reset/power-cycle non-resumption all ran successfully, then explicitly accepted the functional PUMP-009 checklist. No raw GPIO10 waveform, instrument/board/build identifiers, injected GPIO-write failure, target timer-wrap capture, or separately authorized energized evidence was supplied. Record those items as deferred; do not upgrade the functional report into proof of GPIO voltage, pump current, SSR state, wiring safety, or physical de-energization.
 
 ## FOTEK SSR-40 DA verification
 

@@ -28,7 +28,21 @@ constexpr char kLogTag[] = "philcoino-net";
 constexpr EventBits_t kConnectedBit = BIT0;
 constexpr EventBits_t kConnectionFailedBit = BIT1;
 constexpr std::size_t kMaximumAuthorizationLength = 512;
-constexpr std::size_t kMaximumRequestBodyLength = 256;
+constexpr std::size_t kMaximumRequestBodyLength = 1024;
+constexpr std::array<std::pair<const char*, httpd_method_t>, 12> kRoutes{{
+    {"/healthz", HTTP_GET},
+    {"/api/v1/device", HTTP_GET},
+    {"/api/v1/state", HTTP_GET},
+    {"/api/v1/settings/temperatures", HTTP_PATCH},
+    {"/api/v1/mode", HTTP_PUT},
+    {"/api/v1/heater", HTTP_PUT},
+    {"/api/v1/faults/over-temperature/dismiss", HTTP_POST},
+    {"/api/v2/state", HTTP_GET},
+    {"/api/v2/profiles", HTTP_GET},
+    {"/api/v2/profiles", HTTP_PUT},
+    {"/api/v2/extractions/start", HTTP_POST},
+    {"/api/v2/extractions/stop", HTTP_POST},
+}};
 
 std::uint64_t uptime_ms() {
   return static_cast<std::uint64_t>(esp_timer_get_time() / 1000);
@@ -56,9 +70,9 @@ HttpMethod request_method(int method) {
 
 }  // namespace
 
-EspNetworkServer::EspNetworkServer(FirmwareApi& api, void* api_mutex,
+EspNetworkServer::EspNetworkServer(FirmwareApi& api,
                                    const DeviceIdentity& identity)
-    : api_(api), api_mutex_(api_mutex), identity_(identity) {}
+    : api_(api), identity_(identity) {}
 
 bool EspNetworkServer::start(const char* ssid, const char* password) {
   if (!start_wifi(ssid, password) || !start_http()) {
@@ -229,6 +243,8 @@ bool EspNetworkServer::start_http() {
   httpd_config_t configuration = HTTPD_DEFAULT_CONFIG();
   configuration.server_port = kHttpPort;
   configuration.stack_size = 6144;
+  configuration.max_uri_handlers =
+      static_cast<std::uint16_t>(kRoutes.size());
   httpd_handle_t server = nullptr;
   if (httpd_start(&server, &configuration) != ESP_OK) {
     return false;
@@ -240,16 +256,7 @@ bool EspNetworkServer::start_http() {
         static_cast<EspNetworkServer*>(request->user_ctx)
             ->handle_http_request(request));
   };
-  const std::array<std::pair<const char*, httpd_method_t>, 7> routes{{
-      {"/healthz", HTTP_GET},
-      {"/api/v1/device", HTTP_GET},
-      {"/api/v1/state", HTTP_GET},
-      {"/api/v1/settings/temperatures", HTTP_PATCH},
-      {"/api/v1/mode", HTTP_PUT},
-      {"/api/v1/heater", HTTP_PUT},
-      {"/api/v1/faults/over-temperature/dismiss", HTTP_POST},
-  }};
-  for (const auto& route : routes) {
+  for (const auto& route : kRoutes) {
     httpd_uri_t uri{};
     uri.uri = route.first;
     uri.method = route.second;
@@ -298,16 +305,10 @@ int EspNetworkServer::handle_http_request(void* opaque_request) {
     body = "invalid";
   }
 
-  const auto mutex = static_cast<SemaphoreHandle_t>(api_mutex_);
-  if (mutex == nullptr || xSemaphoreTake(mutex, portMAX_DELAY) != pdTRUE) {
-    return ESP_FAIL;
-  }
   const HttpResponse response = api_.handle(
       request_method(request->method), request->uri,
       authorization.empty() ? nullptr : authorization.c_str(), body,
       uptime_ms());
-  xSemaphoreGive(mutex);
-
   httpd_resp_set_status(request, status_text(response.status));
   httpd_resp_set_type(request, "application/json");
   if (response.bearer_challenge) {

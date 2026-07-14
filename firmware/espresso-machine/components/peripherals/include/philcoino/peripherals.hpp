@@ -195,6 +195,9 @@ struct DisplaySnapshot {
   DisplayStatus status{DisplayStatus::kBoot};
   bool heater_enabled{false};
   DisplayWifiStatus wifi_status{DisplayWifiStatus::kOff};
+  bool extraction_active{false};
+  PumpCommand pump_command{PumpCommand::kOff};
+  const char* extraction_phase{"IDLE"};
 };
 
 class OledTransport {

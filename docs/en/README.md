@@ -2,7 +2,7 @@
 
 [Português do Brasil](../../README.md)
 
-Philcoino is a local-first espresso-machine monitoring and temperature-control prototype. It combines an Expo mobile app, an OpenAPI contract, a deterministic device simulator, and ESP32-C3 firmware in one repository.
+Philcoino is a local-first espresso-machine monitoring, temperature-control, and extraction-command prototype. It combines an Expo mobile app, an OpenAPI contract, a deterministic device simulator, and ESP32-C3 firmware in one repository.
 
 The phone discovers and authenticates one machine, displays live state, and submits target/mode/heater-permission changes. The ESP32 remains authoritative for sensor readings, persisted targets, readiness, heater output, timeouts, and faults.
 
@@ -15,11 +15,14 @@ The phone discovers and authenticates one machine, displays live state, and subm
 - Public device identity inspection followed by bearer-token authentication.
 - Secure storage of one selected device, token, and last successful address.
 - Cached-address restore and stable-ID rediscovery after address changes.
-- Strict API v1 runtime validation and explicit offline, unauthorized, not-found, timeout, and protocol-error states.
+- Strict API v1/v2 runtime validation and explicit offline, unauthorized, not-found, timeout, and protocol-error states.
 - Completion-driven one-second dashboard polling while the screen/app is active.
 - Firmware-acknowledged brew/steam targets, active mode, heater permission, and over-temperature dismissal.
 - ESP32-C3 control, NVS target persistence, MAX6675 sampling, SSD1306 output, HTTP/mDNS networking, and host-testable policy boundaries.
 - Deterministic Bun/Hono simulator for mobile and contract development.
+- Manual plus four local profile slots, explicit whole-set export, and
+  firmware-acknowledged pre-infusion/soak/main extraction, Stop, and 60-second
+  Manual cutoff.
 
 The product is still a prototype. PRD-001 acceptance and physical validation are incomplete; see [the tracker](../TRACKER.md) and [known findings](../../CODEBASE_REVIEW_REPORT.md).
 
@@ -29,7 +32,7 @@ The product is still a prototype. PRD-001 acceptance and physical validation are
 Expo mobile app
   discovery -> identity check -> bearer authentication -> SecureStore
       |                                                   |
-      +---------------- local HTTP API v1 ----------------+
+      +-------------- local HTTP API v1 + v2 ------------+
                               |
                     ESP32 firmware (authority)
              sensors -> control -> SSR command -> faults
@@ -100,6 +103,16 @@ Authenticated endpoints require `Authorization: Bearer <token>`:
 - `PUT /api/v1/heater`
 - `POST /api/v1/faults/over-temperature/dismiss`
 
+API v2 adds without removing v1:
+
+- `GET /api/v2/state`
+- `GET` and `PUT /api/v2/profiles`
+- `POST /api/v2/extractions/start`
+- `POST /api/v2/extractions/stop`
+
+`running` and `off` describe only the GPIO10 command, not current, flow, series
+switch position, or confirmed physical de-energization.
+
 The simulator also exposes `_simulator/*` controls that are deliberately outside API v1 and must never be implemented as production firmware endpoints.
 
 ## Core design rules
@@ -119,6 +132,7 @@ The simulator also exposes `_simulator/*` controls that are deliberately outside
 - [Safety and project status](SAFETY.md)
 - [Contributing](CONTRIBUTING.md)
 - [API v1 outline](../protocol/api-v1-outline.md)
+- [API v2 outline](../protocol/api-v2-outline.md)
 - [Hardware wiring](../hardware/esp32-c3-wiring.md)
 - [Temperature-control tuning](../hardware/temperature-control-tuning.md)
 - [PRD-001 tracker](../TRACKER.md)

@@ -6,6 +6,7 @@ import {
   parseResolvedService,
   type DeviceDiscovery,
 } from "./device-discovery";
+import { cleanupZeroconfScan } from "./zeroconf-scan-cleanup";
 
 const ANDROID_DISCOVERY_IMPLEMENTATION = "DNSSD";
 
@@ -17,6 +18,7 @@ class NativeDeviceDiscovery implements DeviceDiscovery {
 
     const zeroconf = new Zeroconf();
     let active = true;
+    let scanStarted = false;
 
     zeroconf.on("resolved", (service: ZeroconfService) => {
       if (!active) {
@@ -42,12 +44,10 @@ class NativeDeviceDiscovery implements DeviceDiscovery {
         return;
       }
       active = false;
-      if (Platform.OS === "android") {
-        zeroconf.stop(ANDROID_DISCOVERY_IMPLEMENTATION);
-      } else {
-        zeroconf.stop();
-      }
-      zeroconf.removeDeviceListeners();
+      cleanupZeroconfScan(zeroconf, {
+        android: Platform.OS === "android",
+        scanStarted,
+      });
       if (this.stopActiveScan === stop) {
         this.stopActiveScan = null;
       }
@@ -65,6 +65,7 @@ class NativeDeviceDiscovery implements DeviceDiscovery {
       } else {
         zeroconf.scan("philcoino", "tcp", "local.");
       }
+      scanStarted = true;
     } catch (error) {
       stop();
       handlers.onError(

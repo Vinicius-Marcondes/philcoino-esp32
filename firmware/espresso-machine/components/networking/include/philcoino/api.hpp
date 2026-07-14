@@ -15,6 +15,14 @@ inline constexpr char kMdnsProtocol[] = "_tcp";
 inline constexpr std::uint16_t kHttpPort = 80;
 
 enum class HttpMethod { kGet, kPatch, kPost, kPut };
+enum class ApiDomain { kTemperature, kExtraction };
+
+class ApiSynchronization {
+ public:
+  virtual ~ApiSynchronization() = default;
+  virtual bool lock(ApiDomain domain) = 0;
+  virtual void unlock(ApiDomain domain) = 0;
+};
 
 struct DeviceIdentity {
   std::string device_id;
@@ -45,7 +53,10 @@ class FirmwareApi {
  public:
   FirmwareApi(DeviceIdentity identity, std::string bearer_token,
               control::TemperatureController& controller,
-              peripherals::TargetStorage& target_storage);
+              peripherals::TargetStorage& target_storage,
+              control::ExtractionController& extraction_controller,
+              peripherals::ProfileStorage& profile_storage,
+              ApiSynchronization& synchronization);
 
   HttpResponse handle(HttpMethod method, const std::string& path,
                       const char* authorization, const std::string& body,
@@ -62,11 +73,21 @@ class FirmwareApi {
   HttpResponse update_heater(const std::string& body,
                              std::uint64_t uptime_ms);
   HttpResponse dismiss_over_temperature(std::uint64_t uptime_ms);
+  HttpResponse state_v2(std::uint64_t uptime_ms) const;
+  HttpResponse profiles() const;
+  HttpResponse replace_profiles(const std::string& body,
+                                std::uint64_t uptime_ms);
+  HttpResponse start_extraction(const std::string& body,
+                                std::uint64_t uptime_ms);
+  HttpResponse stop_extraction(std::uint64_t uptime_ms);
 
   DeviceIdentity identity_;
   std::string bearer_token_;
   control::TemperatureController& controller_;
   peripherals::TargetStorage& target_storage_;
+  control::ExtractionController& extraction_controller_;
+  peripherals::ProfileStorage& profile_storage_;
+  ApiSynchronization& synchronization_;
 };
 
 }  // namespace philcoino::networking

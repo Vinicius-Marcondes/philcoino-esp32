@@ -64,11 +64,13 @@ Its exact part number, marked trip point, tolerance, reset behavior, electrical 
 
 ### Pump output
 
-GPIO10 is reserved for an active-high pump SSR command. Firmware commands it low before configuring it as an output and again immediately after configuration; it never restores a running command at boot. PUMP-005 does not connect this output to extraction policy or HTTP, so current firmware has no runtime path that commands the pump on.
+GPIO10 is the active-high pump SSR command. Firmware commands it low before configuring it as an output and again immediately after configuration; it never restores a running command at boot. The firmware-owned API v2 controller can command it high for Manual, pre-infusion, and main-extraction phases and low for soak, Stop, completion, cutoff, reset/startup, synchronization failure, or GPIO failure.
 
 `running` and `off` describe only the requested GPIO10 command. There is no pump-current, SSR-output, switch-position, pressure, or flow feedback, so software cannot confirm pump operation or physical de-energization. A GPIO write failure leaves the reported firmware command at `off`, records initialization failure where applicable, and must not be interpreted as proof that the pin or load is low.
 
-The original series pump switch, the exact pump SSR, active-high 3.3 V drive, reset/boot behavior, mounting, ratings, wiring, and failure behavior remain subject to disconnected low-voltage checks and separate qualified physical approval. GPIO10 is uncontrolled during reset and early boot before application initialization, so the firmware ordering does not remove that hardware risk.
+The original series pump switch remains the local hard cutoff but is not sensed by software. The exact pump SSR, active-high 3.3 V drive, reset/boot behavior, mounting, ratings, wiring, and failure behavior remain subject to disconnected low-voltage checks and separate qualified physical approval. GPIO10 is uncontrolled during reset and early boot before application initialization, so the firmware ordering does not remove that hardware risk.
+
+On 2026-07-14, the owner accepted the target functional matrix after reporting successful rebuilt HTTP/mDNS startup, mobile reachability, Manual and seeded-profile timing, Stop/cutoff behavior, continuation after app disconnection, and idle/no-resume behavior after reset or power cycle. This is owner-reported functional evidence, not an independently reviewed electrical record. No exact board identifier, firmware image hash, instrument model, raw GPIO10 capture, injected GPIO-write failure, target timer-wrap waveform, or separately authorized energized evidence was supplied. The wiring status therefore remains draft and not mains-safety approved.
 
 ### Temperature sensors
 

@@ -11,6 +11,7 @@ Philcoino é um controller experimental para máquina de espresso que trabalha p
 - O source atual do firmware usa uma leitura de thermocouple para brew e steam (`kDualThermocouplesEnabled = false`), o que não atende à aceitação final de dois sensores.
 - O source atual do firmware habilita o OLED (`kOledEnabled = true`), enquanto o tracker registra um estado temporário com OLED desabilitado. Trate isso como uma divergência não resolvida entre documentação e configuração, não como um estado de hardware aprovado.
 - Discovery físico no iPhone, comportamento final dos sensores, instalação do relay/SSR, cutoff independente e validação energizada supervisionada continuam sendo checks humanos.
+- Em 2026-07-14, o owner aceitou a matriz funcional da pump no target após relatar discovery HTTP/mDNS, Manual/profiles, Stop/cutoff, continuidade sem app e boot sem retomada. Isso é evidência funcional reportada pelo owner; não inclui captures elétricos independentes, injeção de falha GPIO, timer-wrap no target nem aprovação energizada.
 
 Consulte [CODEBASE_REVIEW_REPORT.md](../CODEBASE_REVIEW_REPORT.md), [docs/TRACKER.md](TRACKER.md) e [docs/side-notes.md](side-notes.md) para as evidências detalhadas.
 
@@ -25,7 +26,7 @@ O firmware controla o temperature-control loop e não depende da conectividade d
 - calcula o duty do heater em janelas de dez segundos;
 - faz latch de faults e comanda a saída do SSR para off;
 - persiste apenas targets e conjuntos completos de profiles validados;
-- inicializa o comando ativo-alto da pump em GPIO10 como `off`, sem restaurar um comando `running` no boot;
+- executa Manual e profiles em um controller monotônico dedicado, inicializa GPIO10 como `off` e não restaura `running` no boot;
 - inicializa hardware crítico em ordem fail-off.
 
 Esses itens são intenções de design e comportamentos de software cobertos por testes, não prova de desenergização física ou segurança térmica.
@@ -71,7 +72,7 @@ Não conecte, desconecte, modifique ou energize a fiação da rede elétrica com
 
 ## Modelo de segurança da informação
 
-A API v1 usa HTTP plaintext local e um bearer token. A identidade pública é anunciada por mDNS. Isso pode ser aceitável para desenvolvimento restrito em uma LAN confiável e isolada, mas não protege contra um peer local hostil capaz de observar o tráfego, clonar a identidade, roubar/reutilizar um token ou executar brute force contra um token fraco.
+As APIs v1 e v2 usam HTTP plaintext local e o mesmo bearer token. A identidade pública é anunciada por mDNS. Isso pode ser aceitável para desenvolvimento restrito em uma LAN confiável e isolada, mas não protege contra um peer local hostil capaz de observar o tráfego, clonar a identidade, roubar/reutilizar um token ou executar brute force contra um token fraco. API v2 amplia o impacto de uma credencial roubada para comandos de extração.
 
 Enquanto os findings conhecidos não forem resolvidos:
 

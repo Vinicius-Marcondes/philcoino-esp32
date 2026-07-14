@@ -6,6 +6,7 @@ import {
   type DeviceDiscovery,
   type DiscoveredDevice,
 } from "../src/discovery/device-discovery";
+import { cleanupZeroconfScan } from "../src/discovery/zeroconf-scan-cleanup";
 
 const discoveredDevice: DiscoveredDevice = {
   address: "http://192.168.1.20",
@@ -17,6 +18,39 @@ const discoveredDevice: DiscoveredDevice = {
 };
 
 describe("device discovery", () => {
+  test("does not stop a scan that failed before native startup completed", () => {
+    const calls: string[] = [];
+    cleanupZeroconfScan(
+      {
+        stop: () => calls.push("stop"),
+        removeDeviceListeners: () => calls.push("remove-listeners"),
+      },
+      { android: false, scanStarted: false },
+    );
+    expect(calls).toEqual(["remove-listeners"]);
+  });
+
+  test("contains native cleanup failures and uses the matching platform signature", () => {
+    const stopArguments: Array<string | undefined> = [];
+    const target = {
+      stop: (implementation?: "DNSSD") => {
+        stopArguments.push(implementation);
+        throw new Error("native stop unavailable");
+      },
+      removeDeviceListeners: () => {
+        throw new Error("native listeners unavailable");
+      },
+    };
+
+    expect(() =>
+      cleanupZeroconfScan(target, { android: false, scanStarted: true }),
+    ).not.toThrow();
+    expect(() =>
+      cleanupZeroconfScan(target, { android: true, scanStarted: true }),
+    ).not.toThrow();
+    expect(stopArguments).toEqual([undefined, "DNSSD"]);
+  });
+
   test("parses firmware TXT identity and prefers its resolved IPv4 address", () => {
     expect(
       parseResolvedService({
