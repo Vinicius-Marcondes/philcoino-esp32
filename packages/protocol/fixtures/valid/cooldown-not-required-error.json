@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": "cooldown_not_required",
+    "message": "The Brew-effective temperature must be above the current Brew target."
+  }
+}

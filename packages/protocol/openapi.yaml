@@ -181,11 +181,11 @@
     "/api/v2/state": {
       "get": {
         "operationId": "getMachineStateV2",
-        "summary": "Read temperature-control and acknowledged extraction state",
+        "summary": "Read acknowledged machine, extraction, compensation, and cooldown state",
         "security": [{ "bearerAuth": [] }],
         "responses": {
           "200": {
-            "description": "Current API v1 machine state plus firmware-acknowledged extraction state.",
+            "description": "Current API v1 machine state plus firmware-acknowledged extraction, compensation, and cooldown state.",
             "content": {
               "application/json": {
                 "schema": { "$ref": "#/components/schemas/MachineStateV2" }
@@ -240,10 +240,15 @@
           "400": { "$ref": "#/components/responses/V2BadRequest" },
           "401": { "$ref": "#/components/responses/V2Unauthorized" },
           "409": {
-            "description": "An extraction is active; no profile slot was changed.",
+            "description": "An extraction or cooldown is active; no profile slot was changed.",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/ExtractionActiveConflictResponse" }
+                "schema": {
+                  "oneOf": [
+                    { "$ref": "#/components/schemas/ExtractionActiveConflictResponse" },
+                    { "$ref": "#/components/schemas/CooldownActiveConflictResponse" }
+                  ]
+                }
               }
             }
           },
@@ -255,7 +260,7 @@
       "post": {
         "operationId": "startExtraction",
         "summary": "Start Manual or one persisted profile idempotently",
-        "description": "Replaying the same idempotency key returns the same active extraction without resetting its monotonic timing. A different key while active is rejected.",
+        "description": "Start is accepted only in acknowledged Brew mode and while cooldown is idle. Replaying the same idempotency key returns the same active extraction without resetting its monotonic timing. A different key while active is rejected.",
         "security": [{ "bearerAuth": [] }],
         "requestBody": {
           "required": true,
@@ -277,12 +282,13 @@
           "400": { "$ref": "#/components/responses/V2BadRequest" },
           "401": { "$ref": "#/components/responses/V2Unauthorized" },
           "409": {
-            "description": "A different extraction is active or the selected custom slot is empty.",
+            "description": "The machine is not in Brew, a different extraction or cooldown is active, or the selected custom slot is empty.",
             "content": {
               "application/json": {
                 "schema": {
                   "oneOf": [
                     { "$ref": "#/components/schemas/ExtractionActiveConflictResponse" },
+                    { "$ref": "#/components/schemas/CooldownActiveConflictResponse" },
                     { "$ref": "#/components/schemas/ApiV2ErrorResponse" }
                   ]
                 }
@@ -304,6 +310,69 @@
             "content": {
               "application/json": {
                 "schema": { "$ref": "#/components/schemas/IdleExtractionState" }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/V2Unauthorized" },
+          "500": { "$ref": "#/components/responses/V2InternalError" }
+        }
+      }
+    },
+    "/api/v2/cooldowns/start": {
+      "post": {
+        "operationId": "startCooldown",
+        "summary": "Start the firmware-owned cooldown workflow idempotently",
+        "description": "A new key is eligible only while extraction and cooldown are idle, the validated Brew-effective temperature is above the current Brew target, and no sensor or machine fault prevents operation. Firmware switches to Brew, establishes the transient heater inhibit, commands the heater off, snapshots the Brew target, and only then commands the pump running. Replaying the retained key returns the original cooldown identity and current or terminal acknowledgement without restarting the 45-second pump deadline. A different key replaces a terminal acknowledgement only after fresh eligibility checks.",
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/StartCooldownRequest" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The acknowledged new, replayed, active, or retained terminal cooldown state. Same-key replay never restarts a deadline.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/CooldownState" }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/V2BadRequest" },
+          "401": { "$ref": "#/components/responses/V2Unauthorized" },
+          "409": {
+            "description": "An extraction or different cooldown is active, or sensor, fault, or temperature eligibility rejects a new cooldown.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    { "$ref": "#/components/schemas/ExtractionActiveConflictResponse" },
+                    { "$ref": "#/components/schemas/CooldownActiveConflictResponse" },
+                    { "$ref": "#/components/schemas/ApiV2ErrorResponse" }
+                  ]
+                }
+              }
+            }
+          },
+          "500": { "$ref": "#/components/responses/V2InternalError" }
+        }
+      }
+    },
+    "/api/v2/cooldowns/stop": {
+      "post": {
+        "operationId": "stopCooldown",
+        "summary": "Idempotently stop cooldown pumping",
+        "description": "While pumping, Stop commands the pump off and enters the same five-second stabilization phase with outcome stopped. During stabilization or idle it returns the current acknowledgement unchanged.",
+        "security": [{ "bearerAuth": [] }],
+        "responses": {
+          "200": {
+            "description": "The acknowledged stabilizing or idle cooldown state.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/CooldownState" }
               }
             }
           },
@@ -944,14 +1013,209 @@
           { "$ref": "#/components/schemas/RunningExtractionState" }
         ]
       },
+      "CompensationPhase": {
+        "type": "string",
+        "enum": ["manual", "main-extraction"]
+      },
+      "InactiveCompensationState": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["status", "phase"],
+        "properties": {
+          "status": { "const": "inactive" },
+          "phase": { "type": "null" }
+        },
+        "description": "No non-zero extraction bias is participating in the heater-duty calculation. Profile pre-infusion uses its fixed zero-degree policy and soak uses no compensation, so both acknowledge inactive here while extraction.phase remains authoritative for the workflow phase.",
+        "examples": [
+          { "status": "inactive", "phase": null }
+        ]
+      },
+      "ActiveCompensationState": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["status", "phase"],
+        "properties": {
+          "status": { "const": "active" },
+          "phase": { "$ref": "#/components/schemas/CompensationPhase" }
+        },
+        "description": "Firmware is using its fixed compile-time extraction bias only for the acknowledged Manual or main-extraction heater-duty calculation. This is not a measured thermal result or a runtime-configurable value and does not alter targets, readiness, deadlines, or limits.",
+        "examples": [
+          { "status": "active", "phase": "main-extraction" }
+        ]
+      },
+      "CompensationState": {
+        "oneOf": [
+          { "$ref": "#/components/schemas/InactiveCompensationState" },
+          { "$ref": "#/components/schemas/ActiveCompensationState" }
+        ]
+      },
+      "CooldownStatus": {
+        "type": "string",
+        "enum": ["idle", "pumping", "stabilizing"]
+      },
+      "CooldownOutcome": {
+        "type": "string",
+        "enum": ["target-reached", "cutoff", "stopped", "failed"]
+      },
+      "CooldownId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 64,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$"
+      },
+      "InitialIdleCooldownState": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["status", "cooldownId", "brewTargetC", "elapsedMs", "remainingMs", "pumpCommand", "heaterInhibited", "outcome"],
+        "properties": {
+          "status": { "const": "idle" },
+          "cooldownId": { "type": "null" },
+          "brewTargetC": { "type": "null" },
+          "elapsedMs": { "const": 0 },
+          "remainingMs": { "type": "null" },
+          "pumpCommand": { "const": "off" },
+          "heaterInhibited": { "const": false },
+          "outcome": { "type": "null" }
+        }
+      },
+      "TerminalIdleCooldownState": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["status", "cooldownId", "brewTargetC", "elapsedMs", "remainingMs", "pumpCommand", "heaterInhibited", "outcome"],
+        "properties": {
+          "status": { "const": "idle" },
+          "cooldownId": { "$ref": "#/components/schemas/CooldownId" },
+          "brewTargetC": { "$ref": "#/components/schemas/BrewTarget" },
+          "elapsedMs": { "type": "integer", "minimum": 0, "maximum": 50000, "description": "Total acknowledged monotonic elapsed time from the retained cooldown Start." },
+          "remainingMs": { "type": "null" },
+          "pumpCommand": { "const": "off" },
+          "heaterInhibited": { "const": false },
+          "outcome": { "$ref": "#/components/schemas/CooldownOutcome" }
+        },
+        "description": "The retained terminal acknowledgement for the most recent cooldown. It preserves identity, the snapshotted Brew threshold, total acknowledged elapsed time, and the terminal reason so a same-key replay cannot be interpreted as a new workflow. Reset or power loss returns the initial idle shape.",
+        "examples": [
+          {
+            "status": "idle",
+            "cooldownId": "cooldown-184220",
+            "brewTargetC": 93,
+            "elapsedMs": 50000,
+            "remainingMs": null,
+            "pumpCommand": "off",
+            "heaterInhibited": false,
+            "outcome": "cutoff"
+          }
+        ]
+      },
+      "IdleCooldownState": {
+        "oneOf": [
+          { "$ref": "#/components/schemas/InitialIdleCooldownState" },
+          { "$ref": "#/components/schemas/TerminalIdleCooldownState" }
+        ],
+        "examples": [
+          {
+            "status": "idle",
+            "cooldownId": null,
+            "brewTargetC": null,
+            "elapsedMs": 0,
+            "remainingMs": null,
+            "pumpCommand": "off",
+            "heaterInhibited": false,
+            "outcome": null
+          },
+          {
+            "status": "idle",
+            "cooldownId": "cooldown-184220",
+            "brewTargetC": 93,
+            "elapsedMs": 50000,
+            "remainingMs": null,
+            "pumpCommand": "off",
+            "heaterInhibited": false,
+            "outcome": "cutoff"
+          }
+        ]
+      },
+      "PumpingCooldownState": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["status", "cooldownId", "brewTargetC", "elapsedMs", "remainingMs", "pumpCommand", "heaterInhibited", "outcome"],
+        "properties": {
+          "status": { "const": "pumping" },
+          "cooldownId": { "$ref": "#/components/schemas/CooldownId" },
+          "brewTargetC": { "$ref": "#/components/schemas/BrewTarget" },
+          "elapsedMs": { "type": "integer", "minimum": 0, "maximum": 45000, "description": "Acknowledged monotonic elapsed time from cooldown Start." },
+          "remainingMs": { "type": "integer", "minimum": 0, "maximum": 45000, "description": "Time remaining to the fixed pump-command cutoff; elapsedMs plus remainingMs is exactly 45000." },
+          "pumpCommand": { "const": "running" },
+          "heaterInhibited": { "const": true },
+          "outcome": { "type": "null" }
+        },
+        "description": "Firmware has acknowledged Brew mode, snapshotted brewTargetC, established the transient heater inhibit, issued the heater-off command, and then issued the GPIO10 running command. running is command state only and does not confirm flow, current, switch position, cooling, or SSR behavior.",
+        "examples": [
+          {
+            "status": "pumping",
+            "cooldownId": "cooldown-184220",
+            "brewTargetC": 93,
+            "elapsedMs": 12000,
+            "remainingMs": 33000,
+            "pumpCommand": "running",
+            "heaterInhibited": true,
+            "outcome": null
+          }
+        ]
+      },
+      "StabilizingCooldownState": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["status", "cooldownId", "brewTargetC", "elapsedMs", "remainingMs", "pumpCommand", "heaterInhibited", "outcome"],
+        "properties": {
+          "status": { "const": "stabilizing" },
+          "cooldownId": { "$ref": "#/components/schemas/CooldownId" },
+          "brewTargetC": { "$ref": "#/components/schemas/BrewTarget" },
+          "elapsedMs": { "type": "integer", "minimum": 0, "maximum": 50000, "description": "Total acknowledged monotonic elapsed time from cooldown Start." },
+          "remainingMs": { "type": "integer", "minimum": 0, "maximum": 5000, "description": "Time remaining in the fixed five-second stabilization phase." },
+          "pumpCommand": { "const": "off" },
+          "heaterInhibited": { "const": true },
+          "outcome": {
+            "type": "string",
+            "enum": ["target-reached", "cutoff", "stopped"]
+          }
+        },
+        "description": "The pump-off command has been issued because the snapshotted target was reached, the 45-second cutoff elapsed, or Stop was acknowledged. The transient heater inhibit remains for the five-second stabilization deadline. Neither command proves physical de-energization or cooling.",
+        "examples": [
+          {
+            "status": "stabilizing",
+            "cooldownId": "cooldown-184220",
+            "brewTargetC": 93,
+            "elapsedMs": 45000,
+            "remainingMs": 5000,
+            "pumpCommand": "off",
+            "heaterInhibited": true,
+            "outcome": "cutoff"
+          }
+        ]
+      },
+      "ActiveCooldownState": {
+        "oneOf": [
+          { "$ref": "#/components/schemas/PumpingCooldownState" },
+          { "$ref": "#/components/schemas/StabilizingCooldownState" }
+        ]
+      },
+      "CooldownState": {
+        "oneOf": [
+          { "$ref": "#/components/schemas/IdleCooldownState" },
+          { "$ref": "#/components/schemas/ActiveCooldownState" }
+        ]
+      },
       "MachineStateV2": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["machine", "extraction"],
+        "required": ["machine", "extraction", "compensation", "cooldown"],
         "properties": {
           "machine": { "$ref": "#/components/schemas/MachineState" },
-          "extraction": { "$ref": "#/components/schemas/ExtractionState" }
+          "extraction": { "$ref": "#/components/schemas/ExtractionState" },
+          "compensation": { "$ref": "#/components/schemas/CompensationState" },
+          "cooldown": { "$ref": "#/components/schemas/CooldownState" }
         },
+        "description": "One firmware-acknowledged snapshot. Running extraction requires Brew mode. Active compensation requires the matching Manual or main-extraction phase, enabled heater permission, and no fault. Pumping or stabilizing cooldown requires Brew mode, idle extraction, inactive compensation, a heater-off command in machine.heaterActive, and no fault. A retained failed cooldown outcome requires machine.status fault so removing the transient inhibit cannot restore heating.",
         "examples": [
           {
             "machine": {
@@ -974,6 +1238,20 @@
               "elapsedMs": 0,
               "remainingMs": null,
               "pumpCommand": "off"
+            },
+            "compensation": {
+              "status": "inactive",
+              "phase": null
+            },
+            "cooldown": {
+              "status": "idle",
+              "cooldownId": null,
+              "brewTargetC": null,
+              "elapsedMs": 0,
+              "remainingMs": null,
+              "pumpCommand": "off",
+              "heaterInhibited": false,
+              "outcome": null
             }
           }
         ]
@@ -998,12 +1276,33 @@
           }
         ]
       },
+      "StartCooldownRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["idempotencyKey"],
+        "properties": {
+          "idempotencyKey": {
+            "type": "string",
+            "minLength": 16,
+            "maxLength": 64,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$"
+          }
+        },
+        "examples": [
+          { "idempotencyKey": "cooldown-01J2ABCDEF1" }
+        ]
+      },
       "ApiV2ErrorCode": {
         "type": "string",
         "enum": [
           "malformed_request",
           "unauthorized",
           "extraction_active",
+          "cooldown_active",
+          "brew_mode_required",
+          "cooldown_not_required",
+          "sensor_unavailable",
+          "machine_faulted",
           "profile_not_configured",
           "persistence_failure",
           "internal_error"
@@ -1029,6 +1328,30 @@
             "error": {
               "code": "profile_not_configured",
               "message": "The selected custom profile slot is empty."
+            }
+          },
+          {
+            "error": {
+              "code": "brew_mode_required",
+              "message": "Switch the machine to Brew before starting extraction."
+            }
+          },
+          {
+            "error": {
+              "code": "cooldown_not_required",
+              "message": "The Brew-effective temperature must be above the current Brew target."
+            }
+          },
+          {
+            "error": {
+              "code": "sensor_unavailable",
+              "message": "Cooldown requires a valid boiler temperature reading."
+            }
+          },
+          {
+            "error": {
+              "code": "machine_faulted",
+              "message": "Cooldown cannot start while a machine fault is latched."
             }
           }
         ]
@@ -1063,6 +1386,41 @@
               "elapsedMs": 12000,
               "remainingMs": 48000,
               "pumpCommand": "running"
+            }
+          }
+        ]
+      },
+      "CooldownActiveConflictResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["error", "activeCooldown"],
+        "properties": {
+          "error": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["code", "message"],
+            "properties": {
+              "code": { "const": "cooldown_active" },
+              "message": { "type": "string", "minLength": 1, "maxLength": 160 }
+            }
+          },
+          "activeCooldown": { "$ref": "#/components/schemas/ActiveCooldownState" }
+        },
+        "examples": [
+          {
+            "error": {
+              "code": "cooldown_active",
+              "message": "A different cooldown is already active."
+            },
+            "activeCooldown": {
+              "status": "pumping",
+              "cooldownId": "cooldown-184220",
+              "brewTargetC": 93,
+              "elapsedMs": 12000,
+              "remainingMs": 33000,
+              "pumpCommand": "running",
+              "heaterInhibited": true,
+              "outcome": null
             }
           }
         ]

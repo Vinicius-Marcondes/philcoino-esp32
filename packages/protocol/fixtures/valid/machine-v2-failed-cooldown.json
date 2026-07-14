@@ -1,0 +1,40 @@
+{
+  "machine": {
+    "status": "fault",
+    "activeMode": "brew",
+    "boilerTemperatureC": 100,
+    "brewTargetC": 93,
+    "steamTargetC": 115,
+    "heaterEnabled": true,
+    "heaterActive": false,
+    "fault": {
+      "code": "internal_error",
+      "message": "Cooldown aborted after an output command failure."
+    },
+    "steamTimeoutRemainingMs": null,
+    "uptimeMs": 184220
+  },
+  "extraction": {
+    "status": "idle",
+    "extractionId": null,
+    "selection": null,
+    "phase": "idle",
+    "elapsedMs": 0,
+    "remainingMs": null,
+    "pumpCommand": "off"
+  },
+  "compensation": {
+    "status": "inactive",
+    "phase": null
+  },
+  "cooldown": {
+    "status": "idle",
+    "cooldownId": "cooldown-184220",
+    "brewTargetC": 93,
+    "elapsedMs": 12000,
+    "remainingMs": null,
+    "pumpCommand": "off",
+    "heaterInhibited": false,
+    "outcome": "failed"
+  }
+}

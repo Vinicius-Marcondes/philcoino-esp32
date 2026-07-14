@@ -1,0 +1,10 @@
+{
+  "status": "pumping",
+  "cooldownId": "cooldown-184220",
+  "brewTargetC": 93,
+  "elapsedMs": 12000,
+  "remainingMs": 33000,
+  "pumpCommand": "running",
+  "heaterInhibited": true,
+  "outcome": null
+}

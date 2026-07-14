@@ -1,3 +1,61 @@
+# PRD-004 Tracker
+
+PRD Status: Active
+Current Task: THERM-002 (Human review gate)
+
+Implementation Boundary: THERM-001 is complete. THERM-002 is the current Human
+design gate; do not begin THERM-003 until Vinicius explicitly approves the debug
+mobile hierarchy, copy, interactions, large-text behavior, and accessibility.
+THERM-010 remains a separate disconnected low-voltage/visual gate, and THERM-011
+requires separate authorization before any physical or energized work.
+
+## Summary
+
+Add Brew-only extraction with a fixed phase-aware `+2°C` heater-duty bias and
+an acknowledged firmware-owned cooldown workflow with a 45-second pump cutoff
+and five-second stabilization period.
+
+PRD: `docs/prds/PRD-004/PRD-004.md`
+
+## Safety Boundary
+
+- Compensation and cooldown constants are owner-selected hypotheses, not
+  calibrated thermal results or proof of energized safety.
+- Firmware remains authoritative for sensor validity, output commands, timing,
+  faults, targets, mode eligibility, and workflow mutual exclusion.
+- `running`/`off` describe GPIO commands only; the system has no pump-flow,
+  current, SSR-output, water-level, or physical-switch feedback.
+- Existing single-sensor, cutoff, SSR, timing, security, wiring, enclosure,
+  pressure, and mains findings remain unresolved and visible.
+- THERM-010 is disconnected low-voltage/visual acceptance only. THERM-011
+  requires a separately approved instrumented procedure and qualified
+  supervision; software evidence cannot complete it.
+
+## Git
+
+- Planned branch: `feature/PRD-004-thermal-workflows`
+- Base: `main` (reuses the latest owner-approved PRD-003 branch precedent
+  because `develop` was unavailable)
+- Merge target: `main` (same latest owner-approved precedent)
+
+## Execution State
+
+| Task | Review | Status | Evidence | Decision Log | Commit | Blocked Reason | Requested Decision |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| [THERM-001](prds/PRD-004/tasks/THERM-001.md) | Agent | Done | OpenAPI validation; 111 protocol tests/224 expectations; protocol typecheck; `git diff --check` passed | API v1 is unchanged; API v2 strictly adds acknowledged compensation plus idempotent cooldown Start/Stop, retained replay identity, command-only output state, terminal outcomes, and distinguishable workflow/eligibility conflicts | This commit | None | None |
+| [THERM-002](prds/PRD-004/tasks/THERM-002.md) | Human | Todo | Pending | Pending | Pending | None | None |
+| [THERM-003](prds/PRD-004/tasks/THERM-003.md) | Agent | Todo | Pending | Pending | Pending | None | None |
+| [THERM-004](prds/PRD-004/tasks/THERM-004.md) | Agent | Todo | Pending | Pending | Pending | None | None |
+| [THERM-005](prds/PRD-004/tasks/THERM-005.md) | Agent | Todo | Pending | Pending | Pending | None | None |
+| [THERM-006](prds/PRD-004/tasks/THERM-006.md) | Agent | Todo | Pending | Pending | Pending | None | None |
+| [THERM-007](prds/PRD-004/tasks/THERM-007.md) | Agent | Todo | Pending | Pending | Pending | None | None |
+| [THERM-008](prds/PRD-004/tasks/THERM-008.md) | Agent | Todo | Pending | Pending | Pending | None | None |
+| [THERM-009](prds/PRD-004/tasks/THERM-009.md) | Agent | Todo | Pending | Pending | Pending | None | None |
+| [THERM-010](prds/PRD-004/tasks/THERM-010.md) | Human | Todo | Pending | Pending | Pending | None | None |
+| [THERM-011](prds/PRD-004/tasks/THERM-011.md) | Human | Todo | Pending | Pending | Pending | None | None |
+
+---
+
 # PRD-003 Tracker
 
 PRD Status: Software Complete — Physical Acceptance Deferred

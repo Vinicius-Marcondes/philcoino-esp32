@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": "brew_mode_required",
+    "message": "Switch the machine to Brew before starting extraction."
+  }
+}

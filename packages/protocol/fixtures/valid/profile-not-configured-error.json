@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": "profile_not_configured",
+    "message": "The selected custom profile slot is empty."
+  }
+}
