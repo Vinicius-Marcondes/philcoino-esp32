@@ -1,5 +1,6 @@
 import {
   BREW_TARGET_MIN_C,
+  CooldownStateSchema,
   ExtractionStateSchema,
   HeaterSettingsRequestSchema,
   MachineStateV2Schema,
@@ -61,6 +62,16 @@ export class DebugDeviceApiClient
     remainingMs: null,
     pumpCommand: "off",
   });
+  private readonly cooldown = CooldownStateSchema.parse({
+    status: "idle",
+    cooldownId: null,
+    brewTargetC: null,
+    elapsedMs: 0,
+    remainingMs: null,
+    pumpCommand: "off",
+    heaterInhibited: false,
+    outcome: null,
+  });
   private activeStartKey: string | null = null;
 
   async getHealth(options: { signal?: AbortSignal } = {}): Promise<HealthResponse> {
@@ -85,6 +96,8 @@ export class DebugDeviceApiClient
     return MachineStateV2Schema.parse({
       machine: this.state,
       extraction: this.extraction,
+      compensation: { status: "inactive", phase: null },
+      cooldown: this.cooldown,
     });
   }
 

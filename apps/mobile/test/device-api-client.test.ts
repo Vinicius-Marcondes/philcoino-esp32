@@ -8,6 +8,7 @@ import {
   DeviceApiClient,
   type FetchImplementation,
 } from "../src/networking/device-api-client";
+import { withPreTherm003IdleStateEnvelope } from "./pre-therm-003-state-envelope";
 import {
   createSimulator,
   DEFAULT_SIMULATOR_TOKEN,
@@ -279,15 +280,21 @@ describe("DeviceApiClient", () => {
     const request = simulator.app.request.bind(simulator.app);
     const client = new DeviceApiClient({
       address: "http://127.0.0.1:3000",
-      fetch: (url, init) =>
-        Promise.resolve(
-          request(url, {
-            body: init.body,
-            headers: init.headers,
-            method: init.method,
-            signal: init.signal,
-          }),
-        ),
+      fetch: withPreTherm003IdleStateEnvelope(
+        (url, init) =>
+          Promise.resolve(
+            request(url, {
+              body: init.body,
+              headers: init.headers,
+              method: init.method,
+              signal: init.signal,
+            }),
+          ),
+        () => ({
+          machine: simulator.machine.getState(),
+          extraction: simulator.machine.getExtractionState(),
+        }),
+      ),
       token: DEFAULT_SIMULATOR_TOKEN,
     });
 

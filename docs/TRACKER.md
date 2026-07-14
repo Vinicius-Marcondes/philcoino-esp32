@@ -6,6 +6,8 @@ Current Task: THERM-002 (Human review gate)
 Implementation Boundary: THERM-001 is complete. THERM-002 is the current Human
 design gate; do not begin THERM-003 until Vinicius explicitly approves the debug
 mobile hierarchy, copy, interactions, large-text behavior, and accessibility.
+The deterministic debug implementation and automated/web checks pass; owner
+review is the only remaining THERM-002 acceptance item.
 THERM-010 remains a separate disconnected low-voltage/visual gate, and THERM-011
 requires separate authorization before any physical or energized work.
 
@@ -43,7 +45,7 @@ PRD: `docs/prds/PRD-004/PRD-004.md`
 | Task | Review | Status | Evidence | Decision Log | Commit | Blocked Reason | Requested Decision |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | [THERM-001](prds/PRD-004/tasks/THERM-001.md) | Agent | Done | OpenAPI validation; 111 protocol tests/224 expectations; protocol typecheck; `git diff --check` passed | API v1 is unchanged; API v2 strictly adds acknowledged compensation plus idempotent cooldown Start/Stop, retained replay identity, command-only output state, terminal outcomes, and distinguishable workflow/eligibility conflicts | This commit | None | None |
-| [THERM-002](prds/PRD-004/tasks/THERM-002.md) | Human | Todo | Pending | Pending | Pending | None | None |
+| [THERM-002](prds/PRD-004/tasks/THERM-002.md) | Human | Awaiting Approval | 89 mobile tests/286 expectations; lint; typecheck; Expo SDK 54 config; debug web export; interactive 390×844 QA passed | Debug-only pure state machine; explicit confirmation and command-only boundaries; prominent Stop; Steam requires explicit Machine-controls navigation; test-only pre-THERM-003 simulator envelope is removed in THERM-003 | This commit | Explicit owner approval is required before production integration | Approve or request in-scope revisions to hierarchy, copy, interactions, large-text behavior, and accessibility |
 | [THERM-003](prds/PRD-004/tasks/THERM-003.md) | Agent | Todo | Pending | Pending | Pending | None | None |
 | [THERM-004](prds/PRD-004/tasks/THERM-004.md) | Agent | Todo | Pending | Pending | Pending | None | None |
 | [THERM-005](prds/PRD-004/tasks/THERM-005.md) | Agent | Todo | Pending | Pending | Pending | None | None |

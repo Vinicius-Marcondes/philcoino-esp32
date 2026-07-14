@@ -122,6 +122,8 @@ describe("debug device mode", () => {
     await expect(client.startExtraction(request)).resolves.toEqual(started);
     await expect(client.getStateV2()).resolves.toMatchObject({
       extraction: { extractionId: started.extractionId, status: "running" },
+      compensation: { status: "inactive" },
+      cooldown: { status: "idle", pumpCommand: "off" },
     });
     await expect(client.stopExtraction()).resolves.toMatchObject({
       pumpCommand: "off",

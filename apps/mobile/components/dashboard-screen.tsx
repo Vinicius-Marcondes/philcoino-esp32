@@ -28,6 +28,7 @@ import {
   ExtractionPreview,
   phaseLabel,
 } from "@/components/extraction-preview";
+import { ThermalWorkflowPreview } from "@/components/thermal-workflow-preview";
 import { useMachineDashboard } from "@/hooks/use-machine-dashboard";
 import {
   appendTemperatureSample,
@@ -320,6 +321,11 @@ export function DashboardScreen({
                   onDismissOverTemperature={dismissOverTemperature}
                   snapshot={snapshot}
                 />
+                {debugDeviceMode ? (
+                  <ThermalWorkflowPreview
+                    onOpenMachine={() => openDashboardPage("machine")}
+                  />
+                ) : null}
                 {mobileProfiles !== null && machineProfiles !== null ? (
                   <ExtractionPreview
                     debugPreview={debugDeviceMode}
