@@ -1,6 +1,6 @@
 # STEAM-004 — Review the physical Steam temperature correction
 
-Status: Todo
+Status: Deferred — Separate Human Authorization Required
 Review Mode: Human
 
 ## Human Review Needs
@@ -93,3 +93,18 @@ STEAM-001 through STEAM-003.
 - Stop immediately for implausible readings, uncontrolled heating, unexpected
   SSR behavior, cutoff concerns, leaks, pressure concerns, wiring/enclosure
   issues, or loss of independent instrumentation.
+
+## Deferral Record
+
+- Deferred: 2026-07-14 after completion of STEAM-001 through STEAM-003.
+- No physical, low-voltage target, wiring, heater, SSR, boiler, or energized
+  operation was performed by the implementing agent.
+- Human review still requires a separately authorized written procedure,
+  independent reference instrument and calibration status, exact probe
+  mounting, firmware build identifier, boiler fill/state, pressure context,
+  ambient conditions, heat-soak duration, qualified supervision, stop
+  conditions, and repeated paired measurements near raw `110°C`, `115°C`,
+  and `120°C` during rise, steady Steam operation, and recovery.
+- The reviewer must explicitly retain the fixed `+5°C`, defer judgment, or
+  request a separate calibration PRD. Software evidence cannot complete this
+  task.

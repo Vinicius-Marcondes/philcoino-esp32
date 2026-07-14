@@ -9,6 +9,10 @@ Philcoino é um controller experimental para máquina de espresso que trabalha p
 - As tasks de software da PRD-001 avançaram até o monitoramento mobile e controles com acknowledgement, mas o tracker ainda registra tasks posteriores de revisão/validação física como incompletas.
 - A revisão atual do codebase contém findings BLOCKER e MAJOR não resolvidos sobre timing do firmware, monitoramento dos sensores, comportamento de timeout, certeza da saída física, transporte e identidade/credenciais do dispositivo.
 - O firmware usa permanentemente uma leitura de thermocouple na base da boiler para brew e steam. Isso mantém um único ponto de falha de controle e não oferece cross-check independente entre sensores.
+- A PRD-003 implementa uma correção fixa e owner-selected de `+5°C` apenas em
+  Steam, depois da validação da leitura raw. O valor corrigido orienta control,
+  limits, API e OLED, mas ainda depende do mesmo sensor único e aguarda
+  validação física instrumentada e repetível na STEAM-004.
 - O source atual do firmware habilita o OLED (`kOledEnabled = true`), enquanto o tracker registra um estado temporário com OLED desabilitado. Trate isso como uma divergência não resolvida entre documentação e configuração, não como um estado de hardware aprovado.
 - Discovery físico no iPhone, comportamento final dos sensores, instalação do relay/SSR, cutoff independente e validação energizada supervisionada continuam sendo checks humanos.
 - Em 2026-07-14, o owner aceitou a matriz funcional da pump no target após relatar discovery HTTP/mDNS, Manual/profiles, Stop/cutoff, continuidade sem app e boot sem retomada. Isso é evidência funcional reportada pelo owner; não inclui captures elétricos independentes, injeção de falha GPIO, timer-wrap no target nem aprovação energizada.
@@ -20,6 +24,8 @@ Consulte [CODEBASE_REVIEW_REPORT.md](../CODEBASE_REVIEW_REPORT.md), [docs/TRACKE
 O firmware controla o temperature-control loop e não depende da conectividade do aplicativo. Seu policy code:
 
 - valida o status do MAX6675 e leituras finitas;
+- usa a leitura raw em Brew e aplica uma única correção compile-time de `+5°C`
+  em Steam antes das decisões e snapshots;
 - aplica target e limites de over-temperature específicos de cada mode;
 - exige três segundos contínuos na ready band;
 - aplica um heating timeout e um timeout de cinco minutos após steam-ready;
@@ -30,6 +36,10 @@ O firmware controla o temperature-control loop e não depende da conectividade d
 - inicializa hardware crítico em ordem fail-off.
 
 Esses itens são intenções de design e comportamentos de software cobertos por testes, não prova de desenergização física ou segurança térmica.
+
+A concordância entre control, API e OLED demonstra somente consistência de
+software. Ela não comprova que `+5°C` representa a diferença física da boiler,
+nem substitui medição independente, cutoff térmico ou revisão energizada.
 
 ## Limitações conhecidas de alto risco
 

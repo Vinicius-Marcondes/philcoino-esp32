@@ -42,6 +42,9 @@ struct ControlSnapshot {
   SteamTimeoutSnapshot steam_timeout{};
 };
 
+peripherals::DisplayTemperature display_temperature(
+    const ControlSnapshot& snapshot);
+
 const char* fault_code_name(FaultCode code);
 const char* fault_message(FaultCode code);
 

@@ -249,6 +249,9 @@ void test_steam_offset_is_applied_once_for_cutoff_readiness_and_snapshot() {
   auto snapshot = harness.controller.update(reading(115.0F), 0);
   assert(snapshot.mode == ControlMode::kSteam);
   assert(snapshot.boiler_temperature.temperature_c == 120.0F);
+  const auto oled_temperature = display_temperature(snapshot);
+  assert(oled_temperature.valid);
+  assert(oled_temperature.value_c == 120.0F);
   assert(snapshot.status == ControlStatus::kHeating);
   assert(!snapshot.heater_enabled);
   assert(!harness.output.level);
@@ -329,12 +332,14 @@ void test_mode_changes_recompute_effective_temperature_and_reset_steam_state() {
   auto snapshot = harness.controller.update(reading(92.0F), 0);
   assert(snapshot.mode == ControlMode::kBrew);
   assert(snapshot.boiler_temperature.temperature_c == 92.0F);
+  assert(display_temperature(snapshot).value_c == 92.0F);
 
   assert(harness.controller.set_mode(ControlMode::kSteam, 1000));
   snapshot = harness.controller.snapshot(1000);
   assert(snapshot.mode == ControlMode::kSteam);
   assert(snapshot.status == ControlStatus::kHeating);
   assert(snapshot.boiler_temperature.temperature_c == 97.0F);
+  assert(display_temperature(snapshot).value_c == 97.0F);
   assert(!snapshot.steam_timeout.active);
   assert(!snapshot.heater_enabled);
 
@@ -343,6 +348,7 @@ void test_mode_changes_recompute_effective_temperature_and_reset_steam_state() {
   assert(snapshot.mode == ControlMode::kBrew);
   assert(snapshot.status == ControlStatus::kHeating);
   assert(snapshot.boiler_temperature.temperature_c == 92.0F);
+  assert(display_temperature(snapshot).value_c == 92.0F);
   assert(!snapshot.steam_timeout.active);
   assert(!snapshot.heater_enabled);
 }

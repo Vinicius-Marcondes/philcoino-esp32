@@ -3,6 +3,7 @@
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
+#include <string>
 #include <vector>
 
 #include "philcoino/config.hpp"
@@ -491,6 +492,15 @@ void test_oled() {
   snapshot.mode = DisplayMode::kBrew;
   snapshot.status = DisplayStatus::kReady;
   snapshot.heater_enabled = true;
+
+  std::array<char, 24> temperature_line{};
+  format_display_temperature_line(temperature_line.data(),
+                                  temperature_line.size(),
+                                  {true, 120.0F}, 120);
+  assert(std::string(temperature_line.data()) == "TEMP 120.0/120");
+  format_display_temperature_line(temperature_line.data(),
+                                  temperature_line.size(), {}, 120);
+  assert(std::string(temperature_line.data()) == "TEMP --.-/120");
 
   assert(!display.render(snapshot));
   assert(display.initialize());

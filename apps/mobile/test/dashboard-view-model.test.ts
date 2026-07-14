@@ -21,12 +21,12 @@ import {
 const steamState: MachineState = {
   activeMode: "steam",
   brewTargetC: 93,
-  boilerTemperatureC: 115,
+  boilerTemperatureC: 120,
   fault: null,
   heaterEnabled: true,
   heaterActive: false,
   status: "ready",
-  steamTargetC: 115,
+  steamTargetC: 120,
   steamTimeoutRemainingMs: 299_001,
   uptimeMs: 3_661_000,
 };
@@ -71,7 +71,7 @@ describe("dashboard view model", () => {
     ).toBe("Heating");
   });
 
-  test("uses one boiler reading and the active mode target", () => {
+  test("uses the acknowledged boiler reading unchanged and the active target", () => {
     expect(
       boilerTemperatureC({
         ...steamState,
@@ -79,9 +79,9 @@ describe("dashboard view model", () => {
         boilerTemperatureC: 85,
       }),
     ).toBe(85);
-    expect(boilerTemperatureC(steamState)).toBe(115);
+    expect(boilerTemperatureC(steamState)).toBe(120);
     expect(boilerTargetC({ ...steamState, activeMode: "brew" })).toBe(93);
-    expect(boilerTargetC(steamState)).toBe(115);
+    expect(boilerTargetC(steamState)).toBe(120);
   });
 
   test("explains whether the steam countdown is active", () => {

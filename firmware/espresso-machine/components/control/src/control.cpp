@@ -27,6 +27,15 @@ bool over_temperature(float active_temperature_c, ControlMode mode) {
 
 }  // namespace
 
+peripherals::DisplayTemperature display_temperature(
+    const ControlSnapshot& snapshot) {
+  return {
+      snapshot.boiler_temperature.status ==
+          peripherals::ThermocoupleStatus::kOk,
+      snapshot.boiler_temperature.temperature_c,
+  };
+}
+
 const char* fault_code_name(FaultCode code) {
   switch (code) {
     case FaultCode::kSensorFailure: return "sensor_failure";

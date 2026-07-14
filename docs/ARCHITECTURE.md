@@ -162,6 +162,10 @@ increments, which makes phase, completion, readiness, and timeout boundaries
 deterministic. Power-cycle preserves targets/profiles and resets extraction idle;
 reset restores all defaults.
 
+Simulator `boilerTemperatureC` is already the effective logical control value.
+The simulator does not add the firmware Steam offset, model separate
+boiler-base and upper-boiler temperatures, or provide calibration evidence.
+
 Simulator-only routes can set readings, inject faults or the next profile-save
 failure, advance time, power-cycle, or reset. They are test controls, not
 production capabilities. The model's simple move-toward-target and extraction
@@ -196,18 +200,31 @@ The API and control loop share `TemperatureController` and `TargetStorage` behin
 
 ### Sensor and control state
 
-`Max6675` enforces conversion timing and rejects open, invalid, or transport-failed frames from the permanent boiler-base thermocouple. The one boiler reading is authoritative in both modes; the active mode selects the target, over-temperature limit, and heat-control constants.
+`Max6675` enforces conversion timing and rejects open, invalid, or
+transport-failed frames from the permanent boiler-base thermocouple. The
+controller also rejects non-finite values before conversion. One controller-owned
+path then defines the active temperature: the validated raw reading in Brew and
+that raw reading plus the compile-time `kSteamTemperatureOffsetC = 5` correction
+in Steam. No API, OLED, mobile, simulator, or persistence caller adds another
+correction.
 
 `TemperatureController` boots in brew mode with volatile heater permission enabled. A valid update:
 
-1. validates the boiler reading and active mode over-temperature limit;
-2. applies the steam return timeout when active;
-3. requires ±1°C stability for three seconds before `ready`;
-4. tracks continuous heating demand toward a ten-minute timeout;
-5. computes SSR duty inside a ten-second window;
-6. returns a snapshot for API/OLED consumers.
+1. validates the raw boiler reading status and finite numeric value;
+2. derives the active temperature once for the current mode;
+3. applies the active-mode over-temperature limit and steam return timeout;
+4. requires ±1°C stability for three seconds before `ready`;
+5. tracks active-temperature heating demand toward a ten-minute timeout;
+6. computes SSR duty and recovery inside a ten-second window;
+7. returns the same active effective value to API and OLED consumers.
 
 Mode and target changes reset readiness, steam timing, demand tracking, recovery state, and the heater window. Targets are saved before becoming controller state. Steam timeout starts on first readiness and returns to brew after five minutes.
+
+Consequently, a valid raw `115°C` reading is controlled and published as
+`120°C` in Steam and as `115°C` in Brew. A mode acknowledgement can change
+`boilerTemperatureC` and the OLED value by exactly `5°C` without a new sensor
+sample. This is an owner-selected correction pending repeatable instrumented
+physical validation, not proof of the upper-boiler temperature.
 
 Sensor, over-temperature, heating-timeout, and internal faults latch and command the SSR off. Only over-temperature can be dismissed without a power cycle, and only when the boiler reading is valid, the temperature is back at the active target, and the active mode limit is clear.
 

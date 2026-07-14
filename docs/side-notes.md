@@ -14,6 +14,30 @@ Before treating this item as resolved, identify the exact component and verify i
 
 This concern is retained for later hardware validation and does not block the approved software/API scope in PRD-001.
 
+## PRD-003 Steam temperature correction validation
+
+Status: STEAM-004 DEFERRED — SEPARATE HUMAN AUTHORIZATION REQUIRED
+
+Firmware now validates the boiler-base thermocouple reading and uses it raw in
+Brew or with one fixed owner-selected `+5°C` correction in Steam. The corrected
+Steam value is shared by control, heater duty/recovery, readiness, timeouts,
+over-temperature policy, API output, and OLED output. Protocol, host, simulator,
+mobile, capture, and target-build checks are software evidence only.
+
+No agent work under STEAM-001 through STEAM-003 measured the physical
+top-to-bottom boiler gradient or authorized energized operation. Before
+STEAM-004 physical work, Vinicius must approve the exact written procedure,
+independent reference instrument and calibration status, probe mounting,
+firmware build, boiler fill/state, pressure context, ambient conditions,
+heat-soak duration, supervision, and stop conditions.
+
+The deferred matrix requires repeated paired raw boiler-base and independent
+top-reference readings near raw `110°C`, `115°C`, and `120°C` during rise,
+steady Steam operation, and recovery. The human reviewer must explicitly retain
+the fixed `+5°C`, defer judgment, or request a separately scoped calibration
+change. Existing single-sensor, cutoff, SSR, wiring, enclosure, grounding,
+pressure, and supervision limitations remain open.
+
 ## Pump GPIO10 and SSR validation
 
 Status: HUMAN FUNCTIONAL REVIEW ACCEPTED — ELECTRICAL AND ENERGIZED VALIDATION DEFERRED

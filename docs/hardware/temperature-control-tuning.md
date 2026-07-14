@@ -27,6 +27,35 @@ below target.
 When the active temperature reaches or exceeds the active target, firmware turns
 the heater command off and resets the heater window.
 
+## Steam temperature correction
+
+Firmware validates the raw boiler-base MAX6675 status and finite reading before
+deriving the active temperature. The only correction constant is compile-time:
+
+```cpp
+kSteamTemperatureOffsetC = 5;
+```
+
+The controller uses these semantics:
+
+```text
+Brew active temperature  = validated raw boiler-base temperature
+Steam active temperature = validated raw boiler-base temperature + 5°C
+```
+
+The conversion occurs once inside `TemperatureController`. Heater demand and
+duty, recovery, readiness, heating timeout, five-minute Steam timeout,
+over-temperature latching/dismissal, API state, and OLED presentation all use
+that same active value. At a Steam target of `120°C`, raw `115°C` is active
+`120°C` and requests no additional heat. The unchanged raw sample is reported
+as `115°C` in Brew, so a mode change may visibly move the API/OLED value by
+exactly `5°C`.
+
+This fixed value is an owner-selected compensation for an observed boiler-base
+to upper-boiler difference. It is not a calibration result, scaling curve, or
+proof of heater safety. Changing it requires a source edit, rebuild, and
+reflash; do not add runtime configuration under PRD-003.
+
 ## GPTimer fail-off safety lease
 
 Every heater-on control update arms or renews a 1500 ms one-shot GPTimer safety
@@ -228,6 +257,15 @@ Useful observations:
 - Highest temperature after recovery.
 - Approximate time from lowest point back to target.
 - Whether the SSR LED is solid on, pulsing, or off.
+
+Physical acceptance of the Steam correction is deferred to STEAM-004 and
+requires separate authorization. Record the reference instrument and
+calibration status, exact probe locations, firmware build, boiler fill/state,
+pressure context, ambient conditions, heat-soak duration, and supervision.
+Collect repeated paired raw-base and independent top-reference readings near
+raw `110°C`, `115°C`, and `120°C` during rise, steady Steam operation, and
+recovery. Software, simulator, host, and target-build results cannot substitute
+for those measurements.
 
 ## Safety limits
 

@@ -88,18 +88,6 @@ const char* wifi_status_name(DisplayWifiStatus status) {
   return "FAIL";
 }
 
-void format_temperature_line(char* output, std::size_t length,
-                             const char* label,
-                             const DisplayTemperature& temperature,
-                             std::int32_t target) {
-  if (temperature.valid) {
-    std::snprintf(output, length, "%s %05.1f/%" PRId32, label,
-                  static_cast<double>(temperature.value_c), target);
-    return;
-  }
-  std::snprintf(output, length, "%s --.-/%" PRId32, label, target);
-}
-
 bool ascii_alphanumeric(char value) {
   return (value >= 'A' && value <= 'Z') ||
          (value >= 'a' && value <= 'z') ||
@@ -122,6 +110,17 @@ ExtractionProfile make_profile(const char* name, std::uint8_t pre_infusion,
 }
 
 }  // namespace
+
+void format_display_temperature_line(char* output, std::size_t length,
+                                     const DisplayTemperature& temperature,
+                                     std::int32_t target) {
+  if (temperature.valid) {
+    std::snprintf(output, length, "TEMP %05.1f/%" PRId32,
+                  static_cast<double>(temperature.value_c), target);
+    return;
+  }
+  std::snprintf(output, length, "TEMP --.-/%" PRId32, target);
+}
 
 Max6675::Max6675(Max6675Transport& transport, std::uint32_t started_at_ms)
     : transport_(transport),
@@ -410,10 +409,10 @@ bool Ssd1306Display::render(const DisplaySnapshot& snapshot) {
 
   Framebuffer buffer{};
   std::array<char, 24> line{};
-  format_temperature_line(line.data(), line.size(), "TEMP", snapshot.boiler,
-                          snapshot.mode == DisplayMode::kSteam
-                              ? snapshot.targets.steam_c
-                              : snapshot.targets.brew_c);
+  format_display_temperature_line(
+      line.data(), line.size(), snapshot.boiler,
+      snapshot.mode == DisplayMode::kSteam ? snapshot.targets.steam_c
+                                           : snapshot.targets.brew_c);
   draw_text(buffer, 0, line.data());
   std::snprintf(line.data(), line.size(), "B %" PRId32 " S %" PRId32,
                 snapshot.targets.brew_c, snapshot.targets.steam_c);

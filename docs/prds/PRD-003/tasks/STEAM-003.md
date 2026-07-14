@@ -1,6 +1,6 @@
 # STEAM-003 — Validate firmware surfaces and align documentation
 
-Status: Todo
+Status: Done
 Review Mode: Agent
 Review Reason: API serialization, OLED input, contract captures, compatibility,
 and documentation claims can be checked deterministically without energized
@@ -50,20 +50,20 @@ run the complete affected software verification matrix.
 
 ## Acceptance Criteria
 
-- [ ] Raw `115°C` in Steam is serialized and rendered as `120°C` exactly once.
-- [ ] The same raw sample in Brew is serialized and rendered as `115°C`.
-- [ ] Switching modes with an unchanged raw sample produces the documented
+- [x] Raw `115°C` in Steam is serialized and rendered as `120°C` exactly once.
+- [x] The same raw sample in Brew is serialized and rendered as `115°C`.
+- [x] Switching modes with an unchanged raw sample produces the documented
   `5°C` value change and preserves all controller reset semantics.
-- [ ] Mobile uses the acknowledged `boilerTemperatureC` unchanged and exposes
+- [x] Mobile uses the acknowledged `boilerTemperatureC` unchanged and exposes
   no offset control.
-- [ ] API v1/v2 shapes, target persistence, target ranges, and mutation flows
+- [x] API v1/v2 shapes, target persistence, target ranges, and mutation flows
   remain compatible.
-- [ ] Firmware captures validate through the shared protocol schemas.
-- [ ] Documentation identifies the correction as owner-selected and the
+- [x] Firmware captures validate through the shared protocol schemas.
+- [x] Documentation identifies the correction as owner-selected and the
   physical gradient as pending repeatable validation.
-- [ ] Existing safety blockers remain visible and no software result is
+- [x] Existing safety blockers remain visible and no software result is
   presented as proof of heater de-energization or physical accuracy.
-- [ ] All affected configured checks pass, with unavailable target/hardware
+- [x] All affected configured checks pass, with unavailable target/hardware
   checks explicitly reported.
 
 ## Verification Strategy
@@ -98,3 +98,31 @@ STEAM-002.
 - `docs/en/SAFETY.md`
 - `docs/side-notes.md`
 - `CODEBASE_REVIEW_REPORT.md`
+
+## Implementation Record
+
+- Completed: 2026-07-14.
+- API/OLED evidence: firmware host tests prove raw Steam `115°C` serializes
+  through API v1/v2 and formats for OLED as `120°C` exactly once; Brew
+  serializes the same raw value as `115°C`. Unchanged safe raw samples produce
+  the documented `5°C` API/display input change across mode acknowledgements.
+- Client/simulator boundary: mobile view-model tests prove the acknowledged
+  `boilerTemperatureC` is used unchanged. Simulator tests prove its configured
+  Steam temperature remains the already-effective logical value and receives
+  no firmware correction.
+- Regression evidence: OpenAPI validation passed; protocol passed 71 tests/147
+  expectations and typecheck; simulator passed 44 tests/215 expectations and
+  typecheck; mobile passed 79 tests/254 expectations, Expo lint, and typecheck;
+  a fresh strict C++17 build in `/tmp/philcoino-prd003-final-host` passed 4/4
+  CTest cases; 14 generated firmware response captures passed the shared Zod
+  validator.
+- Unavailable check: the pinned ESP-IDF 6.0.2 target build was not run because
+  `idf.py` is absent from `PATH` and `IDF_PATH` is unset. No toolchain,
+  dependency, package, CLI, or SDK was installed or modified.
+- Compatibility: API paths, numeric schemas, field names, target ranges,
+  persisted target/profile structures, error shapes, and mobile mutation flows
+  are unchanged.
+- Safety evidence: these are software checks only. No physical calibration,
+  sensor-placement validation, heater/SSR observation, wiring work, or
+  energized test was performed or inferred.
+- Commit: This commit.
