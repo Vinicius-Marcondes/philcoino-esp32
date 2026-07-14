@@ -20,7 +20,6 @@ import {
   DeviceApiClient,
   type FetchImplementation,
 } from "../src/networking/device-api-client";
-import { withPreTherm003IdleStateEnvelope } from "./pre-therm-003-state-envelope";
 
 const validState: MachineState = {
   activeMode: "brew",
@@ -225,21 +224,15 @@ describe("DashboardPollingSession", () => {
     const firstSnapshot = deferred<MachineStateV2>();
     const faultSnapshot = deferred<MachineStateV2>();
     const request = simulator.app.request.bind(simulator.app);
-    const fetch: FetchImplementation = withPreTherm003IdleStateEnvelope(
-      (url, init) =>
-        Promise.resolve(
-          request(url, {
-            body: init.body,
-            headers: init.headers,
-            method: init.method,
-            signal: init.signal,
-          }),
-        ),
-      () => ({
-        machine: simulator.machine.getState(),
-        extraction: simulator.machine.getExtractionState(),
-      }),
-    );
+    const fetch: FetchImplementation = (url, init) =>
+      Promise.resolve(
+        request(url, {
+          body: init.body,
+          headers: init.headers,
+          method: init.method,
+          signal: init.signal,
+        }),
+      );
     const client = new DeviceApiClient({
       address: "http://127.0.0.1:3000",
       fetch,

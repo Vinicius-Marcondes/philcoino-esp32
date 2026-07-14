@@ -91,10 +91,11 @@ Build and approve the Dashboard experience for Steam-blocked extraction, acknowl
 - GPIO `running`/`off`, heater inhibition, and workflow timing are labeled as
   command/control state only. No copy represents flow, cooling, current, SSR
   output, switch position, or physical de-energization as confirmed.
-- Existing mobile-to-simulator extraction tests use a named test-only
+- Existing mobile-to-simulator extraction tests used a named test-only
   pre-THERM-003 state envelope sourced from the simulator's public model. This
-  avoids implementing simulator behavior before approval and must be removed
-  when THERM-003 makes the simulator serve the authoritative fields.
+  avoided implementing simulator behavior before the design gate; THERM-003
+  removed the adapter after the simulator began serving the authoritative
+  fields directly.
 
 ### Compatibility and safety impact
 
