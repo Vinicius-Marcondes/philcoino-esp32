@@ -103,6 +103,31 @@ describe("debug device mode", () => {
     expect(error).toBeInstanceOf(ApiClientError);
     expect((error as ApiClientError).kind).toBe("cancelled");
   });
+
+  test("provides deterministic API v2 profile and acknowledged extraction data", async () => {
+    const client = createDebugDeviceApiClient();
+    const profiles = await client.getProfiles();
+    expect(profiles.profiles[0].profile?.name).toBe("Classic30");
+
+    const request = {
+      idempotencyKey: "debug-start-key-01",
+      selection: { kind: "profile" as const, profileId: "profile-2" as const },
+    };
+    const started = await client.startExtraction(request);
+    expect(started).toMatchObject({
+      phase: "pre-infusion",
+      pumpCommand: "running",
+      status: "running",
+    });
+    await expect(client.startExtraction(request)).resolves.toEqual(started);
+    await expect(client.getStateV2()).resolves.toMatchObject({
+      extraction: { extractionId: started.extractionId, status: "running" },
+    });
+    await expect(client.stopExtraction()).resolves.toMatchObject({
+      pumpCommand: "off",
+      status: "idle",
+    });
+  });
 });
 
 async function captureError(promise: Promise<unknown>): Promise<unknown> {

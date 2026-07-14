@@ -40,6 +40,7 @@ Do not silently resolve a safety, hardware, security, or scope conflict. Record 
 - [`ARCHITECTURE.md`](../ARCHITECTURE.md): current mobile, protocol, simulator, and firmware architecture.
 - [`architecture/repository-layout.md`](../architecture/repository-layout.md): durable repository boundaries and placement guidance.
 - [`protocol/api-v1-outline.md`](../protocol/api-v1-outline.md): human-readable API rationale and examples; OpenAPI remains authoritative.
+- [`protocol/api-v2-outline.md`](../protocol/api-v2-outline.md): firmware-acknowledged profiles and extraction while v1 remains compatible.
 - [`decisions/firmware-foundation.md`](../decisions/firmware-foundation.md): approved firmware/toolchain/foundation decisions.
 
 ## Product and delivery

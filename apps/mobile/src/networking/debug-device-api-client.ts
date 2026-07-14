@@ -1,23 +1,36 @@
 import {
   BREW_TARGET_MIN_C,
+  ExtractionStateSchema,
   HeaterSettingsRequestSchema,
+  MachineStateV2Schema,
   ModeRequestSchema,
+  ProfileSetSchema,
   STEAM_TARGET_MIN_C,
   TemperatureSettingsRequestSchema,
+  StartExtractionRequestSchema,
   type DeviceResponse,
   type HeaterSettingsRequest,
   type HeaterSettingsResponse,
   type HealthResponse,
   type MachineState,
+  type MachineStateV2,
   type ModeRequest,
   type ModeResponse,
   type OverTemperatureDismissResponse,
+  type ProfileSet,
+  type StartExtractionRequest,
+  type StartExtractionResponse,
+  type StopExtractionResponse,
   type TemperatureSettingsRequest,
   type TemperatureSettingsResponse,
 } from "@philcoino/protocol";
 
 import type { DashboardMutationClient } from "../dashboard/dashboard-mutation-session";
 import type { DashboardStateClient } from "../dashboard/dashboard-polling-session";
+import {
+  cloneProfileSet,
+  DEFAULT_MOBILE_PROFILE_SET,
+} from "../profiles/profile-set";
 import { ApiClientError } from "./api-client-error";
 
 export const debugDeviceIdentity: DeviceResponse = {
@@ -38,6 +51,17 @@ export class DebugDeviceApiClient
   implements DashboardStateClient, DashboardMutationClient
 {
   private state: MachineState = createDebugState();
+  private profiles = cloneProfileSet(DEFAULT_MOBILE_PROFILE_SET);
+  private extraction = ExtractionStateSchema.parse({
+    status: "idle",
+    extractionId: null,
+    selection: null,
+    phase: "idle",
+    elapsedMs: 0,
+    remainingMs: null,
+    pumpCommand: "off",
+  });
+  private activeStartKey: string | null = null;
 
   async getHealth(options: { signal?: AbortSignal } = {}): Promise<HealthResponse> {
     throwIfAborted(options.signal);
@@ -52,6 +76,141 @@ export class DebugDeviceApiClient
   async getState(options: { signal?: AbortSignal } = {}): Promise<MachineState> {
     throwIfAborted(options.signal);
     return this.state;
+  }
+
+  async getStateV2(
+    options: { signal?: AbortSignal } = {},
+  ): Promise<MachineStateV2> {
+    throwIfAborted(options.signal);
+    return MachineStateV2Schema.parse({
+      machine: this.state,
+      extraction: this.extraction,
+    });
+  }
+
+  async getProfiles(
+    options: { signal?: AbortSignal } = {},
+  ): Promise<ProfileSet> {
+    throwIfAborted(options.signal);
+    return cloneProfileSet(this.profiles);
+  }
+
+  async replaceProfiles(
+    profiles: ProfileSet,
+    options: { signal?: AbortSignal } = {},
+  ): Promise<ProfileSet> {
+    throwIfAborted(options.signal);
+    const parsed = ProfileSetSchema.safeParse(profiles);
+    if (!parsed.success) {
+      throw new ApiClientError("invalid-request", "The profile set is invalid.");
+    }
+    if (this.extraction.status === "running") {
+      throw new ApiClientError("http", "Extraction is active.", {
+        response: {
+          error: {
+            code: "extraction_active",
+            message: "Profiles cannot be replaced while extraction is active.",
+          },
+          activeExtraction: this.extraction,
+        },
+        status: 409,
+      });
+    }
+    this.profiles = cloneProfileSet(parsed.data);
+    return cloneProfileSet(this.profiles);
+  }
+
+  async startExtraction(
+    request: StartExtractionRequest,
+    options: { signal?: AbortSignal } = {},
+  ): Promise<StartExtractionResponse> {
+    throwIfAborted(options.signal);
+    const parsed = StartExtractionRequestSchema.safeParse(request);
+    if (!parsed.success) {
+      throw new ApiClientError("invalid-request", "The Start request is invalid.");
+    }
+    if (this.extraction.status === "running") {
+      if (this.activeStartKey === parsed.data.idempotencyKey) {
+        return this.extraction;
+      }
+      throw new ApiClientError("http", "Extraction is active.", {
+        response: {
+          error: {
+            code: "extraction_active",
+            message: "A different extraction is already active.",
+          },
+          activeExtraction: this.extraction,
+        },
+        status: 409,
+      });
+    }
+
+    const selection = parsed.data.selection;
+    const profile =
+      selection.kind === "profile"
+        ? (this.profiles.profiles.find(
+            (slot) => slot.id === selection.profileId,
+          )?.profile ?? null)
+        : null;
+    if (selection.kind === "profile" && profile === null) {
+      throw new ApiClientError("http", "The profile slot is empty.", {
+        response: {
+          error: {
+            code: "profile_not_configured",
+            message: "The selected custom profile slot is empty.",
+          },
+        },
+        status: 409,
+      });
+    }
+
+    const profileDurationMs =
+      profile === null
+        ? 60_000
+        : (profile.preInfusionSeconds +
+            profile.soakSeconds +
+            profile.mainExtractionSeconds) *
+          1_000;
+    const phase =
+      selection.kind === "manual"
+        ? "manual"
+        : (profile?.preInfusionSeconds ?? 0) > 0
+          ? "pre-infusion"
+          : "main-extraction";
+    this.activeStartKey = parsed.data.idempotencyKey;
+    this.extraction = ExtractionStateSchema.parse({
+      status: "running",
+      extractionId: "debug-run-1",
+      selection,
+      phase,
+      elapsedMs: 0,
+      remainingMs: profileDurationMs,
+      pumpCommand: "running",
+    });
+    if (this.extraction.status !== "running") {
+      throw new Error("Debug Start must produce a running extraction.");
+    }
+    return this.extraction;
+  }
+
+  async stopExtraction(
+    options: { signal?: AbortSignal } = {},
+  ): Promise<StopExtractionResponse> {
+    throwIfAborted(options.signal);
+    this.activeStartKey = null;
+    this.extraction = ExtractionStateSchema.parse({
+      status: "idle",
+      extractionId: null,
+      selection: null,
+      phase: "idle",
+      elapsedMs: 0,
+      remainingMs: null,
+      pumpCommand: "off",
+    });
+    if (this.extraction.status !== "idle") {
+      throw new Error("Debug Stop must produce idle extraction.");
+    }
+    return this.extraction;
   }
 
   async updateTemperatureSettings(

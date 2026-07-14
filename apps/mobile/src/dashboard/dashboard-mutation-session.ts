@@ -1,9 +1,14 @@
 import type {
+  ExtractionSelection,
+  ExtractionState,
   HeaterSettingsResponse,
   MachineState,
   Mode,
   ModeResponse,
   OverTemperatureDismissResponse,
+  ProfileSet,
+  StartExtractionResponse,
+  StopExtractionResponse,
   TemperatureSettingsRequest,
   TemperatureSettingsResponse,
 } from "@philcoino/protocol";
@@ -15,7 +20,14 @@ import {
 } from "../networking/connection-state";
 import { translate } from "../localization/i18n";
 
-export type DashboardMutationKind = "fault" | "heater" | "mode" | "temperatures";
+export type DashboardMutationKind =
+  | "extraction-start"
+  | "extraction-stop"
+  | "fault"
+  | "heater"
+  | "mode"
+  | "profiles"
+  | "temperatures";
 export type DashboardMutationStatus =
   | "idle"
   | "pending"
@@ -34,9 +46,12 @@ export const idleMutationState: DashboardMutationState = {
 };
 
 const mutationKinds: DashboardMutationKind[] = [
+  "extraction-start",
+  "extraction-stop",
   "fault",
   "heater",
   "mode",
+  "profiles",
   "temperatures",
 ];
 
@@ -44,6 +59,17 @@ export interface DashboardMutationClient {
   dismissOverTemperature(
     options?: { signal?: AbortSignal },
   ): Promise<OverTemperatureDismissResponse>;
+  replaceProfiles(
+    profiles: ProfileSet,
+    options?: { signal?: AbortSignal },
+  ): Promise<ProfileSet>;
+  startExtraction(
+    request: { idempotencyKey: string; selection: ExtractionSelection },
+    options?: { signal?: AbortSignal },
+  ): Promise<StartExtractionResponse>;
+  stopExtraction(
+    options?: { signal?: AbortSignal },
+  ): Promise<StopExtractionResponse>;
   setMode(
     request: { mode: Mode },
     options?: { signal?: AbortSignal },
@@ -67,43 +93,56 @@ interface DashboardMutationSessionOptions {
   client: DashboardMutationClient;
   onConnectionLost: (connection: ConnectionState) => void;
   onHeaterAcknowledged: (settings: HeaterSettingsResponse) => void;
+  onExtractionAcknowledged: (extraction: ExtractionState) => void;
   onModeAcknowledged: (mode: Mode) => void;
   onMutationChange: (
     kind: DashboardMutationKind,
     state: DashboardMutationState,
   ) => void;
   onOverTemperatureDismissed: (snapshot: MachineState) => void;
+  onProfilesAcknowledged: (profiles: ProfileSet) => void;
   onTemperatureSettingsAcknowledged: (
     settings: TemperatureSettingsResponse,
   ) => void;
   polling: DashboardPollingControl;
+  startKeyFactory?: () => string;
 }
 
 export class DashboardMutationSession {
   private readonly client: DashboardMutationClient;
   private readonly onConnectionLost: (connection: ConnectionState) => void;
   private readonly onHeaterAcknowledged: (settings: HeaterSettingsResponse) => void;
+  private readonly onExtractionAcknowledged: (extraction: ExtractionState) => void;
   private readonly onModeAcknowledged: (mode: Mode) => void;
   private readonly onMutationChange: DashboardMutationSessionOptions["onMutationChange"];
   private readonly onOverTemperatureDismissed: DashboardMutationSessionOptions["onOverTemperatureDismissed"];
+  private readonly onProfilesAcknowledged: (profiles: ProfileSet) => void;
   private readonly onTemperatureSettingsAcknowledged: DashboardMutationSessionOptions["onTemperatureSettingsAcknowledged"];
   private readonly polling: DashboardPollingControl;
+  private readonly startKeyFactory: () => string;
 
   private activeController: AbortController | null = null;
   private generation = 0;
   private pending = false;
   private running = false;
+  private pendingStart: {
+    idempotencyKey: string;
+    selection: ExtractionSelection;
+  } | null = null;
 
   constructor(options: DashboardMutationSessionOptions) {
     this.client = options.client;
     this.onConnectionLost = options.onConnectionLost;
     this.onHeaterAcknowledged = options.onHeaterAcknowledged;
+    this.onExtractionAcknowledged = options.onExtractionAcknowledged;
     this.onModeAcknowledged = options.onModeAcknowledged;
     this.onMutationChange = options.onMutationChange;
     this.onOverTemperatureDismissed = options.onOverTemperatureDismissed;
+    this.onProfilesAcknowledged = options.onProfilesAcknowledged;
     this.onTemperatureSettingsAcknowledged =
       options.onTemperatureSettingsAcknowledged;
     this.polling = options.polling;
+    this.startKeyFactory = options.startKeyFactory ?? createStartKey;
   }
 
   start(): void {
@@ -186,6 +225,54 @@ export class DashboardMutationSession {
     );
   }
 
+  replaceProfiles(profiles: ProfileSet): void {
+    void this.perform(
+      "profiles",
+      (signal) => this.client.replaceProfiles(profiles, { signal }),
+      (response) => {
+        this.onProfilesAcknowledged(response);
+        return translate("mutation.profilesExported");
+      },
+      translate("mutation.profilesExportPending"),
+    );
+  }
+
+  startExtraction(selection: ExtractionSelection): void {
+    if (
+      this.pendingStart === null ||
+      !sameExtractionSelection(this.pendingStart.selection, selection)
+    ) {
+      this.pendingStart = {
+        idempotencyKey: this.startKeyFactory(),
+        selection,
+      };
+    }
+    const request = this.pendingStart;
+    void this.perform(
+      "extraction-start",
+      (signal) => this.client.startExtraction(request, { signal }),
+      (response) => {
+        this.pendingStart = null;
+        this.onExtractionAcknowledged(response);
+        return translate("mutation.extractionStarted");
+      },
+      translate("mutation.extractionStartPending"),
+    );
+  }
+
+  stopExtraction(): void {
+    void this.perform(
+      "extraction-stop",
+      (signal) => this.client.stopExtraction({ signal }),
+      (response) => {
+        this.pendingStart = null;
+        this.onExtractionAcknowledged(response);
+        return translate("mutation.extractionStopped");
+      },
+      translate("mutation.extractionStopPending"),
+    );
+  }
+
   dismissMutation(kind: DashboardMutationKind): void {
     if (!this.running) {
       return;
@@ -249,6 +336,26 @@ export class DashboardMutationSession {
   private isCurrent(generation: number): boolean {
     return this.running && this.generation === generation;
   }
+}
+
+function createStartKey(): string {
+  const random = Math.random()
+    .toString(36)
+    .slice(2)
+    .padEnd(12, "0")
+    .slice(0, 12);
+  return `start-${Date.now().toString(36)}-${random}`;
+}
+
+function sameExtractionSelection(
+  left: ExtractionSelection,
+  right: ExtractionSelection,
+): boolean {
+  return (
+    left.kind === right.kind &&
+    (left.kind === "manual" ||
+      (right.kind === "profile" && left.profileId === right.profileId))
+  );
 }
 
 export function mutationOutcomeFromError(error: unknown): {

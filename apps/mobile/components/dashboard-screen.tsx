@@ -1,5 +1,14 @@
-import type { MachineState } from "@philcoino/protocol";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import type {
+  ExtractionSelection,
+  MachineState,
+} from "@philcoino/protocol";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type SetStateAction,
+} from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -15,6 +24,10 @@ import {
   MachineControls,
   MutationFeedback,
 } from "@/components/machine-controls";
+import {
+  ExtractionPreview,
+  phaseLabel,
+} from "@/components/extraction-preview";
 import { useMachineDashboard } from "@/hooks/use-machine-dashboard";
 import {
   appendTemperatureSample,
@@ -34,10 +47,20 @@ import {
 } from "@/src/dashboard/dashboard-view-model";
 import type { DashboardMutationState } from "@/src/dashboard/dashboard-mutation-session";
 import { isDebugDeviceModeEnabled } from "@/src/debug-device-mode";
+import { debugMobileProfileRepository } from "@/src/debug/debug-mobile-profile-repository";
+import {
+  createExtractionPreviewState,
+  type ExtractionPreviewState,
+} from "@/src/debug/extraction-preview-model";
 import { translate } from "@/src/localization/i18n";
 import { createDebugDeviceApiClient } from "@/src/networking/debug-device-api-client";
 import { createDeviceApiClient } from "@/src/networking/expo-device-api-client";
+import { profileSetsEqual } from "@/src/profiles/profile-set";
 import type { SelectedDevice } from "@/src/storage/selected-device-repository";
+import { mobileProfileRepository } from "@/src/storage/secure-mobile-profile-repository";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+
+type DashboardPage = "dashboard" | "profiles" | "machine";
 
 interface DashboardScreenProps {
   deviceName: string;
@@ -72,20 +95,58 @@ export function DashboardScreen({
     dismissMutation,
     dismissOverTemperature,
     faultMutation,
+    extraction,
+    extractionStartMutation,
+    extractionStopMutation,
+    exportProfiles,
     heaterMutation,
     modeMutation,
+    machineProfiles,
+    mobileProfiles,
+    profileMutation,
+    profileStorageError,
+    saveMobileProfiles,
     setHeaterEnabled,
     setMode,
     snapshot,
+    startExtraction,
+    stopExtraction,
     temperatureMutation,
     updateTemperatureSettings,
-  } = useMachineDashboard(client);
+  } = useMachineDashboard(
+    client,
+    debugDeviceMode
+      ? debugMobileProfileRepository
+      : mobileProfileRepository,
+  );
   const { width } = useWindowDimensions();
+  const safeAreaInsets = useSafeAreaInsets();
   const connectionContent = connectionCopy(connection);
   const metricWidth = width >= 700 ? "48.5%" : "100%";
   const [temperatureHistory, setTemperatureHistory] = useState<
     TemperatureSample[]
   >([]);
+  const [dashboardPage, setDashboardPage] =
+    useState<DashboardPage>("dashboard");
+  const [selectedExtraction, setSelectedExtraction] =
+    useState<ExtractionSelection>({ kind: "manual" });
+  const idlePreviewState = useMemo(createExtractionPreviewState, []);
+  const extractionUiState: ExtractionPreviewState = useMemo(
+    () => ({
+      extraction: extraction ?? idlePreviewState.extraction,
+      machineProfiles: machineProfiles ?? idlePreviewState.machineProfiles,
+      mobileProfiles: mobileProfiles ?? idlePreviewState.mobileProfiles,
+      notice: null,
+      selected: selectedExtraction,
+    }),
+    [
+      extraction,
+      idlePreviewState,
+      machineProfiles,
+      mobileProfiles,
+      selectedExtraction,
+    ],
+  );
   const dismissModeMutation = useCallback(
     () => dismissMutation("mode"),
     [dismissMutation],
@@ -102,10 +163,25 @@ export function DashboardScreen({
     () => dismissMutation("heater"),
     [dismissMutation],
   );
+  const dismissExtractionStartMutation = useCallback(
+    () => dismissMutation("extraction-start"),
+    [dismissMutation],
+  );
+  const dismissExtractionStopMutation = useCallback(
+    () => dismissMutation("extraction-stop"),
+    [dismissMutation],
+  );
+  const dismissProfileMutation = useCallback(
+    () => dismissMutation("profiles"),
+    [dismissMutation],
+  );
   const mutationPending =
+    extractionStartMutation.status === "pending" ||
+    extractionStopMutation.status === "pending" ||
     faultMutation.status === "pending" ||
     heaterMutation.status === "pending" ||
     modeMutation.status === "pending" ||
+    profileMutation.status === "pending" ||
     temperatureMutation.status === "pending";
 
   useEffect(() => {
@@ -118,125 +194,342 @@ export function DashboardScreen({
     );
   }, [connection.status, snapshot]);
 
+  const applyExtractionUiState = useCallback(
+    (update: SetStateAction<ExtractionPreviewState>) => {
+      const next =
+        typeof update === "function" ? update(extractionUiState) : update;
+      if (JSON.stringify(next.selected) !== JSON.stringify(extractionUiState.selected)) {
+        setSelectedExtraction(next.selected);
+      }
+      if (!profileSetsEqual(next.mobileProfiles, extractionUiState.mobileProfiles)) {
+        void saveMobileProfiles(next.mobileProfiles);
+      }
+      if (!profileSetsEqual(next.machineProfiles, extractionUiState.machineProfiles)) {
+        exportProfiles();
+      }
+      if (
+        extractionUiState.extraction.status === "idle" &&
+        next.extraction.status === "running"
+      ) {
+        startExtraction(next.selected);
+      } else if (
+        extractionUiState.extraction.status === "running" &&
+        next.extraction.status === "idle"
+      ) {
+        stopExtraction();
+      }
+    },
+    [
+      exportProfiles,
+      extractionUiState,
+      saveMobileProfiles,
+      startExtraction,
+      stopExtraction,
+    ],
+  );
+
+  const openDashboardPage = useCallback((page: DashboardPage) => {
+    if (page === "profiles") {
+      setSelectedExtraction((current) =>
+        current.kind === "manual"
+          ? { kind: "profile", profileId: "profile-1" }
+          : current,
+      );
+    }
+    setDashboardPage(page);
+  }, []);
+
   return (
     <View style={styles.screen}>
       <ScrollView
         contentInsetAdjustmentBehavior="never"
-        contentContainerStyle={styles.content}>
+        contentContainerStyle={[
+          styles.content,
+          styles.contentWithNavigation,
+        ]}>
         <View style={styles.pageHeader}>
           <Text selectable style={styles.pageTitle}>{deviceName}</Text>
         </View>
         <View style={styles.intro}>
-          <Text selectable style={styles.eyebrow}>{translate("dashboard.liveMachine")}</Text>
+          <Text selectable style={styles.eyebrow}>
+            {translate(
+              `dashboard.navigation.${dashboardPage}.eyebrow`,
+            )}
+          </Text>
           <Text selectable style={styles.lead}>
-            {translate("dashboard.lead")}
+            {translate(
+              `dashboard.navigation.${dashboardPage}.lead`,
+            )}
           </Text>
         </View>
 
-        <View
-          accessibilityLiveRegion="polite"
-          style={[
-            styles.connectionCard,
-            connection.status === "online"
-              ? styles.connectionOnline
-              : styles.connectionUnavailable,
-          ]}>
-          <View style={styles.statusHeading}>
-            <View
-              style={[
-                styles.statusDot,
-                connection.status === "online"
-                  ? styles.statusDotOnline
-                  : styles.statusDotUnavailable,
-              ]}
-            />
-            <Text selectable style={styles.connectionLabel}>
-              {translate("dashboard.appConnection", { status: connectionContent.label })}
-            </Text>
-            {connection.status === "connecting" ? (
-              <ActivityIndicator accessibilityLabel={translate("dashboard.connecting")} size="small" />
-            ) : null}
-          </View>
-          <Text selectable style={styles.connectionDetail}>
-            {connectionContent.detail}
-          </Text>
-        </View>
-
-        <MutationFeedback
-          onDismiss={dismissModeMutation}
-          state={modeMutation}
-        />
-        <MutationFeedback
-          onDismiss={dismissTemperatureMutation}
-          state={temperatureMutation}
-        />
-        <MutationFeedback
-          onDismiss={dismissFaultMutation}
-          state={faultMutation}
-        />
-        <MutationFeedback
-          onDismiss={dismissHeaterMutation}
-          state={heaterMutation}
-        />
-
-        {connection.status === "online" && snapshot !== null ? (
+        {dashboardPage === "dashboard" ? (
           <>
-            <MachineSnapshot
-              faultMutation={faultMutation}
-              metricWidth={metricWidth}
-              onDismissOverTemperature={dismissOverTemperature}
-              snapshot={snapshot}
-            />
-            <TemperatureCurve
-              history={temperatureHistory}
-              snapshot={snapshot}
-            />
-            <MachineControls
-              faultMutation={faultMutation}
-              heaterMutation={heaterMutation}
-              modeMutation={modeMutation}
-              onSetMode={setMode}
-              onUpdateTemperatureSettings={updateTemperatureSettings}
-              snapshot={snapshot}
-              temperatureMutation={temperatureMutation}
-            />
-          </>
-        ) : (
-          <View style={styles.unavailableCard}>
-            <Text selectable style={styles.unavailableTitle}>
-              {translate("dashboard.unavailableTitle")}
-            </Text>
-            <Text selectable style={styles.unavailableText}>
-              {translate("dashboard.unavailableText")}
-            </Text>
-          </View>
-        )}
+            <View
+              accessibilityLiveRegion="polite"
+              style={[
+                styles.connectionCard,
+                connection.status === "online"
+                  ? styles.connectionOnline
+                  : styles.connectionUnavailable,
+              ]}>
+              <View style={styles.statusHeading}>
+                <View
+                  style={[
+                    styles.statusDot,
+                    connection.status === "online"
+                      ? styles.statusDotOnline
+                      : styles.statusDotUnavailable,
+                  ]}
+                />
+                <Text selectable style={styles.connectionLabel}>
+                  {translate("dashboard.appConnection", {
+                    status: connectionContent.label,
+                  })}
+                </Text>
+                {connection.status === "connecting" ? (
+                  <ActivityIndicator
+                    accessibilityLabel={translate("dashboard.connecting")}
+                    size="small"
+                  />
+                ) : null}
+              </View>
+              <Text selectable style={styles.connectionDetail}>
+                {connectionContent.detail}
+              </Text>
+            </View>
 
-        {connection.status === "online" && snapshot !== null ? (
-          <HeaterToggleBar
-            disabled={mutationPending}
-            mutation={heaterMutation}
-            onSetHeaterEnabled={setHeaterEnabled}
-            snapshot={snapshot}
-          />
+            <MutationFeedback
+              onDismiss={dismissFaultMutation}
+              state={faultMutation}
+            />
+            <MutationFeedback
+              onDismiss={dismissExtractionStartMutation}
+              state={extractionStartMutation}
+            />
+            <MutationFeedback
+              onDismiss={dismissExtractionStopMutation}
+              state={extractionStopMutation}
+            />
+
+            {connection.status === "online" && snapshot !== null ? (
+              <>
+                <MachineSnapshot
+                  faultMutation={faultMutation}
+                  metricWidth={metricWidth}
+                  onDismissOverTemperature={dismissOverTemperature}
+                  snapshot={snapshot}
+                />
+                {mobileProfiles !== null && machineProfiles !== null ? (
+                  <ExtractionPreview
+                    debugPreview={debugDeviceMode}
+                    onStateChange={applyExtractionUiState}
+                    state={extractionUiState}
+                    view="quick"
+                  />
+                ) : (
+                  <ProfileLoadingCard error={profileStorageError} />
+                )}
+                <TemperatureCurve
+                  history={temperatureHistory}
+                  snapshot={snapshot}
+                />
+              </>
+            ) : (
+              <View style={styles.unavailableCard}>
+                <Text selectable style={styles.unavailableTitle}>
+                  {translate("dashboard.unavailableTitle")}
+                </Text>
+                <Text selectable style={styles.unavailableText}>
+                  {translate("dashboard.unavailableText")}
+                </Text>
+              </View>
+            )}
+          </>
         ) : null}
 
-        <View style={styles.contextCard}>
-          <Text selectable style={styles.contextTitle}>{translate("dashboard.savedMachine")}</Text>
-          <Text selectable style={styles.contextText}>{initialNote}</Text>
-          <Text selectable style={styles.deviceId}>{selectedDevice.deviceId}</Text>
-          <Text selectable style={styles.address}>
-            {selectedDevice.lastSuccessfulAddress}
-          </Text>
-          <Pressable
-            accessibilityRole="button"
-            onPress={onForget}
-            style={({ pressed }) => [styles.forgetButton, pressed && styles.pressed]}>
-            <Text style={styles.forgetButtonText}>{translate("dashboard.forgetMachine")}</Text>
-          </Pressable>
-        </View>
+        {dashboardPage === "profiles" ? (
+          <>
+            {profileStorageError !== null ? (
+              <ProfileLoadingCard error={profileStorageError} />
+            ) : null}
+            <MutationFeedback
+              onDismiss={dismissProfileMutation}
+              state={profileMutation}
+            />
+            {mobileProfiles !== null && machineProfiles !== null ? (
+              <ExtractionPreview
+                debugPreview={debugDeviceMode}
+                onStateChange={applyExtractionUiState}
+                state={extractionUiState}
+                view="profiles"
+              />
+            ) : (
+              <ProfileLoadingCard error={profileStorageError} />
+            )}
+          </>
+        ) : null}
+
+        {dashboardPage === "machine" ? (
+          <>
+            <MutationFeedback
+              onDismiss={dismissModeMutation}
+              state={modeMutation}
+            />
+            <MutationFeedback
+              onDismiss={dismissTemperatureMutation}
+              state={temperatureMutation}
+            />
+            <MutationFeedback
+              onDismiss={dismissHeaterMutation}
+              state={heaterMutation}
+            />
+
+            {connection.status === "online" && snapshot !== null ? (
+              <>
+                <MachineControls
+                  faultMutation={faultMutation}
+                  heaterMutation={heaterMutation}
+                  modeMutation={modeMutation}
+                  onSetMode={setMode}
+                  onUpdateTemperatureSettings={updateTemperatureSettings}
+                  snapshot={snapshot}
+                  temperatureMutation={temperatureMutation}
+                />
+                <HeaterToggleBar
+                  disabled={mutationPending}
+                  mutation={heaterMutation}
+                  onSetHeaterEnabled={setHeaterEnabled}
+                  snapshot={snapshot}
+                />
+              </>
+            ) : (
+              <View style={styles.unavailableCard}>
+                <Text selectable style={styles.unavailableTitle}>
+                  {translate("dashboard.unavailableTitle")}
+                </Text>
+                <Text selectable style={styles.unavailableText}>
+                  {translate("dashboard.unavailableText")}
+                </Text>
+              </View>
+            )}
+
+            <View style={styles.contextCard}>
+              <Text selectable style={styles.contextTitle}>
+                {translate("dashboard.savedMachine")}
+              </Text>
+              <Text selectable style={styles.contextText}>{initialNote}</Text>
+              <Text selectable style={styles.deviceId}>
+                {selectedDevice.deviceId}
+              </Text>
+              <Text selectable style={styles.address}>
+                {selectedDevice.lastSuccessfulAddress}
+              </Text>
+              <Pressable
+                accessibilityRole="button"
+                onPress={onForget}
+                style={({ pressed }) => [
+                  styles.forgetButton,
+                  pressed && styles.pressed,
+                ]}>
+                <Text style={styles.forgetButtonText}>
+                  {translate("dashboard.forgetMachine")}
+                </Text>
+              </Pressable>
+            </View>
+          </>
+        ) : null}
       </ScrollView>
+
+      <View
+        style={[
+          styles.bottomNavigation,
+          { paddingBottom: Math.max(10, safeAreaInsets.bottom) },
+        ]}>
+          {extraction?.status === "running" ? (
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => openDashboardPage("dashboard")}
+              style={({ pressed }) => [
+                styles.activeExtractionBar,
+                pressed && styles.pressed,
+              ]}>
+              <Text selectable style={styles.activeExtractionTitle}>
+                {translate("dashboard.navigation.extractionRunning", {
+                  phase: phaseLabel(extraction.phase),
+                })}
+              </Text>
+              <Text selectable style={styles.activeExtractionAction}>
+                {translate("dashboard.navigation.openControls")}
+              </Text>
+            </Pressable>
+          ) : null}
+          <View accessibilityRole="tablist" style={styles.bottomNavigationRow}>
+            <DashboardTab
+              active={dashboardPage === "dashboard"}
+              label={translate("dashboard.navigation.dashboard.tab")}
+              onPress={() => openDashboardPage("dashboard")}
+            />
+            <DashboardTab
+              active={dashboardPage === "profiles"}
+              label={translate("dashboard.navigation.profiles.tab")}
+              onPress={() => openDashboardPage("profiles")}
+            />
+            <DashboardTab
+              active={dashboardPage === "machine"}
+              label={translate("dashboard.navigation.machine.tab")}
+              onPress={() => openDashboardPage("machine")}
+            />
+          </View>
+        </View>
     </View>
+  );
+}
+
+function ProfileLoadingCard({ error }: { error: string | null }) {
+  return (
+    <View
+      accessibilityLiveRegion={error === null ? "polite" : "assertive"}
+      style={styles.unavailableCard}>
+      <Text selectable style={styles.unavailableTitle}>
+        {error === null
+          ? translate("extractionPreview.loadingProfiles")
+          : translate("extractionPreview.profileLoadFailed")}
+      </Text>
+      <Text selectable style={styles.unavailableText}>
+        {error ?? translate("extractionPreview.loadingProfilesDetail")}
+      </Text>
+    </View>
+  );
+}
+
+function DashboardTab({
+  active,
+  label,
+  onPress,
+}: {
+  active: boolean;
+  label: string;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      accessibilityRole="tab"
+      accessibilityState={{ selected: active }}
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.bottomNavigationTab,
+        active && styles.bottomNavigationTabActive,
+        pressed && styles.pressed,
+      ]}>
+      <Text
+        style={[
+          styles.bottomNavigationLabel,
+          active && styles.bottomNavigationLabelActive,
+        ]}>
+        {label}
+      </Text>
+    </Pressable>
   );
 }
 
@@ -757,6 +1050,57 @@ const styles = StyleSheet.create({
     padding: 20,
     paddingBottom: 44,
     paddingTop: 72,
+  },
+  contentWithNavigation: { paddingBottom: 210 },
+  bottomNavigation: {
+    backgroundColor: "#FFFCF7",
+    borderColor: "#D8C9BA",
+    borderTopWidth: 1,
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingTop: 10,
+  },
+  bottomNavigationRow: { flexDirection: "row", gap: 8 },
+  bottomNavigationTab: {
+    alignItems: "center",
+    borderCurve: "continuous",
+    borderRadius: 14,
+    flex: 1,
+    justifyContent: "center",
+    minHeight: 48,
+    paddingHorizontal: 8,
+  },
+  bottomNavigationTabActive: { backgroundColor: "#8B3A2B" },
+  bottomNavigationLabel: {
+    color: "#695A50",
+    fontSize: 13,
+    fontWeight: "800",
+    textAlign: "center",
+  },
+  bottomNavigationLabelActive: { color: "#FFFFFF" },
+  activeExtractionBar: {
+    alignItems: "center",
+    backgroundColor: "#2F2722",
+    borderCurve: "continuous",
+    borderRadius: 14,
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    justifyContent: "space-between",
+    minHeight: 44,
+    paddingHorizontal: 13,
+    paddingVertical: 9,
+  },
+  activeExtractionTitle: {
+    color: "#FFFFFF",
+    flexGrow: 1,
+    fontSize: 13,
+    fontWeight: "800",
+  },
+  activeExtractionAction: {
+    color: "#F2B66D",
+    fontSize: 12,
+    fontWeight: "900",
   },
   pageHeader: { alignItems: "center", minHeight: 34 },
   pageTitle: { color: "#241B17", fontSize: 22, fontWeight: "800" },

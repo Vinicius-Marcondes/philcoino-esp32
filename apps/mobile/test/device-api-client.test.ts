@@ -3,10 +3,15 @@ import type { MachineState } from "@philcoino/protocol";
 
 import { ApiClientError } from "../src/networking/api-client-error";
 import { connectionStateFromError } from "../src/networking/connection-state";
+import { DEFAULT_MOBILE_PROFILE_SET } from "../src/profiles/profile-set";
 import {
   DeviceApiClient,
   type FetchImplementation,
 } from "../src/networking/device-api-client";
+import {
+  createSimulator,
+  DEFAULT_SIMULATOR_TOKEN,
+} from "../../../tools/device-simulator/src/app.ts";
 
 const validState: MachineState = {
   activeMode: "brew",
@@ -267,6 +272,117 @@ describe("DeviceApiClient", () => {
           timeoutMs: 30_001,
         }),
     ).toThrow(RangeError);
+  });
+
+  test("validates API v2 profile and acknowledged extraction operations against the simulator", async () => {
+    const simulator = createSimulator();
+    const request = simulator.app.request.bind(simulator.app);
+    const client = new DeviceApiClient({
+      address: "http://127.0.0.1:3000",
+      fetch: (url, init) =>
+        Promise.resolve(
+          request(url, {
+            body: init.body,
+            headers: init.headers,
+            method: init.method,
+            signal: init.signal,
+          }),
+        ),
+      token: DEFAULT_SIMULATOR_TOKEN,
+    });
+
+    await expect(client.getProfiles()).resolves.toEqual(
+      DEFAULT_MOBILE_PROFILE_SET,
+    );
+    await expect(
+      client.replaceProfiles(DEFAULT_MOBILE_PROFILE_SET),
+    ).resolves.toEqual(DEFAULT_MOBILE_PROFILE_SET);
+
+    const started = await client.startExtraction({
+      idempotencyKey: "mobile-integration-01",
+      selection: { kind: "profile", profileId: "profile-2" },
+    });
+    expect(started).toMatchObject({
+      status: "running",
+      phase: "pre-infusion",
+      pumpCommand: "running",
+    });
+    await simulator.app.request("/_simulator/advance", {
+      body: JSON.stringify({ milliseconds: 5_000 }),
+      headers: { "content-type": "application/json" },
+      method: "POST",
+    });
+    await expect(client.getStateV2()).resolves.toMatchObject({
+      extraction: {
+        extractionId: started.extractionId,
+        elapsedMs: 5_000,
+        phase: "soak",
+        pumpCommand: "off",
+      },
+    });
+    await simulator.app.request("/_simulator/fault", {
+      body: JSON.stringify({ code: "sensor_failure" }),
+      headers: { "content-type": "application/json" },
+      method: "PUT",
+    });
+    await simulator.app.request("/_simulator/advance", {
+      body: JSON.stringify({ milliseconds: 5_000 }),
+      headers: { "content-type": "application/json" },
+      method: "POST",
+    });
+    await expect(client.startExtraction({
+      idempotencyKey: "mobile-integration-01",
+      selection: { kind: "manual" },
+    })).resolves.toMatchObject({
+      extractionId: started.extractionId,
+      elapsedMs: 10_000,
+      phase: "main-extraction",
+      pumpCommand: "running",
+      selection: { kind: "profile", profileId: "profile-2" },
+    });
+    await expect(client.getStateV2()).resolves.toMatchObject({
+      extraction: { extractionId: started.extractionId, status: "running" },
+      machine: { status: "fault" },
+    });
+    await expect(client.stopExtraction()).resolves.toMatchObject({
+      status: "idle",
+      pumpCommand: "off",
+    });
+  });
+
+  test("parses API v2 active conflicts without treating them as protocol failures", async () => {
+    const client = clientWithResponse(
+      Response.json(
+        {
+          error: {
+            code: "extraction_active",
+            message: "A different extraction is already active.",
+          },
+          activeExtraction: {
+            status: "running",
+            extractionId: "run-1",
+            selection: { kind: "manual" },
+            phase: "manual",
+            elapsedMs: 1_000,
+            remainingMs: 59_000,
+            pumpCommand: "running",
+          },
+        },
+        { status: 409 },
+      ),
+    );
+
+    const error = await captureError(
+      client.startExtraction({
+        idempotencyKey: "mobile-conflict-001",
+        selection: { kind: "manual" },
+      }),
+    );
+    expect((error as ApiClientError).kind).toBe("http");
+    expect((error as ApiClientError).response).toMatchObject({
+      activeExtraction: { elapsedMs: 1_000 },
+      error: { code: "extraction_active" },
+    });
   });
 });
 

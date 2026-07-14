@@ -1,7 +1,10 @@
 import type {
+  ExtractionSelection,
+  ExtractionState,
   MachineState,
   Mode,
   TemperatureSettingsRequest,
+  ProfileSet,
 } from "@philcoino/protocol";
 import { useFocusEffect } from "expo-router";
 import { useCallback, useRef, useState } from "react";
@@ -22,14 +25,28 @@ import {
   connectingState,
   type ConnectionState,
 } from "@/src/networking/connection-state";
+import { profileSetsEqual } from "@/src/profiles/profile-set";
+import type { MobileProfileRepository } from "@/src/storage/mobile-profile-repository";
 
 export interface MachineDashboardState {
   connection: ConnectionState;
   dismissMutation: (kind: DashboardMutationKind) => void;
   dismissOverTemperature: () => void;
   faultMutation: DashboardMutationState;
+  extraction: ExtractionState | null;
+  extractionStartMutation: DashboardMutationState;
+  extractionStopMutation: DashboardMutationState;
   heaterMutation: DashboardMutationState;
   modeMutation: DashboardMutationState;
+  machineProfiles: ProfileSet | null;
+  mobileProfiles: ProfileSet | null;
+  profileMutation: DashboardMutationState;
+  profileStorageError: string | null;
+  profilesSynchronized: boolean;
+  exportProfiles: () => void;
+  saveMobileProfiles: (profiles: ProfileSet) => Promise<boolean>;
+  startExtraction: (selection: ExtractionSelection) => void;
+  stopExtraction: () => void;
   setMode: (mode: Mode) => void;
   setHeaterEnabled: (heaterEnabled: boolean) => void;
   snapshot: MachineState | null;
@@ -39,6 +56,7 @@ export interface MachineDashboardState {
 
 export function useMachineDashboard(
   client: DashboardStateClient & DashboardMutationClient,
+  profileRepository: MobileProfileRepository,
 ): MachineDashboardState {
   const [connection, setConnection] = useState<ConnectionState>(connectingState);
   const [faultMutation, setFaultMutation] =
@@ -48,23 +66,42 @@ export function useMachineDashboard(
   const [modeMutation, setModeMutation] =
     useState<DashboardMutationState>(idleMutationState);
   const [snapshot, setSnapshot] = useState<MachineState | null>(null);
+  const [extraction, setExtraction] = useState<ExtractionState | null>(null);
+  const [extractionStartMutation, setExtractionStartMutation] =
+    useState<DashboardMutationState>(idleMutationState);
+  const [extractionStopMutation, setExtractionStopMutation] =
+    useState<DashboardMutationState>(idleMutationState);
+  const [machineProfiles, setMachineProfiles] = useState<ProfileSet | null>(null);
+  const [mobileProfiles, setMobileProfiles] = useState<ProfileSet | null>(null);
+  const [profileMutation, setProfileMutation] =
+    useState<DashboardMutationState>(idleMutationState);
+  const [profileStorageError, setProfileStorageError] = useState<string | null>(
+    null,
+  );
   const [temperatureMutation, setTemperatureMutation] =
     useState<DashboardMutationState>(idleMutationState);
   const mutationSession = useRef<DashboardMutationSession | null>(null);
 
   useFocusEffect(
     useCallback(() => {
+      let active = true;
+      const profileController = new AbortController();
       const polling = new DashboardPollingSession({
         client,
         onConnectionChange: setConnection,
-        onSnapshotChange: setSnapshot,
+        onSnapshotChange: (nextSnapshot) => {
+          setSnapshot(nextSnapshot?.machine ?? null);
+          setExtraction(nextSnapshot?.extraction ?? null);
+        },
       });
       const mutations = new DashboardMutationSession({
         client,
         onConnectionLost: (nextConnection) => {
           setSnapshot(null);
+          setExtraction(null);
           setConnection(nextConnection);
         },
+        onExtractionAcknowledged: setExtraction,
         onHeaterAcknowledged: (settings) => {
           setSnapshot((current) => {
             if (current === null) {
@@ -101,7 +138,13 @@ export function useMachineDashboard(
           );
         },
         onMutationChange: (kind, state) => {
-          if (kind === "mode") {
+          if (kind === "extraction-start") {
+            setExtractionStartMutation(state);
+          } else if (kind === "extraction-stop") {
+            setExtractionStopMutation(state);
+          } else if (kind === "profiles") {
+            setProfileMutation(state);
+          } else if (kind === "mode") {
             setModeMutation(state);
           } else if (kind === "temperatures") {
             setTemperatureMutation(state);
@@ -112,6 +155,7 @@ export function useMachineDashboard(
           }
         },
         onOverTemperatureDismissed: setSnapshot,
+        onProfilesAcknowledged: setMachineProfiles,
         onTemperatureSettingsAcknowledged: (settings) => {
           setSnapshot((current) =>
             current === null ? null : { ...current, ...settings },
@@ -120,6 +164,29 @@ export function useMachineDashboard(
         polling,
       });
       mutationSession.current = mutations;
+
+      void Promise.all([
+        profileRepository.load(),
+        client.getProfiles({ signal: profileController.signal }),
+      ])
+        .then(([localProfiles, persistedProfiles]) => {
+          if (!active) {
+            return;
+          }
+          setMobileProfiles(localProfiles);
+          setMachineProfiles(persistedProfiles);
+          setProfileStorageError(null);
+        })
+        .catch((error: unknown) => {
+          if (!active || profileController.signal.aborted) {
+            return;
+          }
+          setProfileStorageError(
+            error instanceof Error
+              ? error.message
+              : "The profile sets could not be loaded.",
+          );
+        });
 
       const synchronizePolling = (appState: typeof AppState.currentState) => {
         if (appState === "active") {
@@ -138,6 +205,8 @@ export function useMachineDashboard(
       );
 
       return () => {
+        active = false;
+        profileController.abort();
         subscription.remove();
         mutations.stop();
         polling.stop();
@@ -145,7 +214,7 @@ export function useMachineDashboard(
           mutationSession.current = null;
         }
       };
-    }, [client]),
+    }, [client, profileRepository]),
   );
 
   const setMode = useCallback((mode: Mode) => {
@@ -171,13 +240,67 @@ export function useMachineDashboard(
     [],
   );
 
+  const saveMobileProfiles = useCallback(
+    async (profiles: ProfileSet) => {
+      try {
+        await profileRepository.save(profiles);
+        setMobileProfiles(profiles);
+        setProfileStorageError(null);
+        return true;
+      } catch (error) {
+        setProfileStorageError(
+          error instanceof Error
+            ? error.message
+            : "The mobile profile set could not be saved.",
+        );
+        return false;
+      }
+    },
+    [profileRepository],
+  );
+
+  const exportProfiles = useCallback(() => {
+    if (mobileProfiles !== null) {
+      mutationSession.current?.replaceProfiles(mobileProfiles);
+    }
+  }, [mobileProfiles]);
+
+  const startExtraction = useCallback(
+    (selection: ExtractionSelection) => {
+      if (
+        selection.kind === "profile" &&
+        !profileSetsEqual(mobileProfiles, machineProfiles)
+      ) {
+        return;
+      }
+      mutationSession.current?.startExtraction(selection);
+    },
+    [machineProfiles, mobileProfiles],
+  );
+
+  const stopExtraction = useCallback(() => {
+    mutationSession.current?.stopExtraction();
+  }, []);
+
   return {
     connection,
     dismissMutation,
     dismissOverTemperature,
     faultMutation,
+    extraction,
+    extractionStartMutation,
+    extractionStopMutation,
     heaterMutation,
     modeMutation,
+    machineProfiles,
+    mobileProfiles,
+    profileMutation,
+    profileStorageError,
+    profilesSynchronized: profileSetsEqual(mobileProfiles, machineProfiles),
+    exportProfiles,
+    saveMobileProfiles,
+    startExtraction,
+    stopExtraction,
     setHeaterEnabled,
     setMode,
     snapshot,

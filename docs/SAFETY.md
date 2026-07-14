@@ -11,6 +11,7 @@ Philcoino é um controller experimental para máquina de espresso que trabalha p
 - O firmware usa permanentemente uma leitura de thermocouple na base da boiler para brew e steam. Isso mantém um único ponto de falha de controle e não oferece cross-check independente entre sensores.
 - O source atual do firmware habilita o OLED (`kOledEnabled = true`), enquanto o tracker registra um estado temporário com OLED desabilitado. Trate isso como uma divergência não resolvida entre documentação e configuração, não como um estado de hardware aprovado.
 - Discovery físico no iPhone, comportamento final dos sensores, instalação do relay/SSR, cutoff independente e validação energizada supervisionada continuam sendo checks humanos.
+- Em 2026-07-14, o owner aceitou a matriz funcional da pump no target após relatar discovery HTTP/mDNS, Manual/profiles, Stop/cutoff, continuidade sem app e boot sem retomada. Isso é evidência funcional reportada pelo owner; não inclui captures elétricos independentes, injeção de falha GPIO, timer-wrap no target nem aprovação energizada.
 
 Consulte [CODEBASE_REVIEW_REPORT.md](../CODEBASE_REVIEW_REPORT.md), [docs/TRACKER.md](TRACKER.md) e [docs/side-notes.md](side-notes.md) para as evidências detalhadas.
 
@@ -24,7 +25,8 @@ O firmware controla o temperature-control loop e não depende da conectividade d
 - aplica um heating timeout e um timeout de cinco minutos após steam-ready;
 - calcula o duty do heater em janelas de dez segundos;
 - faz latch de faults e comanda a saída do SSR para off;
-- persiste apenas targets validados;
+- persiste apenas targets e conjuntos completos de profiles validados;
+- executa Manual e profiles em um controller monotônico dedicado, inicializa GPIO10 como `off` e não restaura `running` no boot;
 - inicializa hardware crítico em ordem fail-off.
 
 Esses itens são intenções de design e comportamentos de software cobertos por testes, não prova de desenergização física ou segurança térmica.
@@ -37,6 +39,7 @@ A revisão atual identifica, entre outros pontos:
 - o mode diagnóstico com um sensor remove monitoramento independente entre dois sensores, e a detecção de disagreement não está implementada;
 - alguns writes remotos válidos ou no-op podem reiniciar deadlines de aquecimento, permitindo que um cliente prolongue a proteção de timeout;
 - uma falha ao escrever off no GPIO ainda pode ser apresentada como heater desligado, mesmo quando o estado físico é desconhecido;
+- a pump não possui feedback de corrente, SSR, fluxo ou posição do switch; `running` e `off` indicam somente o comando GPIO10 e uma falha de write pode deixar o estado físico desconhecido;
 - uma falha ao iniciar mDNS atualmente encerra o HTTP server, invalidando o fallback por endereço manual;
 - o pairing verifica um stable ID público, não uma identidade criptográfica do dispositivo;
 - credenciais bearer em HTTP plaintext não têm requisitos mínimos de força, throttling, rotação ou confidencialidade no transporte;
@@ -54,7 +57,7 @@ Software não substitui:
 - proteções contra pressão e dry boil já exigidas pelo appliance;
 - revisão qualificada e medição supervisionada na unidade real.
 
-Um SSR pode falhar em curto. Uma response bem-sucedida da API ou um comando GPIO low não comprova que a corrente da rede elétrica foi interrompida.
+Um SSR pode falhar em curto. Uma response bem-sucedida da API ou um comando GPIO low não comprova que a corrente da rede elétrica do heater ou da pump foi interrompida.
 
 ## Escopo permitido para desenvolvimento
 
@@ -69,7 +72,7 @@ Não conecte, desconecte, modifique ou energize a fiação da rede elétrica com
 
 ## Modelo de segurança da informação
 
-A API v1 usa HTTP plaintext local e um bearer token. A identidade pública é anunciada por mDNS. Isso pode ser aceitável para desenvolvimento restrito em uma LAN confiável e isolada, mas não protege contra um peer local hostil capaz de observar o tráfego, clonar a identidade, roubar/reutilizar um token ou executar brute force contra um token fraco.
+As APIs v1 e v2 usam HTTP plaintext local e o mesmo bearer token. A identidade pública é anunciada por mDNS. Isso pode ser aceitável para desenvolvimento restrito em uma LAN confiável e isolada, mas não protege contra um peer local hostil capaz de observar o tráfego, clonar a identidade, roubar/reutilizar um token ou executar brute force contra um token fraco. API v2 amplia o impacto de uma credencial roubada para comandos de extração.
 
 Enquanto os findings conhecidos não forem resolvidos:
 

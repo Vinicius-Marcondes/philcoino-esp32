@@ -1,4 +1,4 @@
-import type { MachineState } from "@philcoino/protocol";
+import type { MachineStateV2, ProfileSet } from "@philcoino/protocol";
 
 import {
   connectingState,
@@ -10,7 +10,8 @@ import {
 export const DASHBOARD_POLL_INTERVAL_MS = 1_000;
 
 export interface DashboardStateClient {
-  getState(options?: { signal?: AbortSignal }): Promise<MachineState>;
+  getProfiles(options?: { signal?: AbortSignal }): Promise<ProfileSet>;
+  getStateV2(options?: { signal?: AbortSignal }): Promise<MachineStateV2>;
 }
 
 interface PollingScheduler {
@@ -22,7 +23,7 @@ interface DashboardPollingSessionOptions {
   client: DashboardStateClient;
   intervalMs?: number;
   onConnectionChange: (connection: ConnectionState) => void;
-  onSnapshotChange: (snapshot: MachineState | null) => void;
+  onSnapshotChange: (snapshot: MachineStateV2 | null) => void;
   scheduler?: PollingScheduler;
 }
 
@@ -36,7 +37,7 @@ export class DashboardPollingSession {
   private readonly client: DashboardStateClient;
   private readonly intervalMs: number;
   private readonly onConnectionChange: (connection: ConnectionState) => void;
-  private readonly onSnapshotChange: (snapshot: MachineState | null) => void;
+  private readonly onSnapshotChange: (snapshot: MachineStateV2 | null) => void;
   private readonly scheduler: PollingScheduler;
 
   private activeController: AbortController | null = null;
@@ -109,7 +110,7 @@ export class DashboardPollingSession {
     this.activeController = controller;
 
     try {
-      const snapshot = await this.client.getState({ signal: controller.signal });
+      const snapshot = await this.client.getStateV2({ signal: controller.signal });
       if (!this.isCurrent(generation)) {
         return;
       }

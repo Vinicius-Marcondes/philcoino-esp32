@@ -1,0 +1,4 @@
+{
+  "idempotencyKey": "start-01J2ABCDEF1234",
+  "selection": { "kind": "profile", "profileId": "profile-2" }
+}

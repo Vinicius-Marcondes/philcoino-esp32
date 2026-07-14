@@ -1,4 +1,13 @@
-import type { ErrorResponse } from "@philcoino/protocol";
+import type {
+  ApiV2ErrorResponse,
+  ErrorResponse,
+  ExtractionActiveConflictResponse,
+} from "@philcoino/protocol";
+
+export type ApiErrorResponse =
+  | ApiV2ErrorResponse
+  | ErrorResponse
+  | ExtractionActiveConflictResponse;
 
 export type ApiClientErrorKind =
   | "cancelled"
@@ -12,13 +21,13 @@ export type ApiClientErrorKind =
 
 export class ApiClientError extends Error {
   readonly kind: ApiClientErrorKind;
-  readonly response?: ErrorResponse;
+  readonly response?: ApiErrorResponse;
   readonly status?: number;
 
   constructor(
     kind: ApiClientErrorKind,
     message: string,
-    options: { response?: ErrorResponse; status?: number } = {},
+    options: { response?: ApiErrorResponse; status?: number } = {},
   ) {
     super(message);
     this.name = "ApiClientError";

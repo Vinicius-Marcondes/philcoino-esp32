@@ -1,5 +1,6 @@
 #include "philcoino/api.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <cstdlib>
@@ -94,7 +95,12 @@ class JsonObjectParser {
       return true;
     }
     value.type = JsonValue::Type::kOther;
-    return consume_literal("null") || consume_composite();
+    const std::size_t start = position_;
+    if (consume_literal("null") || consume_composite()) {
+      value.string = input_.substr(start, position_ - start);
+      return true;
+    }
+    return false;
   }
 
   bool parse_string(std::string& output) {
@@ -396,6 +402,268 @@ bool parse_heater_enabled(const std::string& body, bool& enabled) {
   return true;
 }
 
+class ScopedApiLock {
+ public:
+  ScopedApiLock(ApiSynchronization& synchronization, ApiDomain domain)
+      : synchronization_(synchronization), domain_(domain), locked_(synchronization_.lock(domain_)) {}
+  ~ScopedApiLock() {
+    if (locked_) {
+      synchronization_.unlock(domain_);
+    }
+  }
+  bool locked() const { return locked_; }
+
+ private:
+  ApiSynchronization& synchronization_;
+  ApiDomain domain_;
+  bool locked_;
+};
+
+bool split_json_array(const std::string& input,
+                      std::vector<std::string>& elements) {
+  if (input.size() < 2U || input.front() != '[' || input.back() != ']') {
+    return false;
+  }
+  std::size_t start = 1U;
+  int depth = 0;
+  bool in_string = false;
+  bool escaped = false;
+  for (std::size_t index = 1U; index + 1U < input.size(); ++index) {
+    const char value = input[index];
+    if (in_string) {
+      if (escaped) {
+        escaped = false;
+      } else if (value == '\\') {
+        escaped = true;
+      } else if (value == '"') {
+        in_string = false;
+      }
+      continue;
+    }
+    if (value == '"') {
+      in_string = true;
+    } else if (value == '{' || value == '[') {
+      ++depth;
+    } else if (value == '}' || value == ']') {
+      --depth;
+      if (depth < 0) {
+        return false;
+      }
+    } else if (value == ',' && depth == 0) {
+      elements.push_back(input.substr(start, index - start));
+      start = index + 1U;
+    }
+  }
+  if (in_string || depth != 0 || start >= input.size() - 1U) {
+    return false;
+  }
+  elements.push_back(input.substr(start, input.size() - 1U - start));
+  return true;
+}
+
+bool integer_seconds(const JsonValue& value, std::uint8_t& output) {
+  if (value.type != JsonValue::Type::kNumber ||
+      std::floor(value.number) != value.number || value.number < 0.0 ||
+      value.number > 60.0) {
+    return false;
+  }
+  output = static_cast<std::uint8_t>(value.number);
+  return true;
+}
+
+bool parse_profile(const std::string& body,
+                   peripherals::ExtractionProfile& profile) {
+  std::vector<JsonField> fields;
+  JsonObjectParser parser(body);
+  if (!parser.parse(fields) || fields.size() != 4U) {
+    return false;
+  }
+  bool name_seen = false;
+  bool pre_seen = false;
+  bool soak_seen = false;
+  bool main_seen = false;
+  profile = {};
+  profile.configured = true;
+  for (const auto& field : fields) {
+    if (field.key == "name" && field.value.type == JsonValue::Type::kString &&
+        field.value.string.size() < profile.name.size()) {
+      std::copy(field.value.string.begin(), field.value.string.end(),
+                profile.name.begin());
+      name_seen = true;
+    } else if (field.key == "preInfusionSeconds") {
+      pre_seen = integer_seconds(field.value, profile.pre_infusion_seconds);
+    } else if (field.key == "soakSeconds") {
+      soak_seen = integer_seconds(field.value, profile.soak_seconds);
+    } else if (field.key == "mainExtractionSeconds") {
+      main_seen = integer_seconds(field.value,
+                                  profile.main_extraction_seconds);
+    } else {
+      return false;
+    }
+  }
+  return name_seen && pre_seen && soak_seen && main_seen &&
+         peripherals::extraction_profile_is_valid(profile);
+}
+
+bool parse_profiles(const std::string& body,
+                    peripherals::ExtractionProfiles& profiles) {
+  std::vector<JsonField> root;
+  JsonObjectParser parser(body);
+  if (!parser.parse(root) || root.size() != 1U ||
+      root[0].key != "profiles" ||
+      root[0].value.type != JsonValue::Type::kOther) {
+    return false;
+  }
+  std::vector<std::string> slots;
+  if (!split_json_array(root[0].value.string, slots) ||
+      slots.size() != profiles.size()) {
+    return false;
+  }
+  for (std::size_t index = 0; index < slots.size(); ++index) {
+    std::vector<JsonField> fields;
+    JsonObjectParser slot_parser(slots[index]);
+    if (!slot_parser.parse(fields) || fields.size() != 2U) {
+      return false;
+    }
+    bool id_seen = false;
+    bool profile_seen = false;
+    for (const auto& field : fields) {
+      if (field.key == "id" && field.value.type == JsonValue::Type::kString) {
+        id_seen = field.value.string ==
+                  (std::string("profile-") + std::to_string(index + 1U));
+      } else if (field.key == "profile" &&
+                 field.value.type == JsonValue::Type::kOther) {
+        if (field.value.string == "null") {
+          profiles[index] = {};
+          profile_seen = true;
+        } else {
+          profile_seen = parse_profile(field.value.string, profiles[index]);
+        }
+      } else {
+        return false;
+      }
+    }
+    if (!id_seen || !profile_seen) {
+      return false;
+    }
+  }
+  return peripherals::extraction_profiles_are_valid(profiles);
+}
+
+bool parse_start(const std::string& body, std::string& idempotency_key,
+                 control::ExtractionSelection& selection) {
+  std::vector<JsonField> fields;
+  JsonObjectParser parser(body);
+  if (!parser.parse(fields) || fields.size() != 2U) {
+    return false;
+  }
+  std::string selection_body;
+  for (const auto& field : fields) {
+    if (field.key == "idempotencyKey" &&
+        field.value.type == JsonValue::Type::kString) {
+      idempotency_key = field.value.string;
+    } else if (field.key == "selection" &&
+               field.value.type == JsonValue::Type::kOther) {
+      selection_body = field.value.string;
+    } else {
+      return false;
+    }
+  }
+  std::vector<JsonField> selection_fields;
+  JsonObjectParser selection_parser(selection_body);
+  if (idempotency_key.empty() || !selection_parser.parse(selection_fields)) {
+    return false;
+  }
+  if (selection_fields.size() == 1U && selection_fields[0].key == "kind" &&
+      selection_fields[0].value.type == JsonValue::Type::kString &&
+      selection_fields[0].value.string == "manual") {
+    selection = {control::ExtractionSelectionKind::kManual, 0};
+    return true;
+  }
+  if (selection_fields.size() != 2U) {
+    return false;
+  }
+  bool kind_seen = false;
+  bool id_seen = false;
+  for (const auto& field : selection_fields) {
+    if (field.key == "kind" && field.value.type == JsonValue::Type::kString) {
+      kind_seen = field.value.string == "profile";
+    } else if (field.key == "profileId" &&
+               field.value.type == JsonValue::Type::kString &&
+               field.value.string.size() == 9U &&
+               field.value.string.compare(0, 8, "profile-") == 0 &&
+               field.value.string[8] >= '1' && field.value.string[8] <= '4') {
+      selection = {control::ExtractionSelectionKind::kProfile,
+                   static_cast<std::size_t>(field.value.string[8] - '1')};
+      id_seen = true;
+    } else {
+      return false;
+    }
+  }
+  return kind_seen && id_seen;
+}
+
+const char* phase_name(control::ExtractionPhase phase) {
+  switch (phase) {
+    case control::ExtractionPhase::kIdle: return "idle";
+    case control::ExtractionPhase::kManual: return "manual";
+    case control::ExtractionPhase::kPreInfusion: return "pre-infusion";
+    case control::ExtractionPhase::kSoak: return "soak";
+    case control::ExtractionPhase::kMainExtraction: return "main-extraction";
+  }
+  return "idle";
+}
+
+std::string serialize_extraction(const control::ExtractionSnapshot& snapshot) {
+  if (snapshot.status == control::ExtractionStatus::kIdle) {
+    return "{\"status\":\"idle\",\"extractionId\":null,\"selection\":null,\"phase\":\"idle\",\"elapsedMs\":0,\"remainingMs\":null,\"pumpCommand\":\"off\"}";
+  }
+  std::ostringstream output;
+  output << "{\"status\":\"running\",\"extractionId\":\""
+         << snapshot.extraction_id << "\",\"selection\":{";
+  if (snapshot.selection.kind == control::ExtractionSelectionKind::kManual) {
+    output << "\"kind\":\"manual\"";
+  } else {
+    output << "\"kind\":\"profile\",\"profileId\":\"profile-"
+           << snapshot.selection.profile_index + 1U << "\"";
+  }
+  output << "},\"phase\":\"" << phase_name(snapshot.phase)
+         << "\",\"elapsedMs\":" << snapshot.elapsed_ms
+         << ",\"remainingMs\":" << snapshot.remaining_ms
+         << ",\"pumpCommand\":\""
+         << (snapshot.pump_command == peripherals::PumpCommand::kRunning
+                 ? "running"
+                 : "off")
+         << "\"}";
+  return output.str();
+}
+
+std::string serialize_profiles(const peripherals::ExtractionProfiles& profiles) {
+  std::ostringstream output;
+  output << "{\"profiles\":[";
+  for (std::size_t index = 0; index < profiles.size(); ++index) {
+    if (index != 0U) {
+      output << ',';
+    }
+    output << "{\"id\":\"profile-" << index + 1U << "\",\"profile\":";
+    const auto& profile = profiles[index];
+    if (!profile.configured) {
+      output << "null";
+    } else {
+      output << "{\"name\":\"" << profile.name.data()
+             << "\",\"preInfusionSeconds\":"
+             << static_cast<unsigned>(profile.pre_infusion_seconds)
+             << ",\"soakSeconds\":"
+             << static_cast<unsigned>(profile.soak_seconds)
+             << ",\"mainExtractionSeconds\":"
+             << static_cast<unsigned>(profile.main_extraction_seconds) << '}';
+    }
+    output << '}';
+  }
+  output << "]}";
+  return output.str();
+}
+
 bool ascii_case_equal(char left, char right) {
   if (left >= 'A' && left <= 'Z') {
     left = static_cast<char>(left - 'A' + 'a');
@@ -459,11 +727,17 @@ bool constant_time_bearer_matches(const char* authorization,
 
 FirmwareApi::FirmwareApi(DeviceIdentity identity, std::string bearer_token,
                          control::TemperatureController& controller,
-                         peripherals::TargetStorage& target_storage)
+                         peripherals::TargetStorage& target_storage,
+                         control::ExtractionController& extraction_controller,
+                         peripherals::ProfileStorage& profile_storage,
+                         ApiSynchronization& synchronization)
     : identity_(std::move(identity)),
       bearer_token_(std::move(bearer_token)),
       controller_(controller),
-      target_storage_(target_storage) {}
+      target_storage_(target_storage),
+      extraction_controller_(extraction_controller),
+      profile_storage_(profile_storage),
+      synchronization_(synchronization) {}
 
 HttpResponse FirmwareApi::handle(HttpMethod method, const std::string& path,
                                  const char* authorization,
@@ -483,13 +757,40 @@ HttpResponse FirmwareApi::handle(HttpMethod method, const std::string& path,
       (method == HttpMethod::kPut && path == "/api/v1/mode") ||
       (method == HttpMethod::kPut && path == "/api/v1/heater") ||
       (method == HttpMethod::kPost &&
-       path == "/api/v1/faults/over-temperature/dismiss");
+       path == "/api/v1/faults/over-temperature/dismiss") ||
+      (method == HttpMethod::kGet && path == "/api/v2/state") ||
+      (method == HttpMethod::kGet && path == "/api/v2/profiles") ||
+      (method == HttpMethod::kPut && path == "/api/v2/profiles") ||
+      (method == HttpMethod::kPost &&
+       path == "/api/v2/extractions/start") ||
+      (method == HttpMethod::kPost &&
+       path == "/api/v2/extractions/stop");
   if (!protected_path) {
     return error_response(404, "internal_error", "The requested endpoint does not exist.");
   }
   if (!constant_time_bearer_matches(authorization, bearer_token_)) {
     return error_response(401, "unauthorized",
                           "A valid bearer token is required.", true);
+  }
+  if (path == "/api/v2/state") {
+    return state_v2(uptime_ms);
+  }
+  if (path == "/api/v2/profiles" && method == HttpMethod::kGet) {
+    return profiles();
+  }
+  if (path == "/api/v2/profiles") {
+    return replace_profiles(body, uptime_ms);
+  }
+  if (path == "/api/v2/extractions/start") {
+    return start_extraction(body, uptime_ms);
+  }
+  if (path == "/api/v2/extractions/stop") {
+    return stop_extraction(uptime_ms);
+  }
+  ScopedApiLock lock(synchronization_, ApiDomain::kTemperature);
+  if (!lock.locked()) {
+    return error_response(500, "internal_error",
+                          "Temperature control synchronization failed.");
   }
   if (method == HttpMethod::kGet) {
     return state(uptime_ms);
@@ -599,6 +900,135 @@ HttpResponse FirmwareApi::dismiss_over_temperature(std::uint64_t uptime_ms) {
         "Over-temperature can only be dismissed after the active temperature returns to target.");
   }
   return state(uptime_ms);
+}
+
+HttpResponse FirmwareApi::state_v2(std::uint64_t uptime_ms) const {
+  control::ControlSnapshot machine{};
+  {
+    ScopedApiLock lock(synchronization_, ApiDomain::kTemperature);
+    if (!lock.locked()) {
+      return error_response(500, "internal_error",
+                            "Temperature control synchronization failed.");
+    }
+    machine = controller_.snapshot(static_cast<std::uint32_t>(uptime_ms));
+  }
+  control::ExtractionSnapshot extraction{};
+  {
+    ScopedApiLock lock(synchronization_, ApiDomain::kExtraction);
+    if (!lock.locked()) {
+      return error_response(500, "internal_error",
+                            "Extraction control synchronization failed.");
+    }
+    extraction_controller_.update(static_cast<std::uint32_t>(uptime_ms));
+    extraction = extraction_controller_.snapshot(
+        static_cast<std::uint32_t>(uptime_ms));
+  }
+  return json_response(200, std::string("{\"machine\":") +
+                                serialize_state(machine, uptime_ms) +
+                                ",\"extraction\":" +
+                                serialize_extraction(extraction) + '}');
+}
+
+HttpResponse FirmwareApi::profiles() const {
+  peripherals::ExtractionProfiles current{};
+  {
+    ScopedApiLock lock(synchronization_, ApiDomain::kExtraction);
+    if (!lock.locked()) {
+      return error_response(500, "internal_error",
+                            "Extraction control synchronization failed.");
+    }
+    current = extraction_controller_.profiles();
+  }
+  return json_response(200, serialize_profiles(current));
+}
+
+HttpResponse FirmwareApi::replace_profiles(const std::string& body,
+                                           std::uint64_t uptime_ms) {
+  peripherals::ExtractionProfiles replacement{};
+  if (!parse_profiles(body, replacement)) {
+    return error_response(400, "malformed_request", kMalformedMessage);
+  }
+  {
+    ScopedApiLock lock(synchronization_, ApiDomain::kExtraction);
+    if (!lock.locked()) {
+      return error_response(500, "internal_error",
+                            "Extraction control synchronization failed.");
+    }
+    extraction_controller_.update(static_cast<std::uint32_t>(uptime_ms));
+    if (extraction_controller_.active()) {
+      return json_response(
+          409,
+          std::string("{\"error\":{\"code\":\"extraction_active\",\"message\":\"Profiles cannot be replaced while extraction is active.\"},\"activeExtraction\":") +
+              serialize_extraction(extraction_controller_.snapshot(
+                  static_cast<std::uint32_t>(uptime_ms))) +
+              '}');
+    }
+  }
+  if (!profile_storage_.save(replacement)) {
+    return error_response(500, "persistence_failure",
+                          "The complete profile set could not be persisted.");
+  }
+  {
+    ScopedApiLock lock(synchronization_, ApiDomain::kExtraction);
+    if (!lock.locked() ||
+        !extraction_controller_.adopt_persisted_profiles(replacement)) {
+      return error_response(500, "internal_error",
+                            "Persisted profiles could not be acknowledged.");
+    }
+  }
+  return json_response(200, serialize_profiles(replacement));
+}
+
+HttpResponse FirmwareApi::start_extraction(const std::string& body,
+                                           std::uint64_t uptime_ms) {
+  std::string key;
+  control::ExtractionSelection selection{};
+  if (!parse_start(body, key, selection)) {
+    return error_response(400, "malformed_request", kMalformedMessage);
+  }
+  ScopedApiLock lock(synchronization_, ApiDomain::kExtraction);
+  if (!lock.locked()) {
+    return error_response(500, "internal_error",
+                          "Extraction control synchronization failed.");
+  }
+  extraction_controller_.update(static_cast<std::uint32_t>(uptime_ms));
+  const auto result = extraction_controller_.start(
+      key, selection, static_cast<std::uint32_t>(uptime_ms));
+  const auto snapshot = extraction_controller_.snapshot(
+      static_cast<std::uint32_t>(uptime_ms));
+  switch (result) {
+    case control::StartExtractionResult::kStarted:
+    case control::StartExtractionResult::kReplay:
+      return json_response(200, serialize_extraction(snapshot));
+    case control::StartExtractionResult::kConflict:
+      return json_response(
+          409,
+          std::string("{\"error\":{\"code\":\"extraction_active\",\"message\":\"A different extraction is already active.\"},\"activeExtraction\":") +
+              serialize_extraction(snapshot) + '}');
+    case control::StartExtractionResult::kProfileNotConfigured:
+      return error_response(409, "profile_not_configured",
+                            "The selected custom profile slot is empty.");
+    case control::StartExtractionResult::kInvalidRequest:
+      return error_response(400, "malformed_request", kMalformedMessage);
+    case control::StartExtractionResult::kOutputFailure:
+      return error_response(500, "internal_error",
+                            "The pump command could not be started safely.");
+  }
+  return error_response(500, "internal_error",
+                        "The extraction command failed.");
+}
+
+HttpResponse FirmwareApi::stop_extraction(std::uint64_t) {
+  ScopedApiLock lock(synchronization_, ApiDomain::kExtraction);
+  if (!lock.locked()) {
+    return error_response(500, "internal_error",
+                          "Extraction control synchronization failed.");
+  }
+  if (!extraction_controller_.stop()) {
+    return error_response(500, "internal_error",
+                          "The pump off command could not be completed.");
+  }
+  return json_response(200, serialize_extraction({}));
 }
 
 }  // namespace philcoino::networking

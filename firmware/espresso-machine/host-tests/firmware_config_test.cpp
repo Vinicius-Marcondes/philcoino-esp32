@@ -41,6 +41,12 @@ int main() {
   static_assert(kBoilerThermocoupleDataGpio == 6);
   static_assert(kBoilerThermocoupleClockGpio == 4);
   static_assert(kSsrActiveHigh);
+  static_assert(kPumpGpio == 10);
+  static_assert(kPumpActiveHigh);
+  static_assert(kPumpGpio != kSsrGpio);
+  static_assert(kPumpGpio != kBoilerThermocoupleChipSelectGpio);
+  static_assert(kPumpGpio != kBoilerThermocoupleClockGpio);
+  static_assert(kPumpGpio != kBoilerThermocoupleDataGpio);
 
   return 0;
 }

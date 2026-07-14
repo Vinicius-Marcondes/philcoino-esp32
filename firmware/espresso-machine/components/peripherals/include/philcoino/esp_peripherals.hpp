@@ -30,6 +30,17 @@ class EspNvsTargetBackend final : public TargetBackend {
   bool initialized_{false};
 };
 
+class EspNvsProfileBackend final : public ProfileBackend {
+ public:
+  bool initialize();
+  BackendLoadResult load(ExtractionProfiles& profiles) override;
+  bool save(const ExtractionProfiles& profiles) override;
+
+ private:
+  std::uint32_t handle_{0};
+  bool initialized_{false};
+};
+
 class EspGpioOutput final : public DigitalOutput {
  public:
   explicit EspGpioOutput(std::int32_t gpio);

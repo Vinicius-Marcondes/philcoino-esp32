@@ -1,0 +1,9 @@
+{
+  "status": "running",
+  "extractionId": "run-184220",
+  "selection": { "kind": "profile", "profileId": "profile-2" },
+  "phase": "soak",
+  "elapsedMs": 7000,
+  "remainingMs": 28000,
+  "pumpCommand": "running"
+}

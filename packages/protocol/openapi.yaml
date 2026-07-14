@@ -177,6 +177,140 @@
           "500": { "$ref": "#/components/responses/InternalError" }
         }
       }
+    },
+    "/api/v2/state": {
+      "get": {
+        "operationId": "getMachineStateV2",
+        "summary": "Read temperature-control and acknowledged extraction state",
+        "security": [{ "bearerAuth": [] }],
+        "responses": {
+          "200": {
+            "description": "Current API v1 machine state plus firmware-acknowledged extraction state.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/MachineStateV2" }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/V2Unauthorized" },
+          "500": { "$ref": "#/components/responses/V2InternalError" }
+        }
+      }
+    },
+    "/api/v2/profiles": {
+      "get": {
+        "operationId": "getExtractionProfiles",
+        "summary": "Read all four persisted custom profile slots",
+        "security": [{ "bearerAuth": [] }],
+        "responses": {
+          "200": {
+            "description": "The complete persisted machine profile set.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ProfileSet" }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/V2Unauthorized" },
+          "500": { "$ref": "#/components/responses/V2InternalError" }
+        }
+      },
+      "put": {
+        "operationId": "replaceExtractionProfiles",
+        "summary": "Atomically replace all four custom profile slots while idle",
+        "description": "The previous complete set remains persisted if validation or persistence fails.",
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/ProfileSet" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The complete acknowledged persisted profile set.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ProfileSet" }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/V2BadRequest" },
+          "401": { "$ref": "#/components/responses/V2Unauthorized" },
+          "409": {
+            "description": "An extraction is active; no profile slot was changed.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ExtractionActiveConflictResponse" }
+              }
+            }
+          },
+          "500": { "$ref": "#/components/responses/V2InternalError" }
+        }
+      }
+    },
+    "/api/v2/extractions/start": {
+      "post": {
+        "operationId": "startExtraction",
+        "summary": "Start Manual or one persisted profile idempotently",
+        "description": "Replaying the same idempotency key returns the same active extraction without resetting its monotonic timing. A different key while active is rejected.",
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/StartExtractionRequest" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The same acknowledged active extraction for a new or replayed key.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/RunningExtractionState" }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/V2BadRequest" },
+          "401": { "$ref": "#/components/responses/V2Unauthorized" },
+          "409": {
+            "description": "A different extraction is active or the selected custom slot is empty.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    { "$ref": "#/components/schemas/ExtractionActiveConflictResponse" },
+                    { "$ref": "#/components/schemas/ApiV2ErrorResponse" }
+                  ]
+                }
+              }
+            }
+          },
+          "500": { "$ref": "#/components/responses/V2InternalError" }
+        }
+      }
+    },
+    "/api/v2/extractions/stop": {
+      "post": {
+        "operationId": "stopExtraction",
+        "summary": "Idempotently stop extraction and acknowledge idle",
+        "security": [{ "bearerAuth": [] }],
+        "responses": {
+          "200": {
+            "description": "Acknowledged idle state, including when extraction was already idle.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/IdleExtractionState" }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/V2Unauthorized" },
+          "500": { "$ref": "#/components/responses/V2InternalError" }
+        }
+      }
     }
   },
   "components": {
@@ -223,6 +357,36 @@
         "content": {
           "application/json": {
             "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+          }
+        }
+      },
+      "V2BadRequest": {
+        "description": "The JSON body is malformed or violates an API v2 request constraint.",
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/ApiV2ErrorResponse" }
+          }
+        }
+      },
+      "V2Unauthorized": {
+        "description": "The bearer token is missing or invalid.",
+        "headers": {
+          "WWW-Authenticate": {
+            "schema": { "type": "string" },
+            "description": "Bearer authentication challenge."
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/ApiV2ErrorResponse" }
+          }
+        }
+      },
+      "V2InternalError": {
+        "description": "The device could not complete the API v2 request.",
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/ApiV2ErrorResponse" }
           }
         }
       }
@@ -484,6 +648,419 @@
             "fault": null,
             "steamTimeoutRemainingMs": null,
             "uptimeMs": 190000
+          }
+        ]
+      },
+      "ProfileSlotId": {
+        "type": "string",
+        "enum": ["profile-1", "profile-2", "profile-3", "profile-4"],
+        "pattern": "^[a-z][a-z0-9-]*$"
+      },
+      "ProfileName": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 12,
+        "pattern": "^[A-Za-z0-9]+$"
+      },
+      "ExtractionProfile": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "preInfusionSeconds",
+          "soakSeconds",
+          "mainExtractionSeconds"
+        ],
+        "properties": {
+          "name": { "$ref": "#/components/schemas/ProfileName" },
+          "preInfusionSeconds": { "type": "integer", "minimum": 0, "maximum": 60 },
+          "soakSeconds": { "type": "integer", "minimum": 0, "maximum": 60 },
+          "mainExtractionSeconds": { "type": "integer", "minimum": 1, "maximum": 60 }
+        },
+        "description": "Whole-second phases whose sum must not exceed 60 seconds. A zero pre-infusion requires zero soak.",
+        "allOf": [
+          {
+            "if": {
+              "properties": { "preInfusionSeconds": { "const": 0 } },
+              "required": ["preInfusionSeconds"]
+            },
+            "then": {
+              "properties": { "soakSeconds": { "const": 0 } }
+            }
+          }
+        ],
+        "examples": [
+          {
+            "name": "Classic30",
+            "preInfusionSeconds": 0,
+            "soakSeconds": 0,
+            "mainExtractionSeconds": 30
+          },
+          {
+            "name": "Pre5Soak5",
+            "preInfusionSeconds": 5,
+            "soakSeconds": 5,
+            "mainExtractionSeconds": 25
+          }
+        ]
+      },
+      "ProfileSet": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["profiles"],
+        "properties": {
+          "profiles": {
+            "type": "array",
+            "minItems": 4,
+            "maxItems": 4,
+            "prefixItems": [
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["id", "profile"],
+                "properties": {
+                  "id": { "const": "profile-1" },
+                  "profile": {
+                    "oneOf": [
+                      { "$ref": "#/components/schemas/ExtractionProfile" },
+                      { "type": "null" }
+                    ]
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["id", "profile"],
+                "properties": {
+                  "id": { "const": "profile-2" },
+                  "profile": {
+                    "oneOf": [
+                      { "$ref": "#/components/schemas/ExtractionProfile" },
+                      { "type": "null" }
+                    ]
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["id", "profile"],
+                "properties": {
+                  "id": { "const": "profile-3" },
+                  "profile": {
+                    "oneOf": [
+                      { "$ref": "#/components/schemas/ExtractionProfile" },
+                      { "type": "null" }
+                    ]
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["id", "profile"],
+                "properties": {
+                  "id": { "const": "profile-4" },
+                  "profile": {
+                    "oneOf": [
+                      { "$ref": "#/components/schemas/ExtractionProfile" },
+                      { "type": "null" }
+                    ]
+                  }
+                }
+              }
+            ],
+            "items": false
+          }
+        },
+        "examples": [
+          {
+            "profiles": [
+              {
+                "id": "profile-1",
+                "profile": {
+                  "name": "Classic30",
+                  "preInfusionSeconds": 0,
+                  "soakSeconds": 0,
+                  "mainExtractionSeconds": 30
+                }
+              },
+              {
+                "id": "profile-2",
+                "profile": {
+                  "name": "Pre5Soak5",
+                  "preInfusionSeconds": 5,
+                  "soakSeconds": 5,
+                  "mainExtractionSeconds": 25
+                }
+              },
+              { "id": "profile-3", "profile": null },
+              { "id": "profile-4", "profile": null }
+            ]
+          }
+        ]
+      },
+      "ManualExtractionSelection": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["kind"],
+        "properties": { "kind": { "const": "manual" } }
+      },
+      "ProfileExtractionSelection": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["kind", "profileId"],
+        "properties": {
+          "kind": { "const": "profile" },
+          "profileId": { "$ref": "#/components/schemas/ProfileSlotId" }
+        }
+      },
+      "ExtractionSelection": {
+        "oneOf": [
+          { "$ref": "#/components/schemas/ManualExtractionSelection" },
+          { "$ref": "#/components/schemas/ProfileExtractionSelection" }
+        ]
+      },
+      "PumpCommand": {
+        "type": "string",
+        "enum": ["running", "off"],
+        "description": "Firmware's GPIO10 command only; not measured pump operation, series-switch position, current, flow, or confirmed physical de-energization."
+      },
+      "ExtractionPhase": {
+        "type": "string",
+        "enum": ["idle", "manual", "pre-infusion", "soak", "main-extraction"]
+      },
+      "IdleExtractionState": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "status",
+          "extractionId",
+          "selection",
+          "phase",
+          "elapsedMs",
+          "remainingMs",
+          "pumpCommand"
+        ],
+        "properties": {
+          "status": { "const": "idle" },
+          "extractionId": { "type": "null" },
+          "selection": { "type": "null" },
+          "phase": { "const": "idle" },
+          "elapsedMs": { "const": 0 },
+          "remainingMs": { "type": "null" },
+          "pumpCommand": { "const": "off" }
+        },
+        "examples": [
+          {
+            "status": "idle",
+            "extractionId": null,
+            "selection": null,
+            "phase": "idle",
+            "elapsedMs": 0,
+            "remainingMs": null,
+            "pumpCommand": "off"
+          }
+        ]
+      },
+      "RunningExtractionState": {
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["status", "extractionId", "selection", "phase", "elapsedMs", "remainingMs", "pumpCommand"],
+            "properties": {
+              "status": { "const": "running" },
+              "extractionId": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$" },
+              "selection": { "$ref": "#/components/schemas/ManualExtractionSelection" },
+              "phase": { "const": "manual" },
+              "elapsedMs": { "type": "integer", "minimum": 0, "maximum": 60000 },
+              "remainingMs": { "type": "integer", "minimum": 0, "maximum": 60000 },
+              "pumpCommand": { "const": "running" }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["status", "extractionId", "selection", "phase", "elapsedMs", "remainingMs", "pumpCommand"],
+            "properties": {
+              "status": { "const": "running" },
+              "extractionId": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$" },
+              "selection": { "$ref": "#/components/schemas/ProfileExtractionSelection" },
+              "phase": { "const": "pre-infusion" },
+              "elapsedMs": { "type": "integer", "minimum": 0, "maximum": 60000 },
+              "remainingMs": { "type": "integer", "minimum": 0, "maximum": 60000 },
+              "pumpCommand": { "const": "running" }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["status", "extractionId", "selection", "phase", "elapsedMs", "remainingMs", "pumpCommand"],
+            "properties": {
+              "status": { "const": "running" },
+              "extractionId": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$" },
+              "selection": { "$ref": "#/components/schemas/ProfileExtractionSelection" },
+              "phase": { "const": "soak" },
+              "elapsedMs": { "type": "integer", "minimum": 0, "maximum": 60000 },
+              "remainingMs": { "type": "integer", "minimum": 0, "maximum": 60000 },
+              "pumpCommand": { "const": "off" }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["status", "extractionId", "selection", "phase", "elapsedMs", "remainingMs", "pumpCommand"],
+            "properties": {
+              "status": { "const": "running" },
+              "extractionId": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$" },
+              "selection": { "$ref": "#/components/schemas/ProfileExtractionSelection" },
+              "phase": { "const": "main-extraction" },
+              "elapsedMs": { "type": "integer", "minimum": 0, "maximum": 60000 },
+              "remainingMs": { "type": "integer", "minimum": 0, "maximum": 60000 },
+              "pumpCommand": { "const": "running" }
+            }
+          }
+        ],
+        "examples": [
+          {
+            "status": "running",
+            "extractionId": "run-184220",
+            "selection": { "kind": "profile", "profileId": "profile-2" },
+            "phase": "soak",
+            "elapsedMs": 7000,
+            "remainingMs": 28000,
+            "pumpCommand": "off"
+          }
+        ]
+      },
+      "ExtractionState": {
+        "oneOf": [
+          { "$ref": "#/components/schemas/IdleExtractionState" },
+          { "$ref": "#/components/schemas/RunningExtractionState" }
+        ]
+      },
+      "MachineStateV2": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["machine", "extraction"],
+        "properties": {
+          "machine": { "$ref": "#/components/schemas/MachineState" },
+          "extraction": { "$ref": "#/components/schemas/ExtractionState" }
+        },
+        "examples": [
+          {
+            "machine": {
+              "status": "ready",
+              "activeMode": "brew",
+              "boilerTemperatureC": 93,
+              "brewTargetC": 93,
+              "steamTargetC": 115,
+              "heaterEnabled": true,
+              "heaterActive": false,
+              "fault": null,
+              "steamTimeoutRemainingMs": null,
+              "uptimeMs": 184220
+            },
+            "extraction": {
+              "status": "idle",
+              "extractionId": null,
+              "selection": null,
+              "phase": "idle",
+              "elapsedMs": 0,
+              "remainingMs": null,
+              "pumpCommand": "off"
+            }
+          }
+        ]
+      },
+      "StartExtractionRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["idempotencyKey", "selection"],
+        "properties": {
+          "idempotencyKey": {
+            "type": "string",
+            "minLength": 16,
+            "maxLength": 64,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$"
+          },
+          "selection": { "$ref": "#/components/schemas/ExtractionSelection" }
+        },
+        "examples": [
+          {
+            "idempotencyKey": "start-01J2ABCDEF1234",
+            "selection": { "kind": "profile", "profileId": "profile-2" }
+          }
+        ]
+      },
+      "ApiV2ErrorCode": {
+        "type": "string",
+        "enum": [
+          "malformed_request",
+          "unauthorized",
+          "extraction_active",
+          "profile_not_configured",
+          "persistence_failure",
+          "internal_error"
+        ]
+      },
+      "ApiV2ErrorResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["error"],
+        "properties": {
+          "error": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["code", "message"],
+            "properties": {
+              "code": { "$ref": "#/components/schemas/ApiV2ErrorCode" },
+              "message": { "type": "string", "minLength": 1, "maxLength": 160 }
+            }
+          }
+        },
+        "examples": [
+          {
+            "error": {
+              "code": "profile_not_configured",
+              "message": "The selected custom profile slot is empty."
+            }
+          }
+        ]
+      },
+      "ExtractionActiveConflictResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["error", "activeExtraction"],
+        "properties": {
+          "error": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["code", "message"],
+            "properties": {
+              "code": { "const": "extraction_active" },
+              "message": { "type": "string", "minLength": 1, "maxLength": 160 }
+            }
+          },
+          "activeExtraction": { "$ref": "#/components/schemas/RunningExtractionState" }
+        },
+        "examples": [
+          {
+            "error": {
+              "code": "extraction_active",
+              "message": "A different extraction is already active."
+            },
+            "activeExtraction": {
+              "status": "running",
+              "extractionId": "run-184220",
+              "selection": { "kind": "manual" },
+              "phase": "manual",
+              "elapsedMs": 12000,
+              "remainingMs": 48000,
+              "pumpCommand": "running"
+            }
           }
         ]
       },

@@ -1,13 +1,19 @@
 import {
+  ApiV2ErrorResponseSchema,
   ErrorResponseSchema,
+  ExtractionActiveConflictResponseSchema,
   FaultCodeSchema,
   HeaterSettingsRequestSchema,
   HeaterSettingsResponseSchema,
   ModeRequestSchema,
   ModeResponseSchema,
+  ProfileSetSchema,
+  StartExtractionRequestSchema,
   TemperatureSettingsRequestSchema,
   type ErrorCode,
   type ErrorResponse,
+  type ApiV2ErrorCode,
+  type ApiV2ErrorResponse,
 } from "@philcoino/protocol";
 import { Hono, type Context, type Next } from "hono";
 
@@ -53,6 +59,22 @@ export function createSimulator(
 
     await next();
   };
+  const requireBearerV2 = async (c: Context, next: Next) => {
+    const authorization = c.req.header("Authorization");
+    const match = authorization?.match(/^Bearer\s+(.+)$/i);
+
+    if (!match || match[1] !== token) {
+      c.header("WWW-Authenticate", 'Bearer realm="philcoino"');
+      return contractV2Error(
+        c,
+        401,
+        "unauthorized",
+        "A valid bearer token is required.",
+      );
+    }
+
+    await next();
+  };
 
   app.get("/healthz", (c) => c.json(machine.getHealth()));
   app.get("/api/v1/device", (c) => c.json(machine.getDevice()));
@@ -62,6 +84,10 @@ export function createSimulator(
   app.use("/api/v1/mode", requireBearer);
   app.use("/api/v1/heater", requireBearer);
   app.use("/api/v1/faults/over-temperature/dismiss", requireBearer);
+  app.use("/api/v2/state", requireBearerV2);
+  app.use("/api/v2/profiles", requireBearerV2);
+  app.use("/api/v2/extractions/start", requireBearerV2);
+  app.use("/api/v2/extractions/stop", requireBearerV2);
 
   app.get("/api/v1/state", (c) => c.json(machine.getState()));
 
@@ -141,6 +167,95 @@ export function createSimulator(
     return c.json(state);
   });
 
+  app.get("/api/v2/state", (c) => c.json(machine.getStateV2()));
+
+  app.get("/api/v2/profiles", (c) => c.json(machine.getProfiles()));
+
+  app.put("/api/v2/profiles", async (c) => {
+    const body = await readJson(c);
+    if (!body.ok) {
+      return contractV2Error(
+        c,
+        400,
+        "malformed_request",
+        MALFORMED_REQUEST_MESSAGE,
+      );
+    }
+    const parsed = ProfileSetSchema.safeParse(body.value);
+    if (!parsed.success) {
+      return contractV2Error(
+        c,
+        400,
+        "malformed_request",
+        "The complete profile set is invalid.",
+      );
+    }
+
+    const result = machine.replaceProfiles(parsed.data);
+    if (!result.ok && result.reason === "active") {
+      return extractionActiveConflict(
+        c,
+        result.activeExtraction,
+        "Profiles cannot be replaced while extraction is active.",
+      );
+    }
+    if (!result.ok) {
+      return contractV2Error(
+        c,
+        500,
+        "persistence_failure",
+        "The complete profile set could not be persisted.",
+      );
+    }
+    return c.json(result.profiles);
+  });
+
+  app.post("/api/v2/extractions/start", async (c) => {
+    const body = await readJson(c);
+    if (!body.ok) {
+      return contractV2Error(
+        c,
+        400,
+        "malformed_request",
+        MALFORMED_REQUEST_MESSAGE,
+      );
+    }
+    const parsed = StartExtractionRequestSchema.safeParse(body.value);
+    if (!parsed.success) {
+      return contractV2Error(
+        c,
+        400,
+        "malformed_request",
+        "The extraction Start request is invalid.",
+      );
+    }
+
+    const result = machine.startExtraction(
+      parsed.data.idempotencyKey,
+      parsed.data.selection,
+    );
+    if (!result.ok && result.reason === "active") {
+      return extractionActiveConflict(
+        c,
+        result.activeExtraction,
+        "A different extraction is already active.",
+      );
+    }
+    if (!result.ok) {
+      return contractV2Error(
+        c,
+        409,
+        "profile_not_configured",
+        "The selected custom profile slot is empty.",
+      );
+    }
+    return c.json(result.extraction);
+  });
+
+  app.post("/api/v2/extractions/stop", (c) =>
+    c.json(machine.stopExtraction()),
+  );
+
   app.post("/_simulator/reset", (c) => {
     machine.reset();
     return c.json(machine.getState());
@@ -182,6 +297,11 @@ export function createSimulator(
     return c.json(machine.getState());
   });
 
+  app.post("/_simulator/fail-next-profile-save", (c) => {
+    machine.injectNextProfileSaveFailure();
+    return c.json({ status: "armed" });
+  });
+
   return { app, machine };
 }
 
@@ -195,6 +315,30 @@ function contractError(
     error: { code, message },
   });
   return c.json(payload, status);
+}
+
+function contractV2Error(
+  c: Context,
+  status: 400 | 401 | 409 | 500,
+  code: ApiV2ErrorCode,
+  message: string,
+): Response {
+  const payload: ApiV2ErrorResponse = ApiV2ErrorResponseSchema.parse({
+    error: { code, message },
+  });
+  return c.json(payload, status);
+}
+
+function extractionActiveConflict(
+  c: Context,
+  activeExtraction: ReturnType<SimulatorMachine["getExtractionState"]>,
+  message: string,
+): Response {
+  const payload = ExtractionActiveConflictResponseSchema.parse({
+    error: { code: "extraction_active", message },
+    activeExtraction,
+  });
+  return c.json(payload, 409);
 }
 
 async function readJson(

@@ -10,6 +10,9 @@ inline constexpr std::uint32_t kMax6675ConversionMs = 220;
 inline constexpr std::uint32_t kMax6675SampleIntervalMs = 500;
 inline constexpr std::int32_t kDefaultBrewTargetC = 93;
 inline constexpr std::int32_t kDefaultSteamTargetC = 115;
+inline constexpr std::size_t kProfileSlotCount = 4;
+inline constexpr std::size_t kProfileNameCapacity = 13;
+inline constexpr std::uint8_t kMaximumExtractionDurationSeconds = 60;
 
 enum class ThermocoupleStatus {
   kOk,
@@ -74,6 +77,40 @@ class TargetStorage {
   TargetBackend& backend_;
 };
 
+struct ExtractionProfile {
+  bool configured{false};
+  std::array<char, kProfileNameCapacity> name{};
+  std::uint8_t pre_infusion_seconds{0};
+  std::uint8_t soak_seconds{0};
+  std::uint8_t main_extraction_seconds{0};
+};
+
+using ExtractionProfiles = std::array<ExtractionProfile, kProfileSlotCount>;
+
+ExtractionProfiles default_extraction_profiles();
+bool extraction_profile_is_valid(const ExtractionProfile& profile);
+bool extraction_profiles_are_valid(const ExtractionProfiles& profiles);
+
+class ProfileBackend {
+ public:
+  virtual ~ProfileBackend() = default;
+  virtual BackendLoadResult load(ExtractionProfiles& profiles) = 0;
+  virtual bool save(const ExtractionProfiles& profiles) = 0;
+};
+
+enum class ProfileLoadResult { kOk, kInitializedDefaults, kCorrupt, kError };
+
+class ProfileStorage {
+ public:
+  explicit ProfileStorage(ProfileBackend& backend);
+
+  ProfileLoadResult load(ExtractionProfiles& profiles);
+  bool save(const ExtractionProfiles& profiles);
+
+ private:
+  ProfileBackend& backend_;
+};
+
 class DigitalOutput {
  public:
   virtual ~DigitalOutput() = default;
@@ -111,6 +148,26 @@ class FailOffSsr {
   bool enabled_{false};
 };
 
+enum class PumpCommand { kOff, kRunning };
+
+class FailOffPump {
+ public:
+  explicit FailOffPump(DigitalOutput& output, bool active_high = true);
+
+  bool initialize();
+  bool set_running(bool running);
+  bool force_off();
+  PumpCommand command() const;
+
+ private:
+  bool write_command(PumpCommand command);
+
+  DigitalOutput& output_;
+  bool active_high_{true};
+  bool initialized_{false};
+  PumpCommand command_{PumpCommand::kOff};
+};
+
 enum class DisplayMode { kUnknown, kBrew, kSteam };
 enum class DisplayStatus { kBoot, kHeating, kCooling, kReady, kFault };
 enum class DisplayWifiStatus { kOff, kConnecting, kConnected, kRetrying, kFailed };
@@ -127,6 +184,9 @@ struct DisplaySnapshot {
   DisplayStatus status{DisplayStatus::kBoot};
   bool heater_enabled{false};
   DisplayWifiStatus wifi_status{DisplayWifiStatus::kOff};
+  bool extraction_active{false};
+  PumpCommand pump_command{PumpCommand::kOff};
+  const char* extraction_phase{"IDLE"};
 };
 
 class OledTransport {

@@ -2,9 +2,13 @@ import {
   BREW_TARGET_MAX_C,
   BREW_TARGET_MIN_C,
   DeviceResponseSchema,
+  ExtractionStateSchema,
   HeaterSettingsResponseSchema,
   HealthResponseSchema,
   MachineStateSchema,
+  MachineStateV2Schema,
+  ProfileSetSchema,
+  RunningExtractionStateSchema,
   STEAM_TARGET_MAX_C,
   STEAM_TARGET_MIN_C,
   STEAM_TIMEOUT_MS,
@@ -15,10 +19,16 @@ import {
   type HealthResponse,
   type HeaterSettingsResponse,
   type MachineState,
+  type MachineStateV2,
   type Mode,
   type OverTemperatureDismissResponse,
   type TemperatureSettingsRequest,
   type TemperatureSettingsResponse,
+  type ExtractionProfile,
+  type ExtractionSelection,
+  type ExtractionState,
+  type ProfileSet,
+  type RunningExtractionState,
 } from "@philcoino/protocol";
 
 const AMBIENT_TEMPERATURE_C = 24;
@@ -29,6 +39,32 @@ const READY_HOLD_MS = 3_000;
 const MAX_SIMULATION_STEP_MS = 100;
 const BREW_OVER_TEMPERATURE_C = 98;
 const STEAM_OVER_TEMPERATURE_C = 130;
+const MANUAL_EXTRACTION_CUTOFF_MS = 60_000;
+
+const DEFAULT_PROFILE_SET: ProfileSet = ProfileSetSchema.parse({
+  profiles: [
+    {
+      id: "profile-1",
+      profile: {
+        name: "Classic30",
+        preInfusionSeconds: 0,
+        soakSeconds: 0,
+        mainExtractionSeconds: 30,
+      },
+    },
+    {
+      id: "profile-2",
+      profile: {
+        name: "Pre5Soak5",
+        preInfusionSeconds: 5,
+        soakSeconds: 5,
+        mainExtractionSeconds: 25,
+      },
+    },
+    { id: "profile-3", profile: null },
+    { id: "profile-4", profile: null },
+  ],
+});
 
 const FAULT_MESSAGES: Record<FaultCode, string> = {
   sensor_failure: "A simulated thermocouple is unavailable.",
@@ -41,6 +77,32 @@ export interface SimulatorMachineOptions {
   brewTargetC?: number;
   steamTargetC?: number;
   device?: Partial<DeviceResponse>;
+}
+
+export type ReplaceProfilesResult =
+  | { ok: true; profiles: ProfileSet }
+  | {
+      ok: false;
+      reason: "active";
+      activeExtraction: RunningExtractionState;
+    }
+  | { ok: false; reason: "persistence" };
+
+export type StartExtractionResult =
+  | { ok: true; extraction: RunningExtractionState }
+  | {
+      ok: false;
+      reason: "active";
+      activeExtraction: RunningExtractionState;
+    }
+  | { ok: false; reason: "profile-not-configured" };
+
+interface ActiveExtraction {
+  elapsedMs: number;
+  extractionId: string;
+  idempotencyKey: string;
+  profile: ExtractionProfile | null;
+  selection: ExtractionSelection;
 }
 
 export class SimulatorMachine {
@@ -57,6 +119,10 @@ export class SimulatorMachine {
   private readyElapsedMs = 0;
   private steamTimeoutRemainingMs: number | null = null;
   private uptimeMs = 0;
+  private profiles = cloneProfileSet(DEFAULT_PROFILE_SET);
+  private activeExtraction: ActiveExtraction | null = null;
+  private extractionCounter = 0;
+  private failNextProfileSave = false;
 
   constructor(options: SimulatorMachineOptions = {}) {
     this.initialBrewTargetC = options.brewTargetC ?? 93;
@@ -116,6 +182,136 @@ export class SimulatorMachine {
       fault: this.fault,
       steamTimeoutRemainingMs: this.steamTimeoutRemainingMs,
       uptimeMs: this.uptimeMs,
+    });
+  }
+
+  getStateV2(): MachineStateV2 {
+    return MachineStateV2Schema.parse({
+      machine: this.getState(),
+      extraction: this.getExtractionState(),
+    });
+  }
+
+  getProfiles(): ProfileSet {
+    return cloneProfileSet(this.profiles);
+  }
+
+  replaceProfiles(profiles: ProfileSet): ReplaceProfilesResult {
+    const extraction = this.getExtractionState();
+    if (extraction.status === "running") {
+      return {
+        ok: false,
+        reason: "active",
+        activeExtraction: extraction,
+      };
+    }
+    if (this.failNextProfileSave) {
+      this.failNextProfileSave = false;
+      return { ok: false, reason: "persistence" };
+    }
+
+    this.profiles = cloneProfileSet(ProfileSetSchema.parse(profiles));
+    return { ok: true, profiles: this.getProfiles() };
+  }
+
+  injectNextProfileSaveFailure(): void {
+    this.failNextProfileSave = true;
+  }
+
+  startExtraction(
+    idempotencyKey: string,
+    selection: ExtractionSelection,
+  ): StartExtractionResult {
+    const current = this.getExtractionState();
+    if (current.status === "running") {
+      if (this.activeExtraction?.idempotencyKey === idempotencyKey) {
+        return { ok: true, extraction: current };
+      }
+      return {
+        ok: false,
+        reason: "active",
+        activeExtraction: current,
+      };
+    }
+
+    const profile =
+      selection.kind === "profile"
+        ? (this.profiles.profiles.find(
+            (slot) => slot.id === selection.profileId,
+          )?.profile ?? null)
+        : null;
+    if (selection.kind === "profile" && profile === null) {
+      return { ok: false, reason: "profile-not-configured" };
+    }
+
+    this.extractionCounter += 1;
+    this.activeExtraction = {
+      elapsedMs: 0,
+      extractionId: `sim-run-${this.extractionCounter}`,
+      idempotencyKey,
+      profile: profile === null ? null : { ...profile },
+      selection,
+    };
+    return {
+      ok: true,
+      extraction: RunningExtractionStateSchema.parse(this.getExtractionState()),
+    };
+  }
+
+  stopExtraction(): ExtractionState {
+    this.activeExtraction = null;
+    return this.getExtractionState();
+  }
+
+  getExtractionState(): ExtractionState {
+    if (this.activeExtraction === null) {
+      return ExtractionStateSchema.parse({
+        status: "idle",
+        extractionId: null,
+        selection: null,
+        phase: "idle",
+        elapsedMs: 0,
+        remainingMs: null,
+        pumpCommand: "off",
+      });
+    }
+
+    const active = this.activeExtraction;
+    if (active.selection.kind === "manual") {
+      return ExtractionStateSchema.parse({
+        status: "running",
+        extractionId: active.extractionId,
+        selection: active.selection,
+        phase: "manual",
+        elapsedMs: active.elapsedMs,
+        remainingMs: MANUAL_EXTRACTION_CUTOFF_MS - active.elapsedMs,
+        pumpCommand: "running",
+      });
+    }
+
+    if (active.profile === null) {
+      throw new Error("An active profile extraction requires a profile snapshot.");
+    }
+    const preInfusionMs = active.profile.preInfusionSeconds * 1_000;
+    const soakEndMs =
+      preInfusionMs + active.profile.soakSeconds * 1_000;
+    const totalMs =
+      soakEndMs + active.profile.mainExtractionSeconds * 1_000;
+    const phase =
+      active.elapsedMs < preInfusionMs
+        ? "pre-infusion"
+        : active.elapsedMs < soakEndMs
+          ? "soak"
+          : "main-extraction";
+
+    return ExtractionStateSchema.parse({
+      status: "running",
+      extractionId: active.extractionId,
+      selection: active.selection,
+      phase,
+      elapsedMs: active.elapsedMs,
+      remainingMs: totalMs - active.elapsedMs,
+      pumpCommand: phase === "soak" ? "off" : "running",
     });
   }
 
@@ -208,12 +404,15 @@ export class SimulatorMachine {
   }
 
   powerCycle(): void {
+    this.failNextProfileSave = false;
     this.resetVolatileState();
   }
 
   reset(): void {
     this.brewTargetC = this.initialBrewTargetC;
     this.steamTargetC = this.initialSteamTargetC;
+    this.profiles = cloneProfileSet(DEFAULT_PROFILE_SET);
+    this.failNextProfileSave = false;
     this.resetVolatileState();
   }
 
@@ -234,6 +433,7 @@ export class SimulatorMachine {
     }
 
     this.uptimeMs += milliseconds;
+    this.advanceExtraction(milliseconds);
 
     if (!this.fault && this.isActiveTemperatureReady()) {
       this.readyElapsedMs = Math.min(
@@ -258,6 +458,22 @@ export class SimulatorMachine {
         this.steamTimeoutRemainingMs = null;
       }
     }
+  }
+
+  private advanceExtraction(milliseconds: number): void {
+    if (this.activeExtraction === null) {
+      return;
+    }
+    const durationMs =
+      this.activeExtraction.selection.kind === "manual"
+        ? MANUAL_EXTRACTION_CUTOFF_MS
+        : profileDurationMs(this.activeExtraction.profile);
+    const nextElapsedMs = this.activeExtraction.elapsedMs + milliseconds;
+    if (nextElapsedMs >= durationMs) {
+      this.activeExtraction = null;
+      return;
+    }
+    this.activeExtraction.elapsedMs = nextElapsedMs;
   }
 
   private advanceTemperature(seconds: number): void {
@@ -315,7 +531,25 @@ export class SimulatorMachine {
     this.readyElapsedMs = 0;
     this.steamTimeoutRemainingMs = null;
     this.uptimeMs = 0;
+    this.activeExtraction = null;
+    this.extractionCounter = 0;
   }
+}
+
+function profileDurationMs(profile: ExtractionProfile | null): number {
+  if (profile === null) {
+    throw new Error("A profile extraction requires a profile snapshot.");
+  }
+  return (
+    (profile.preInfusionSeconds +
+      profile.soakSeconds +
+      profile.mainExtractionSeconds) *
+    1_000
+  );
+}
+
+function cloneProfileSet(profiles: ProfileSet): ProfileSet {
+  return ProfileSetSchema.parse(JSON.parse(JSON.stringify(profiles)));
 }
 
 function moveToward(current: number, target: number, maximumDelta: number): number {

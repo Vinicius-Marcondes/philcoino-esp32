@@ -11,8 +11,7 @@ enum class WifiStatus { kOff, kConnecting, kConnected, kRetrying, kFailed };
 
 class EspNetworkServer {
  public:
-  EspNetworkServer(FirmwareApi& api, void* api_mutex,
-                   const DeviceIdentity& identity);
+  EspNetworkServer(FirmwareApi& api, const DeviceIdentity& identity);
 
   bool start(const char* ssid, const char* password);
   WifiStatus wifi_status() const;
@@ -26,7 +25,6 @@ class EspNetworkServer {
   int handle_http_request(void* request);
 
   FirmwareApi& api_;
-  void* api_mutex_;
   DeviceIdentity identity_;
   void* event_group_{nullptr};
   void* http_server_{nullptr};

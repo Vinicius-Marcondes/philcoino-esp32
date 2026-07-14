@@ -1,5 +1,6 @@
 #include "philcoino/peripherals.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cinttypes>
 #include <cstdio>
@@ -30,6 +31,8 @@ std::array<std::uint8_t, 5> glyph(char value) {
     case 'M': return {0x7F, 0x02, 0x0C, 0x02, 0x7F};
     case 'N': return {0x7F, 0x04, 0x08, 0x10, 0x7F};
     case 'O': return {0x3E, 0x41, 0x41, 0x41, 0x3E};
+    case 'P': return {0x7F, 0x09, 0x09, 0x09, 0x06};
+    case 'K': return {0x7F, 0x08, 0x14, 0x22, 0x41};
     case 'R': return {0x7F, 0x09, 0x19, 0x29, 0x46};
     case 'S': return {0x46, 0x49, 0x49, 0x49, 0x31};
     case 'T': return {0x01, 0x01, 0x7F, 0x01, 0x01};
@@ -97,6 +100,27 @@ void format_temperature_line(char* output, std::size_t length,
   std::snprintf(output, length, "%s --.-/%" PRId32, label, target);
 }
 
+bool ascii_alphanumeric(char value) {
+  return (value >= 'A' && value <= 'Z') ||
+         (value >= 'a' && value <= 'z') ||
+         (value >= '0' && value <= '9');
+}
+
+ExtractionProfile make_profile(const char* name, std::uint8_t pre_infusion,
+                               std::uint8_t soak,
+                               std::uint8_t main_extraction) {
+  ExtractionProfile profile{};
+  profile.configured = true;
+  for (std::size_t index = 0;
+       name[index] != '\0' && index + 1U < profile.name.size(); ++index) {
+    profile.name[index] = name[index];
+  }
+  profile.pre_infusion_seconds = pre_infusion;
+  profile.soak_seconds = soak;
+  profile.main_extraction_seconds = main_extraction;
+  return profile;
+}
+
 }  // namespace
 
 Max6675::Max6675(Max6675Transport& transport, std::uint32_t started_at_ms)
@@ -160,6 +184,75 @@ TargetLoadResult TargetStorage::load(TemperatureTargets& targets) {
 
 bool TargetStorage::save(const TemperatureTargets& targets) {
   return targets_are_valid(targets) && backend_.save(targets);
+}
+
+ExtractionProfiles default_extraction_profiles() {
+  return {
+      make_profile("Classic30", 0U, 0U, 30U),
+      make_profile("Pre5Soak5", 5U, 5U, 25U),
+      ExtractionProfile{},
+      ExtractionProfile{},
+  };
+}
+
+bool extraction_profile_is_valid(const ExtractionProfile& profile) {
+  if (!profile.configured) {
+    return std::all_of(profile.name.begin(), profile.name.end(),
+                       [](char value) { return value == '\0'; }) &&
+           profile.pre_infusion_seconds == 0U && profile.soak_seconds == 0U &&
+           profile.main_extraction_seconds == 0U;
+  }
+
+  std::size_t name_length = 0;
+  while (name_length < profile.name.size() &&
+         profile.name[name_length] != '\0') {
+    if (!ascii_alphanumeric(profile.name[name_length])) {
+      return false;
+    }
+    ++name_length;
+  }
+  if (name_length == 0U || name_length > 12U ||
+      name_length == profile.name.size()) {
+    return false;
+  }
+  if (!std::all_of(profile.name.begin() + name_length, profile.name.end(),
+                   [](char value) { return value == '\0'; })) {
+    return false;
+  }
+  if (profile.main_extraction_seconds == 0U ||
+      (profile.pre_infusion_seconds == 0U && profile.soak_seconds != 0U)) {
+    return false;
+  }
+  const auto total_seconds =
+      static_cast<std::uint16_t>(profile.pre_infusion_seconds) +
+      static_cast<std::uint16_t>(profile.soak_seconds) +
+      static_cast<std::uint16_t>(profile.main_extraction_seconds);
+  return total_seconds <= kMaximumExtractionDurationSeconds;
+}
+
+bool extraction_profiles_are_valid(const ExtractionProfiles& profiles) {
+  return std::all_of(profiles.begin(), profiles.end(),
+                     extraction_profile_is_valid);
+}
+
+ProfileStorage::ProfileStorage(ProfileBackend& backend) : backend_(backend) {}
+
+ProfileLoadResult ProfileStorage::load(ExtractionProfiles& profiles) {
+  const auto result = backend_.load(profiles);
+  if (result == BackendLoadResult::kError) {
+    return ProfileLoadResult::kError;
+  }
+  if (result == BackendLoadResult::kNotFound) {
+    profiles = default_extraction_profiles();
+    return backend_.save(profiles) ? ProfileLoadResult::kInitializedDefaults
+                                   : ProfileLoadResult::kError;
+  }
+  return extraction_profiles_are_valid(profiles) ? ProfileLoadResult::kOk
+                                                  : ProfileLoadResult::kCorrupt;
+}
+
+bool ProfileStorage::save(const ExtractionProfiles& profiles) {
+  return extraction_profiles_are_valid(profiles) && backend_.save(profiles);
 }
 
 FailOffSsr::FailOffSsr(DigitalOutput& output, SsrSafetyLease& safety_lease,
@@ -249,6 +342,55 @@ bool FailOffSsr::write_enabled_level(bool enabled) {
   return output_.set_level(output_high);
 }
 
+FailOffPump::FailOffPump(DigitalOutput& output, bool active_high)
+    : output_(output), active_high_(active_high) {}
+
+bool FailOffPump::initialize() {
+  initialized_ = false;
+  command_ = PumpCommand::kOff;
+  if (!write_command(PumpCommand::kOff)) {
+    return false;
+  }
+  if (!output_.configure_output()) {
+    write_command(PumpCommand::kOff);
+    return false;
+  }
+  if (!write_command(PumpCommand::kOff)) {
+    write_command(PumpCommand::kOff);
+    return false;
+  }
+  initialized_ = true;
+  return true;
+}
+
+bool FailOffPump::set_running(bool running) {
+  const auto requested = running ? PumpCommand::kRunning : PumpCommand::kOff;
+  if (!initialized_) {
+    command_ = PumpCommand::kOff;
+    write_command(PumpCommand::kOff);
+    return false;
+  }
+  if (!write_command(requested)) {
+    command_ = PumpCommand::kOff;
+    write_command(PumpCommand::kOff);
+    return false;
+  }
+  command_ = requested;
+  return true;
+}
+
+bool FailOffPump::force_off() {
+  command_ = PumpCommand::kOff;
+  return write_command(PumpCommand::kOff);
+}
+
+PumpCommand FailOffPump::command() const { return command_; }
+
+bool FailOffPump::write_command(PumpCommand command) {
+  const bool running = command == PumpCommand::kRunning;
+  return output_.set_level(running ? active_high_ : !active_high_);
+}
+
 Ssd1306Display::Ssd1306Display(OledTransport& transport)
     : transport_(transport) {}
 
@@ -279,9 +421,16 @@ bool Ssd1306Display::render(const DisplaySnapshot& snapshot) {
   std::snprintf(line.data(), line.size(), "MODE %s %s", mode_name(snapshot.mode),
                 status_name(snapshot.status));
   draw_text(buffer, 2, line.data());
-  std::snprintf(line.data(), line.size(), "HEATER %s WIFI %s",
-                snapshot.heater_enabled ? "ON" : "OFF",
-                wifi_status_name(snapshot.wifi_status));
+  if (snapshot.extraction_active) {
+    std::snprintf(line.data(), line.size(), "PUMP %s %s",
+                  snapshot.pump_command == PumpCommand::kRunning ? "RUN"
+                                                                  : "OFF",
+                  snapshot.extraction_phase);
+  } else {
+    std::snprintf(line.data(), line.size(), "HEATER %s WIFI %s",
+                  snapshot.heater_enabled ? "ON" : "OFF",
+                  wifi_status_name(snapshot.wifi_status));
+  }
   draw_text(buffer, 3, line.data());
 
   constexpr std::array<std::uint8_t, 6> address_window{0x21, 0x00, 0x7F,

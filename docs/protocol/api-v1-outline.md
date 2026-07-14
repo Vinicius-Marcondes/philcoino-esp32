@@ -2,6 +2,9 @@
 
 Status: IMPLEMENTED
 
+API v1 remains temperature-control-only. See
+[`api-v2-outline.md`](api-v2-outline.md) for the additive extraction contract.
+
 The definitive machine-readable contract is
 [`packages/protocol/openapi.yaml`](../../packages/protocol/openapi.yaml). The
 examples below mirror tested fixtures in that package.

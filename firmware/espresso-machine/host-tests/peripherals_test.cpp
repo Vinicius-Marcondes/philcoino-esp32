@@ -36,6 +36,41 @@ struct MemoryState {
   TemperatureTargets targets{};
 };
 
+struct ProfileMemoryState {
+  bool present{false};
+  bool fail_load{false};
+  bool fail_save{false};
+  ExtractionProfiles profiles{};
+};
+
+class ProfileMemoryBackend final : public ProfileBackend {
+ public:
+  explicit ProfileMemoryBackend(ProfileMemoryState& state) : state_(state) {}
+
+  BackendLoadResult load(ExtractionProfiles& profiles) override {
+    if (state_.fail_load) {
+      return BackendLoadResult::kError;
+    }
+    if (!state_.present) {
+      return BackendLoadResult::kNotFound;
+    }
+    profiles = state_.profiles;
+    return BackendLoadResult::kOk;
+  }
+
+  bool save(const ExtractionProfiles& profiles) override {
+    if (state_.fail_save) {
+      return false;
+    }
+    state_.profiles = profiles;
+    state_.present = true;
+    return true;
+  }
+
+ private:
+  ProfileMemoryState& state_;
+};
+
 class MemoryBackend final : public TargetBackend {
  public:
   explicit MemoryBackend(MemoryState& state) : state_(state) {}
@@ -77,11 +112,11 @@ class FakeDigitalOutput final : public DigitalOutput {
  public:
   bool set_level(bool high) override {
     events.push_back(high ? OutputEvent::kHigh : OutputEvent::kLow);
-    level = high;
-    if (high && fail_high) {
-      return false;
+    const bool failed = (high && fail_high) || (!high && fail_low);
+    if (!failed || !preserve_level_on_failure) {
+      level = high;
     }
-    return !fail_low;
+    return !failed;
   }
 
   bool configure_output() override {
@@ -96,6 +131,7 @@ class FakeDigitalOutput final : public DigitalOutput {
   bool fail_low{false};
   bool fail_high{false};
   bool fail_configure{false};
+  bool preserve_level_on_failure{false};
 };
 
 class FakeSafetyLease final : public SsrSafetyLease {
@@ -215,6 +251,142 @@ void test_target_storage() {
   TargetStorage corrupt_storage(corrupt_backend);
   TemperatureTargets corrupt{};
   assert(corrupt_storage.load(corrupt) == TargetLoadResult::kCorrupt);
+}
+
+ExtractionProfile configured_profile(const char* name, std::uint8_t pre,
+                                     std::uint8_t soak, std::uint8_t main) {
+  ExtractionProfile profile{};
+  profile.configured = true;
+  for (std::size_t index = 0;
+       name[index] != '\0' && index + 1U < profile.name.size(); ++index) {
+    profile.name[index] = name[index];
+  }
+  profile.pre_infusion_seconds = pre;
+  profile.soak_seconds = soak;
+  profile.main_extraction_seconds = main;
+  return profile;
+}
+
+bool profiles_equal(const ExtractionProfiles& left,
+                    const ExtractionProfiles& right) {
+  for (std::size_t index = 0; index < left.size(); ++index) {
+    if (left[index].configured != right[index].configured ||
+        left[index].name != right[index].name ||
+        left[index].pre_infusion_seconds !=
+            right[index].pre_infusion_seconds ||
+        left[index].soak_seconds != right[index].soak_seconds ||
+        left[index].main_extraction_seconds !=
+            right[index].main_extraction_seconds) {
+      return false;
+    }
+  }
+  return true;
+}
+
+void test_profile_storage() {
+  ProfileMemoryState state;
+  ExtractionProfiles profiles{};
+  {
+    ProfileMemoryBackend backend(state);
+    ProfileStorage storage(backend);
+    assert(storage.load(profiles) == ProfileLoadResult::kInitializedDefaults);
+    assert(profiles_equal(profiles, default_extraction_profiles()));
+    assert(profiles[0].configured);
+    assert(profiles[1].configured);
+    assert(!profiles[2].configured);
+    assert(!profiles[3].configured);
+
+    auto replacement = profiles;
+    replacement[2] = configured_profile("Long40", 5U, 5U, 30U);
+    assert(storage.save(replacement));
+    assert(profiles_equal(state.profiles, replacement));
+
+    state.fail_save = true;
+    auto failed_replacement = replacement;
+    failed_replacement[0] = configured_profile("Short20", 0U, 0U, 20U);
+    assert(!storage.save(failed_replacement));
+    assert(profiles_equal(state.profiles, replacement));
+  }
+  {
+    ProfileMemoryBackend restarted_backend(state);
+    ProfileStorage restarted_storage(restarted_backend);
+    ExtractionProfiles restored{};
+    assert(restarted_storage.load(restored) == ProfileLoadResult::kOk);
+    assert(profiles_equal(restored, state.profiles));
+  }
+
+  auto invalid = default_extraction_profiles();
+  invalid[0] = configured_profile("Bad name", 0U, 0U, 30U);
+  assert(!extraction_profiles_are_valid(invalid));
+  invalid[0] = configured_profile("Valid", 0U, 0U, 30U);
+  invalid[0].name.fill('A');
+  assert(!extraction_profiles_are_valid(invalid));
+  invalid[0] = configured_profile("NoPre", 0U, 5U, 25U);
+  assert(!extraction_profiles_are_valid(invalid));
+  invalid[0] = configured_profile("TooLong", 30U, 20U, 11U);
+  assert(!extraction_profiles_are_valid(invalid));
+  invalid[0] = {};
+  invalid[0].name[0] = 'X';
+  assert(!extraction_profiles_are_valid(invalid));
+
+  state.fail_save = false;
+  state.profiles = invalid;
+  ProfileMemoryBackend corrupt_backend(state);
+  ProfileStorage corrupt_storage(corrupt_backend);
+  ExtractionProfiles corrupt{};
+  assert(corrupt_storage.load(corrupt) == ProfileLoadResult::kCorrupt);
+
+  state.fail_load = true;
+  ProfileMemoryBackend failed_backend(state);
+  ProfileStorage failed_storage(failed_backend);
+  assert(failed_storage.load(corrupt) == ProfileLoadResult::kError);
+}
+
+void test_fail_off_pump() {
+  FakeDigitalOutput output;
+  FailOffPump pump(output);
+  assert(pump.initialize());
+  assert((output.events == std::vector<OutputEvent>{OutputEvent::kLow,
+                                                    OutputEvent::kConfigure,
+                                                    OutputEvent::kLow}));
+  assert(!output.level);
+  assert(pump.command() == PumpCommand::kOff);
+  assert(pump.set_running(true));
+  assert(output.level);
+  assert(pump.command() == PumpCommand::kRunning);
+  assert(pump.force_off());
+  assert(!output.level);
+  assert(pump.command() == PumpCommand::kOff);
+
+  FakeDigitalOutput configuration_error;
+  configuration_error.fail_configure = true;
+  FailOffPump failed_pump(configuration_error);
+  assert(!failed_pump.initialize());
+  assert(!configuration_error.level);
+  assert(failed_pump.command() == PumpCommand::kOff);
+  assert(!failed_pump.set_running(true));
+
+  FakeDigitalOutput high_error;
+  FailOffPump high_error_pump(high_error);
+  assert(high_error_pump.initialize());
+  high_error.fail_high = true;
+  const auto failure_start = high_error.events.size();
+  assert(!high_error_pump.set_running(true));
+  assert((std::vector<OutputEvent>(high_error.events.begin() + failure_start,
+                                  high_error.events.end()) ==
+          std::vector<OutputEvent>{OutputEvent::kHigh, OutputEvent::kLow}));
+  assert(!high_error.level);
+  assert(high_error_pump.command() == PumpCommand::kOff);
+
+  FakeDigitalOutput stuck_high;
+  FailOffPump stuck_high_pump(stuck_high);
+  assert(stuck_high_pump.initialize());
+  assert(stuck_high_pump.set_running(true));
+  stuck_high.fail_low = true;
+  stuck_high.preserve_level_on_failure = true;
+  assert(!stuck_high_pump.force_off());
+  assert(stuck_high.level);
+  assert(stuck_high_pump.command() == PumpCommand::kOff);
 }
 
 void test_fail_off_ssr() {
@@ -345,7 +517,18 @@ void test_oled() {
                        wifi_off_frame.end(),
                        transport.data.begin() + 3 * Ssd1306Display::kWidth));
   }
-  assert(transport.commands.size() == 55);
+  const auto idle_frame = transport.data;
+  snapshot.extraction_active = true;
+  snapshot.pump_command = PumpCommand::kOff;
+  snapshot.extraction_phase = "SOAK";
+  assert(display.render(snapshot));
+  assert(std::equal(idle_frame.begin(),
+                    idle_frame.begin() + 3 * Ssd1306Display::kWidth,
+                    transport.data.begin()));
+  assert(!std::equal(idle_frame.begin() + 3 * Ssd1306Display::kWidth,
+                     idle_frame.end(),
+                     transport.data.begin() + 3 * Ssd1306Display::kWidth));
+  assert(transport.commands.size() == 61);
 }
 
 }  // namespace
@@ -353,6 +536,8 @@ void test_oled() {
 int main() {
   test_thermocouple();
   test_target_storage();
+  test_profile_storage();
+  test_fail_off_pump();
   test_fail_off_ssr();
   test_oled();
   return 0;

@@ -1,6 +1,8 @@
 #pragma once
 
+#include <array>
 #include <cstdint>
+#include <string>
 
 #include "philcoino/peripherals.hpp"
 
@@ -110,6 +112,82 @@ class TemperatureController {
   bool recovery_heat_active_{false};
   bool steam_timeout_active_{false};
   std::uint32_t steam_timeout_started_ms_{0};
+};
+
+enum class ExtractionStatus { kIdle, kRunning };
+enum class ExtractionPhase { kIdle, kManual, kPreInfusion, kSoak, kMainExtraction };
+enum class ExtractionSelectionKind { kManual, kProfile };
+
+struct ExtractionSelection {
+  ExtractionSelectionKind kind{ExtractionSelectionKind::kManual};
+  std::size_t profile_index{0};
+};
+
+struct ExtractionSnapshot {
+  ExtractionStatus status{ExtractionStatus::kIdle};
+  std::string extraction_id{};
+  ExtractionSelection selection{};
+  ExtractionPhase phase{ExtractionPhase::kIdle};
+  std::uint32_t elapsed_ms{0};
+  std::uint32_t remaining_ms{0};
+  peripherals::PumpCommand pump_command{peripherals::PumpCommand::kOff};
+};
+
+enum class StartExtractionResult {
+  kStarted,
+  kReplay,
+  kConflict,
+  kProfileNotConfigured,
+  kInvalidRequest,
+  kOutputFailure,
+};
+
+enum class ReplaceProfilesResult {
+  kReplaced,
+  kActive,
+  kInvalidProfiles,
+  kPersistenceFailure,
+};
+
+enum class ExtractionUpdateResult { kOk, kCompleted, kOutputFailure };
+
+class ExtractionController {
+ public:
+  ExtractionController(peripherals::ExtractionProfiles profiles,
+                       peripherals::FailOffPump& pump);
+
+  const peripherals::ExtractionProfiles& profiles() const;
+  bool active() const;
+  ExtractionSnapshot snapshot(std::uint32_t now_ms) const;
+
+  ReplaceProfilesResult replace_profiles(
+      const peripherals::ExtractionProfiles& profiles,
+      peripherals::ProfileStorage& storage);
+  bool adopt_persisted_profiles(
+      const peripherals::ExtractionProfiles& profiles);
+  StartExtractionResult start(const std::string& idempotency_key,
+                              ExtractionSelection selection,
+                              std::uint32_t now_ms);
+  bool stop();
+  ExtractionUpdateResult update(std::uint32_t now_ms);
+
+ private:
+  static bool valid_idempotency_key(const std::string& key);
+  ExtractionPhase phase_at(std::uint32_t elapsed_ms) const;
+  std::uint32_t total_duration_ms() const;
+  bool command_for_phase(ExtractionPhase phase);
+  void clear_active();
+
+  peripherals::ExtractionProfiles profiles_{};
+  peripherals::FailOffPump& pump_;
+  bool active_{false};
+  std::uint32_t started_at_ms_{0};
+  std::uint32_t extraction_counter_{0};
+  std::string extraction_id_{};
+  std::string idempotency_key_{};
+  ExtractionSelection selection_{};
+  peripherals::ExtractionProfile active_profile_{};
+  ExtractionPhase phase_{ExtractionPhase::kIdle};
 };
 
 }  // namespace philcoino::control

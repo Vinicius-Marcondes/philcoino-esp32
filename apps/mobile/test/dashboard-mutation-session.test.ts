@@ -1,8 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import type {
+  ExtractionState,
   HeaterSettingsResponse,
   MachineState,
   Mode,
+  ProfileSet,
   TemperatureSettingsResponse,
 } from "@philcoino/protocol";
 
@@ -265,6 +267,72 @@ describe("DashboardMutationSession", () => {
     expect(harness.polling.resumes).toBe(0);
   });
 
+  test("reuses one Start key after an unacknowledged retry and publishes only the acknowledgement", async () => {
+    const requests: string[] = [];
+    let attempt = 0;
+    const client = mutationClient({
+      startExtraction: async (request) => {
+        requests.push(request.idempotencyKey);
+        attempt += 1;
+        if (attempt === 1) {
+          throw new ApiClientError("offline", "socket closed");
+        }
+        return {
+          status: "running",
+          extractionId: "retry-run-1",
+          selection: { kind: "manual" },
+          phase: "manual",
+          elapsedMs: 5_000,
+          remainingMs: 55_000,
+          pumpCommand: "running",
+        };
+      },
+    });
+    const harness = createHarness(client, () => "stable-start-key-01");
+    harness.session.start();
+
+    harness.session.startExtraction({ kind: "manual" });
+    await settle();
+    expect(harness.acknowledgedExtractions).toEqual([]);
+    expect(harness.outcomes.at(-1)?.state.status).toBe("disconnected");
+
+    harness.session.startExtraction({ kind: "manual" });
+    await settle();
+    expect(requests).toEqual(["stable-start-key-01", "stable-start-key-01"]);
+    expect(harness.acknowledgedExtractions).toHaveLength(1);
+    expect(harness.acknowledgedExtractions[0]).toMatchObject({
+      extractionId: "retry-run-1",
+      elapsedMs: 5_000,
+      status: "running",
+    });
+  });
+
+  test("serializes profile export, Start, and Stop with acknowledged state", async () => {
+    const client = mutationClient({});
+    const harness = createHarness(client, () => "serialized-start-01");
+    harness.session.start();
+
+    harness.session.replaceProfiles({
+      profiles: [
+        { id: "profile-1", profile: null },
+        { id: "profile-2", profile: null },
+        { id: "profile-3", profile: null },
+        { id: "profile-4", profile: null },
+      ],
+    });
+    harness.session.startExtraction({ kind: "manual" });
+    await settle();
+    expect(harness.acknowledgedProfiles).toHaveLength(1);
+    expect(harness.acknowledgedExtractions).toHaveLength(0);
+
+    harness.session.startExtraction({ kind: "manual" });
+    await settle();
+    expect(harness.acknowledgedExtractions.at(-1)?.status).toBe("running");
+    harness.session.stopExtraction();
+    await settle();
+    expect(harness.acknowledgedExtractions.at(-1)?.status).toBe("idle");
+  });
+
   test("uses validated simulator acknowledgements and rejection payloads", async () => {
     const simulator = createSimulator();
     const request = simulator.app.request.bind(simulator.app);
@@ -314,10 +382,15 @@ describe("DashboardMutationSession", () => {
   });
 });
 
-function createHarness(client: DashboardMutationClient) {
+function createHarness(
+  client: DashboardMutationClient,
+  startKeyFactory?: () => string,
+) {
+  const acknowledgedExtractions: ExtractionState[] = [];
   const acknowledgedHeaterSettings: HeaterSettingsResponse[] = [];
   const acknowledgedModes: Mode[] = [];
   const acknowledgedSettings: TemperatureSettingsResponse[] = [];
+  const acknowledgedProfiles: ProfileSet[] = [];
   const connections: ConnectionState[] = [];
   const dismissedFaults: MachineState[] = [];
   const outcomes: {
@@ -337,19 +410,25 @@ function createHarness(client: DashboardMutationClient) {
   const session = new DashboardMutationSession({
     client,
     onConnectionLost: (connection) => connections.push(connection),
+    onExtractionAcknowledged: (extraction) =>
+      acknowledgedExtractions.push(extraction),
     onHeaterAcknowledged: (settings) =>
       acknowledgedHeaterSettings.push(settings),
     onModeAcknowledged: (mode) => acknowledgedModes.push(mode),
     onMutationChange: (kind, state) => outcomes.push({ kind, state }),
     onOverTemperatureDismissed: (snapshot) => dismissedFaults.push(snapshot),
+    onProfilesAcknowledged: (profiles) => acknowledgedProfiles.push(profiles),
     onTemperatureSettingsAcknowledged: (settings) =>
       acknowledgedSettings.push(settings),
     polling,
+    startKeyFactory,
   });
 
   return {
+    acknowledgedExtractions,
     acknowledgedHeaterSettings,
     acknowledgedModes,
+    acknowledgedProfiles,
     acknowledgedSettings,
     connections,
     dismissedFaults,
@@ -374,6 +453,36 @@ function mutationClient(
       steamTargetC: 115,
       steamTimeoutRemainingMs: null,
       uptimeMs: 190_000,
+    }),
+    replaceProfiles: async (profiles) => profiles,
+    startExtraction: async ({ selection }) =>
+      selection.kind === "manual"
+        ? {
+            status: "running",
+            extractionId: "test-run-1",
+            selection,
+            phase: "manual",
+            elapsedMs: 0,
+            remainingMs: 30_000,
+            pumpCommand: "running",
+          }
+        : {
+            status: "running",
+            extractionId: "test-run-1",
+            selection,
+            phase: "main-extraction",
+            elapsedMs: 0,
+            remainingMs: 30_000,
+            pumpCommand: "running",
+          },
+    stopExtraction: async () => ({
+      status: "idle",
+      extractionId: null,
+      selection: null,
+      phase: "idle",
+      elapsedMs: 0,
+      remainingMs: null,
+      pumpCommand: "off",
     }),
     setHeaterEnabled: async ({ heaterEnabled }) => ({ heaterEnabled }),
     setMode: async ({ mode }) => ({ mode }),

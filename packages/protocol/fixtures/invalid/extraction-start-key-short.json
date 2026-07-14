@@ -1,0 +1,4 @@
+{
+  "idempotencyKey": "too-short",
+  "selection": { "kind": "manual" }
+}
