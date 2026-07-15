@@ -4,7 +4,7 @@
     "slug": "philcoino",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/images/icon.png",
+    "icon": "./assets/images/philcoino-icon.png",
     "scheme": "philcoino",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
@@ -20,8 +20,13 @@
         ],
         "NSAppTransportSecurity": {
           "NSAllowsLocalNetworking": true
-        }
-      }
+        },
+        "CFBundleLocalizations": [
+          "en",
+          "pt-BR"
+        ]
+      },
+      "appleTeamId": "637UA2N8TU"
     },
     "locales": {
       "en": "./locales/en.json",
@@ -29,10 +34,8 @@
     },
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
-        "foregroundImage": "./assets/images/android-icon-foreground.png",
-        "backgroundImage": "./assets/images/android-icon-background.png",
-        "monochromeImage": "./assets/images/android-icon-monochrome.png"
+        "backgroundColor": "#FFFFFF",
+        "foregroundImage": "./assets/images/philcoino-icon.png"
       },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
@@ -47,7 +50,7 @@
     },
     "web": {
       "output": "static",
-      "favicon": "./assets/images/favicon.png"
+      "favicon": "./assets/images/philcoino-icon.png"
     },
     "plugins": [
       "expo-router",
@@ -71,7 +74,7 @@
       [
         "expo-splash-screen",
         {
-          "image": "./assets/images/splash-icon.png",
+          "image": "./assets/images/philcoino-icon.png",
           "imageWidth": 200,
           "resizeMode": "contain",
           "backgroundColor": "#ffffff",
