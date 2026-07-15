@@ -1,5 +1,6 @@
 import {
   ApiV2ErrorResponseSchema,
+  CooldownActiveConflictResponseSchema,
   ErrorResponseSchema,
   ExtractionActiveConflictResponseSchema,
   FaultCodeSchema,
@@ -8,6 +9,7 @@ import {
   ModeRequestSchema,
   ModeResponseSchema,
   ProfileSetSchema,
+  StartCooldownRequestSchema,
   StartExtractionRequestSchema,
   TemperatureSettingsRequestSchema,
   type ErrorCode,
@@ -17,7 +19,11 @@ import {
 } from "@philcoino/protocol";
 import { Hono, type Context, type Next } from "hono";
 
-import { SimulatorMachine, type SimulatorMachineOptions } from "./model.ts";
+import {
+  SimulatorMachine,
+  type SimulatedOutputCommand,
+  type SimulatorMachineOptions,
+} from "./model.ts";
 
 export const DEFAULT_SIMULATOR_TOKEN = "philcoino-dev-token";
 
@@ -88,6 +94,8 @@ export function createSimulator(
   app.use("/api/v2/profiles", requireBearerV2);
   app.use("/api/v2/extractions/start", requireBearerV2);
   app.use("/api/v2/extractions/stop", requireBearerV2);
+  app.use("/api/v2/cooldowns/start", requireBearerV2);
+  app.use("/api/v2/cooldowns/stop", requireBearerV2);
 
   app.get("/api/v1/state", (c) => c.json(machine.getState()));
 
@@ -130,6 +138,14 @@ export function createSimulator(
         409,
         "sensor_unavailable",
         "Mode cannot be changed while a machine fault is latched.",
+      );
+    }
+    if (parsed.data.mode === "steam" && machine.hasActiveWorkflow()) {
+      return contractError(
+        c,
+        409,
+        "sensor_unavailable",
+        "Steam cannot be selected while extraction or cooldown is active.",
       );
     }
 
@@ -199,6 +215,13 @@ export function createSimulator(
         "Profiles cannot be replaced while extraction is active.",
       );
     }
+    if (!result.ok && result.reason === "cooldown-active") {
+      return cooldownActiveConflict(
+        c,
+        result.activeCooldown,
+        "Profiles cannot be replaced while cooldown is active.",
+      );
+    }
     if (!result.ok) {
       return contractV2Error(
         c,
@@ -241,6 +264,21 @@ export function createSimulator(
         "A different extraction is already active.",
       );
     }
+    if (!result.ok && result.reason === "cooldown-active") {
+      return cooldownActiveConflict(
+        c,
+        result.activeCooldown,
+        "Extraction cannot start while cooldown is active.",
+      );
+    }
+    if (!result.ok && result.reason === "brew-mode-required") {
+      return contractV2Error(
+        c,
+        409,
+        "brew_mode_required",
+        "Switch the machine to Brew before starting extraction.",
+      );
+    }
     if (!result.ok) {
       return contractV2Error(
         c,
@@ -255,6 +293,88 @@ export function createSimulator(
   app.post("/api/v2/extractions/stop", (c) =>
     c.json(machine.stopExtraction()),
   );
+
+  app.post("/api/v2/cooldowns/start", async (c) => {
+    const body = await readJson(c);
+    if (!body.ok) {
+      return contractV2Error(
+        c,
+        400,
+        "malformed_request",
+        MALFORMED_REQUEST_MESSAGE,
+      );
+    }
+    const parsed = StartCooldownRequestSchema.safeParse(body.value);
+    if (!parsed.success) {
+      return contractV2Error(
+        c,
+        400,
+        "malformed_request",
+        "The cooldown Start request is invalid.",
+      );
+    }
+
+    const result = machine.startCooldown(parsed.data.idempotencyKey);
+    if (result.ok) {
+      return c.json(result.cooldown);
+    }
+    if (result.reason === "extraction-active") {
+      return extractionActiveConflict(
+        c,
+        result.activeExtraction,
+        "Cooldown cannot start while extraction is active.",
+      );
+    }
+    if (result.reason === "cooldown-active") {
+      return cooldownActiveConflict(
+        c,
+        result.activeCooldown,
+        "A different cooldown is already active.",
+      );
+    }
+    if (result.reason === "cooldown-not-required") {
+      return contractV2Error(
+        c,
+        409,
+        "cooldown_not_required",
+        "The Brew-effective temperature must be above the current Brew target.",
+      );
+    }
+    if (result.reason === "sensor-unavailable") {
+      return contractV2Error(
+        c,
+        409,
+        "sensor_unavailable",
+        "Cooldown requires a valid boiler temperature reading.",
+      );
+    }
+    if (result.reason === "machine-faulted") {
+      return contractV2Error(
+        c,
+        409,
+        "machine_faulted",
+        "Cooldown cannot start while a machine fault is latched.",
+      );
+    }
+    return contractV2Error(
+      c,
+      500,
+      "internal_error",
+      "The simulator could not apply the cooldown output commands.",
+    );
+  });
+
+  app.post("/api/v2/cooldowns/stop", (c) => {
+    const result = machine.stopCooldown();
+    return result.ok
+      ? c.json(result.cooldown)
+      : contractV2Error(
+          c,
+          500,
+          "internal_error",
+          "The simulator could not apply the cooldown pump-off command.",
+        );
+  });
 
   app.post("/_simulator/reset", (c) => {
     machine.reset();
@@ -302,6 +422,15 @@ export function createSimulator(
     return c.json({ status: "armed" });
   });
 
+  app.post("/_simulator/fail-next-output-command", async (c) => {
+    const body = await readJson(c);
+    if (!body.ok || !isOutputFailureRequest(body.value)) {
+      return contractError(c, 400, "malformed_request", MALFORMED_REQUEST_MESSAGE);
+    }
+    machine.injectNextOutputFailure(body.value.command);
+    return c.json({ command: body.value.command, status: "armed" });
+  });
+
   return { app, machine };
 }
 
@@ -337,6 +466,18 @@ function extractionActiveConflict(
   const payload = ExtractionActiveConflictResponseSchema.parse({
     error: { code: "extraction_active", message },
     activeExtraction,
+  });
+  return c.json(payload, 409);
+}
+
+function cooldownActiveConflict(
+  c: Context,
+  activeCooldown: ReturnType<SimulatorMachine["getCooldownState"]>,
+  message: string,
+): Response {
+  const payload = CooldownActiveConflictResponseSchema.parse({
+    error: { code: "cooldown_active", message },
+    activeCooldown,
   });
   return c.json(payload, 409);
 }
@@ -381,6 +522,17 @@ function isTemperatureControlRequest(value: unknown): value is {
     isExactObject(value, ["boilerTemperatureC"]) &&
     typeof value.boilerTemperatureC === "number" &&
     Number.isFinite(value.boilerTemperatureC)
+  );
+}
+
+function isOutputFailureRequest(
+  value: unknown,
+): value is { command: SimulatedOutputCommand } {
+  return (
+    isExactObject(value, ["command"]) &&
+    (value.command === "heater-off" ||
+      value.command === "pump-running" ||
+      value.command === "pump-off")
   );
 }
 

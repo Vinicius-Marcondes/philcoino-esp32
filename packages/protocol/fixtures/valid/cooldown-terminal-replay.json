@@ -1,0 +1,10 @@
+{
+  "status": "idle",
+  "cooldownId": "cooldown-184220",
+  "brewTargetC": 93,
+  "elapsedMs": 50000,
+  "remainingMs": null,
+  "pumpCommand": "off",
+  "heaterInhibited": false,
+  "outcome": "cutoff"
+}

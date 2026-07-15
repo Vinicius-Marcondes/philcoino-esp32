@@ -29,7 +29,7 @@ constexpr EventBits_t kConnectedBit = BIT0;
 constexpr EventBits_t kConnectionFailedBit = BIT1;
 constexpr std::size_t kMaximumAuthorizationLength = 512;
 constexpr std::size_t kMaximumRequestBodyLength = 1024;
-constexpr std::array<std::pair<const char*, httpd_method_t>, 12> kRoutes{{
+constexpr std::array<std::pair<const char*, httpd_method_t>, 14> kRoutes{{
     {"/healthz", HTTP_GET},
     {"/api/v1/device", HTTP_GET},
     {"/api/v1/state", HTTP_GET},
@@ -42,6 +42,8 @@ constexpr std::array<std::pair<const char*, httpd_method_t>, 12> kRoutes{{
     {"/api/v2/profiles", HTTP_PUT},
     {"/api/v2/extractions/start", HTTP_POST},
     {"/api/v2/extractions/stop", HTTP_POST},
+    {"/api/v2/cooldowns/start", HTTP_POST},
+    {"/api/v2/cooldowns/stop", HTTP_POST},
 }};
 
 std::uint64_t uptime_ms() {

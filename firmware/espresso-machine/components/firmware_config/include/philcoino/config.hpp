@@ -20,6 +20,8 @@ inline constexpr std::int32_t kBrewTargetMaximumC = 95;
 inline constexpr std::int32_t kSteamTargetMinimumC = 110;
 inline constexpr std::int32_t kSteamTargetMaximumC = 120;
 inline constexpr std::int32_t kSteamTemperatureOffsetC = 5;
+inline constexpr std::int32_t kPreInfusionHeaterDutyOffsetC = 0;
+inline constexpr std::int32_t kExtractionHeaterDutyOffsetC = 2;
 inline constexpr std::int32_t kBrewOverTemperatureC = 98;
 inline constexpr std::int32_t kSteamOverTemperatureC = 130;
 
@@ -30,6 +32,8 @@ inline constexpr std::int32_t kReadyBandC = 1;
 inline constexpr std::uint32_t kHeaterControlWindowMs = 10U * 1000U;
 inline constexpr std::uint32_t kMinimumHeaterPulseMs = 500U;
 inline constexpr std::uint32_t kHeaterSafetyLeaseMs = 1500U;
+inline constexpr std::uint32_t kCooldownPumpLimitMs = 45U * 1000U;
+inline constexpr std::uint32_t kCooldownStabilizationMs = 5U * 1000U;
 inline constexpr float kBrewHeatRampMinimumTargetBandC = 4.0F;
 inline constexpr float kBrewHeatRampBandC = 8.0F;
 inline constexpr float kSteamHeatRampBandC = 12.0F;

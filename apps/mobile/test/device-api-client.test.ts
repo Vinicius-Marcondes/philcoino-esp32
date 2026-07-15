@@ -350,6 +350,169 @@ describe("DeviceApiClient", () => {
     });
   });
 
+  test("validates cooldown replay, reconnect, Stop, threshold, cutoff, stabilization, and failure against the simulator", async () => {
+    const simulator = createSimulator();
+    const request = simulator.app.request.bind(simulator.app);
+    const fetch: FetchImplementation = (url, init) =>
+      Promise.resolve(
+        request(url, {
+          body: init.body,
+          headers: init.headers,
+          method: init.method,
+          signal: init.signal,
+        }),
+      );
+    const createClient = () =>
+      new DeviceApiClient({
+        address: "http://127.0.0.1:3000",
+        fetch,
+        token: DEFAULT_SIMULATOR_TOKEN,
+      });
+    const client = createClient();
+    const control = (method: string, path: string, body?: unknown) =>
+      simulator.app.request(path, {
+        body: body === undefined ? undefined : JSON.stringify(body),
+        headers:
+          body === undefined ? undefined : { "content-type": "application/json" },
+        method,
+      });
+
+    await control("PUT", "/_simulator/temperatures", {
+      boilerTemperatureC: 110,
+    });
+    const started = await client.startCooldown({
+      idempotencyKey: "mobile-cooldown-target-01",
+    });
+    expect(started).toMatchObject({
+      status: "pumping",
+      remainingMs: 45_000,
+      pumpCommand: "running",
+      heaterInhibited: true,
+    });
+    await control("POST", "/_simulator/advance", { milliseconds: 1_234 });
+
+    const reconnectedClient = createClient();
+    await expect(reconnectedClient.getStateV2()).resolves.toMatchObject({
+      cooldown: {
+        cooldownId: started.cooldownId,
+        status: "pumping",
+        elapsedMs: 1_234,
+        remainingMs: 43_766,
+      },
+    });
+    await expect(
+      reconnectedClient.startCooldown({
+        idempotencyKey: "mobile-cooldown-target-01",
+      }),
+    ).resolves.toMatchObject({
+      cooldownId: started.cooldownId,
+      elapsedMs: 1_234,
+      remainingMs: 43_766,
+    });
+
+    await control("PUT", "/_simulator/temperatures", {
+      boilerTemperatureC: 93,
+    });
+    const targetState = await reconnectedClient.getStateV2();
+    expect(targetState.cooldown).toMatchObject({
+      status: "stabilizing",
+      outcome: "target-reached",
+      remainingMs: 5_000,
+      pumpCommand: "off",
+    });
+    await expect(reconnectedClient.stopCooldown()).resolves.toEqual(
+      targetState.cooldown,
+    );
+    await control("POST", "/_simulator/advance", { milliseconds: 5_000 });
+    await expect(reconnectedClient.getStateV2()).resolves.toMatchObject({
+      cooldown: { status: "idle", outcome: "target-reached" },
+    });
+
+    await control("POST", "/_simulator/reset");
+    await control("PUT", "/_simulator/temperatures", {
+      boilerTemperatureC: 1_000,
+    });
+    await client.startCooldown({ idempotencyKey: "mobile-cooldown-cutoff-01" });
+    await control("POST", "/_simulator/advance", { milliseconds: 45_000 });
+    await expect(client.getStateV2()).resolves.toMatchObject({
+      cooldown: {
+        status: "stabilizing",
+        outcome: "cutoff",
+        remainingMs: 5_000,
+        pumpCommand: "off",
+      },
+    });
+    await control("POST", "/_simulator/advance", { milliseconds: 5_000 });
+    await expect(client.getStateV2()).resolves.toMatchObject({
+      cooldown: { status: "idle", outcome: "cutoff" },
+    });
+
+    await control("POST", "/_simulator/reset");
+    await control("PUT", "/_simulator/temperatures", {
+      boilerTemperatureC: 110,
+    });
+    await client.startCooldown({ idempotencyKey: "mobile-cooldown-fault-001" });
+    await control("PUT", "/_simulator/fault", { code: "sensor_failure" });
+    await expect(client.getStateV2()).resolves.toMatchObject({
+      machine: { status: "fault", heaterActive: false },
+      cooldown: {
+        status: "idle",
+        outcome: "failed",
+        pumpCommand: "off",
+      },
+    });
+  });
+
+  test("rejects malformed cooldown acknowledgements and parses active cooldown conflicts", async () => {
+    const malformedClient = clientWithResponse(
+      Response.json({
+        status: "pumping",
+        cooldownId: "cooldown-malformed-1",
+        brewTargetC: 93,
+        elapsedMs: 0,
+        remainingMs: 45_000,
+        pumpCommand: "running",
+        heaterInhibited: true,
+        outcome: null,
+        extra: true,
+      }),
+    );
+    const malformed = await captureError(
+      malformedClient.startCooldown({ idempotencyKey: "cooldown-malformed-key" }),
+    );
+    expect((malformed as ApiClientError).kind).toBe("protocol");
+
+    const conflictClient = clientWithResponse(
+      Response.json(
+        {
+          error: {
+            code: "cooldown_active",
+            message: "A different cooldown is already active.",
+          },
+          activeCooldown: {
+            status: "pumping",
+            cooldownId: "cooldown-active-1",
+            brewTargetC: 93,
+            elapsedMs: 1_000,
+            remainingMs: 44_000,
+            pumpCommand: "running",
+            heaterInhibited: true,
+            outcome: null,
+          },
+        },
+        { status: 409 },
+      ),
+    );
+    const conflict = await captureError(
+      conflictClient.startCooldown({ idempotencyKey: "cooldown-conflict-key" }),
+    );
+    expect((conflict as ApiClientError).kind).toBe("http");
+    expect((conflict as ApiClientError).response).toMatchObject({
+      error: { code: "cooldown_active" },
+      activeCooldown: { elapsedMs: 1_000, pumpCommand: "running" },
+    });
+  });
+
   test("parses API v2 active conflicts without treating them as protocol failures", async () => {
     const client = clientWithResponse(
       Response.json(

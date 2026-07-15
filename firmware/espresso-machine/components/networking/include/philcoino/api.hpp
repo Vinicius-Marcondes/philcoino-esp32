@@ -55,6 +55,7 @@ class FirmwareApi {
               control::TemperatureController& controller,
               peripherals::TargetStorage& target_storage,
               control::ExtractionController& extraction_controller,
+              control::CooldownController& cooldown_controller,
               peripherals::ProfileStorage& profile_storage,
               ApiSynchronization& synchronization);
 
@@ -80,12 +81,16 @@ class FirmwareApi {
   HttpResponse start_extraction(const std::string& body,
                                 std::uint64_t uptime_ms);
   HttpResponse stop_extraction(std::uint64_t uptime_ms);
+  HttpResponse start_cooldown(const std::string& body,
+                              std::uint64_t uptime_ms);
+  HttpResponse stop_cooldown(std::uint64_t uptime_ms);
 
   DeviceIdentity identity_;
   std::string bearer_token_;
   control::TemperatureController& controller_;
   peripherals::TargetStorage& target_storage_;
   control::ExtractionController& extraction_controller_;
+  control::CooldownController& cooldown_controller_;
   peripherals::ProfileStorage& profile_storage_;
   ApiSynchronization& synchronization_;
 };

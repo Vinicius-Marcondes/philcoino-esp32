@@ -8,6 +8,10 @@ export const STEAM_TIMEOUT_MS = 300_000;
 export const EXTRACTION_MAX_DURATION_SECONDS = 60;
 export const EXTRACTION_MAX_DURATION_MS =
   EXTRACTION_MAX_DURATION_SECONDS * 1_000;
+export const COOLDOWN_PUMP_LIMIT_MS = 45_000;
+export const COOLDOWN_STABILIZATION_MS = 5_000;
+export const COOLDOWN_MAX_DURATION_MS =
+  COOLDOWN_PUMP_LIMIT_MS + COOLDOWN_STABILIZATION_MS;
 export const PROFILE_NAME_MAX_LENGTH = 12;
 export const PROFILE_SLOT_IDS = [
   "profile-1",
@@ -231,6 +235,11 @@ const ExtractionIdSchema = z
   .min(1)
   .max(64)
   .regex(/^[A-Za-z0-9][A-Za-z0-9._~-]*$/);
+const CooldownIdSchema = z
+  .string()
+  .min(1)
+  .max(64)
+  .regex(/^[A-Za-z0-9][A-Za-z0-9._~-]*$/);
 export const IdempotencyKeySchema = z
   .string()
   .min(16)
@@ -297,10 +306,174 @@ export const ExtractionStateSchema = z.union([
   RunningExtractionStateSchema,
 ]);
 
-export const MachineStateV2Schema = z.strictObject({
-  machine: MachineStateSchema,
-  extraction: ExtractionStateSchema,
+export const CompensationPhaseSchema = z.enum(["manual", "main-extraction"]);
+export const InactiveCompensationStateSchema = z.strictObject({
+  status: z.literal("inactive"),
+  phase: z.null(),
 });
+export const ActiveCompensationStateSchema = z.strictObject({
+  status: z.literal("active"),
+  phase: CompensationPhaseSchema,
+});
+export const CompensationStateSchema = z.discriminatedUnion("status", [
+  InactiveCompensationStateSchema,
+  ActiveCompensationStateSchema,
+]);
+
+export const CooldownStatusSchema = z.enum([
+  "idle",
+  "pumping",
+  "stabilizing",
+]);
+export const CooldownOutcomeSchema = z.enum([
+  "target-reached",
+  "cutoff",
+  "stopped",
+  "failed",
+]);
+
+const CooldownElapsedMsSchema = z
+  .number()
+  .int()
+  .min(0)
+  .max(COOLDOWN_MAX_DURATION_MS);
+
+const InitialIdleCooldownStateSchema = z.strictObject({
+  status: z.literal("idle"),
+  cooldownId: z.null(),
+  brewTargetC: z.null(),
+  elapsedMs: z.literal(0),
+  remainingMs: z.null(),
+  pumpCommand: z.literal("off"),
+  heaterInhibited: z.literal(false),
+  outcome: z.null(),
+});
+
+const TerminalIdleCooldownStateSchema = z.strictObject({
+  status: z.literal("idle"),
+  cooldownId: CooldownIdSchema,
+  brewTargetC: BrewTargetSchema,
+  elapsedMs: CooldownElapsedMsSchema,
+  remainingMs: z.null(),
+  pumpCommand: z.literal("off"),
+  heaterInhibited: z.literal(false),
+  outcome: CooldownOutcomeSchema,
+});
+
+export const IdleCooldownStateSchema = z.union([
+  InitialIdleCooldownStateSchema,
+  TerminalIdleCooldownStateSchema,
+]);
+
+export const PumpingCooldownStateSchema = z
+  .strictObject({
+    status: z.literal("pumping"),
+    cooldownId: CooldownIdSchema,
+    brewTargetC: BrewTargetSchema,
+    elapsedMs: z.number().int().min(0).max(COOLDOWN_PUMP_LIMIT_MS),
+    remainingMs: z.number().int().min(0).max(COOLDOWN_PUMP_LIMIT_MS),
+    pumpCommand: z.literal("running"),
+    heaterInhibited: z.literal(true),
+    outcome: z.null(),
+  })
+  .superRefine((state, context) => {
+    if (state.elapsedMs + state.remainingMs !== COOLDOWN_PUMP_LIMIT_MS) {
+      context.addIssue({
+        code: "custom",
+        path: ["remainingMs"],
+        message:
+          "Pumping elapsed and remaining timing must total the 45-second cutoff.",
+      });
+    }
+  });
+
+export const StabilizingCooldownStateSchema = z.strictObject({
+  status: z.literal("stabilizing"),
+  cooldownId: CooldownIdSchema,
+  brewTargetC: BrewTargetSchema,
+  elapsedMs: CooldownElapsedMsSchema,
+  remainingMs: z.number().int().min(0).max(COOLDOWN_STABILIZATION_MS),
+  pumpCommand: z.literal("off"),
+  heaterInhibited: z.literal(true),
+  outcome: z.enum(["target-reached", "cutoff", "stopped"]),
+});
+
+export const ActiveCooldownStateSchema = z.discriminatedUnion("status", [
+  PumpingCooldownStateSchema,
+  StabilizingCooldownStateSchema,
+]);
+export const CooldownStateSchema = z.union([
+  IdleCooldownStateSchema,
+  ActiveCooldownStateSchema,
+]);
+
+export const MachineStateV2Schema = z
+  .strictObject({
+    machine: MachineStateSchema,
+    extraction: ExtractionStateSchema,
+    compensation: CompensationStateSchema,
+    cooldown: CooldownStateSchema,
+  })
+  .superRefine((state, context) => {
+    if (
+      state.extraction.status === "running" &&
+      state.machine.activeMode !== "brew"
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["extraction"],
+        message: "An active extraction requires acknowledged Brew mode.",
+      });
+    }
+
+    if (state.compensation.status === "active") {
+      const extractionPhase =
+        state.extraction.status === "running" ? state.extraction.phase : null;
+      if (
+        extractionPhase !== state.compensation.phase ||
+        state.machine.activeMode !== "brew" ||
+        !state.machine.heaterEnabled ||
+        state.machine.status === "fault"
+      ) {
+        context.addIssue({
+          code: "custom",
+          path: ["compensation"],
+          message:
+            "Active compensation requires the matching Brew extraction phase, heater permission, and no machine fault.",
+        });
+      }
+    }
+
+    if (state.cooldown.status !== "idle") {
+      if (
+        state.extraction.status !== "idle" ||
+        state.compensation.status !== "inactive" ||
+        state.machine.activeMode !== "brew" ||
+        state.machine.heaterActive ||
+        state.machine.status === "fault"
+      ) {
+        context.addIssue({
+          code: "custom",
+          path: ["cooldown"],
+          message:
+            "An active cooldown requires idle extraction, inactive compensation, acknowledged Brew mode, a heater-off command, and no machine fault.",
+        });
+      }
+    }
+
+    if (
+      state.cooldown.status === "idle" &&
+      state.cooldown.outcome === "failed" &&
+      state.machine.status !== "fault"
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["cooldown", "outcome"],
+        message:
+          "A failed cooldown acknowledgement requires the machine fault state that keeps heating suppressed.",
+      });
+    }
+  });
 
 export const StartExtractionRequestSchema = z.strictObject({
   idempotencyKey: IdempotencyKeySchema,
@@ -309,10 +482,21 @@ export const StartExtractionRequestSchema = z.strictObject({
 export const StartExtractionResponseSchema = RunningExtractionStateSchema;
 export const StopExtractionResponseSchema = IdleExtractionStateSchema;
 
+export const StartCooldownRequestSchema = z.strictObject({
+  idempotencyKey: IdempotencyKeySchema,
+});
+export const StartCooldownResponseSchema = CooldownStateSchema;
+export const StopCooldownResponseSchema = CooldownStateSchema;
+
 export const ApiV2ErrorCodeSchema = z.enum([
   "malformed_request",
   "unauthorized",
   "extraction_active",
+  "cooldown_active",
+  "brew_mode_required",
+  "cooldown_not_required",
+  "sensor_unavailable",
+  "machine_faulted",
   "profile_not_configured",
   "persistence_failure",
   "internal_error",
@@ -329,6 +513,13 @@ export const ExtractionActiveConflictResponseSchema = z.strictObject({
     message: z.string().min(1).max(160),
   }),
   activeExtraction: RunningExtractionStateSchema,
+});
+export const CooldownActiveConflictResponseSchema = z.strictObject({
+  error: z.strictObject({
+    code: z.literal("cooldown_active"),
+    message: z.string().min(1).max(160),
+  }),
+  activeCooldown: ActiveCooldownStateSchema,
 });
 
 export type Mode = z.infer<typeof ModeSchema>;
@@ -368,6 +559,13 @@ export type ExtractionState = z.infer<typeof ExtractionStateSchema>;
 export type RunningExtractionState = z.infer<
   typeof RunningExtractionStateSchema
 >;
+export type CompensationPhase = z.infer<typeof CompensationPhaseSchema>;
+export type CompensationState = z.infer<typeof CompensationStateSchema>;
+export type CooldownStatus = z.infer<typeof CooldownStatusSchema>;
+export type CooldownOutcome = z.infer<typeof CooldownOutcomeSchema>;
+export type IdleCooldownState = z.infer<typeof IdleCooldownStateSchema>;
+export type ActiveCooldownState = z.infer<typeof ActiveCooldownStateSchema>;
+export type CooldownState = z.infer<typeof CooldownStateSchema>;
 export type MachineStateV2 = z.infer<typeof MachineStateV2Schema>;
 export type StartExtractionRequest = z.infer<
   typeof StartExtractionRequestSchema
@@ -376,8 +574,14 @@ export type StartExtractionResponse = z.infer<
   typeof StartExtractionResponseSchema
 >;
 export type StopExtractionResponse = z.infer<typeof StopExtractionResponseSchema>;
+export type StartCooldownRequest = z.infer<typeof StartCooldownRequestSchema>;
+export type StartCooldownResponse = z.infer<typeof StartCooldownResponseSchema>;
+export type StopCooldownResponse = z.infer<typeof StopCooldownResponseSchema>;
 export type ApiV2ErrorCode = z.infer<typeof ApiV2ErrorCodeSchema>;
 export type ApiV2ErrorResponse = z.infer<typeof ApiV2ErrorResponseSchema>;
 export type ExtractionActiveConflictResponse = z.infer<
   typeof ExtractionActiveConflictResponseSchema
+>;
+export type CooldownActiveConflictResponse = z.infer<
+  typeof CooldownActiveConflictResponseSchema
 >;

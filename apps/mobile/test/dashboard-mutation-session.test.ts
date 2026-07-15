@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type {
+  CooldownState,
   ExtractionState,
   HeaterSettingsResponse,
   MachineState,
@@ -307,6 +308,124 @@ describe("DashboardMutationSession", () => {
     });
   });
 
+  test("publishes cooldown state only after acknowledgement and reuses its key after transport loss", async () => {
+    const requests: string[] = [];
+    const acknowledged: CooldownState = {
+      status: "pumping",
+      cooldownId: "cooldown-test-1",
+      brewTargetC: 93,
+      elapsedMs: 0,
+      remainingMs: 45_000,
+      pumpCommand: "running",
+      heaterInhibited: true,
+      outcome: null,
+    };
+    let attempt = 0;
+    const client = mutationClient({
+      startCooldown: async (request) => {
+        requests.push(request.idempotencyKey);
+        attempt += 1;
+        if (attempt === 1) {
+          throw new ApiClientError("offline", "socket closed");
+        }
+        return acknowledged;
+      },
+    });
+    const harness = createHarness(
+      client,
+      undefined,
+      () => "stable-cooldown-key-01",
+    );
+    harness.session.start();
+
+    harness.session.startCooldown();
+    await settle();
+    expect(harness.acknowledgedCooldowns).toEqual([]);
+    expect(harness.outcomes.at(-1)?.state.status).toBe("disconnected");
+
+    harness.session.startCooldown();
+    await settle();
+    expect(requests).toEqual([
+      "stable-cooldown-key-01",
+      "stable-cooldown-key-01",
+    ]);
+    expect(harness.acknowledgedCooldowns).toEqual([acknowledged]);
+    expect(harness.outcomes.at(-1)?.state.status).toBe("acknowledged");
+  });
+
+  test("serializes cooldown Stop and applies its stabilizing acknowledgement", async () => {
+    const response = deferred<CooldownState>();
+    const client = mutationClient({ stopCooldown: () => response.promise });
+    const harness = createHarness(client);
+    harness.session.start();
+
+    harness.session.stopCooldown();
+    expect(harness.acknowledgedCooldowns).toEqual([]);
+    expect(harness.polling.pauses).toBe(1);
+    expect(harness.outcomes.at(-1)?.state.status).toBe("pending");
+
+    response.resolve({
+      status: "stabilizing",
+      cooldownId: "cooldown-test-2",
+      brewTargetC: 93,
+      elapsedMs: 12_000,
+      remainingMs: 5_000,
+      pumpCommand: "off",
+      heaterInhibited: true,
+      outcome: "stopped",
+    });
+    await settle();
+
+    expect(harness.acknowledgedCooldowns.at(-1)).toMatchObject({
+      status: "stabilizing",
+      outcome: "stopped",
+      pumpCommand: "off",
+    });
+    expect(harness.polling.resumes).toBe(1);
+  });
+
+  test("uses a fresh cooldown key after an authoritative rejection", async () => {
+    const requests: string[] = [];
+    const keys = ["cooldown-rejected-01", "cooldown-retry-0002"];
+    const client = mutationClient({
+      startCooldown: async (request) => {
+        requests.push(request.idempotencyKey);
+        if (requests.length === 1) {
+          throw new ApiClientError("http", "not required", {
+            response: {
+              error: {
+                code: "cooldown_not_required",
+                message: "The boiler is already at the Brew target.",
+              },
+            },
+            status: 409,
+          });
+        }
+        return {
+          status: "pumping",
+          cooldownId: "cooldown-retry-1",
+          brewTargetC: 93,
+          elapsedMs: 0,
+          remainingMs: 45_000,
+          pumpCommand: "running",
+          heaterInhibited: true,
+          outcome: null,
+        };
+      },
+    });
+    const harness = createHarness(client, undefined, () => keys.shift()!);
+    harness.session.start();
+
+    harness.session.startCooldown();
+    await settle();
+    expect(harness.outcomes.at(-1)?.state.status).toBe("rejected");
+
+    harness.session.startCooldown();
+    await settle();
+    expect(requests).toEqual(["cooldown-rejected-01", "cooldown-retry-0002"]);
+    expect(harness.acknowledgedCooldowns).toHaveLength(1);
+  });
+
   test("serializes profile export, Start, and Stop with acknowledged state", async () => {
     const client = mutationClient({});
     const harness = createHarness(client, () => "serialized-start-01");
@@ -385,7 +504,9 @@ describe("DashboardMutationSession", () => {
 function createHarness(
   client: DashboardMutationClient,
   startKeyFactory?: () => string,
+  cooldownStartKeyFactory?: () => string,
 ) {
+  const acknowledgedCooldowns: CooldownState[] = [];
   const acknowledgedExtractions: ExtractionState[] = [];
   const acknowledgedHeaterSettings: HeaterSettingsResponse[] = [];
   const acknowledgedModes: Mode[] = [];
@@ -409,6 +530,8 @@ function createHarness(
   };
   const session = new DashboardMutationSession({
     client,
+    onCooldownAcknowledged: (cooldown) =>
+      acknowledgedCooldowns.push(cooldown),
     onConnectionLost: (connection) => connections.push(connection),
     onExtractionAcknowledged: (extraction) =>
       acknowledgedExtractions.push(extraction),
@@ -422,9 +545,11 @@ function createHarness(
       acknowledgedSettings.push(settings),
     polling,
     startKeyFactory,
+    cooldownStartKeyFactory,
   });
 
   return {
+    acknowledgedCooldowns,
     acknowledgedExtractions,
     acknowledgedHeaterSettings,
     acknowledgedModes,
@@ -442,6 +567,26 @@ function mutationClient(
   overrides: Partial<DashboardMutationClient>,
 ): DashboardMutationClient {
   return {
+    startCooldown: async () => ({
+      status: "pumping",
+      cooldownId: "cooldown-test-default",
+      brewTargetC: 93,
+      elapsedMs: 0,
+      remainingMs: 45_000,
+      pumpCommand: "running",
+      heaterInhibited: true,
+      outcome: null,
+    }),
+    stopCooldown: async () => ({
+      status: "idle",
+      cooldownId: null,
+      brewTargetC: null,
+      elapsedMs: 0,
+      remainingMs: null,
+      pumpCommand: "off",
+      heaterInhibited: false,
+      outcome: null,
+    }),
     dismissOverTemperature: async () => ({
       activeMode: "brew",
       brewTargetC: 93,

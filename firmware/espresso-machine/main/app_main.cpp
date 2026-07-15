@@ -1,4 +1,6 @@
 #include <array>
+#include <atomic>
+#include <cmath>
 
 #include "esp_log.h"
 #include "esp_mac.h"
@@ -56,6 +58,8 @@ bool active_temperature_above_target(
 philcoino::peripherals::DisplaySnapshot display_snapshot(
     const philcoino::control::ControlSnapshot& control,
     const philcoino::control::ExtractionSnapshot& extraction = {},
+    const philcoino::control::CooldownSnapshot& cooldown = {},
+    bool compensation_active = false,
     philcoino::peripherals::DisplayWifiStatus wifi_status =
         philcoino::peripherals::DisplayWifiStatus::kOff) {
   using philcoino::control::ControlMode;
@@ -82,10 +86,28 @@ philcoino::peripherals::DisplaySnapshot display_snapshot(
   display.wifi_status = wifi_status;
   display.extraction_active =
       extraction.status == philcoino::control::ExtractionStatus::kRunning;
-  display.pump_command = extraction.pump_command;
+  display.compensation_active = compensation_active;
+  display.pump_command = cooldown.status ==
+                                 philcoino::control::CooldownStatus::kIdle
+                             ? extraction.pump_command
+                             : cooldown.pump_command;
+  switch (cooldown.status) {
+    case philcoino::control::CooldownStatus::kIdle:
+      display.cooldown_status =
+          philcoino::peripherals::DisplayCooldownStatus::kIdle;
+      break;
+    case philcoino::control::CooldownStatus::kPumping:
+      display.cooldown_status =
+          philcoino::peripherals::DisplayCooldownStatus::kPumping;
+      break;
+    case philcoino::control::CooldownStatus::kStabilizing:
+      display.cooldown_status =
+          philcoino::peripherals::DisplayCooldownStatus::kStabilizing;
+      break;
+  }
   switch (extraction.phase) {
     case philcoino::control::ExtractionPhase::kManual:
-      display.extraction_phase = "MANUAL";
+      display.extraction_phase = "MAN";
       break;
     case philcoino::control::ExtractionPhase::kPreInfusion:
       display.extraction_phase = "PRE";
@@ -106,31 +128,41 @@ philcoino::peripherals::DisplaySnapshot display_snapshot(
 class FreeRtosApiSynchronization final
     : public philcoino::networking::ApiSynchronization {
  public:
-  FreeRtosApiSynchronization(SemaphoreHandle_t temperature_mutex,
-                             SemaphoreHandle_t extraction_mutex)
-      : temperature_mutex_(temperature_mutex),
-        extraction_mutex_(extraction_mutex) {}
+  // Both API domains intentionally alias this one bounded mutex. Holders may
+  // only copy snapshots or execute controller transitions; NVS, HTTP response
+  // transmission, sensor I/O, and display rendering stay outside the lock.
+  FreeRtosApiSynchronization(
+      SemaphoreHandle_t workflow_mutex,
+      philcoino::peripherals::FailOffPump& pump,
+      philcoino::peripherals::FailOffSsr& heater,
+      std::atomic<bool>& fail_safe_requested)
+      : workflow_mutex_(workflow_mutex),
+        pump_(pump),
+        heater_(heater),
+        fail_safe_requested_(fail_safe_requested) {}
 
-  bool lock(philcoino::networking::ApiDomain domain) override {
-    const auto mutex = domain == philcoino::networking::ApiDomain::kTemperature
-                           ? temperature_mutex_
-                           : extraction_mutex_;
-    return mutex != nullptr &&
-           xSemaphoreTake(mutex, pdMS_TO_TICKS(50)) == pdTRUE;
+  bool lock(philcoino::networking::ApiDomain) override {
+    if (workflow_mutex_ != nullptr &&
+        xSemaphoreTake(workflow_mutex_, pdMS_TO_TICKS(50)) == pdTRUE) {
+      return true;
+    }
+    pump_.force_off();
+    heater_.force_off();
+    fail_safe_requested_.store(true, std::memory_order_release);
+    return false;
   }
 
-  void unlock(philcoino::networking::ApiDomain domain) override {
-    const auto mutex = domain == philcoino::networking::ApiDomain::kTemperature
-                           ? temperature_mutex_
-                           : extraction_mutex_;
-    if (mutex != nullptr) {
-      xSemaphoreGive(mutex);
+  void unlock(philcoino::networking::ApiDomain) override {
+    if (workflow_mutex_ != nullptr) {
+      xSemaphoreGive(workflow_mutex_);
     }
   }
 
  private:
-  SemaphoreHandle_t temperature_mutex_;
-  SemaphoreHandle_t extraction_mutex_;
+  SemaphoreHandle_t workflow_mutex_;
+  philcoino::peripherals::FailOffPump& pump_;
+  philcoino::peripherals::FailOffSsr& heater_;
+  std::atomic<bool>& fail_safe_requested_;
 };
 
 struct NetworkStartContext {
@@ -148,37 +180,78 @@ void network_start_task(void* argument) {
   vTaskDelete(nullptr);
 }
 
-struct ExtractionTaskContext {
-  philcoino::control::ExtractionController* controller;
+struct WorkflowTaskContext {
+  philcoino::control::TemperatureController* temperature;
+  philcoino::control::ExtractionController* extraction;
+  philcoino::control::CooldownController* cooldown;
   philcoino::peripherals::FailOffPump* pump;
+  philcoino::peripherals::FailOffSsr* heater;
+  std::atomic<bool>* fail_safe_requested;
   FreeRtosApiSynchronization* synchronization;
 };
 
-void extraction_control_task(void* argument) {
-  auto* context = static_cast<ExtractionTaskContext*>(argument);
+philcoino::control::CooldownInput cooldown_input(
+    const philcoino::control::ControlSnapshot& temperature,
+    bool extraction_active) {
+  return {
+      temperature.boiler_temperature.status ==
+              philcoino::peripherals::ThermocoupleStatus::kOk &&
+          std::isfinite(temperature.boiler_temperature.temperature_c),
+      temperature.fault_active,
+      extraction_active,
+      temperature.boiler_temperature.temperature_c,
+  };
+}
+
+void workflow_control_task(void* argument) {
+  auto* context = static_cast<WorkflowTaskContext*>(argument);
   TickType_t last_wake = xTaskGetTickCount();
-  bool synchronization_failed = false;
   while (true) {
     if (!context->synchronization->lock(
             philcoino::networking::ApiDomain::kExtraction)) {
       context->pump->force_off();
-      synchronization_failed = true;
+      context->heater->force_off();
       ESP_LOGE(kLogTag,
-               "Extraction synchronization deadline missed; pump commanded off");
+               "Workflow synchronization deadline missed; output-off commands issued");
       vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(10));
       continue;
     }
-    const auto result = synchronization_failed
-                            ? (context->controller->stop()
-                                   ? philcoino::control::ExtractionUpdateResult::kCompleted
-                                   : philcoino::control::ExtractionUpdateResult::kOutputFailure)
-                            : context->controller->update(uptime_ms());
-    synchronization_failed = false;
+    const auto now_ms = uptime_ms();
+    auto extraction_result =
+        philcoino::control::ExtractionUpdateResult::kOk;
+    auto cooldown_result = philcoino::control::CooldownUpdateResult::kOk;
+    if (context->fail_safe_requested->exchange(
+            false, std::memory_order_acq_rel)) {
+      context->temperature->latch_fault(
+          philcoino::control::FaultCode::kInternalError);
+      extraction_result = context->extraction->stop()
+                              ? philcoino::control::ExtractionUpdateResult::kCompleted
+                              : philcoino::control::ExtractionUpdateResult::kOutputFailure;
+      if (context->cooldown->active()) {
+        const auto temperature = context->temperature->snapshot(now_ms);
+        cooldown_result = context->cooldown->update(
+            cooldown_input(temperature, context->extraction->active()),
+            now_ms);
+      }
+    } else if (context->cooldown->active()) {
+      const auto temperature = context->temperature->snapshot(now_ms);
+      cooldown_result = context->cooldown->update(
+          cooldown_input(temperature, context->extraction->active()), now_ms);
+    } else {
+      extraction_result = context->extraction->update(now_ms);
+      context->temperature->set_extraction_phase(
+          context->extraction->snapshot(now_ms).phase, now_ms);
+    }
     context->synchronization->unlock(
         philcoino::networking::ApiDomain::kExtraction);
-    if (result == philcoino::control::ExtractionUpdateResult::kOutputFailure) {
+    if (extraction_result ==
+        philcoino::control::ExtractionUpdateResult::kOutputFailure) {
       ESP_LOGE(kLogTag,
                "Pump command failed; extraction ended with an off command");
+    }
+    if (cooldown_result == philcoino::control::CooldownUpdateResult::kFailed) {
+      ESP_LOGE(kLogTag,
+               "Cooldown output or input failed; output-off commands issued and fault latched");
     }
     vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(10));
   }
@@ -263,29 +336,27 @@ extern "C" void app_main() {
     ssr.force_off();
     return;
   }
+  static philcoino::control::TemperatureController controller(targets, ssr);
   static philcoino::control::ExtractionController extraction_controller(
       profiles, pump);
-  const auto temperature_mutex = xSemaphoreCreateMutex();
-  const auto extraction_mutex = xSemaphoreCreateMutex();
-  if (temperature_mutex == nullptr || extraction_mutex == nullptr) {
+  static philcoino::control::CooldownController cooldown_controller(controller,
+                                                                    pump);
+  if (!cooldown_controller.reset(uptime_ms())) {
+    ESP_LOGE(kLogTag, "Cooldown reset fail-off initialization failed");
+    pump.force_off();
+    ssr.force_off();
+    return;
+  }
+  const auto workflow_mutex = xSemaphoreCreateMutex();
+  if (workflow_mutex == nullptr) {
     ESP_LOGE(kLogTag, "Controller synchronization initialization failed");
     pump.force_off();
     ssr.force_off();
     return;
   }
-  static FreeRtosApiSynchronization synchronization(temperature_mutex,
-                                                    extraction_mutex);
-  static ExtractionTaskContext extraction_context{
-      &extraction_controller, &pump, &synchronization};
-  TaskHandle_t extraction_task = nullptr;
-  if (xTaskCreate(extraction_control_task, "philcoino-extraction", 3072,
-                  &extraction_context, configMAX_PRIORITIES - 2,
-                  &extraction_task) != pdPASS) {
-    ESP_LOGE(kLogTag, "Extraction controller task creation failed");
-    pump.force_off();
-    ssr.force_off();
-    return;
-  }
+  static std::atomic<bool> fail_safe_requested{false};
+  static FreeRtosApiSynchronization synchronization(
+      workflow_mutex, pump, ssr, fail_safe_requested);
 
   static EspMax6675Transport max6675_transport;
   if (!max6675_transport.initialize()) {
@@ -313,7 +384,6 @@ extern "C" void app_main() {
     }
   }
 
-  static philcoino::control::TemperatureController controller(targets, ssr);
   vTaskDelay(pdMS_TO_TICKS(kMax6675SampleIntervalMs));
   auto snapshot = controller.update(thermocouple.read(uptime_ms()), uptime_ms());
   if (philcoino::config::kOledEnabled) {
@@ -324,6 +394,19 @@ extern "C" void app_main() {
     }
   }
 
+  static WorkflowTaskContext workflow_context{
+      &controller, &extraction_controller, &cooldown_controller,
+      &pump, &ssr, &fail_safe_requested, &synchronization};
+  TaskHandle_t workflow_task = nullptr;
+  if (xTaskCreate(workflow_control_task, "philcoino-workflow", 4096,
+                  &workflow_context, configMAX_PRIORITIES - 2,
+                  &workflow_task) != pdPASS) {
+    ESP_LOGE(kLogTag, "Workflow controller task creation failed");
+    pump.force_off();
+    ssr.force_off();
+    return;
+  }
+
   const philcoino::networking::DeviceIdentity identity{
       device_id,
       philcoino::config::kFriendlyName,
@@ -332,7 +415,8 @@ extern "C" void app_main() {
   };
   static philcoino::networking::FirmwareApi api(
       identity, CONFIG_PHILCOINO_BEARER_TOKEN, controller, target_storage,
-      extraction_controller, profile_storage, synchronization);
+      extraction_controller, cooldown_controller, profile_storage,
+      synchronization);
   static philcoino::networking::EspNetworkServer network(api, identity);
   static const NetworkStartContext network_context{
       &network,
@@ -350,24 +434,35 @@ extern "C" void app_main() {
   while (true) {
     vTaskDelay(pdMS_TO_TICKS(kMax6675SampleIntervalMs));
     const auto reading = thermocouple.read(uptime_ms());
-    if (!synchronization.lock(
-            philcoino::networking::ApiDomain::kTemperature)) {
+    if (!synchronization.lock(philcoino::networking::ApiDomain::kTemperature)) {
+      pump.force_off();
       ssr.force_off();
-      ESP_LOGE(kLogTag, "Temperature controller synchronization failed");
-      return;
+      ESP_LOGE(kLogTag,
+               "Temperature synchronization deadline missed; output-off commands issued");
+      continue;
+    }
+    if (fail_safe_requested.exchange(false, std::memory_order_acq_rel)) {
+      controller.latch_fault(
+          philcoino::control::FaultCode::kInternalError);
+      extraction_controller.stop();
+      if (cooldown_controller.active()) {
+        const auto failed_snapshot = controller.snapshot(uptime_ms());
+        cooldown_controller.update(
+            cooldown_input(failed_snapshot,
+                           extraction_controller.active()),
+            uptime_ms());
+      }
     }
     snapshot = controller.update(reading, uptime_ms());
+    const auto extraction_snapshot = extraction_controller.snapshot(uptime_ms());
+    const auto cooldown_snapshot = cooldown_controller.snapshot(uptime_ms());
+    const bool compensation_active =
+        controller.extraction_compensation_active();
     synchronization.unlock(philcoino::networking::ApiDomain::kTemperature);
     if (philcoino::config::kOledEnabled) {
-      philcoino::control::ExtractionSnapshot extraction_snapshot{};
-      if (synchronization.lock(
-              philcoino::networking::ApiDomain::kExtraction)) {
-        extraction_snapshot = extraction_controller.snapshot(uptime_ms());
-        synchronization.unlock(
-            philcoino::networking::ApiDomain::kExtraction);
-      }
       if (!display.render(display_snapshot(
-              snapshot, extraction_snapshot,
+              snapshot, extraction_snapshot, cooldown_snapshot,
+              compensation_active,
               display_wifi_status(network.wifi_status())))) {
         ESP_LOGE(kLogTag, "SSD1306 state render failed");
         if (synchronization.lock(

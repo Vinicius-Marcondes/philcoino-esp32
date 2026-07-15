@@ -1,6 +1,10 @@
 import {
   BREW_TARGET_MAX_C,
   BREW_TARGET_MIN_C,
+  COOLDOWN_PUMP_LIMIT_MS,
+  COOLDOWN_STABILIZATION_MS,
+  CompensationStateSchema,
+  CooldownStateSchema,
   DeviceResponseSchema,
   ExtractionStateSchema,
   HeaterSettingsResponseSchema,
@@ -14,6 +18,10 @@ import {
   STEAM_TIMEOUT_MS,
   TemperatureSettingsResponseSchema,
   type DeviceResponse,
+  type ActiveCooldownState,
+  type CompensationState,
+  type CooldownOutcome,
+  type CooldownState,
   type Fault,
   type FaultCode,
   type HealthResponse,
@@ -86,6 +94,11 @@ export type ReplaceProfilesResult =
       reason: "active";
       activeExtraction: RunningExtractionState;
     }
+  | {
+      ok: false;
+      reason: "cooldown-active";
+      activeCooldown: ActiveCooldownState;
+    }
   | { ok: false; reason: "persistence" };
 
 export type StartExtractionResult =
@@ -95,7 +108,42 @@ export type StartExtractionResult =
       reason: "active";
       activeExtraction: RunningExtractionState;
     }
-  | { ok: false; reason: "profile-not-configured" };
+  | {
+      ok: false;
+      reason: "cooldown-active";
+      activeCooldown: ActiveCooldownState;
+    }
+  | { ok: false; reason: "brew-mode-required" | "profile-not-configured" };
+
+export type StartCooldownResult =
+  | { ok: true; cooldown: CooldownState }
+  | {
+      ok: false;
+      reason: "extraction-active";
+      activeExtraction: RunningExtractionState;
+    }
+  | {
+      ok: false;
+      reason: "cooldown-active";
+      activeCooldown: ActiveCooldownState;
+    }
+  | {
+      ok: false;
+      reason:
+        | "cooldown-not-required"
+        | "sensor-unavailable"
+        | "machine-faulted"
+        | "output-failure";
+    };
+
+export type StopCooldownResult =
+  | { ok: true; cooldown: CooldownState }
+  | { ok: false; reason: "output-failure" };
+
+export type SimulatedOutputCommand =
+  | "heater-off"
+  | "pump-running"
+  | "pump-off";
 
 interface ActiveExtraction {
   elapsedMs: number;
@@ -103,6 +151,16 @@ interface ActiveExtraction {
   idempotencyKey: string;
   profile: ExtractionProfile | null;
   selection: ExtractionSelection;
+}
+
+interface CooldownRecord {
+  cooldownId: string;
+  idempotencyKey: string;
+  brewTargetC: number;
+  pumpElapsedMs: number;
+  stabilizationElapsedMs: number;
+  status: "pumping" | "stabilizing" | "terminal";
+  outcome: CooldownOutcome | null;
 }
 
 export class SimulatorMachine {
@@ -122,7 +180,10 @@ export class SimulatorMachine {
   private profiles = cloneProfileSet(DEFAULT_PROFILE_SET);
   private activeExtraction: ActiveExtraction | null = null;
   private extractionCounter = 0;
+  private cooldown: CooldownRecord | null = null;
+  private cooldownCounter = 0;
   private failNextProfileSave = false;
+  private readonly failNextOutputCommands = new Set<SimulatedOutputCommand>();
 
   constructor(options: SimulatorMachineOptions = {}) {
     this.initialBrewTargetC = options.brewTargetC ?? 93;
@@ -189,6 +250,8 @@ export class SimulatorMachine {
     return MachineStateV2Schema.parse({
       machine: this.getState(),
       extraction: this.getExtractionState(),
+      compensation: this.getCompensationState(),
+      cooldown: this.getCooldownState(),
     });
   }
 
@@ -203,6 +266,14 @@ export class SimulatorMachine {
         ok: false,
         reason: "active",
         activeExtraction: extraction,
+      };
+    }
+    const cooldown = this.getCooldownState();
+    if (cooldown.status !== "idle") {
+      return {
+        ok: false,
+        reason: "cooldown-active",
+        activeCooldown: cooldown,
       };
     }
     if (this.failNextProfileSave) {
@@ -232,6 +303,18 @@ export class SimulatorMachine {
         reason: "active",
         activeExtraction: current,
       };
+    }
+
+    const cooldown = this.getCooldownState();
+    if (cooldown.status !== "idle") {
+      return {
+        ok: false,
+        reason: "cooldown-active",
+        activeCooldown: cooldown,
+      };
+    }
+    if (this.activeMode !== "brew") {
+      return { ok: false, reason: "brew-mode-required" };
     }
 
     const profile =
@@ -315,6 +398,160 @@ export class SimulatorMachine {
     });
   }
 
+  getCompensationState(): CompensationState {
+    const extraction = this.getExtractionState();
+    const phase =
+      extraction.status === "running" &&
+      (extraction.phase === "manual" || extraction.phase === "main-extraction")
+        ? extraction.phase
+        : null;
+    const active =
+      phase !== null &&
+      this.activeMode === "brew" &&
+      this.heaterEnabled &&
+      this.fault === null &&
+      this.getCooldownState().status === "idle";
+    return CompensationStateSchema.parse(
+      active ? { status: "active", phase } : { status: "inactive", phase: null },
+    );
+  }
+
+  getCooldownState(): CooldownState {
+    const cooldown = this.cooldown;
+    if (cooldown === null) {
+      return CooldownStateSchema.parse({
+        status: "idle",
+        cooldownId: null,
+        brewTargetC: null,
+        elapsedMs: 0,
+        remainingMs: null,
+        pumpCommand: "off",
+        heaterInhibited: false,
+        outcome: null,
+      });
+    }
+
+    if (cooldown.status === "pumping") {
+      return CooldownStateSchema.parse({
+        status: "pumping",
+        cooldownId: cooldown.cooldownId,
+        brewTargetC: cooldown.brewTargetC,
+        elapsedMs: cooldown.pumpElapsedMs,
+        remainingMs: COOLDOWN_PUMP_LIMIT_MS - cooldown.pumpElapsedMs,
+        pumpCommand: "running",
+        heaterInhibited: true,
+        outcome: null,
+      });
+    }
+
+    if (cooldown.status === "stabilizing") {
+      return CooldownStateSchema.parse({
+        status: "stabilizing",
+        cooldownId: cooldown.cooldownId,
+        brewTargetC: cooldown.brewTargetC,
+        elapsedMs:
+          cooldown.pumpElapsedMs + cooldown.stabilizationElapsedMs,
+        remainingMs:
+          COOLDOWN_STABILIZATION_MS - cooldown.stabilizationElapsedMs,
+        pumpCommand: "off",
+        heaterInhibited: true,
+        outcome: cooldown.outcome,
+      });
+    }
+
+    return CooldownStateSchema.parse({
+      status: "idle",
+      cooldownId: cooldown.cooldownId,
+      brewTargetC: cooldown.brewTargetC,
+      elapsedMs: cooldown.pumpElapsedMs + cooldown.stabilizationElapsedMs,
+      remainingMs: null,
+      pumpCommand: "off",
+      heaterInhibited: false,
+      outcome: cooldown.outcome,
+    });
+  }
+
+  startCooldown(idempotencyKey: string): StartCooldownResult {
+    const extraction = this.getExtractionState();
+    if (extraction.status === "running") {
+      return {
+        ok: false,
+        reason: "extraction-active",
+        activeExtraction: extraction,
+      };
+    }
+
+    const current = this.getCooldownState();
+    if (this.cooldown?.idempotencyKey === idempotencyKey) {
+      return { ok: true, cooldown: current };
+    }
+    if (current.status !== "idle") {
+      return {
+        ok: false,
+        reason: "cooldown-active",
+        activeCooldown: current,
+      };
+    }
+
+    if (this.fault?.code === "sensor_failure") {
+      return { ok: false, reason: "sensor-unavailable" };
+    }
+    if (this.fault !== null) {
+      return { ok: false, reason: "machine-faulted" };
+    }
+    if (!Number.isFinite(this.boilerTemperatureC)) {
+      return { ok: false, reason: "sensor-unavailable" };
+    }
+    if (this.boilerTemperatureC <= this.brewTargetC) {
+      return { ok: false, reason: "cooldown-not-required" };
+    }
+
+    this.cooldownCounter += 1;
+    this.cooldown = {
+      cooldownId: `sim-cooldown-${this.cooldownCounter}`,
+      idempotencyKey,
+      brewTargetC: this.brewTargetC,
+      pumpElapsedMs: 0,
+      stabilizationElapsedMs: 0,
+      status: "pumping",
+      outcome: null,
+    };
+    this.activeMode = "brew";
+    this.readyElapsedMs = 0;
+    this.steamTimeoutRemainingMs = null;
+
+    if (
+      !this.attemptOutputCommand("heater-off") ||
+      !this.attemptOutputCommand("pump-running")
+    ) {
+      this.abortCooldownForOutputFailure();
+      return { ok: false, reason: "output-failure" };
+    }
+    return { ok: true, cooldown: this.getCooldownState() };
+  }
+
+  stopCooldown(): StopCooldownResult {
+    if (this.cooldown?.status !== "pumping") {
+      return { ok: true, cooldown: this.getCooldownState() };
+    }
+    if (!this.enterCooldownStabilization("stopped")) {
+      return { ok: false, reason: "output-failure" };
+    }
+    return { ok: true, cooldown: this.getCooldownState() };
+  }
+
+  hasActiveWorkflow(): boolean {
+    return (
+      this.activeExtraction !== null ||
+      this.cooldown?.status === "pumping" ||
+      this.cooldown?.status === "stabilizing"
+    );
+  }
+
+  injectNextOutputFailure(command: SimulatedOutputCommand): void {
+    this.failNextOutputCommands.add(command);
+  }
+
   updateTemperatureSettings(
     request: TemperatureSettingsRequest,
   ): TemperatureSettingsResponse {
@@ -361,6 +598,13 @@ export class SimulatorMachine {
   setTemperature(boilerTemperatureC: number): void {
     this.boilerTemperatureC = boilerTemperatureC;
 
+    if (
+      this.cooldown?.status === "pumping" &&
+      boilerTemperatureC <= this.cooldown.brewTargetC
+    ) {
+      this.enterCooldownStabilization("target-reached");
+    }
+
     if (!this.isActiveTemperatureReady()) {
       this.readyElapsedMs = 0;
     }
@@ -373,6 +617,12 @@ export class SimulatorMachine {
 
     this.fault = { code, message: FAULT_MESSAGES[code] };
     this.readyElapsedMs = 0;
+    if (
+      this.cooldown?.status === "pumping" ||
+      this.cooldown?.status === "stabilizing"
+    ) {
+      this.failCooldown();
+    }
   }
 
   dismissOverTemperature(): OverTemperatureDismissResponse | null {
@@ -405,6 +655,7 @@ export class SimulatorMachine {
 
   powerCycle(): void {
     this.failNextProfileSave = false;
+    this.failNextOutputCommands.clear();
     this.resetVolatileState();
   }
 
@@ -413,6 +664,7 @@ export class SimulatorMachine {
     this.steamTargetC = this.initialSteamTargetC;
     this.profiles = cloneProfileSet(DEFAULT_PROFILE_SET);
     this.failNextProfileSave = false;
+    this.failNextOutputCommands.clear();
     this.resetVolatileState();
   }
 
@@ -420,7 +672,7 @@ export class SimulatorMachine {
     const timeoutWasActive = this.steamTimeoutRemainingMs !== null;
     const seconds = milliseconds / 1_000;
 
-    if (this.fault) {
+    if (this.fault || this.isCooldownActive()) {
       this.boilerTemperatureC = moveToward(
         this.boilerTemperatureC,
         AMBIENT_TEMPERATURE_C,
@@ -434,6 +686,7 @@ export class SimulatorMachine {
 
     this.uptimeMs += milliseconds;
     this.advanceExtraction(milliseconds);
+    this.advanceCooldown(milliseconds);
 
     if (!this.fault && this.isActiveTemperatureReady()) {
       this.readyElapsedMs = Math.min(
@@ -476,8 +729,38 @@ export class SimulatorMachine {
     this.activeExtraction.elapsedMs = nextElapsedMs;
   }
 
+  private advanceCooldown(milliseconds: number): void {
+    const cooldown = this.cooldown;
+    if (cooldown?.status === "pumping") {
+      cooldown.pumpElapsedMs = Math.min(
+        COOLDOWN_PUMP_LIMIT_MS,
+        cooldown.pumpElapsedMs + milliseconds,
+      );
+      const outcome =
+        this.boilerTemperatureC <= cooldown.brewTargetC
+          ? "target-reached"
+          : cooldown.pumpElapsedMs >= COOLDOWN_PUMP_LIMIT_MS
+            ? "cutoff"
+            : null;
+      if (outcome !== null) {
+        this.enterCooldownStabilization(outcome);
+      }
+      return;
+    }
+
+    if (cooldown?.status === "stabilizing") {
+      cooldown.stabilizationElapsedMs = Math.min(
+        COOLDOWN_STABILIZATION_MS,
+        cooldown.stabilizationElapsedMs + milliseconds,
+      );
+      if (cooldown.stabilizationElapsedMs >= COOLDOWN_STABILIZATION_MS) {
+        cooldown.status = "terminal";
+      }
+    }
+  }
+
   private advanceTemperature(seconds: number): void {
-    const target = this.activeTarget();
+    const target = this.controlTarget();
     this.boilerTemperatureC = moveToward(
       this.boilerTemperatureC,
       target,
@@ -500,11 +783,11 @@ export class SimulatorMachine {
   }
 
   private isHeaterActive(): boolean {
-    if (this.fault || !this.heaterEnabled) {
+    if (this.fault || !this.heaterEnabled || this.isCooldownActive()) {
       return false;
     }
 
-    return this.boilerTemperatureC < this.activeTarget();
+    return this.boilerTemperatureC < this.controlTarget();
   }
 
   private activeTemperatureBackAtTarget(): boolean {
@@ -513,6 +796,13 @@ export class SimulatorMachine {
 
   private activeTarget(): number {
     return this.activeMode === "brew" ? this.brewTargetC : this.steamTargetC;
+  }
+
+  private controlTarget(): number {
+    if (this.getCompensationState().status !== "active") {
+      return this.activeTarget();
+    }
+    return Math.min(this.brewTargetC + 2, BREW_OVER_TEMPERATURE_C - 1);
   }
 
   private activeModeOverTemperature(): boolean {
@@ -533,6 +823,59 @@ export class SimulatorMachine {
     this.uptimeMs = 0;
     this.activeExtraction = null;
     this.extractionCounter = 0;
+    this.cooldown = null;
+    this.cooldownCounter = 0;
+  }
+
+  private isCooldownActive(): boolean {
+    return (
+      this.cooldown?.status === "pumping" ||
+      this.cooldown?.status === "stabilizing"
+    );
+  }
+
+  private enterCooldownStabilization(
+    outcome: Exclude<CooldownOutcome, "failed">,
+  ): boolean {
+    const cooldown = this.cooldown;
+    if (cooldown?.status !== "pumping") {
+      return true;
+    }
+    if (!this.attemptOutputCommand("pump-off")) {
+      this.abortCooldownForOutputFailure();
+      return false;
+    }
+    cooldown.status = "stabilizing";
+    cooldown.stabilizationElapsedMs = 0;
+    cooldown.outcome = outcome;
+    return true;
+  }
+
+  private attemptOutputCommand(command: SimulatedOutputCommand): boolean {
+    if (!this.failNextOutputCommands.delete(command)) {
+      return true;
+    }
+    return false;
+  }
+
+  private abortCooldownForOutputFailure(): void {
+    this.attemptOutputCommand("pump-off");
+    this.attemptOutputCommand("heater-off");
+    this.fault = {
+      code: "internal_error",
+      message: "A simulated cooldown output command failed.",
+    };
+    this.readyElapsedMs = 0;
+    this.failCooldown();
+  }
+
+  private failCooldown(): void {
+    const cooldown = this.cooldown;
+    if (cooldown === null || cooldown.status === "terminal") {
+      return;
+    }
+    cooldown.status = "terminal";
+    cooldown.outcome = "failed";
   }
 }
 

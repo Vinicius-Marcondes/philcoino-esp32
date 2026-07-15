@@ -56,6 +56,60 @@ to upper-boiler difference. It is not a calibration result, scaling curve, or
 proof of heater safety. Changing it requires a source edit, rebuild, and
 reflash; do not add runtime configuration under PRD-003.
 
+## Extraction heater-duty bias
+
+Brew extraction has a separate compile-time duty-only hypothesis:
+
+```cpp
+kPreInfusionHeaterDutyOffsetC = 0;
+kExtractionHeaterDutyOffsetC = 2;
+```
+
+The controller receives the current extraction phase and derives a private
+heater-duty target. Pre-infusion, soak, idle, and Steam use their unchanged
+base target. Manual and profile main extraction use:
+
+```text
+heater duty target = min(brewTargetC + 2°C, brewOverTemperatureC - 1°C)
+```
+
+Only heater demand and pulse duration use this private target. Persisted/API/
+OLED targets, the displayed boiler temperature, readiness, heating and Steam
+deadlines, recovery ownership, over-temperature limits, and extraction profile
+data continue to use the base target and existing active temperature. Heater
+permission, sensor/control faults, safety-lease trips, and output failures
+still suppress the heater command; they do not independently stop extraction.
+
+Phase changes update eligibility and begin a new heater-duty window without
+resetting readiness, heating timeout, Steam timeout, or extraction deadlines.
+The `+2°C` value is an owner-selected software hypothesis, not a measured
+thermal result. Host tests establish deterministic command policy only and do
+not prove heater output, water flow, cooling, SSR operation, calibration, or
+energized safety.
+
+## Firmware cooldown policy
+
+Cooldown is a separate fixed workflow, not a tuning control. A new Start
+requires a valid Brew-effective sample above the current Brew target, idle
+extraction/cooldown, and no machine fault. Firmware snapshots the Brew target,
+switches to Brew, establishes a transient heater inhibit and heater-off command,
+then requests the pump-running command. It never changes the user's heater
+permission.
+
+The pump-running command ends at the first validated sample at or below the
+snapshot, at exactly 45 seconds, or on Stop. Firmware then holds pump-off and
+heater-inhibited command state for exactly five seconds before returning to
+normal Brew control when the existing permission/fault rules allow it. Same-key
+replay preserves the original deadline; reset and power loss return to initial
+idle/off rather than resuming.
+
+The Brew threshold, 45-second cutoff, and five-second stabilization are
+owner-selected software hypotheses. API, OLED, simulator, host, and target-build
+agreement cannot establish physical flow, water use, cooling rate, SSR state,
+heater current, or safe thermal behavior. Changing any fixed constant based on
+physical observations requires separately authorized, repeatable THERM-011
+measurement and a new scoped product decision.
+
 ## GPTimer fail-off safety lease
 
 Every heater-on control update arms or renews a 1500 ms one-shot GPTimer safety
@@ -185,7 +239,13 @@ The heater command is the authoritative value for whether firmware is requesting
 heat. If the heater command is off and the temperature still rises, that is
 thermal inertia, sensor lag, or hardware current flow outside firmware control.
 
-## How to tune
+## Future tuning boundary
+
+The notes below are hypotheses for a separately authorized, supervised tuning
+session. They are not authorization to flash, connect loads, run water, or
+energize the machine. THERM-011 must first record the exact build, setup,
+instruments/calibration, independent cutoff, qualified supervision, and stop
+conditions.
 
 Make one small change at a time, flash, and observe at least several full heat
 cycles. For brew tuning, focus on the brew constants first.

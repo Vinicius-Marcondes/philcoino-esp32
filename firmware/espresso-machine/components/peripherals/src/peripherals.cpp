@@ -402,6 +402,32 @@ bool Ssd1306Display::initialize() {
   return initialized_;
 }
 
+void format_display_workflow_line(char* output, std::size_t length,
+                                  const DisplaySnapshot& snapshot) {
+  if (output == nullptr || length == 0U) {
+    return;
+  }
+  if (snapshot.cooldown_status == DisplayCooldownStatus::kPumping) {
+    std::snprintf(output, length, "COOL CMD PUMP RUN");
+    return;
+  }
+  if (snapshot.cooldown_status == DisplayCooldownStatus::kStabilizing) {
+    std::snprintf(output, length, "STAB CMD PUMP OFF");
+    return;
+  }
+  if (snapshot.extraction_active) {
+    std::snprintf(output, length, "PUMP CMD %s %s%s",
+                  snapshot.pump_command == PumpCommand::kRunning ? "RUN"
+                                                                  : "OFF",
+                  snapshot.extraction_phase,
+                  snapshot.compensation_active ? " +2C" : "");
+    return;
+  }
+  std::snprintf(output, length, "HEATER %s WIFI %s",
+                snapshot.heater_enabled ? "ON" : "OFF",
+                wifi_status_name(snapshot.wifi_status));
+}
+
 bool Ssd1306Display::render(const DisplaySnapshot& snapshot) {
   if (!initialized_) {
     return false;
@@ -420,16 +446,7 @@ bool Ssd1306Display::render(const DisplaySnapshot& snapshot) {
   std::snprintf(line.data(), line.size(), "MODE %s %s", mode_name(snapshot.mode),
                 status_name(snapshot.status));
   draw_text(buffer, 2, line.data());
-  if (snapshot.extraction_active) {
-    std::snprintf(line.data(), line.size(), "PUMP %s %s",
-                  snapshot.pump_command == PumpCommand::kRunning ? "RUN"
-                                                                  : "OFF",
-                  snapshot.extraction_phase);
-  } else {
-    std::snprintf(line.data(), line.size(), "HEATER %s WIFI %s",
-                  snapshot.heater_enabled ? "ON" : "OFF",
-                  wifi_status_name(snapshot.wifi_status));
-  }
+  format_display_workflow_line(line.data(), line.size(), snapshot);
   draw_text(buffer, 3, line.data());
 
   constexpr std::array<std::uint8_t, 6> address_window{0x21, 0x00, 0x7F,

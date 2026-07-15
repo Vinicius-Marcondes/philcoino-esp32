@@ -1,0 +1,37 @@
+{
+  "machine": {
+    "status": "ready",
+    "activeMode": "steam",
+    "boilerTemperatureC": 115,
+    "brewTargetC": 93,
+    "steamTargetC": 115,
+    "heaterEnabled": true,
+    "heaterActive": false,
+    "fault": null,
+    "steamTimeoutRemainingMs": 300000,
+    "uptimeMs": 184220
+  },
+  "extraction": {
+    "status": "running",
+    "extractionId": "run-184220",
+    "selection": { "kind": "manual" },
+    "phase": "manual",
+    "elapsedMs": 12000,
+    "remainingMs": 48000,
+    "pumpCommand": "running"
+  },
+  "compensation": {
+    "status": "inactive",
+    "phase": null
+  },
+  "cooldown": {
+    "status": "idle",
+    "cooldownId": null,
+    "brewTargetC": null,
+    "elapsedMs": 0,
+    "remainingMs": null,
+    "pumpCommand": "off",
+    "heaterInhibited": false,
+    "outcome": null
+  }
+}

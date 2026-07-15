@@ -2,11 +2,22 @@ import { describe, expect, test } from "bun:test";
 import type { ZodType } from "zod";
 
 import {
+  ActiveCompensationStateSchema,
+  ActiveCooldownStateSchema,
   ApiV2ErrorCodeSchema,
   ApiV2ErrorResponseSchema,
   BREW_TARGET_MAX_C,
   BREW_TARGET_MIN_C,
   BrewTargetSchema,
+  COOLDOWN_MAX_DURATION_MS,
+  COOLDOWN_PUMP_LIMIT_MS,
+  COOLDOWN_STABILIZATION_MS,
+  CompensationPhaseSchema,
+  CompensationStateSchema,
+  CooldownActiveConflictResponseSchema,
+  CooldownOutcomeSchema,
+  CooldownStateSchema,
+  CooldownStatusSchema,
   DeviceResponseSchema,
   ErrorCodeSchema,
   ErrorResponseSchema,
@@ -21,7 +32,9 @@ import {
   HeaterSettingsResponseSchema,
   HealthResponseSchema,
   IdempotencyKeySchema,
+  IdleCooldownStateSchema,
   IdleExtractionStateSchema,
+  InactiveCompensationStateSchema,
   MachineStateSchema,
   MachineStateV2Schema,
   MachineStatusSchema,
@@ -35,11 +48,14 @@ import {
   ProfileSetSchema,
   ProfileSlotIdSchema,
   PumpCommandSchema,
+  PumpingCooldownStateSchema,
   RunningExtractionStateSchema,
   STEAM_TARGET_MAX_C,
   STEAM_TARGET_MIN_C,
   SteamTargetSchema,
   StartExtractionRequestSchema,
+  StartCooldownRequestSchema,
+  StabilizingCooldownStateSchema,
   TemperatureSettingsRequestSchema,
   TemperatureSettingsResponseSchema,
 } from "../src/index.ts";
@@ -54,7 +70,7 @@ type OpenApiSchema = {
 };
 
 type OpenApiDocument = {
-  paths: Record<string, unknown>;
+  paths: Record<string, Record<string, Record<string, unknown>>>;
   components: {
     schemas: Record<string, OpenApiSchema>;
   };
@@ -87,6 +103,13 @@ const documentedSchemas: Record<string, ZodType> = {
   StartExtractionRequest: StartExtractionRequestSchema,
   ApiV2ErrorResponse: ApiV2ErrorResponseSchema,
   ExtractionActiveConflictResponse: ExtractionActiveConflictResponseSchema,
+  InactiveCompensationState: InactiveCompensationStateSchema,
+  ActiveCompensationState: ActiveCompensationStateSchema,
+  IdleCooldownState: IdleCooldownStateSchema,
+  PumpingCooldownState: PumpingCooldownStateSchema,
+  StabilizingCooldownState: StabilizingCooldownStateSchema,
+  StartCooldownRequest: StartCooldownRequestSchema,
+  CooldownActiveConflictResponse: CooldownActiveConflictResponseSchema,
 };
 
 const validFixtures = [
@@ -109,6 +132,20 @@ const validFixtures = [
     "valid/extraction-active-conflict.json",
     ExtractionActiveConflictResponseSchema,
   ],
+  ["valid/compensation-inactive.json", InactiveCompensationStateSchema],
+  ["valid/compensation-active.json", ActiveCompensationStateSchema],
+  ["valid/cooldown-idle.json", IdleCooldownStateSchema],
+  ["valid/cooldown-pumping.json", PumpingCooldownStateSchema],
+  ["valid/cooldown-stabilizing.json", StabilizingCooldownStateSchema],
+  ["valid/cooldown-terminal-replay.json", IdleCooldownStateSchema],
+  ["valid/cooldown-start-request.json", StartCooldownRequestSchema],
+  ["valid/cooldown-active-conflict.json", CooldownActiveConflictResponseSchema],
+  ["valid/brew-mode-required-error.json", ApiV2ErrorResponseSchema],
+  ["valid/profile-not-configured-error.json", ApiV2ErrorResponseSchema],
+  ["valid/cooldown-not-required-error.json", ApiV2ErrorResponseSchema],
+  ["valid/cooldown-sensor-unavailable-error.json", ApiV2ErrorResponseSchema],
+  ["valid/cooldown-machine-faulted-error.json", ApiV2ErrorResponseSchema],
+  ["valid/machine-v2-failed-cooldown.json", MachineStateV2Schema],
 ] as const;
 
 const invalidFixtures = [
@@ -136,6 +173,28 @@ const invalidFixtures = [
   [
     "invalid/extraction-conflict-with-idle.json",
     ExtractionActiveConflictResponseSchema,
+  ],
+  ["invalid/compensation-active-preinfusion.json", CompensationStateSchema],
+  ["invalid/compensation-extra-property.json", CompensationStateSchema],
+  ["invalid/cooldown-pumping-wrong-command.json", CooldownStateSchema],
+  ["invalid/cooldown-pumping-inconsistent-timing.json", CooldownStateSchema],
+  ["invalid/cooldown-pumping-time-overflow.json", CooldownStateSchema],
+  [
+    "invalid/cooldown-stabilizing-failed-outcome.json",
+    CooldownStateSchema,
+  ],
+  ["invalid/cooldown-terminal-without-outcome.json", CooldownStateSchema],
+  ["invalid/cooldown-start-key-short.json", StartCooldownRequestSchema],
+  [
+    "invalid/cooldown-conflict-with-idle.json",
+    CooldownActiveConflictResponseSchema,
+  ],
+  ["invalid/machine-v2-steam-extraction.json", MachineStateV2Schema],
+  ["invalid/machine-v2-active-workflows.json", MachineStateV2Schema],
+  ["invalid/machine-v2-compensation-disabled.json", MachineStateV2Schema],
+  [
+    "invalid/machine-v2-failed-cooldown-without-fault.json",
+    MachineStateV2Schema,
   ],
 ] as const;
 
@@ -197,10 +256,34 @@ describe("documented OpenAPI examples", () => {
         await fixture("valid/extraction-start-request.json"),
       ],
       ApiV2ErrorResponse: [
-        openApi.components.schemas.ApiV2ErrorResponse.examples?.[0],
+        await fixture("valid/profile-not-configured-error.json"),
+        await fixture("valid/brew-mode-required-error.json"),
+        await fixture("valid/cooldown-not-required-error.json"),
+        await fixture("valid/cooldown-sensor-unavailable-error.json"),
+        await fixture("valid/cooldown-machine-faulted-error.json"),
       ],
       ExtractionActiveConflictResponse: [
         await fixture("valid/extraction-active-conflict.json"),
+      ],
+      InactiveCompensationState: [
+        await fixture("valid/compensation-inactive.json"),
+      ],
+      ActiveCompensationState: [
+        await fixture("valid/compensation-active.json"),
+      ],
+      IdleCooldownState: [
+        await fixture("valid/cooldown-idle.json"),
+        await fixture("valid/cooldown-terminal-replay.json"),
+      ],
+      PumpingCooldownState: [await fixture("valid/cooldown-pumping.json")],
+      StabilizingCooldownState: [
+        await fixture("valid/cooldown-stabilizing.json"),
+      ],
+      StartCooldownRequest: [
+        await fixture("valid/cooldown-start-request.json"),
+      ],
+      CooldownActiveConflictResponse: [
+        await fixture("valid/cooldown-active-conflict.json"),
       ],
     };
 
@@ -416,5 +499,119 @@ describe("API v2 extraction acknowledgement boundaries", () => {
     expect(v1Paths.some((path) => path.includes("extraction"))).toBe(false);
     expect(ApiV2ErrorCodeSchema.options).toContain("extraction_active");
     expect(ErrorCodeSchema.options).not.toContain("extraction_active");
+  });
+});
+
+describe("API v2 thermal workflow boundaries", () => {
+  test("exposes compensation activity without a runtime bias value", () => {
+    expect(CompensationPhaseSchema.options).toEqual([
+      "manual",
+      "main-extraction",
+    ]);
+    expect(
+      Object.keys(
+        openApi.components.schemas.ActiveCompensationState.properties ?? {},
+      ),
+    ).toEqual(["status", "phase"]);
+    expect(
+      ActiveCompensationStateSchema.safeParse({
+        status: "active",
+        phase: "pre-infusion",
+      }).success,
+    ).toBe(false);
+  });
+
+  test("binds cooldown phases to command and inhibit states", () => {
+    expect(CooldownStatusSchema.options).toEqual([
+      "idle",
+      "pumping",
+      "stabilizing",
+    ]);
+    expect(CooldownOutcomeSchema.options).toEqual([
+      "target-reached",
+      "cutoff",
+      "stopped",
+      "failed",
+    ]);
+    expect(ActiveCooldownStateSchema.safeParse({
+      status: "pumping",
+      cooldownId: "cooldown-boundary",
+      brewTargetC: 93,
+      elapsedMs: COOLDOWN_PUMP_LIMIT_MS,
+      remainingMs: 0,
+      pumpCommand: "running",
+      heaterInhibited: true,
+      outcome: null,
+    }).success).toBe(true);
+    expect(StabilizingCooldownStateSchema.safeParse({
+      status: "stabilizing",
+      cooldownId: "cooldown-boundary",
+      brewTargetC: 93,
+      elapsedMs: COOLDOWN_MAX_DURATION_MS,
+      remainingMs: 0,
+      pumpCommand: "off",
+      heaterInhibited: true,
+      outcome: "cutoff",
+    }).success).toBe(true);
+    expect(COOLDOWN_STABILIZATION_MS).toBe(5_000);
+  });
+
+  test("requires strict cooldown idempotency keys", () => {
+    expect(
+      StartCooldownRequestSchema.safeParse({
+        idempotencyKey: "cooldown-01J2ABCDEF1",
+      }).success,
+    ).toBe(true);
+    expect(
+      StartCooldownRequestSchema.safeParse({
+        idempotencyKey: "cooldown-01J2ABCDEF1",
+        restartDeadline: true,
+      }).success,
+    ).toBe(false);
+  });
+
+  test("documents replay as returning retained state without a new deadline", () => {
+    const operation = openApi.paths["/api/v2/cooldowns/start"]?.post;
+    const description = operation?.description;
+    const responseSchema = (
+      operation?.responses as Record<
+        string,
+        { content?: Record<string, { schema?: { $ref?: string } }> }
+      >
+    )?.["200"]?.content?.["application/json"]?.schema;
+
+    expect(description).toContain("without restarting the 45-second pump deadline");
+    expect(responseSchema?.$ref).toBe("#/components/schemas/CooldownState");
+  });
+
+  test("keeps workflow conflicts distinguishable and versioned", () => {
+    expect(ApiV2ErrorCodeSchema.options).toEqual(
+      openApi.components.schemas.ApiV2ErrorCode.enum,
+    );
+    for (const code of [
+      "brew_mode_required",
+      "cooldown_active",
+      "cooldown_not_required",
+      "machine_faulted",
+    ]) {
+      expect(ApiV2ErrorCodeSchema.options).toContain(code);
+      expect(ErrorCodeSchema.options).not.toContain(code);
+    }
+    expect(ApiV2ErrorCodeSchema.options).toContain("sensor_unavailable");
+    expect(ErrorCodeSchema.options).toContain("sensor_unavailable");
+  });
+
+  test("adds only the approved API v2 cooldown paths", () => {
+    const v2Paths = Object.keys(openApi.paths)
+      .filter((path) => path.startsWith("/api/v2/"))
+      .sort();
+    expect(v2Paths).toEqual([
+      "/api/v2/cooldowns/start",
+      "/api/v2/cooldowns/stop",
+      "/api/v2/extractions/start",
+      "/api/v2/extractions/stop",
+      "/api/v2/profiles",
+      "/api/v2/state",
+    ]);
   });
 });

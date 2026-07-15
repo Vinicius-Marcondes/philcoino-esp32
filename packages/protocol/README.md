@@ -25,9 +25,12 @@ operations are `GET /healthz` and `GET /api/v1/device`.
 
 API v1 authenticated operations are state read, temperature-target update, mode
 selection, volatile heater permission, and cooled over-temperature dismissal.
-API v2 additionally defines combined state, four-slot profile read/replace, and
-idempotent extraction Start/Stop. The firmware does not yet serve these routes;
-simulator availability is not firmware or physical-pump evidence.
+API v2 additionally defines combined machine/extraction/compensation/cooldown
+state, four-slot profile read/replace, idempotent extraction Start/Stop, and
+idempotent cooldown Start/Stop. Cooldown and compensation fields describe
+firmware acknowledgements and GPIO/control commands only; they are not evidence
+of physical flow, current, cooling, SSR state, or de-energization. Layer support
+is introduced by the supervised PRD tasks after the contract task.
 Objects are strict: consumers must reject unknown fields rather than silently
 accept protocol drift.
 

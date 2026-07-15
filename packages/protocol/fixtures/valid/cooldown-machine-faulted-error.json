@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": "machine_faulted",
+    "message": "Cooldown cannot start while a machine fault is latched."
+  }
+}

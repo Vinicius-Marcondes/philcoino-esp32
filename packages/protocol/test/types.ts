@@ -1,7 +1,10 @@
 import type {
+  CompensationState,
+  CooldownState,
   HeaterSettingsRequest,
   MachineState,
   ModeRequest,
+  StartCooldownRequest,
   TemperatureSettingsRequest,
 } from "../src/index.ts";
 
@@ -13,6 +16,23 @@ const bothUpdate: TemperatureSettingsRequest = {
 };
 const modeUpdate: ModeRequest = { mode: "steam" };
 const heaterUpdate: HeaterSettingsRequest = { heaterEnabled: false };
+const cooldownStart: StartCooldownRequest = {
+  idempotencyKey: "cooldown-01J2ABCDEF1",
+};
+const compensation: CompensationState = {
+  status: "active",
+  phase: "manual",
+};
+const cooldown: CooldownState = {
+  status: "pumping",
+  cooldownId: "cooldown-184220",
+  brewTargetC: 93,
+  elapsedMs: 12_000,
+  remainingMs: 33_000,
+  pumpCommand: "running",
+  heaterInhibited: true,
+  outcome: null,
+};
 const faultState: MachineState = {
   status: "fault",
   activeMode: "brew",
@@ -41,6 +61,9 @@ void [
   bothUpdate,
   modeUpdate,
   heaterUpdate,
+  cooldownStart,
+  compensation,
+  cooldown,
   faultState,
   emptyUpdate,
   invalidMode,

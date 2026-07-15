@@ -531,6 +531,10 @@ void test_oled() {
   snapshot.extraction_active = true;
   snapshot.pump_command = PumpCommand::kOff;
   snapshot.extraction_phase = "SOAK";
+  std::array<char, 24> workflow_line{};
+  format_display_workflow_line(workflow_line.data(), workflow_line.size(),
+                               snapshot);
+  assert(std::string(workflow_line.data()) == "PUMP CMD OFF SOAK");
   assert(display.render(snapshot));
   assert(std::equal(idle_frame.begin(),
                     idle_frame.begin() + 3 * Ssd1306Display::kWidth,
@@ -538,6 +542,22 @@ void test_oled() {
   assert(!std::equal(idle_frame.begin() + 3 * Ssd1306Display::kWidth,
                      idle_frame.end(),
                      transport.data.begin() + 3 * Ssd1306Display::kWidth));
+  snapshot.pump_command = PumpCommand::kRunning;
+  snapshot.extraction_phase = "MAN";
+  snapshot.compensation_active = true;
+  format_display_workflow_line(workflow_line.data(), workflow_line.size(),
+                               snapshot);
+  assert(std::string(workflow_line.data()) == "PUMP CMD RUN MAN +2C");
+  snapshot.extraction_active = false;
+  snapshot.compensation_active = false;
+  snapshot.cooldown_status = DisplayCooldownStatus::kPumping;
+  format_display_workflow_line(workflow_line.data(), workflow_line.size(),
+                               snapshot);
+  assert(std::string(workflow_line.data()) == "COOL CMD PUMP RUN");
+  snapshot.cooldown_status = DisplayCooldownStatus::kStabilizing;
+  format_display_workflow_line(workflow_line.data(), workflow_line.size(),
+                               snapshot);
+  assert(std::string(workflow_line.data()) == "STAB CMD PUMP OFF");
   assert(transport.commands.size() == 61);
 }
 

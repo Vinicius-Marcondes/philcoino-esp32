@@ -15,6 +15,8 @@ int main() {
   static_assert(kBrewTargetMinimumC < kBrewTargetMaximumC);
   static_assert(kSteamTargetMinimumC <= kSteamTargetMaximumC);
   static_assert(kSteamTemperatureOffsetC == 5);
+  static_assert(kPreInfusionHeaterDutyOffsetC == 0);
+  static_assert(kExtractionHeaterDutyOffsetC == 2);
   static_assert(kBrewOverTemperatureC > kBrewTargetMaximumC);
   static_assert(kSteamOverTemperatureC > kSteamTargetMaximumC);
   static_assert(kHeatingTimeoutMs == 600000U);
@@ -24,6 +26,8 @@ int main() {
   static_assert(kMinimumHeaterPulseMs < kHeaterControlWindowMs);
   static_assert(kHeaterSafetyLeaseMs == 1500U);
   static_assert(kHeaterSafetyLeaseMs < kHeaterControlWindowMs);
+  static_assert(kCooldownPumpLimitMs == 45000U);
+  static_assert(kCooldownStabilizationMs == 5000U);
   static_assert(kWifiMaximumTxPowerQuarterDbm == 44);
   static_assert(kWifiMaximumTxPowerQuarterDbm >= 8);
   static_assert(kWifiMaximumTxPowerQuarterDbm <= 84);

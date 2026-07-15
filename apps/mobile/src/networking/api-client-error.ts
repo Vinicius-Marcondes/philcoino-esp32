@@ -1,5 +1,6 @@
 import type {
   ApiV2ErrorResponse,
+  CooldownActiveConflictResponse,
   ErrorResponse,
   ExtractionActiveConflictResponse,
 } from "@philcoino/protocol";
@@ -7,6 +8,7 @@ import type {
 export type ApiErrorResponse =
   | ApiV2ErrorResponse
   | ErrorResponse
+  | CooldownActiveConflictResponse
   | ExtractionActiveConflictResponse;
 
 export type ApiClientErrorKind =

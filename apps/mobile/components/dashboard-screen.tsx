@@ -1,6 +1,7 @@
 import type {
   ExtractionSelection,
   MachineState,
+  MachineStateV2,
 } from "@philcoino/protocol";
 import {
   useCallback,
@@ -28,6 +29,10 @@ import {
   ExtractionPreview,
   phaseLabel,
 } from "@/components/extraction-preview";
+import {
+  ThermalWorkflowPreview,
+  ThermalWorkflowStatus,
+} from "@/components/thermal-workflow-preview";
 import { useMachineDashboard } from "@/hooks/use-machine-dashboard";
 import {
   appendTemperatureSample,
@@ -92,6 +97,10 @@ export function DashboardScreen({
   );
   const {
     connection,
+    compensation,
+    cooldown,
+    cooldownStartMutation,
+    cooldownStopMutation,
     dismissMutation,
     dismissOverTemperature,
     faultMutation,
@@ -109,7 +118,9 @@ export function DashboardScreen({
     setHeaterEnabled,
     setMode,
     snapshot,
+    startCooldown,
     startExtraction,
+    stopCooldown,
     stopExtraction,
     temperatureMutation,
     updateTemperatureSettings,
@@ -147,6 +158,22 @@ export function DashboardScreen({
       selectedExtraction,
     ],
   );
+  const thermalSnapshot: MachineStateV2 | null = useMemo(
+    () =>
+      snapshot !== null &&
+      extraction !== null &&
+      compensation !== null &&
+      cooldown !== null
+        ? {
+            machine: snapshot,
+            extraction,
+            compensation,
+            cooldown,
+          }
+        : null,
+    [compensation, cooldown, extraction, snapshot],
+  );
+  const cooldownActive = cooldown !== null && cooldown.status !== "idle";
   const dismissModeMutation = useCallback(
     () => dismissMutation("mode"),
     [dismissMutation],
@@ -171,11 +198,21 @@ export function DashboardScreen({
     () => dismissMutation("extraction-stop"),
     [dismissMutation],
   );
+  const dismissCooldownStartMutation = useCallback(
+    () => dismissMutation("cooldown-start"),
+    [dismissMutation],
+  );
+  const dismissCooldownStopMutation = useCallback(
+    () => dismissMutation("cooldown-stop"),
+    [dismissMutation],
+  );
   const dismissProfileMutation = useCallback(
     () => dismissMutation("profiles"),
     [dismissMutation],
   );
   const mutationPending =
+    cooldownStartMutation.status === "pending" ||
+    cooldownStopMutation.status === "pending" ||
     extractionStartMutation.status === "pending" ||
     extractionStopMutation.status === "pending" ||
     faultMutation.status === "pending" ||
@@ -311,6 +348,14 @@ export function DashboardScreen({
               onDismiss={dismissExtractionStopMutation}
               state={extractionStopMutation}
             />
+            <MutationFeedback
+              onDismiss={dismissCooldownStartMutation}
+              state={cooldownStartMutation}
+            />
+            <MutationFeedback
+              onDismiss={dismissCooldownStopMutation}
+              state={cooldownStopMutation}
+            />
 
             {connection.status === "online" && snapshot !== null ? (
               <>
@@ -320,12 +365,36 @@ export function DashboardScreen({
                   onDismissOverTemperature={dismissOverTemperature}
                   snapshot={snapshot}
                 />
+                {debugDeviceMode ? (
+                  <ThermalWorkflowPreview
+                    onOpenMachine={() => openDashboardPage("machine")}
+                  />
+                ) : thermalSnapshot !== null ? (
+                  <ThermalWorkflowStatus
+                    mutationPending={mutationPending}
+                    onOpenMachine={() => openDashboardPage("machine")}
+                    onStartCooldown={startCooldown}
+                    onStopCooldown={stopCooldown}
+                    snapshot={thermalSnapshot}
+                  />
+                ) : null}
                 {mobileProfiles !== null && machineProfiles !== null ? (
                   <ExtractionPreview
                     debugPreview={debugDeviceMode}
                     onStateChange={applyExtractionUiState}
                     state={extractionUiState}
                     view="quick"
+                    workflowBlock={
+                      cooldownActive
+                        ? "cooldown"
+                        : snapshot.activeMode === "steam"
+                          ? "steam"
+                          : null
+                    }
+                    workflowMutationPending={
+                      cooldownStartMutation.status === "pending" ||
+                      cooldownStopMutation.status === "pending"
+                    }
                   />
                 ) : (
                   <ProfileLoadingCard error={profileStorageError} />
@@ -363,6 +432,11 @@ export function DashboardScreen({
                 onStateChange={applyExtractionUiState}
                 state={extractionUiState}
                 view="profiles"
+                workflowBlock={cooldownActive ? "cooldown" : null}
+                workflowMutationPending={
+                  cooldownStartMutation.status === "pending" ||
+                  cooldownStopMutation.status === "pending"
+                }
               />
             ) : (
               <ProfileLoadingCard error={profileStorageError} />
@@ -394,6 +468,12 @@ export function DashboardScreen({
                   onSetMode={setMode}
                   onUpdateTemperatureSettings={updateTemperatureSettings}
                   snapshot={snapshot}
+                  steamWorkflowBlocked={
+                    extraction?.status === "running" ||
+                    extractionStartMutation.status === "pending" ||
+                    cooldownActive ||
+                    cooldownStartMutation.status === "pending"
+                  }
                   temperatureMutation={temperatureMutation}
                 />
                 <HeaterToggleBar

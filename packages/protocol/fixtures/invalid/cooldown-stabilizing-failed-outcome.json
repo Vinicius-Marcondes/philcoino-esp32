@@ -1,0 +1,10 @@
+{
+  "status": "stabilizing",
+  "cooldownId": "cooldown-184220",
+  "brewTargetC": 93,
+  "elapsedMs": 45000,
+  "remainingMs": 5000,
+  "pumpCommand": "off",
+  "heaterInhibited": true,
+  "outcome": "failed"
+}

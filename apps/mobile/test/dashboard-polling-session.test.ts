@@ -44,6 +44,17 @@ const validStateV2: MachineStateV2 = {
     remainingMs: null,
     pumpCommand: "off",
   },
+  compensation: { status: "inactive", phase: null },
+  cooldown: {
+    status: "idle",
+    cooldownId: null,
+    brewTargetC: null,
+    elapsedMs: 0,
+    remainingMs: null,
+    pumpCommand: "off",
+    heaterInhibited: false,
+    outcome: null,
+  },
 };
 const profiles: ProfileSet = {
   profiles: [

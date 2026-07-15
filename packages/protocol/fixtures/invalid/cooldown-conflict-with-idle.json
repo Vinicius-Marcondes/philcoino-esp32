@@ -1,0 +1,16 @@
+{
+  "error": {
+    "code": "cooldown_active",
+    "message": "A different cooldown is already active."
+  },
+  "activeCooldown": {
+    "status": "idle",
+    "cooldownId": null,
+    "brewTargetC": null,
+    "elapsedMs": 0,
+    "remainingMs": null,
+    "pumpCommand": "off",
+    "heaterInhibited": false,
+    "outcome": null
+  }
+}

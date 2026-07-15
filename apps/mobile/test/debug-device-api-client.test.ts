@@ -122,11 +122,41 @@ describe("debug device mode", () => {
     await expect(client.startExtraction(request)).resolves.toEqual(started);
     await expect(client.getStateV2()).resolves.toMatchObject({
       extraction: { extractionId: started.extractionId, status: "running" },
+      compensation: { status: "inactive" },
+      cooldown: { status: "idle", pumpCommand: "off" },
     });
     await expect(client.stopExtraction()).resolves.toMatchObject({
       pumpCommand: "off",
       status: "idle",
     });
+  });
+
+  test("acknowledges cooldown Start replay and idempotent Stop locally", async () => {
+    const client = createDebugDeviceApiClient();
+    await client.setMode({ mode: "steam" });
+    const request = { idempotencyKey: "debug-cooldown-key-01" };
+
+    const started = await client.startCooldown(request);
+    expect(started).toMatchObject({
+      status: "pumping",
+      remainingMs: 45_000,
+      heaterInhibited: true,
+      pumpCommand: "running",
+    });
+    await expect(client.startCooldown(request)).resolves.toEqual(started);
+    await expect(client.getStateV2()).resolves.toMatchObject({
+      machine: { activeMode: "brew", heaterActive: false },
+      cooldown: { status: "pumping", pumpCommand: "running" },
+    });
+
+    const stopped = await client.stopCooldown();
+    expect(stopped).toMatchObject({
+      status: "stabilizing",
+      outcome: "stopped",
+      remainingMs: 5_000,
+      pumpCommand: "off",
+    });
+    await expect(client.stopCooldown()).resolves.toEqual(stopped);
   });
 });
 

@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": "sensor_unavailable",
+    "message": "Cooldown requires a valid boiler temperature reading."
+  }
+}

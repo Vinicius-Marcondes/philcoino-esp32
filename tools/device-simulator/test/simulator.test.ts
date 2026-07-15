@@ -60,6 +60,8 @@ describe("bearer authentication", () => {
     ["PUT", "/api/v2/profiles"],
     ["POST", "/api/v2/extractions/start"],
     ["POST", "/api/v2/extractions/stop"],
+    ["POST", "/api/v2/cooldowns/start"],
+    ["POST", "/api/v2/cooldowns/stop"],
   ])("rejects a missing token for %s %s", async (method, path) => {
     const response = await simulator.app.request(path, { method });
     expect(response.status).toBe(401);

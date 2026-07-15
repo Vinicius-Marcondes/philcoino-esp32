@@ -38,6 +38,38 @@ the fixed `+5°C`, defer judgment, or request a separately scoped calibration
 change. Existing single-sensor, cutoff, SSR, wiring, enclosure, grounding,
 pressure, and supervision limitations remain open.
 
+## PRD-004 extraction compensation and cooldown validation
+
+Status: SOFTWARE COMPLETE THROUGH THERM-009 — HUMAN REVIEWS DEFERRED
+
+Firmware uses the owner-selected `+2°C` bias only for Manual and profile-main
+heater-duty calculations, with `0°C` during pre-infusion and no compensation in
+soak/idle. The private duty target is clamped to one degree below the Brew
+over-temperature limit. Persisted/displayed targets, readiness, safety
+deadlines, recovery ownership, limits, and profiles remain unchanged.
+
+Cooldown is volatile and firmware-owned. It snapshots the Brew target, switches
+to Brew, establishes the separate heater inhibit and heater-off command before
+requesting pump running, stops that command at the target/45 seconds/Stop, then
+holds command-off/inhibit state for five seconds. User heater permission remains
+independent. Same-key replay retains the original workflow; reset/power loss
+never resumes it.
+
+Protocol, simulator, mobile, strict C++ host tests, and firmware captures prove
+only their software layers. `running`, `off`, `heaterActive`, and
+`heaterInhibited` do not prove flow, water use, current, cooling, SSR state,
+switch position, or de-energization. The target build was unavailable during
+Agent verification because `idf.py`/`IDF_PATH` were absent; no toolchain was
+installed.
+
+Vinicius authorized software continuation on 2026-07-14 while Human review was
+deferred. That is not approval. THERM-002 final mobile visual/accessibility
+review and the exact disconnected THERM-010 matrix are collected in
+`docs/prds/PRD-004/HUMAN_REVIEW.md`. THERM-011 remains separately authorization-
+gated and has no energized procedure. Existing single-sensor, independent
+cutoff, SSR, timing/watchdog, cleartext credential, wiring, enclosure,
+grounding, water, pressure, and supervision findings remain open.
+
 ## Pump GPIO10 and SSR validation
 
 Status: HUMAN FUNCTIONAL REVIEW ACCEPTED — ELECTRICAL AND ENERGIZED VALIDATION DEFERRED
