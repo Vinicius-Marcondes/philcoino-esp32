@@ -6,7 +6,11 @@ import type {
 import { useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
-import { formatTarget, formatTemperature } from "@/src/dashboard/dashboard-view-model";
+import {
+  faultDetail,
+  formatTarget,
+  formatTemperature,
+} from "@/src/dashboard/dashboard-view-model";
 import {
   createThermalWorkflowPreviewState,
   finishStabilizationPreview,
@@ -405,7 +409,9 @@ function FailureCard({ snapshot }: { snapshot: MachineStateV2 }) {
         {translate("thermalPreview.failureTitle")}
       </Text>
       <Text selectable style={styles.failureText}>
-        {snapshot.machine.fault?.message ?? translate("thermalPreview.failureDetail")}
+        {snapshot.machine.fault
+          ? faultDetail(snapshot.machine.fault.code)
+          : translate("thermalPreview.failureDetail")}
       </Text>
       <Text selectable style={styles.failureSafety}>
         {translate("thermalPreview.failureSafety")}

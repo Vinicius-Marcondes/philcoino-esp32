@@ -20,8 +20,44 @@ describe("mobile localization", () => {
     );
   });
 
+  test("keeps interpolation placeholders aligned in both languages", () => {
+    const english = flattenEntries(translations.en);
+    const portuguese = flattenEntries(translations["pt-BR"]);
+
+    for (const [key, englishValue] of Object.entries(english)) {
+      expect(placeholders(portuguese[key])).toEqual(placeholders(englishValue));
+    }
+  });
+
+  test("resolves every literal translation key used by mobile source", async () => {
+    const catalogKeys = new Set(flattenKeys(translations.en));
+    const missingKeys: string[] = [];
+    const mobileRoot = new URL("../", import.meta.url).pathname;
+
+    for (const pattern of [
+      "app/**/*.tsx",
+      "components/**/*.tsx",
+      "hooks/**/*.ts",
+      "src/**/*.ts",
+    ]) {
+      const files = new Bun.Glob(pattern);
+      for await (const file of files.scan({ cwd: mobileRoot, onlyFiles: true })) {
+        const source = await Bun.file(`${mobileRoot}${file}`).text();
+        for (const match of source.matchAll(/translate\(\s*["']([^"']+)["']/g)) {
+          if (!catalogKeys.has(match[1])) {
+            missingKeys.push(`${file}: ${match[1]}`);
+          }
+        }
+      }
+    }
+
+    expect(missingKeys).toEqual([]);
+  });
+
   test("selects Brazilian Portuguese for Portuguese device locales", () => {
     expect(localeForLanguage("pt")).toBe("pt-BR");
+    expect(localeForLanguage("pt-BR")).toBe("pt-BR");
+    expect(localeForLanguage("pt-PT")).toBe("pt-BR");
     expect(localeForLanguage("en")).toBe("en");
     expect(localeForLanguage("es")).toBe("en");
     expect(localeForLanguage(null)).toBe("en");
@@ -33,6 +69,10 @@ describe("mobile localization", () => {
     expect(currentLocale()).toBe("pt-BR");
     expect(translate("navigation.pairMachine")).toBe("Parear máquina");
     expect(translate("viewModel.mode.brew")).toBe("Café");
+    expect(translate("extractionPreview.newProfileName")).toBe("NovoPerfil");
+    expect(translate("mutation.rejections.cooldownActive")).toBe(
+      "Já existe um fluxo de cooldown ativo.",
+    );
     expect(formatTemperature(91.24)).toBe("91,2°");
   });
 
@@ -52,5 +92,22 @@ function flattenKeys(value: object, prefix = ""): string[] {
         ? flattenKeys(child, path)
         : [path];
     })
+    .sort();
+}
+
+function flattenEntries(value: object, prefix = ""): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(value).flatMap(([key, child]) => {
+      const path = prefix.length === 0 ? key : `${prefix}.${key}`;
+      return typeof child === "object" && child !== null
+        ? Object.entries(flattenEntries(child, path))
+        : [[path, String(child)]];
+    }),
+  );
+}
+
+function placeholders(value: string): string[] {
+  return [...value.matchAll(/%\{([^}]+)\}/g)]
+    .map((match) => match[1])
     .sort();
 }

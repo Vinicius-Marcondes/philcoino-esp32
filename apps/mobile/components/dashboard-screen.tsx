@@ -7,6 +7,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type SetStateAction,
 } from "react";
@@ -39,6 +40,7 @@ import {
   boilerTargetC,
   boilerTemperatureC,
   connectionCopy,
+  faultDetail,
   faultLabel,
   formatHistoryDuration,
   formatSteamCountdown,
@@ -132,6 +134,10 @@ export function DashboardScreen({
   );
   const { width } = useWindowDimensions();
   const safeAreaInsets = useSafeAreaInsets();
+  const navigationVerticalPadding = Math.max(
+    4,
+    (safeAreaInsets.bottom + 4) / 2,
+  );
   const connectionContent = connectionCopy(connection);
   const metricWidth = width >= 700 ? "48.5%" : "100%";
   const [temperatureHistory, setTemperatureHistory] = useState<
@@ -139,6 +145,16 @@ export function DashboardScreen({
   >([]);
   const [dashboardPage, setDashboardPage] =
     useState<DashboardPage>("dashboard");
+  const dashboardScrollView = useRef<ScrollView>(null);
+  const pageScrollOffsets = useRef<Record<DashboardPage, number>>({
+    dashboard: 0,
+    machine: 0,
+    profiles: 0,
+  });
+  const pendingScrollRestore = useRef<{
+    offset: number;
+    page: DashboardPage;
+  } | null>(null);
   const [selectedExtraction, setSelectedExtraction] =
     useState<ExtractionSelection>({ kind: "manual" });
   const idlePreviewState = useMemo(createExtractionPreviewState, []);
@@ -265,34 +281,87 @@ export function DashboardScreen({
     ],
   );
 
-  const openDashboardPage = useCallback((page: DashboardPage) => {
-    if (page === "profiles") {
-      setSelectedExtraction((current) =>
-        current.kind === "manual"
-          ? { kind: "profile", profileId: "profile-1" }
-          : current,
-      );
-    }
-    setDashboardPage(page);
-  }, []);
+  const openDashboardPage = useCallback(
+    (page: DashboardPage) => {
+      if (page === "profiles") {
+        setSelectedExtraction((current) =>
+          current.kind === "manual"
+            ? { kind: "profile", profileId: "profile-1" }
+            : current,
+        );
+      }
+      if (page === dashboardPage) {
+        return;
+      }
+      pendingScrollRestore.current = {
+        offset: pageScrollOffsets.current[page],
+        page,
+      };
+      setDashboardPage(page);
+    },
+    [dashboardPage],
+  );
 
   return (
     <View style={styles.screen}>
       <ScrollView
         contentInsetAdjustmentBehavior="never"
-        contentContainerStyle={[
-          styles.content,
-          styles.contentWithNavigation,
-        ]}>
+        contentContainerStyle={styles.content}
+        key={dashboardPage}
+        onContentSizeChange={() => {
+          const pending = pendingScrollRestore.current;
+          if (pending === null || pending.page !== dashboardPage) {
+            return;
+          }
+          dashboardScrollView.current?.scrollTo({
+            animated: false,
+            y: pending.offset,
+          });
+          pendingScrollRestore.current = null;
+        }}
+        onScroll={(event) => {
+          if (pendingScrollRestore.current?.page === dashboardPage) {
+            return;
+          }
+          pageScrollOffsets.current[dashboardPage] = Math.max(
+            0,
+            event.nativeEvent.contentOffset.y,
+          );
+        }}
+        ref={dashboardScrollView}
+        scrollEventThrottle={16}>
         <View style={styles.pageHeader}>
           <Text selectable style={styles.pageTitle}>{deviceName}</Text>
         </View>
         <View style={styles.intro}>
-          <Text selectable style={styles.eyebrow}>
-            {translate(
-              `dashboard.navigation.${dashboardPage}.eyebrow`,
-            )}
-          </Text>
+          <View style={styles.introHeading}>
+            <Text selectable style={styles.eyebrow}>
+              {translate(
+                `dashboard.navigation.${dashboardPage}.eyebrow`,
+              )}
+            </Text>
+            <View
+              accessibilityLiveRegion="polite"
+              style={styles.connectionPill}>
+              <View
+                style={[
+                  styles.statusDot,
+                  connection.status === "online"
+                    ? styles.statusDotOnline
+                    : styles.statusDotUnavailable,
+                ]}
+              />
+              <Text selectable style={styles.connectionPillLabel}>
+                {connectionContent.label}
+              </Text>
+              {connection.status === "connecting" ? (
+                <ActivityIndicator
+                  accessibilityLabel={translate("dashboard.connecting")}
+                  size="small"
+                />
+              ) : null}
+            </View>
+          </View>
           <Text selectable style={styles.lead}>
             {translate(
               `dashboard.navigation.${dashboardPage}.lead`,
@@ -302,40 +371,6 @@ export function DashboardScreen({
 
         {dashboardPage === "dashboard" ? (
           <>
-            <View
-              accessibilityLiveRegion="polite"
-              style={[
-                styles.connectionCard,
-                connection.status === "online"
-                  ? styles.connectionOnline
-                  : styles.connectionUnavailable,
-              ]}>
-              <View style={styles.statusHeading}>
-                <View
-                  style={[
-                    styles.statusDot,
-                    connection.status === "online"
-                      ? styles.statusDotOnline
-                      : styles.statusDotUnavailable,
-                  ]}
-                />
-                <Text selectable style={styles.connectionLabel}>
-                  {translate("dashboard.appConnection", {
-                    status: connectionContent.label,
-                  })}
-                </Text>
-                {connection.status === "connecting" ? (
-                  <ActivityIndicator
-                    accessibilityLabel={translate("dashboard.connecting")}
-                    size="small"
-                  />
-                ) : null}
-              </View>
-              <Text selectable style={styles.connectionDetail}>
-                {connectionContent.detail}
-              </Text>
-            </View>
-
             <MutationFeedback
               onDismiss={dismissFaultMutation}
               state={faultMutation}
@@ -359,25 +394,23 @@ export function DashboardScreen({
 
             {connection.status === "online" && snapshot !== null ? (
               <>
-                <MachineSnapshot
+                <MachineStatus
                   faultMutation={faultMutation}
-                  metricWidth={metricWidth}
                   onDismissOverTemperature={dismissOverTemperature}
                   snapshot={snapshot}
                 />
-                {debugDeviceMode ? (
-                  <ThermalWorkflowPreview
-                    onOpenMachine={() => openDashboardPage("machine")}
+                <View style={styles.metricGrid}>
+                  <TemperatureCard
+                    mode={snapshot.activeMode}
+                    targetC={boilerTargetC(snapshot)}
+                    temperatureC={boilerTemperatureC(snapshot)}
+                    width="100%"
                   />
-                ) : thermalSnapshot !== null ? (
-                  <ThermalWorkflowStatus
-                    mutationPending={mutationPending}
-                    onOpenMachine={() => openDashboardPage("machine")}
-                    onStartCooldown={startCooldown}
-                    onStopCooldown={stopCooldown}
-                    snapshot={thermalSnapshot}
-                  />
-                ) : null}
+                </View>
+                <TemperatureCurve
+                  history={temperatureHistory}
+                  snapshot={snapshot}
+                />
                 {mobileProfiles !== null && machineProfiles !== null ? (
                   <ExtractionPreview
                     debugPreview={debugDeviceMode}
@@ -399,10 +432,19 @@ export function DashboardScreen({
                 ) : (
                   <ProfileLoadingCard error={profileStorageError} />
                 )}
-                <TemperatureCurve
-                  history={temperatureHistory}
-                  snapshot={snapshot}
-                />
+                {debugDeviceMode ? (
+                  <ThermalWorkflowPreview
+                    onOpenMachine={() => openDashboardPage("machine")}
+                  />
+                ) : thermalSnapshot !== null ? (
+                  <ThermalWorkflowStatus
+                    mutationPending={mutationPending}
+                    onOpenMachine={() => openDashboardPage("machine")}
+                    onStartCooldown={startCooldown}
+                    onStopCooldown={stopCooldown}
+                    snapshot={thermalSnapshot}
+                  />
+                ) : null}
               </>
             ) : (
               <View style={styles.unavailableCard}>
@@ -482,6 +524,22 @@ export function DashboardScreen({
                   onSetHeaterEnabled={setHeaterEnabled}
                   snapshot={snapshot}
                 />
+                <View style={styles.metricGrid}>
+                  <ContextMetric
+                    label={translate("dashboard.machineUptime")}
+                    value={formatUptime(snapshot.uptimeMs)}
+                    detail={translate("dashboard.uptimeDetail")}
+                    width={metricWidth}
+                  />
+                  <ContextMetric
+                    label={translate("dashboard.steamTimer")}
+                    value={formatSteamCountdown(
+                      snapshot.steamTimeoutRemainingMs,
+                    )}
+                    detail={steamCountdownContext(snapshot)}
+                    width={metricWidth}
+                  />
+                </View>
               </>
             ) : (
               <View style={styles.unavailableCard}>
@@ -524,7 +582,10 @@ export function DashboardScreen({
       <View
         style={[
           styles.bottomNavigation,
-          { paddingBottom: Math.max(10, safeAreaInsets.bottom) },
+          {
+            paddingBottom: navigationVerticalPadding,
+            paddingTop: navigationVerticalPadding,
+          },
         ]}>
           {extraction?.status === "running" ? (
             <Pressable
@@ -849,14 +910,12 @@ function curvePointTop(value: number, minimumValue: number, maximumValue: number
   return Math.max(0, Math.min(100, ((maximumValue - value) / range) * 100));
 }
 
-function MachineSnapshot({
+function MachineStatus({
   faultMutation,
-  metricWidth,
   onDismissOverTemperature,
   snapshot,
 }: {
   faultMutation: DashboardMutationState;
-  metricWidth: "100%" | "48.5%";
   onDismissOverTemperature: () => void;
   snapshot: MachineState;
 }) {
@@ -927,7 +986,9 @@ function MachineSnapshot({
           <Text selectable style={styles.faultTitle}>
             {faultLabel(snapshot.fault.code)}
           </Text>
-          <Text selectable style={styles.faultMessage}>{snapshot.fault.message}</Text>
+          <Text selectable style={styles.faultMessage}>
+            {faultDetail(snapshot.fault.code)}
+          </Text>
           <Text selectable style={styles.faultSafety}>{translate("dashboard.heaterCommandOff")}</Text>
           {snapshot.fault.code === "over_temperature" ? (
             <>
@@ -962,30 +1023,6 @@ function MachineSnapshot({
           ) : null}
         </View>
       ) : null}
-
-      <View style={styles.metricGrid}>
-        <TemperatureCard
-          mode={snapshot.activeMode}
-          targetC={boilerTargetC(snapshot)}
-          temperatureC={boilerTemperatureC(snapshot)}
-          width="100%"
-        />
-      </View>
-
-      <View style={styles.metricGrid}>
-        <ContextMetric
-          label={translate("dashboard.steamTimer")}
-          value={formatSteamCountdown(snapshot.steamTimeoutRemainingMs)}
-          detail={steamCountdownContext(snapshot)}
-          width={metricWidth}
-        />
-        <ContextMetric
-          label={translate("dashboard.machineUptime")}
-          value={formatUptime(snapshot.uptimeMs)}
-          detail={translate("dashboard.uptimeDetail")}
-          width={metricWidth}
-        />
-      </View>
     </>
   );
 }
@@ -1128,17 +1165,15 @@ const styles = StyleSheet.create({
     flexGrow: 1,
     gap: 16,
     padding: 20,
-    paddingBottom: 44,
+    paddingBottom: 24,
     paddingTop: 72,
   },
-  contentWithNavigation: { paddingBottom: 210 },
   bottomNavigation: {
     backgroundColor: "#FFFCF7",
     borderColor: "#D8C9BA",
     borderTopWidth: 1,
     gap: 8,
     paddingHorizontal: 12,
-    paddingTop: 10,
   },
   bottomNavigationRow: { flexDirection: "row", gap: 8 },
   bottomNavigationTab: {
@@ -1147,7 +1182,7 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     flex: 1,
     justifyContent: "center",
-    minHeight: 48,
+    minHeight: 44,
     paddingHorizontal: 8,
   },
   bottomNavigationTabActive: { backgroundColor: "#8B3A2B" },
@@ -1185,23 +1220,30 @@ const styles = StyleSheet.create({
   pageHeader: { alignItems: "center", minHeight: 34 },
   pageTitle: { color: "#241B17", fontSize: 22, fontWeight: "800" },
   intro: { gap: 7, paddingHorizontal: 2, paddingTop: 8 },
+  introHeading: {
+    alignItems: "center",
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+    justifyContent: "space-between",
+  },
   eyebrow: { color: "#8B3A2B", fontSize: 12, fontWeight: "800", letterSpacing: 1.5 },
   lead: { color: "#332A25", fontSize: 17, lineHeight: 24 },
-  connectionCard: {
+  connectionPill: {
+    alignItems: "center",
+    backgroundColor: "#EAE2D7",
     borderCurve: "continuous",
-    borderRadius: 18,
-    borderWidth: 1,
+    borderRadius: 999,
+    flexDirection: "row",
     gap: 7,
-    padding: 16,
+    minHeight: 30,
+    paddingHorizontal: 11,
+    paddingVertical: 5,
   },
-  connectionOnline: { backgroundColor: "#E5F1E8", borderColor: "#A9C9B0" },
-  connectionUnavailable: { backgroundColor: "#F3E6DC", borderColor: "#D3B9A7" },
-  statusHeading: { alignItems: "center", flexDirection: "row", gap: 9 },
   statusDot: { borderRadius: 999, height: 9, width: 9 },
   statusDotOnline: { backgroundColor: "#2D7547" },
   statusDotUnavailable: { backgroundColor: "#A54B36" },
-  connectionLabel: { color: "#241B17", flex: 1, fontSize: 16, fontWeight: "800" },
-  connectionDetail: { color: "#5B4D44", fontSize: 14, lineHeight: 20 },
+  connectionPillLabel: { color: "#4A3E37", fontSize: 12, fontWeight: "800" },
   machineStateCard: {
     backgroundColor: "#241B17",
     borderCurve: "continuous",

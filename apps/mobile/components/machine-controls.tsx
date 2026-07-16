@@ -74,6 +74,37 @@ export function MachineControls({
   return (
     <View style={styles.controlsSection}>
       <View style={styles.controlCard}>
+        <Text selectable style={styles.eyebrow}>
+          {translate("controls.activeMode")}
+        </Text>
+        <Text selectable style={styles.sectionTitle}>
+          {translate("controls.firmwareControl")}
+        </Text>
+        <View style={styles.modeRow}>
+          <ModeButton
+            active={snapshot.activeMode === "brew"}
+            disabled={mutationPending}
+            mode="brew"
+            onPress={onSetMode}
+          />
+          <ModeButton
+            active={snapshot.activeMode === "steam"}
+            disabled={mutationPending || steamWorkflowBlocked}
+            mode="steam"
+            onPress={onSetMode}
+          />
+        </View>
+        <Text selectable style={styles.helpText}>
+          {translate("controls.modeHelp")}
+        </Text>
+        {steamWorkflowBlocked ? (
+          <Text accessibilityLiveRegion="polite" selectable style={styles.blockedText}>
+            {translate("controls.steamWorkflowBlocked")}
+          </Text>
+        ) : null}
+      </View>
+
+      <View style={styles.controlCard}>
         <View style={styles.sectionHeading}>
           <View style={styles.headingCopy}>
             <Text selectable style={styles.eyebrow}>
@@ -148,36 +179,6 @@ export function MachineControls({
         )}
       </View>
 
-      <View style={styles.controlCard}>
-        <Text selectable style={styles.eyebrow}>
-          {translate("controls.activeMode")}
-        </Text>
-        <Text selectable style={styles.sectionTitle}>
-          {translate("controls.firmwareControl")}
-        </Text>
-        <View style={styles.modeRow}>
-          <ModeButton
-            active={snapshot.activeMode === "brew"}
-            disabled={mutationPending}
-            mode="brew"
-            onPress={onSetMode}
-          />
-          <ModeButton
-            active={snapshot.activeMode === "steam"}
-            disabled={mutationPending || steamWorkflowBlocked}
-            mode="steam"
-            onPress={onSetMode}
-          />
-        </View>
-        <Text selectable style={styles.helpText}>
-          {translate("controls.modeHelp")}
-        </Text>
-        {steamWorkflowBlocked ? (
-          <Text accessibilityLiveRegion="polite" selectable style={styles.blockedText}>
-            {translate("controls.steamWorkflowBlocked")}
-          </Text>
-        ) : null}
-      </View>
     </View>
   );
 }

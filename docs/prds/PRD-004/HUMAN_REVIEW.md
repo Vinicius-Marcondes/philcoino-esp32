@@ -24,8 +24,23 @@ Software implementation and automated/web review are complete in commit
 `9933bd0`. Review the debug-only Dashboard surface and record approval or
 requested in-scope revisions for all of the following:
 
-- [ ] Dashboard placement between the acknowledged machine snapshot and the
-  extraction preview.
+- [ ] Revised Dashboard hierarchy requested on 2026-07-15: compact connection
+  status beside the top page eyebrow, then Machine status, Boiler temperature,
+  Temperature graph, Extraction, Compensation, and Cooldown machine.
+- [ ] Revised Extraction hierarchy: the Dashboard profile selection stays
+  collapsed in an accessible dropdown until opened; Phase, Elapsed, and
+  Remaining stay as the compact metrics while the GPIO10 command metric is
+  omitted; Profiles reads Profile sync, Profile configuration, then Local
+  profile editor.
+- [ ] Revised Machine hierarchy: Active mode, Temperature targets, Heater
+  permission, Machine uptime, Steam timer, then Saved machine.
+- [ ] Dashboard, Profiles, and Machine preserve independent scroll positions
+  when switching tabs instead of sharing the previous tab's offset.
+- [ ] Each tab stops after the final component plus normal bottom spacing; no
+  duplicated navigation padding leaves a large blank scrollable area.
+- [ ] The slimmer bottom navigation keeps 44-point tab controls and distributes
+  inset-aware vertical space evenly so the controls are centered within the
+  navbar.
 - [ ] Confirmation hierarchy and wording: current acknowledged temperature,
   snapshotted Brew target, possible water use, 45-second pump-command limit,
   missing physical feedback, and command-only boundary.

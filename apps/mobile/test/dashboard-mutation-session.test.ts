@@ -156,7 +156,7 @@ describe("DashboardMutationSession", () => {
     expect(harness.outcomes.at(-1)).toEqual({
       kind: "mode",
       state: {
-        message: "Clear the latched sensor fault before changing mode.",
+        message: "The requested change is unavailable in the machine’s current state.",
         status: "rejected",
       },
     });

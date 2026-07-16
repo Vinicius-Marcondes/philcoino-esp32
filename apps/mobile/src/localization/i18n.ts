@@ -10,7 +10,7 @@ i18n.enableFallback = true;
 i18n.locale = "en";
 
 export function localeForLanguage(languageCode: string | null): SupportedLocale {
-  return languageCode?.toLowerCase() === "pt" ? "pt-BR" : "en";
+  return languageCode?.toLowerCase().split("-")[0] === "pt" ? "pt-BR" : "en";
 }
 
 export function setAppLocale(languageCode: string | null): SupportedLocale {

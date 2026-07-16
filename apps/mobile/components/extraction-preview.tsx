@@ -58,6 +58,7 @@ export function ExtractionPreview({
   const [localState, setLocalState] = useState(
     () => initialState ?? createExtractionPreviewState(),
   );
+  const [profilePickerOpen, setProfilePickerOpen] = useState(false);
   const state = controlledState ?? localState;
   const setState = onStateChange ?? setLocalState;
   const interactivePreview = controlledState === undefined;
@@ -71,6 +72,16 @@ export function ExtractionPreview({
   const activeProfile = selectedProfile(state);
   const selectedProfileId =
     state.selected.kind === "profile" ? state.selected.profileId : null;
+  const selectedProfileLabel =
+    state.selected.kind === "manual"
+      ? translate("extractionPreview.manual")
+      : activeProfile?.name ?? translate("extractionPreview.emptySlot");
+
+  useEffect(() => {
+    if (active) {
+      setProfilePickerOpen(false);
+    }
+  }, [active]);
 
   return (
     <View style={styles.section}>
@@ -86,7 +97,16 @@ export function ExtractionPreview({
         </Text>
       </View> : null}
 
-      <View style={styles.card}>
+      {view === "profiles" ? <ProfileSyncCard
+        active={active}
+        onExport={() => setState(exportProfilesPreview)}
+        state={state}
+        synchronized={synchronized}
+        workflowBlock={workflowBlock}
+        workflowMutationPending={workflowMutationPending}
+      /> : null}
+
+      {view !== "quick" ? <View style={styles.card}>
         <SectionHeading
           eyebrow={translate(
             view === "profiles"
@@ -136,43 +156,16 @@ export function ExtractionPreview({
             />
           ))}
         </View>
-      </View>
-
-      {view !== "quick" ? <View style={styles.card}>
-        <SectionHeading
-          eyebrow={translate("extractionPreview.sync")}
-          title={
-            synchronized
-              ? translate("extractionPreview.synchronized")
-              : translate("extractionPreview.different")
-          }
-        />
-        <Text selectable style={styles.helpText}>
-          {translate("extractionPreview.syncHelp")}
-        </Text>
-        <ActionButton
-          disabled={
-            active ||
-            synchronized ||
-            workflowBlock === "cooldown" ||
-            workflowMutationPending
-          }
-          label={translate("extractionPreview.export")}
-          onPress={() => setState(exportProfilesPreview)}
-        />
-        {state.notice === "exported" ? (
-          <Notice text={translate("extractionPreview.exported")} />
-        ) : null}
-        {state.notice === "export-blocked" ? (
-          <Notice text={translate("extractionPreview.exportBlocked")} warning />
-        ) : null}
-        {workflowBlock === "cooldown" ? (
-          <Notice
-            text={translate("extractionPreview.cooldownExportBlocked")}
-            warning
-          />
-        ) : null}
       </View> : null}
+
+      {view !== "quick" && view !== "profiles" ? <ProfileSyncCard
+        active={active}
+        onExport={() => setState(exportProfilesPreview)}
+        state={state}
+        synchronized={synchronized}
+        workflowBlock={workflowBlock}
+        workflowMutationPending={workflowMutationPending}
+      /> : null}
 
       {view !== "quick" && selectedProfileId !== null ? (
         <ProfileEditor
@@ -203,6 +196,19 @@ export function ExtractionPreview({
               : translate("extractionPreview.idle")
           }
         />
+        {view === "quick" ? (
+          <QuickProfilePicker
+            active={active}
+            expanded={profilePickerOpen}
+            onExpandedChange={setProfilePickerOpen}
+            onSelect={(selection) => {
+              setState((current) => selectPreview(current, selection));
+              setProfilePickerOpen(false);
+            }}
+            selectedLabel={selectedProfileLabel}
+            state={state}
+          />
+        ) : null}
         <View style={styles.metricGrid}>
           <PreviewMetric
             label={translate("extractionPreview.phase")}
@@ -218,14 +224,6 @@ export function ExtractionPreview({
               state.extraction.remainingMs === null
                 ? "—"
                 : formatPreviewTime(state.extraction.remainingMs)
-            }
-          />
-          <PreviewMetric
-            label={translate("extractionPreview.pumpCommand")}
-            value={
-              state.extraction.pumpCommand === "running"
-                ? translate("extractionPreview.pumpRunning")
-                : translate("extractionPreview.pumpOff")
             }
           />
         </View>
@@ -279,6 +277,172 @@ export function ExtractionPreview({
   );
 }
 
+function ProfileSyncCard({
+  active,
+  onExport,
+  state,
+  synchronized,
+  workflowBlock,
+  workflowMutationPending,
+}: {
+  active: boolean;
+  onExport: () => void;
+  state: ExtractionPreviewState;
+  synchronized: boolean;
+  workflowBlock: "cooldown" | "steam" | null;
+  workflowMutationPending: boolean;
+}) {
+  return (
+    <View style={styles.card}>
+      <SectionHeading
+        eyebrow={translate("extractionPreview.sync")}
+        title={
+          synchronized
+            ? translate("extractionPreview.synchronized")
+            : translate("extractionPreview.different")
+        }
+      />
+      <Text selectable style={styles.helpText}>
+        {translate("extractionPreview.syncHelp")}
+      </Text>
+      <ActionButton
+        disabled={
+          active ||
+          synchronized ||
+          workflowBlock === "cooldown" ||
+          workflowMutationPending
+        }
+        label={translate("extractionPreview.export")}
+        onPress={onExport}
+      />
+      {state.notice === "exported" ? (
+        <Notice text={translate("extractionPreview.exported")} />
+      ) : null}
+      {state.notice === "export-blocked" ? (
+        <Notice text={translate("extractionPreview.exportBlocked")} warning />
+      ) : null}
+      {workflowBlock === "cooldown" ? (
+        <Notice
+          text={translate("extractionPreview.cooldownExportBlocked")}
+          warning
+        />
+      ) : null}
+    </View>
+  );
+}
+
+function QuickProfilePicker({
+  active,
+  expanded,
+  onExpandedChange,
+  onSelect,
+  selectedLabel,
+  state,
+}: {
+  active: boolean;
+  expanded: boolean;
+  onExpandedChange: (expanded: boolean) => void;
+  onSelect: (selection: ExtractionPreviewState["selected"]) => void;
+  selectedLabel: string;
+  state: ExtractionPreviewState;
+}) {
+  return (
+    <View style={styles.profilePicker}>
+      <Pressable
+        accessibilityLabel={translate("extractionPreview.selectProfile", {
+          name: selectedLabel,
+        })}
+        accessibilityRole="button"
+        accessibilityState={{ disabled: active, expanded }}
+        disabled={active}
+        onPress={() => onExpandedChange(!expanded)}
+        style={({ pressed }) => [
+          styles.profilePickerButton,
+          active && styles.disabled,
+          pressed && !active && styles.pressed,
+        ]}>
+        <View style={styles.profilePickerCopy}>
+          <Text selectable style={styles.profilePickerLabel}>
+            {translate("extractionPreview.profiles")}
+          </Text>
+          <Text selectable style={styles.profilePickerValue}>
+            {selectedLabel}
+          </Text>
+        </View>
+        <Text style={styles.profilePickerChevron}>{expanded ? "⌃" : "⌄"}</Text>
+      </Pressable>
+
+      {expanded ? (
+        <View accessibilityRole="radiogroup" style={styles.profilePickerMenu}>
+          <CompactProfileOption
+            detail={translate("extractionPreview.manualDetail")}
+            label={translate("extractionPreview.manual")}
+            onPress={() => onSelect({ kind: "manual" })}
+            selected={state.selected.kind === "manual"}
+          />
+          {state.mobileProfiles.profiles.map((slot) => (
+            <CompactProfileOption
+              detail={slot.id}
+              key={slot.id}
+              label={
+                slot.profile?.name ?? translate("extractionPreview.emptySlot")
+              }
+              onPress={() =>
+                onSelect({ kind: "profile", profileId: slot.id })
+              }
+              selected={
+                state.selected.kind === "profile" &&
+                state.selected.profileId === slot.id
+              }
+            />
+          ))}
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+function CompactProfileOption({
+  detail,
+  label,
+  onPress,
+  selected,
+}: {
+  detail: string;
+  label: string;
+  onPress: () => void;
+  selected: boolean;
+}) {
+  return (
+    <Pressable
+      accessibilityLabel={translate("extractionPreview.selectProfile", {
+        name: label,
+      })}
+      accessibilityRole="radio"
+      accessibilityState={{ checked: selected }}
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.profilePickerOption,
+        selected && styles.profilePickerOptionSelected,
+        pressed && styles.pressed,
+      ]}>
+      <View style={styles.profilePickerCopy}>
+        <Text
+          style={[
+            styles.profilePickerOptionName,
+            selected && styles.profilePickerOptionNameSelected,
+          ]}>
+          {label}
+        </Text>
+        <Text style={styles.profilePickerOptionDetail}>
+          {selected ? translate("extractionPreview.selected") : detail}
+        </Text>
+      </View>
+      {selected ? <Text style={styles.profilePickerCheck}>✓</Text> : null}
+    </Pressable>
+  );
+}
+
 function ProfileEditor({
   debugPreview,
   disabled,
@@ -296,7 +460,7 @@ function ProfileEditor({
 }) {
   const [draft, setDraft] = useState<ExtractionProfile>(
     profile ?? {
-      name: "NewProfile",
+      name: translate("extractionPreview.newProfileName"),
       preInfusionSeconds: 0,
       soakSeconds: 0,
       mainExtractionSeconds: 30,
@@ -618,6 +782,53 @@ const styles = StyleSheet.create({
   },
   title: { color: "#241B17", fontSize: 21, fontWeight: "800" },
   profileGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
+  profilePicker: { gap: 8 },
+  profilePickerButton: {
+    alignItems: "center",
+    backgroundColor: "#FFF9F3",
+    borderColor: "#D3B9A7",
+    borderCurve: "continuous",
+    borderRadius: 16,
+    borderWidth: 1,
+    flexDirection: "row",
+    gap: 12,
+    justifyContent: "space-between",
+    minHeight: 58,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  profilePickerCopy: { flex: 1, gap: 2 },
+  profilePickerLabel: {
+    color: "#8B3A2B",
+    fontSize: 10,
+    fontWeight: "900",
+    letterSpacing: 1,
+  },
+  profilePickerValue: { color: "#241B17", fontSize: 17, fontWeight: "800" },
+  profilePickerChevron: { color: "#8B3A2B", fontSize: 22, fontWeight: "800" },
+  profilePickerMenu: {
+    backgroundColor: "#FFF9F3",
+    borderColor: "#D3B9A7",
+    borderCurve: "continuous",
+    borderRadius: 16,
+    borderWidth: 1,
+    overflow: "hidden",
+  },
+  profilePickerOption: {
+    alignItems: "center",
+    borderBottomColor: "#E2D3C5",
+    borderBottomWidth: 1,
+    flexDirection: "row",
+    gap: 10,
+    minHeight: 56,
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+  },
+  profilePickerOptionSelected: { backgroundColor: "#F1DED3" },
+  profilePickerOptionName: { color: "#332A25", fontSize: 15, fontWeight: "800" },
+  profilePickerOptionNameSelected: { color: "#7D3024" },
+  profilePickerOptionDetail: { color: "#76675D", fontSize: 11, fontWeight: "700" },
+  profilePickerCheck: { color: "#8B3A2B", fontSize: 18, fontWeight: "900" },
   profileButton: {
     backgroundColor: "#F5EEE5",
     borderColor: "#D8C9BA",
@@ -683,14 +894,15 @@ const styles = StyleSheet.create({
   roundButtonText: { color: "#8B3A2B", fontSize: 25, fontWeight: "700" },
   durationTotal: { color: "#695A50", fontSize: 13, fontVariant: ["tabular-nums"] },
   validationText: { color: "#9E2E24", fontSize: 14, fontWeight: "700", lineHeight: 20 },
-  metricGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
+  metricGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   metric: {
     backgroundColor: "#FFF9F3",
     borderCurve: "continuous",
     borderRadius: 14,
-    flexBasis: 130,
+    flexBasis: 88,
     flexGrow: 1,
     gap: 3,
+    minWidth: 88,
     padding: 12,
   },
   metricLabel: { color: "#76675D", fontSize: 11, fontWeight: "800" },
