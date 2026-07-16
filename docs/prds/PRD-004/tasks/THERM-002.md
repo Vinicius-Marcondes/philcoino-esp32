@@ -146,3 +146,32 @@ Build and approve the Dashboard experience for Steam-blocked extraction, acknowl
   workflow to continue while all Human-review items are collected in
   `docs/prds/PRD-004/HUMAN_REVIEW.md`. This authorization advances THERM-003
   without representing the design as Human-approved.
+
+### 2026-07-15 requested hierarchy revision
+
+- Vinicius requested an in-scope layout revision without approving the pending
+  Human gate. The full-width online connection card was replaced by a compact,
+  non-color-only connection status beside the page eyebrow.
+- Dashboard now reads Machine status, Boiler temperature, Temperature graph,
+  Extraction, Compensation, then Cooldown machine. Machine uptime and Steam
+  timer moved to the Machine tab.
+- Dashboard profile selection is collapsed into an accessible dropdown inside
+  Extraction. Profiles now reads Profile sync, Profile configuration, then
+  Local profile editor. Machine now reads Active mode, Temperature targets,
+  Heater permission, Machine uptime, Steam timer, then Saved machine.
+- Extraction keeps Phase, Elapsed, and Remaining in a balanced responsive row;
+  the GPIO10 command metric is omitted while explicit copy still states that
+  extraction state is not physical pump feedback.
+- Dashboard, Profiles, and Machine now retain independent in-memory scroll
+  offsets while the Dashboard screen remains mounted.
+- The tab bar already occupies sibling layout space, so the former 210-point
+  navigation allowance was removed from scroll content. Each tab now ends with
+  only 24 points of normal spacing after its final component.
+- Bottom navigation retains 44-point controls and the same total inset-aware
+  height, but distributes vertical padding evenly above and below the row so
+  tabs are visually centered.
+- Combined revision verification passed: 98 mobile tests / 698 expectations,
+  mobile typecheck, Expo lint, Expo SDK 54 public config resolution, `git diff
+  --check`, and a debug web export with three static routes. Native visual,
+  Dynamic Type, VoiceOver, and TalkBack acceptance remain deferred in the Human
+  Review Ledger.

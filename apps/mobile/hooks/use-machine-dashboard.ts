@@ -27,6 +27,7 @@ import {
   connectingState,
   type ConnectionState,
 } from "@/src/networking/connection-state";
+import { translate } from "@/src/localization/i18n";
 import { profileSetsEqual } from "@/src/profiles/profile-set";
 import type { MobileProfileRepository } from "@/src/storage/mobile-profile-repository";
 
@@ -218,15 +219,11 @@ export function useMachineDashboard(
           setMachineProfiles(persistedProfiles);
           setProfileStorageError(null);
         })
-        .catch((error: unknown) => {
+        .catch(() => {
           if (!active || profileController.signal.aborted) {
             return;
           }
-          setProfileStorageError(
-            error instanceof Error
-              ? error.message
-              : "The profile sets could not be loaded.",
-          );
+          setProfileStorageError(translate("extractionPreview.profileLoadError"));
         });
 
       const synchronizePolling = (appState: typeof AppState.currentState) => {
@@ -288,12 +285,8 @@ export function useMachineDashboard(
         setMobileProfiles(profiles);
         setProfileStorageError(null);
         return true;
-      } catch (error) {
-        setProfileStorageError(
-          error instanceof Error
-            ? error.message
-            : "The mobile profile set could not be saved.",
-        );
+      } catch {
+        setProfileStorageError(translate("extractionPreview.profileSaveError"));
         return false;
       }
     },

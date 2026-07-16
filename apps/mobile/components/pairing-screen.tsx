@@ -539,7 +539,7 @@ function errorMessage(error: unknown): string {
       case "cancelled":
         return translate("pairing.errors.cancelled");
       case "http":
-        return error.response?.error.message ?? translate("pairing.errors.generic");
+        return translate("pairing.errors.generic");
       case "invalid-request":
         return translate("pairing.errors.generic");
     }

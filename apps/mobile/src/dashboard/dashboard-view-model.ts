@@ -59,6 +59,13 @@ const FAULT_LABEL_KEYS: Record<FaultCode, string> = {
   sensor_failure: "viewModel.fault.sensorFailure",
 };
 
+const FAULT_DETAIL_KEYS: Record<FaultCode, string> = {
+  heating_timeout: "viewModel.faultDetail.heatingTimeout",
+  internal_error: "viewModel.faultDetail.internalError",
+  over_temperature: "viewModel.faultDetail.overTemperature",
+  sensor_failure: "viewModel.faultDetail.sensorFailure",
+};
+
 export const TEMPERATURE_HISTORY_LIMIT = 180;
 
 export interface TemperatureSample {
@@ -98,6 +105,10 @@ export function modeLabel(mode: Mode): string {
 
 export function faultLabel(code: FaultCode): string {
   return translate(FAULT_LABEL_KEYS[code]);
+}
+
+export function faultDetail(code: FaultCode): string {
+  return translate(FAULT_DETAIL_KEYS[code]);
 }
 
 export function formatTemperature(temperatureC: number): string {

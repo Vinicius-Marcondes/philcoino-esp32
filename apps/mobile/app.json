@@ -40,7 +40,7 @@
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
       "package": "dev.viniciuslab.philcoino",
-      "versionCode": 4,
+      "versionCode": 5,
       "permissions": [
         "android.permission.INTERNET",
         "android.permission.ACCESS_NETWORK_STATE",
@@ -68,6 +68,15 @@
               "pt-BR"
             ]
           }
+        }
+      ],
+      [
+        "./plugins/with-android-locale-resource-qualifiers",
+        {
+          "supportedLocales": [
+            "en",
+            "pt-BR"
+          ]
         }
       ],
       "./plugins/with-android-cleartext",

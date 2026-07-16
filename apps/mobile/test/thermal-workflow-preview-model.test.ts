@@ -171,6 +171,10 @@ describe("thermal workflow design preview model", () => {
     expect(componentSource).toContain("snapshot.cooldown.status");
     expect(componentSource).toContain("snapshot.compensation.status");
     expect(componentSource).toContain("accessibilityState={{ disabled }}");
+    const compensation = componentSource.indexOf("<CompensationCard");
+    const cooldown = componentSource.indexOf("<CooldownCard", compensation);
+    expect(compensation).toBeGreaterThan(-1);
+    expect(cooldown).toBeGreaterThan(compensation);
     expect(dashboardSource).toContain("onStartCooldown={startCooldown}");
     expect(dashboardSource).toContain("onStopCooldown={stopCooldown}");
     expect(dashboardSource).toContain('workflowBlock={cooldownActive ? "cooldown" : null}');

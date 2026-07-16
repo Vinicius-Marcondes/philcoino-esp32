@@ -169,6 +169,16 @@ describe("extraction design preview model", () => {
     expect(source).toContain('accessibilityRole="radiogroup"');
     expect(source).toContain('accessibilityRole="radio"');
     expect(source).toContain('accessibilityRole="button"');
+    expect(source).toContain("function QuickProfilePicker");
+    expect(source).toContain("accessibilityState={{ disabled: active, expanded }}");
+    expect(source).toContain('translate("extractionPreview.pumpBoundary")');
+    expect(source).not.toContain('translate("extractionPreview.pumpCommand")');
+    const profileSync = source.indexOf('view === "profiles" ? <ProfileSyncCard');
+    const profileConfiguration = source.indexOf('view !== "quick" ? <View', profileSync);
+    const localEditor = source.indexOf("<ProfileEditor", profileConfiguration);
+    expect(profileSync).toBeGreaterThan(-1);
+    expect(profileConfiguration).toBeGreaterThan(profileSync);
+    expect(localEditor).toBeGreaterThan(profileConfiguration);
     expect(source).not.toContain("DeviceApiClient");
     expect(source).not.toContain("fetch(");
   });
@@ -185,5 +195,43 @@ describe("extraction design preview model", () => {
     expect(source).toContain('accessibilityRole="tab"');
     expect(source).toContain('styles.activeExtractionBar');
     expect(source).toContain('state={extractionUiState}');
+    expect(source).toContain("pageScrollOffsets.current[dashboardPage]");
+    expect(source).toContain("pendingScrollRestore.current");
+    expect(source).toContain("dashboardScrollView.current?.scrollTo");
+    expect(source).toContain("key={dashboardPage}");
+    expect(source).toContain("paddingBottom: 24");
+    expect(source).not.toContain("contentWithNavigation");
+    expect(source).toContain("navigationVerticalPadding");
+    expect(source).toContain("paddingBottom: navigationVerticalPadding");
+    expect(source).toContain("paddingTop: navigationVerticalPadding");
+    expect(source).toContain("minHeight: 44");
+
+    const machineStatus = source.indexOf("<MachineStatus");
+    const boilerTemperature = source.indexOf("<TemperatureCard", machineStatus);
+    const temperatureCurve = source.indexOf("<TemperatureCurve", boilerTemperature);
+    const extraction = source.indexOf("<ExtractionPreview", temperatureCurve);
+    const cooldown = source.indexOf("<ThermalWorkflowPreview", extraction);
+    expect(machineStatus).toBeGreaterThan(-1);
+    expect(boilerTemperature).toBeGreaterThan(machineStatus);
+    expect(temperatureCurve).toBeGreaterThan(boilerTemperature);
+    expect(extraction).toBeGreaterThan(temperatureCurve);
+    expect(cooldown).toBeGreaterThan(extraction);
+
+    const machineControls = source.indexOf("<MachineControls");
+    const heaterToggle = source.indexOf("<HeaterToggleBar", machineControls);
+    const uptime = source.indexOf('translate("dashboard.machineUptime")', heaterToggle);
+    const steamTimer = source.indexOf('translate("dashboard.steamTimer")', uptime);
+    const savedMachine = source.indexOf('translate("dashboard.savedMachine")', steamTimer);
+    expect(heaterToggle).toBeGreaterThan(machineControls);
+    expect(uptime).toBeGreaterThan(heaterToggle);
+    expect(steamTimer).toBeGreaterThan(uptime);
+    expect(savedMachine).toBeGreaterThan(steamTimer);
+
+    const controlsSource = await Bun.file(
+      new URL("../components/machine-controls.tsx", import.meta.url),
+    ).text();
+    expect(controlsSource.indexOf('translate("controls.activeMode")')).toBeLessThan(
+      controlsSource.indexOf('translate("controls.temperatureTargets")'),
+    );
   });
 });

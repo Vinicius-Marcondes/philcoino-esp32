@@ -6,6 +6,7 @@ import {
   boilerTargetC,
   boilerTemperatureC,
   connectionCopy,
+  faultDetail,
   faultLabel,
   formatSteamCountdown,
   formatHistoryDuration,
@@ -46,6 +47,9 @@ describe("dashboard view model", () => {
     expect(machineStatusLabel("fault")).toBe("Fault");
     expect(modeLabel("steam")).toBe("Steam");
     expect(faultLabel("sensor_failure")).toBe("Sensor failure");
+    expect(faultDetail("sensor_failure")).toBe(
+      "The boiler thermocouple reading is unavailable, invalid, or implausible.",
+    );
   });
 
   test("labels over-target heater-off states as cooling", () => {

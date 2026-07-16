@@ -1,5 +1,7 @@
 import type {
+  ApiV2ErrorCode,
   CooldownState,
+  ErrorCode,
   ExtractionSelection,
   ExtractionState,
   HeaterSettingsResponse,
@@ -433,9 +435,7 @@ export function mutationOutcomeFromError(error: unknown): {
     return {
       connection: null,
       state: {
-        message:
-          error.response?.error.message ??
-          translate("mutation.rejected"),
+        message: localizedRejectionMessage(error.response?.error.code),
         status: "rejected",
       },
     };
@@ -449,6 +449,39 @@ export function mutationOutcomeFromError(error: unknown): {
       status: "disconnected",
     },
   };
+}
+
+function localizedRejectionMessage(
+  code: ApiV2ErrorCode | ErrorCode | undefined,
+): string {
+  switch (code) {
+    case "brew_mode_required":
+      return translate("mutation.rejections.brewModeRequired");
+    case "cooldown_active":
+      return translate("mutation.rejections.cooldownActive");
+    case "cooldown_not_required":
+      return translate("mutation.rejections.cooldownNotRequired");
+    case "extraction_active":
+      return translate("mutation.rejections.extractionActive");
+    case "internal_error":
+      return translate("mutation.rejections.internalError");
+    case "machine_faulted":
+      return translate("mutation.rejections.machineFaulted");
+    case "malformed_request":
+      return translate("mutation.rejections.malformedRequest");
+    case "persistence_failure":
+      return translate("mutation.rejections.persistenceFailure");
+    case "profile_not_configured":
+      return translate("mutation.rejections.profileNotConfigured");
+    case "sensor_unavailable":
+      return translate("mutation.rejections.sensorUnavailable");
+    case "temperature_out_of_range":
+      return translate("mutation.rejections.temperatureOutOfRange");
+    case "unauthorized":
+      return translate("mutation.rejections.unauthorized");
+    case undefined:
+      return translate("mutation.rejected");
+  }
 }
 
 function disconnectedMutationMessage(error: unknown): string {
