@@ -52,6 +52,21 @@ describe("dashboard view model", () => {
     );
   });
 
+  test("shows sanitized protocol diagnostics without response data", () => {
+    expect(
+      connectionCopy({
+        protocol: {
+          endpoint: "/api/v2/state",
+          issuePaths: ["extraction.pumpCommand"],
+          status: 200,
+        },
+        status: "protocol-error",
+      }).detail,
+    ).toBe(
+      "The machine replied with data that does not match the current Philcoino API contract. Endpoint: /api/v2/state. HTTP status: 200. Invalid fields: extraction.pumpCommand.",
+    );
+  });
+
   test("labels over-target heater-off states as cooling", () => {
     expect(
       machineActivityLabel({

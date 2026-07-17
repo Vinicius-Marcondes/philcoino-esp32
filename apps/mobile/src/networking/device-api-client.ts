@@ -49,7 +49,7 @@ const MAX_TIMEOUT_MS = 30_000;
 
 type SafeParseResult<T> =
   | { data: T; success: true }
-  | { success: false };
+  | { error?: unknown; success: false };
 
 interface RuntimeSchema<T> {
   safeParse(value: unknown): SafeParseResult<T>;
@@ -351,10 +351,10 @@ export class DeviceApiClient {
       });
 
       if (!response.ok) {
-        await throwResponseError(response, request.errorVersion ?? "v1");
+        await throwResponseError(response, request.errorVersion ?? "v1", path);
       }
 
-      return await parseResponse(response, schema);
+      return await parseResponse(response, schema, path);
     } catch (error) {
       if (abort.reason() === "timeout") {
         throw new ApiClientError("timeout", "The device request timed out.");
@@ -375,14 +375,19 @@ export class DeviceApiClient {
 async function parseResponse<T>(
   response: DeviceFetchResponse,
   schema: RuntimeSchema<T>,
+  endpoint: string,
 ): Promise<T> {
-  const body = await readJson(response);
+  const body = await readJson(response, endpoint);
   const parsed = schema.safeParse(body);
   if (!parsed.success) {
     throw new ApiClientError(
       "protocol",
       "The device returned an invalid response.",
-      { status: response.status },
+      {
+        endpoint,
+        issuePaths: protocolIssuePaths(parsed.error),
+        status: response.status,
+      },
     );
   }
   return parsed.data;
@@ -391,14 +396,16 @@ async function parseResponse<T>(
 async function throwResponseError(
   response: DeviceFetchResponse,
   version: "v1" | "v2",
+  endpoint: string,
 ): Promise<never> {
   if (response.status === 404) {
     throw new ApiClientError("not-found", "No Philcoino device was found.", {
+      endpoint,
       status: response.status,
     });
   }
 
-  const body = await readJson(response);
+  const body = await readJson(response, endpoint);
   const parsed =
     version === "v1"
       ? ErrorResponseSchema.safeParse(body)
@@ -407,7 +414,11 @@ async function throwResponseError(
     throw new ApiClientError(
       "protocol",
       "The device returned an invalid error response.",
-      { status: response.status },
+      {
+        endpoint,
+        issuePaths: protocolIssuePaths(parsed.error),
+        status: response.status,
+      },
     );
   }
 
@@ -416,16 +427,18 @@ async function throwResponseError(
       throw new ApiClientError(
         "protocol",
         "The device returned an inconsistent authentication response.",
-        { status: response.status },
+        { endpoint, status: response.status },
       );
     }
     throw new ApiClientError("unauthorized", "The bearer token was rejected.", {
+      endpoint,
       response: parsed.data,
       status: response.status,
     });
   }
 
   throw new ApiClientError("http", "The device rejected the request.", {
+    endpoint,
     response: parsed.data,
     status: response.status,
   });
@@ -443,16 +456,62 @@ function parseV2ErrorResponse(body: unknown) {
   return ApiV2ErrorResponseSchema.safeParse(body);
 }
 
-async function readJson(response: DeviceFetchResponse): Promise<unknown> {
+async function readJson(
+  response: DeviceFetchResponse,
+  endpoint: string,
+): Promise<unknown> {
   try {
     return await response.json();
   } catch {
     throw new ApiClientError(
       "protocol",
       "The device returned a non-JSON response.",
-      { status: response.status },
+      { endpoint, status: response.status },
     );
   }
+}
+
+function protocolIssuePaths(error: unknown): readonly string[] | undefined {
+  const paths = new Set<string>();
+  const visited = new Set<object>();
+
+  const visit = (value: unknown): void => {
+    if (paths.size >= 8 || value === null || typeof value !== "object") {
+      return;
+    }
+    if (visited.has(value)) {
+      return;
+    }
+    visited.add(value);
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        visit(item);
+      }
+      return;
+    }
+
+    const record = value as Record<string, unknown>;
+    if (Array.isArray(record.path)) {
+      const components = record.path.filter(
+        (component): component is number | string =>
+          typeof component === "number" || typeof component === "string",
+      );
+      paths.add(
+        components.length === 0
+          ? "$"
+          : components
+              .map((component) =>
+                typeof component === "number" ? `[${component}]` : component,
+              )
+              .join("."),
+      );
+    }
+    visit(record.issues);
+    visit(record.errors);
+  };
+
+  visit(error);
+  return paths.size === 0 ? undefined : [...paths];
 }
 
 function createRequestAbort(

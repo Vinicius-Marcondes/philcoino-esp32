@@ -206,6 +206,25 @@ struct CooldownHarness {
   CooldownController cooldown;
 };
 
+struct WorkflowHarness {
+  WorkflowHarness()
+      : temperature({93, 115}),
+        pump(pump_output, critical_section),
+        extraction(default_extraction_profiles(), pump),
+        cooldown(temperature.controller, pump) {
+    assert(pump.initialize());
+    pump_output.cooldown_guard = &temperature.controller;
+    assert(cooldown.reset(0));
+  }
+
+  ControllerHarness temperature;
+  FakeDigitalOutput pump_output{};
+  FakeOutputCriticalSection critical_section{};
+  FailOffPump pump;
+  ExtractionController extraction;
+  CooldownController cooldown;
+};
+
 CooldownInput cooldown_input(float temperature_c,
                              bool extraction_active = false) {
   return {true, false, extraction_active, temperature_c};
@@ -1241,6 +1260,45 @@ void test_cooldown_start_orders_outputs_and_preserves_permission() {
   assert(!harness.temperature.controller.heater_enabled());
 }
 
+void test_shared_pump_snapshots_keep_workflow_ownership() {
+  WorkflowHarness harness;
+  assert(harness.extraction.start(
+             "start-terminal-before-cooldown", {ExtractionSelectionKind::kManual, 0},
+             1000) == StartExtractionResult::kStarted);
+  assert(harness.extraction.stop(2000));
+  auto extraction = harness.extraction.snapshot(2000);
+  assert(extraction.status == ExtractionStatus::kIdle);
+  assert(extraction.outcome == ExtractionOutcome::kStopped);
+  assert(extraction.pump_command == PumpCommand::kOff);
+
+  harness.temperature.controller.update(ok(96.0F), 2500);
+  assert(harness.cooldown.start("cooldown-owner-key-01", cooldown_input(96.0F),
+                                3000) == StartCooldownResult::kStarted);
+  assert(harness.pump.command() == PumpCommand::kRunning);
+  extraction = harness.extraction.snapshot(3000);
+  assert(extraction.outcome == ExtractionOutcome::kStopped);
+  assert(extraction.pump_command == PumpCommand::kOff);
+  assert(harness.cooldown.snapshot(3000).pump_command == PumpCommand::kRunning);
+
+  assert(harness.cooldown.stop(4000) == CooldownUpdateResult::kOk);
+  assert(harness.cooldown.stop(9000) == CooldownUpdateResult::kCompleted);
+  auto cooldown = harness.cooldown.snapshot(9000);
+  assert(cooldown.status == CooldownStatus::kIdle);
+  assert(cooldown.pump_command == PumpCommand::kOff);
+
+  assert(harness.extraction.start(
+             "start-after-terminal-cooldown", {ExtractionSelectionKind::kManual, 0},
+             10000) == StartExtractionResult::kStarted);
+  assert(harness.pump.command() == PumpCommand::kRunning);
+  cooldown = harness.cooldown.snapshot(10000);
+  assert(cooldown.status == CooldownStatus::kIdle);
+  assert(cooldown.pump_command == PumpCommand::kOff);
+
+  assert(harness.cooldown.stop(10001) == CooldownUpdateResult::kOk);
+  assert(harness.extraction.active());
+  assert(harness.pump.command() == PumpCommand::kRunning);
+}
+
 void test_cooldown_replay_conflict_target_snapshot_and_threshold() {
   CooldownHarness harness({93, 115});
   assert(harness.cooldown.start("cooldown-replay-key-1", cooldown_input(110.0F),
@@ -1487,6 +1545,7 @@ int main() {
   test_extraction_wraparound_disconnect_and_heater_fault_independence();
   test_pump_output_failures_end_extraction_off();
   test_cooldown_start_orders_outputs_and_preserves_permission();
+  test_shared_pump_snapshots_keep_workflow_ownership();
   test_cooldown_replay_conflict_target_snapshot_and_threshold();
   test_cooldown_cutoff_stop_delayed_update_and_wraparound();
   test_cooldown_eligibility_failures_reset_and_output_fail_off();

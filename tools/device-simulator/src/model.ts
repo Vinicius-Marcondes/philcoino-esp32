@@ -518,6 +518,10 @@ export class SimulatorMachine {
   }
 
   startCooldown(idempotencyKey: string): StartCooldownResult {
+    const current = this.getCooldownState();
+    if (this.cooldown?.idempotencyKey === idempotencyKey) {
+      return { ok: true, cooldown: current };
+    }
     const extraction = this.getExtractionState();
     if (extraction.status === "running") {
       return {
@@ -525,10 +529,6 @@ export class SimulatorMachine {
         reason: "extraction-active",
         activeExtraction: extraction,
       };
-    }
-    const current = this.getCooldownState();
-    if (this.cooldown?.idempotencyKey === idempotencyKey) {
-      return { ok: true, cooldown: current };
     }
     if (current.status !== "idle") {
       return {

@@ -685,6 +685,94 @@ void test_api_v2_cooldown_and_compensation_contract() {
   assert(response.body.find("\"cooldownId\":\"cooldown-1\"") !=
          std::string::npos);
 
+  ApiHarness workflow_handoff;
+  assert(workflow_handoff
+             .request(
+                 HttpMethod::kPost, "/api/v2/extractions/start", authorization,
+                 "{\"idempotencyKey\":\"start-before-cooldown-01\",\"selection\":{\"kind\":\"manual\"}}",
+                 2000)
+             .status == 200);
+  assert(workflow_handoff
+             .request(HttpMethod::kPost, "/api/v2/extractions/stop",
+                      authorization, "", 3000)
+             .status == 200);
+  workflow_handoff.controller.update(ok(96.0F), 3000);
+  assert(workflow_handoff
+             .request(HttpMethod::kPost, "/api/v2/cooldowns/start",
+                      authorization, kCooldownStart, 4000)
+             .status == 200);
+  response = workflow_handoff.request(HttpMethod::kGet, "/api/v2/state",
+                                      authorization, "", 4000);
+  assert(response.status == 200);
+  assert(response.body.find(
+             "\"extraction\":{\"status\":\"idle\",\"extractionId\":\"run-1\"") !=
+         std::string::npos);
+  assert(response.body.find(
+             "\"remainingMs\":null,\"pumpCommand\":\"off\",\"outcome\":\"stopped\"") !=
+         std::string::npos);
+  assert(response.body.find(
+             "\"cooldown\":{\"status\":\"pumping\"") !=
+         std::string::npos);
+
+  assert(workflow_handoff
+             .request(HttpMethod::kPost, "/api/v2/cooldowns/stop",
+                      authorization, "", 5000)
+             .status == 200);
+  assert(workflow_handoff
+             .request(HttpMethod::kPost, "/api/v2/cooldowns/stop",
+                      authorization, "", 10000)
+             .status == 200);
+  assert(workflow_handoff
+             .request(
+                 HttpMethod::kPost, "/api/v2/extractions/start", authorization,
+                 "{\"idempotencyKey\":\"start-after-cooldown-001\",\"selection\":{\"kind\":\"manual\"}}",
+                 11000)
+             .status == 200);
+  response = workflow_handoff.request(HttpMethod::kPost,
+                                      "/api/v2/cooldowns/stop", authorization,
+                                      "", 11001);
+  assert(response.status == 200);
+  assert(workflow_handoff.extraction.active());
+  assert(workflow_handoff.pump.command() == PumpCommand::kRunning);
+  response = workflow_handoff.request(HttpMethod::kGet, "/api/v2/state",
+                                      authorization, "", 11001);
+  assert(response.status == 200);
+  assert(response.body.find(
+             "\"extraction\":{\"status\":\"running\"") !=
+         std::string::npos);
+  assert(response.body.find(
+             "\"cooldown\":{\"status\":\"idle\",\"cooldownId\":\"cooldown-1\"") !=
+         std::string::npos);
+  assert(response.body.find(
+             "\"remainingMs\":null,\"pumpCommand\":\"off\",\"heaterInhibited\":false") !=
+         std::string::npos);
+  response = workflow_handoff.request(HttpMethod::kPost,
+                                      "/api/v2/cooldowns/start", authorization,
+                                      kCooldownStart, 11002);
+  assert(response.status == 200);
+  assert(workflow_handoff.extraction.active());
+  assert(workflow_handoff.pump.command() == PumpCommand::kRunning);
+
+  ApiHarness failed_off;
+  failed_off.controller.update(ok(96.0F), 2000);
+  assert(failed_off
+             .request(HttpMethod::kPost, "/api/v2/cooldowns/start",
+                      authorization, kCooldownStart, 2000)
+             .status == 200);
+  failed_off.pump_output.fail_low = true;
+  expect_error(failed_off.request(HttpMethod::kPost,
+                                  "/api/v2/cooldowns/stop", authorization,
+                                  "", 3000),
+               500, "internal_error");
+  response = failed_off.request(HttpMethod::kGet, "/api/v2/state",
+                                authorization, "", 3000);
+  assert(response.status == 200);
+  assert(response.body.find("\"status\":\"fault\"") != std::string::npos);
+  assert(response.body.find("\"pumpCommand\":\"running\"") !=
+         std::string::npos);
+  assert(response.body.find("\"outcome\":\"failed\"") !=
+         std::string::npos);
+
   ApiHarness extraction_conflict_harness;
   assert(extraction_conflict_harness
              .request(
@@ -857,6 +945,35 @@ void capture_contract_payloads(const std::filesystem::path& directory) {
                              authorization, kCooldownStart, 9000)
                     .body);
 
+  ApiHarness handoff_harness;
+  handoff_harness.request(
+      HttpMethod::kPost, "/api/v2/extractions/start", authorization,
+      "{\"idempotencyKey\":\"start-capture-before-cool\",\"selection\":{\"kind\":\"manual\"}}",
+      2000);
+  handoff_harness.request(HttpMethod::kPost, "/api/v2/extractions/stop",
+                          authorization, "", 3000);
+  handoff_harness.controller.update(ok(96.0F), 3000);
+  handoff_harness.request(HttpMethod::kPost, "/api/v2/cooldowns/start",
+                          authorization, kCooldownStart, 4000);
+  write_capture(directory, "state-cooldown-after-extraction-v2.json",
+                handoff_harness
+                    .request(HttpMethod::kGet, "/api/v2/state",
+                             authorization, "", 4000)
+                    .body);
+  handoff_harness.request(HttpMethod::kPost, "/api/v2/cooldowns/stop",
+                          authorization, "", 5000);
+  handoff_harness.request(HttpMethod::kPost, "/api/v2/cooldowns/stop",
+                          authorization, "", 10000);
+  handoff_harness.request(
+      HttpMethod::kPost, "/api/v2/extractions/start", authorization,
+      "{\"idempotencyKey\":\"start-capture-after-cool-1\",\"selection\":{\"kind\":\"manual\"}}",
+      11000);
+  write_capture(directory, "state-extraction-after-cooldown-v2.json",
+                handoff_harness
+                    .request(HttpMethod::kGet, "/api/v2/state",
+                             authorization, "", 11000)
+                    .body);
+
   ApiHarness not_required;
   not_required.controller.update(ok(93.0F), 2000);
   write_capture(directory, "cooldown-not-required-v2.json",
@@ -898,6 +1015,19 @@ void capture_contract_payloads(const std::filesystem::path& directory) {
                 output_failure
                     .request(HttpMethod::kGet, "/api/v2/state",
                              authorization, "", 2000)
+                    .body);
+
+  ApiHarness off_failure;
+  off_failure.controller.update(ok(96.0F), 2000);
+  off_failure.request(HttpMethod::kPost, "/api/v2/cooldowns/start",
+                      authorization, kCooldownStart, 2000);
+  off_failure.pump_output.fail_low = true;
+  off_failure.request(HttpMethod::kPost, "/api/v2/cooldowns/stop",
+                      authorization, "", 3000);
+  write_capture(directory, "state-cooldown-failed-running-v2.json",
+                off_failure
+                    .request(HttpMethod::kGet, "/api/v2/state",
+                             authorization, "", 3000)
                     .body);
 
   ApiHarness fault_harness;

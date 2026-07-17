@@ -9,6 +9,11 @@ export type ConnectionStatus =
   | "unauthorized";
 
 export interface ConnectionState {
+  protocol?: {
+    endpoint?: string;
+    issuePaths?: readonly string[];
+    status?: number;
+  };
   status: ConnectionStatus;
 }
 
@@ -27,7 +32,18 @@ export function connectionStateFromError(
       return null;
     case "not-found":
       return { status: "not-found" };
-    case "protocol":
+    case "protocol": {
+      const protocol = {
+        endpoint: error.endpoint,
+        issuePaths: error.issuePaths,
+        status: error.status,
+      };
+      return protocol.endpoint === undefined &&
+        protocol.issuePaths === undefined &&
+        protocol.status === undefined
+        ? { status: "protocol-error" }
+        : { protocol, status: "protocol-error" };
+    }
     case "invalid-request":
       return { status: "protocol-error" };
     case "unauthorized":

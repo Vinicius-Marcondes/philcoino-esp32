@@ -666,7 +666,9 @@ ExtractionSnapshot ExtractionController::snapshot(std::uint32_t now_ms) const {
         ExtractionPhase::kIdle,
         terminal_elapsed_ms_,
         0,
-        pump_.command(),
+        outcome_ == ExtractionOutcome::kFailed
+            ? pump_.command()
+            : peripherals::PumpCommand::kOff,
         outcome_,
     };
   }
@@ -883,8 +885,10 @@ CooldownSnapshot CooldownController::snapshot(std::uint32_t now_ms) const {
   value.status = status_;
   value.cooldown_id = cooldown_id_;
   value.brew_target_c = brew_target_c_;
-  value.pump_command = cooldown_id_.empty() ? peripherals::PumpCommand::kOff
-                                             : pump_.command();
+  value.pump_command =
+      status_ != CooldownStatus::kIdle || outcome_ == CooldownOutcome::kFailed
+          ? pump_.command()
+          : peripherals::PumpCommand::kOff;
   value.heater_inhibited = temperature_.cooldown_inhibited();
   value.outcome = outcome_;
   if (cooldown_id_.empty()) {
@@ -1006,9 +1010,7 @@ CooldownUpdateResult CooldownController::update(const CooldownInput& input,
 
 CooldownUpdateResult CooldownController::stop(std::uint32_t now_ms) {
   if (status_ == CooldownStatus::kIdle) {
-    return pump_.command() == peripherals::PumpCommand::kOff || pump_.force_off()
-               ? CooldownUpdateResult::kOk
-               : CooldownUpdateResult::kFailed;
+    return CooldownUpdateResult::kOk;
   }
   if (status_ == CooldownStatus::kStabilizing) {
     return update({true, temperature_.has_fault(), false,

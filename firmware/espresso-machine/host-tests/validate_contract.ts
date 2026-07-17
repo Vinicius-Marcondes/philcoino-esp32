@@ -47,11 +47,14 @@ const captures = [
   ["cooldown-stop-v2.json", StopCooldownResponseSchema],
   ["state-cooldown-v2.json", MachineStateV2Schema],
   ["cooldown-terminal-v2.json", StartCooldownResponseSchema],
+  ["state-cooldown-after-extraction-v2.json", MachineStateV2Schema],
+  ["state-extraction-after-cooldown-v2.json", MachineStateV2Schema],
   ["cooldown-not-required-v2.json", ApiV2ErrorResponseSchema],
   ["cooldown-sensor-unavailable-v2.json", ApiV2ErrorResponseSchema],
   ["cooldown-machine-faulted-v2.json", ApiV2ErrorResponseSchema],
   ["brew-mode-required-v2.json", ApiV2ErrorResponseSchema],
   ["state-cooldown-failed-v2.json", MachineStateV2Schema],
+  ["state-cooldown-failed-running-v2.json", MachineStateV2Schema],
 ] as const;
 
 for (const [filename, schema] of captures) {

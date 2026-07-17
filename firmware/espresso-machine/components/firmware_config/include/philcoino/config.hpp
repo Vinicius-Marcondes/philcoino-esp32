@@ -13,7 +13,7 @@ inline constexpr char kDeviceIdPrefix[] = "philcoino-";
 inline constexpr bool kWifiEnabled = true;
 // ESP-IDF uses quarter-dBm units; 44 limits station TX power to 11 dBm.
 inline constexpr std::int8_t kWifiMaximumTxPowerQuarterDbm = 44;
-inline constexpr bool kOledEnabled = true;
+inline constexpr bool kOledEnabled = false;
 
 inline constexpr std::int32_t kBrewTargetMinimumC = 85;
 inline constexpr std::int32_t kBrewTargetMaximumC = 95;

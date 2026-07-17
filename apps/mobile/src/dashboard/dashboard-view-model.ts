@@ -79,7 +79,34 @@ export interface TemperatureSample {
 
 export function connectionCopy(connection: ConnectionState) {
   const keys = CONNECTION_COPY_KEYS[connection.status];
-  return { detail: translate(keys.detail), label: translate(keys.label) };
+  const detail = translate(keys.detail);
+  if (connection.status !== "protocol-error" || connection.protocol === undefined) {
+    return { detail, label: translate(keys.label) };
+  }
+
+  const context = [
+    connection.protocol.endpoint === undefined
+      ? null
+      : translate("viewModel.connection.protocolEndpoint", {
+          endpoint: connection.protocol.endpoint,
+        }),
+    connection.protocol.status === undefined
+      ? null
+      : translate("viewModel.connection.protocolStatus", {
+          status: connection.protocol.status,
+        }),
+    connection.protocol.issuePaths === undefined ||
+    connection.protocol.issuePaths.length === 0
+      ? null
+      : translate("viewModel.connection.protocolFields", {
+          fields: connection.protocol.issuePaths.join(", "),
+        }),
+  ].filter((part): part is string => part !== null);
+
+  return {
+    detail: [detail, ...context].join(" "),
+    label: translate(keys.label),
+  };
 }
 
 export function machineStatusLabel(status: MachineStatus): string {

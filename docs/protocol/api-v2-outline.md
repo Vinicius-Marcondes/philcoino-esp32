@@ -59,6 +59,15 @@ stabilization. User heater permission is separate. Same-key active or terminal
 replay preserves identity and never restarts a deadline; reset/power loss never
 resumes the RAM-only workflow.
 
+Extraction and cooldown retain workflow-owned terminal acknowledgements even
+though they share one pump output. A normally completed or stopped workflow
+therefore continues to report its own `pumpCommand: "off"` if the other
+workflow later commands the shared pump to run. Calling cooldown Stop while
+cooldown is already idle is a no-op for that shared output and cannot interrupt
+an active extraction. If a cooldown pump-off write itself fails, the terminal
+failed acknowledgement may retain `pumpCommand: "running"` to report the last
+successful command instead of falsely claiming off.
+
 Profile and target persistence occur outside the single bounded workflow mutex.
 Phone disconnection cannot interrupt an acknowledged extraction or cooldown.
 Reset or power loss clears volatile workflow/idempotency state and boot never
@@ -70,7 +79,8 @@ restores a running command.
 `heaterInhibited` describe firmware command/policy state only. The device has no
 pump-current, SSR-output, original-switch, pressure, flow, or verified cooling
 feedback. These fields do not prove physical pump/heater operation,
-de-energization, or temperature reduction, and an SSR may fail shorted.
+de-energization, or temperature reduction. A failed off write can retain a
+running command, and an SSR may fail shorted regardless of the reported command.
 
 ## Evidence boundary
 

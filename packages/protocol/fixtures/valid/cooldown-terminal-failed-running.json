@@ -1,0 +1,10 @@
+{
+  "status": "idle",
+  "cooldownId": "cooldown-failed-off",
+  "brewTargetC": 93,
+  "elapsedMs": 12000,
+  "remainingMs": null,
+  "pumpCommand": "running",
+  "heaterInhibited": false,
+  "outcome": "failed"
+}

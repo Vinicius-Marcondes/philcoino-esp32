@@ -141,6 +141,7 @@ const validFixtures = [
   ["valid/cooldown-pumping.json", PumpingCooldownStateSchema],
   ["valid/cooldown-stabilizing.json", StabilizingCooldownStateSchema],
   ["valid/cooldown-terminal-replay.json", IdleCooldownStateSchema],
+  ["valid/cooldown-terminal-failed-running.json", IdleCooldownStateSchema],
   ["valid/cooldown-start-request.json", StartCooldownRequestSchema],
   ["valid/cooldown-active-conflict.json", CooldownActiveConflictResponseSchema],
   ["valid/brew-mode-required-error.json", ApiV2ErrorResponseSchema],
@@ -191,6 +192,7 @@ const invalidFixtures = [
     CooldownStateSchema,
   ],
   ["invalid/cooldown-terminal-without-outcome.json", CooldownStateSchema],
+  ["invalid/cooldown-terminal-running-cutoff.json", CooldownStateSchema],
   ["invalid/cooldown-start-key-short.json", StartCooldownRequestSchema],
   [
     "invalid/cooldown-conflict-with-idle.json",
@@ -288,6 +290,7 @@ describe("documented OpenAPI examples", () => {
       IdleCooldownState: [
         await fixture("valid/cooldown-idle.json"),
         await fixture("valid/cooldown-terminal-replay.json"),
+        await fixture("valid/cooldown-terminal-failed-running.json"),
       ],
       PumpingCooldownState: [await fixture("valid/cooldown-pumping.json")],
       StabilizingCooldownState: [

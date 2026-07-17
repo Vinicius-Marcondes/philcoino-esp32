@@ -374,16 +374,25 @@ const InitialIdleCooldownStateSchema = z.strictObject({
   outcome: z.null(),
 });
 
-const TerminalIdleCooldownStateSchema = z.strictObject({
+const TerminalIdleCooldownBaseSchema = z.strictObject({
   status: z.literal("idle"),
   cooldownId: CooldownIdSchema,
   brewTargetC: BrewTargetSchema,
   elapsedMs: CooldownElapsedMsSchema,
   remainingMs: z.null(),
-  pumpCommand: z.literal("off"),
   heaterInhibited: z.literal(false),
-  outcome: CooldownOutcomeSchema,
 });
+
+const TerminalIdleCooldownStateSchema = z.union([
+  TerminalIdleCooldownBaseSchema.extend({
+    pumpCommand: z.literal("off"),
+    outcome: z.enum(["target-reached", "cutoff", "stopped"]),
+  }),
+  TerminalIdleCooldownBaseSchema.extend({
+    pumpCommand: PumpCommandSchema,
+    outcome: z.literal("failed"),
+  }),
+]);
 
 export const IdleCooldownStateSchema = z.union([
   InitialIdleCooldownStateSchema,

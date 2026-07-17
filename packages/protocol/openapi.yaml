@@ -1141,20 +1141,39 @@
         }
       },
       "TerminalIdleCooldownState": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["status", "cooldownId", "brewTargetC", "elapsedMs", "remainingMs", "pumpCommand", "heaterInhibited", "outcome"],
-        "properties": {
-          "status": { "const": "idle" },
-          "cooldownId": { "$ref": "#/components/schemas/CooldownId" },
-          "brewTargetC": { "$ref": "#/components/schemas/BrewTarget" },
-          "elapsedMs": { "type": "integer", "minimum": 0, "maximum": 50000, "description": "Total acknowledged monotonic elapsed time from the retained cooldown Start." },
-          "remainingMs": { "type": "null" },
-          "pumpCommand": { "const": "off" },
-          "heaterInhibited": { "const": false },
-          "outcome": { "$ref": "#/components/schemas/CooldownOutcome" }
-        },
-        "description": "The retained terminal acknowledgement for the most recent cooldown. It preserves identity, the snapshotted Brew threshold, total acknowledged elapsed time, and the terminal reason so a same-key replay cannot be interpreted as a new workflow. Reset or power loss returns the initial idle shape.",
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["status", "cooldownId", "brewTargetC", "elapsedMs", "remainingMs", "pumpCommand", "heaterInhibited", "outcome"],
+            "properties": {
+              "status": { "const": "idle" },
+              "cooldownId": { "$ref": "#/components/schemas/CooldownId" },
+              "brewTargetC": { "$ref": "#/components/schemas/BrewTarget" },
+              "elapsedMs": { "type": "integer", "minimum": 0, "maximum": 50000 },
+              "remainingMs": { "type": "null" },
+              "pumpCommand": { "const": "off" },
+              "heaterInhibited": { "const": false },
+              "outcome": { "enum": ["target-reached", "cutoff", "stopped"] }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["status", "cooldownId", "brewTargetC", "elapsedMs", "remainingMs", "pumpCommand", "heaterInhibited", "outcome"],
+            "properties": {
+              "status": { "const": "idle" },
+              "cooldownId": { "$ref": "#/components/schemas/CooldownId" },
+              "brewTargetC": { "$ref": "#/components/schemas/BrewTarget" },
+              "elapsedMs": { "type": "integer", "minimum": 0, "maximum": 50000 },
+              "remainingMs": { "type": "null" },
+              "pumpCommand": { "$ref": "#/components/schemas/PumpCommand" },
+              "heaterInhibited": { "const": false },
+              "outcome": { "const": "failed" }
+            }
+          }
+        ],
+        "description": "The retained terminal acknowledgement for the most recent cooldown. Successful target, cutoff, and Stop outcomes retain the cooldown-owned off command even when another workflow later owns the shared pump. A failed off write may retain pumpCommand running; command state does not prove physical flow or de-energization. Reset or power loss returns the initial idle shape.",
         "examples": [
           {
             "status": "idle",
@@ -1165,6 +1184,16 @@
             "pumpCommand": "off",
             "heaterInhibited": false,
             "outcome": "cutoff"
+          },
+          {
+            "status": "idle",
+            "cooldownId": "cooldown-184221",
+            "brewTargetC": 93,
+            "elapsedMs": 12000,
+            "remainingMs": null,
+            "pumpCommand": "running",
+            "heaterInhibited": false,
+            "outcome": "failed"
           }
         ]
       },
@@ -1193,6 +1222,16 @@
             "pumpCommand": "off",
             "heaterInhibited": false,
             "outcome": "cutoff"
+          },
+          {
+            "status": "idle",
+            "cooldownId": "cooldown-failed-off",
+            "brewTargetC": 93,
+            "elapsedMs": 12000,
+            "remainingMs": null,
+            "pumpCommand": "running",
+            "heaterInhibited": false,
+            "outcome": "failed"
           }
         ]
       },
