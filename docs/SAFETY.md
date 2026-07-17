@@ -2,25 +2,25 @@
 
 [English](en/SAFETY.md)
 
-Philcoino é um controller experimental para máquina de espresso que trabalha próximo à rede elétrica. O repositório contém software útil e cobertura por host tests, mas não é um safety controller certificado e não está aprovado para produção, uso sem supervisão ou operação do heater ligado à rede elétrica.
+Philcoino é um controller experimental para máquina de espresso que trabalha próximo à rede elétrica. O repositório contém software útil e cobertura por host tests, mas não é um safety controller certificado e não está aprovado para produção ou uso sem supervisão. Em 2026-07-16, o owner aceitou a configuração testada após reportar testes funcionais e checks dos controles de energia com equipamento técnico; essa aceitação não é certificação geral.
 
 ## Status atual
 
-- As tasks de software da PRD-001 avançaram até o monitoramento mobile e controles com acknowledgement, mas o tracker ainda registra tasks posteriores de revisão/validação física como incompletas.
+- A revisão Human de todas as features implementadas e da configuração física testada foi aceita pelo owner em 2026-07-16. A task Agent PHIL-012 de resiliência/contrato automatizado continua pendente.
 - A revisão atual do codebase contém findings BLOCKER e MAJOR não resolvidos sobre timing do firmware, monitoramento dos sensores, comportamento de timeout, certeza da saída física, transporte e identidade/credenciais do dispositivo.
 - O firmware usa permanentemente uma leitura de thermocouple na base da boiler para brew e steam. Isso mantém um único ponto de falha de controle e não oferece cross-check independente entre sensores.
 - A PRD-003 implementa uma correção fixa e owner-selected de `+5°C` apenas em
   Steam, depois da validação da leitura raw. O valor corrigido orienta control,
-  limits, API e OLED, mas ainda depende do mesmo sensor único e aguarda
-  validação física instrumentada e repetível na STEAM-004.
+  limits, API e OLED. O owner aceitou o valor para a configuração testada em
+  STEAM-004; os registros brutos de instrumentos/medições não estão no repo.
 - O software da PRD-004 adiciona bias fixo de `+2°C` somente ao cálculo de duty
   durante Manual/main e um workflow de comando de cooldown do firmware com
-  cutoff da pump em 45 segundos e estabilização de cinco segundos. A revisão
-  visual/accessibility da THERM-002 e toda aceitação target/física das
-  THERM-010/THERM-011 continuam pendentes no Human Review Ledger; nenhuma
-  evidência de cooling físico ou operação energizada foi produzida.
+  cutoff da pump em 45 segundos e estabilização de cinco segundos. THERM-002,
+  THERM-010 e THERM-011 foram aceitas pelo owner em 2026-07-16 após testes de
+  todas as features e checks dos controles de energia com equipamento técnico.
+  A evidência é owner-reported e limitada à configuração testada.
 - O source atual do firmware habilita o OLED (`kOledEnabled = true`), enquanto o tracker registra um estado temporário com OLED desabilitado. Trate isso como uma divergência não resolvida entre documentação e configuração, não como um estado de hardware aprovado.
-- Discovery físico no iPhone, comportamento final dos sensores, instalação do relay/SSR, cutoff independente e validação energizada supervisionada continuam sendo checks humanos.
+- Não há checks Human pendentes para as features ou para a configuração testada. Findings de arquitetura, firmware e security continuam sendo trabalho de engenharia.
 - Em 2026-07-14, o owner aceitou a matriz funcional da pump no target após relatar discovery HTTP/mDNS, Manual/profiles, Stop/cutoff, continuidade sem app e boot sem retomada. Isso é evidência funcional reportada pelo owner; não inclui captures elétricos independentes, injeção de falha GPIO, timer-wrap no target nem aprovação energizada.
 
 Consulte [CODEBASE_REVIEW_REPORT.md](../CODEBASE_REVIEW_REPORT.md), [docs/TRACKER.md](TRACKER.md) e [docs/side-notes.md](side-notes.md) para as evidências detalhadas.
@@ -63,7 +63,8 @@ A revisão atual identifica, entre outros pontos:
 
 - a lease GPTimer e o mutex bounded reduzem exposição do timing do comando de
   software, mas o build/runtime matrix no target fixado, recovery por watchdog,
-  resposta física GPIO/SSR e cutoff independente continuam sem verificação;
+  continuam sem evidência de source review; o owner aceitou a resposta física
+  GPIO/SSR/cutoff da configuração testada sem adicionar os traces brutos;
 - o mode diagnóstico com um sensor remove monitoramento independente entre dois sensores, e a detecção de disagreement não está implementada;
 - alguns writes remotos válidos ou no-op podem reiniciar deadlines de aquecimento, permitindo que um cliente prolongue a proteção de timeout;
 - uma falha ao escrever off no GPIO ainda pode ser apresentada como heater desligado, mesmo quando o estado físico é desconhecido;
@@ -73,7 +74,7 @@ A revisão atual identifica, entre outros pontos:
 - credenciais bearer em HTTP plaintext não têm requisitos mínimos de força, throttling, rotação ou confidencialidade no transporte;
 - o simulador omite comportamentos críticos de timing, sensores, scheduler, persistence stall e falhas de GPIO do firmware.
 
-Não suavize nem esconda esses findings na documentação destinada ao público. Resolva e verifique cada ponto antes de reconsiderar operação energizada.
+Não suavize nem esconda esses findings na documentação destinada ao público. Resolva e verifique cada ponto antes de considerar produção, uso sem supervisão ou outra configuração de hardware.
 
 ## Boundary de segurança física
 
@@ -124,7 +125,7 @@ Enquanto os findings conhecidos não forem resolvidos:
 
 Sempre informe qual nível produziu uma afirmação.
 
-## Requisitos antes de considerar operação energizada
+## Requisitos antes de produção, uso sem supervisão ou outra configuração energizada
 
 No mínimo:
 
@@ -137,7 +138,7 @@ No mínimo:
 6. resolver identidade do dispositivo, força do token, throttling, transporte e segurança de recovery;
 7. concluir o build ESP-IDF fixado e os checks em runtime no target;
 8. verificar cutoff independente, drive/corrente/comportamento térmico do SSR, wiring, enclosure e proteções com supervisão qualificada;
-9. registrar aceitação humana explícita para a configuração exata do hardware.
+9. registrar aceitação humana explícita para cada configuração exata do hardware; a configuração testada em 2026-07-16 possui aceitação owner-reported.
 
 Concluir esta lista ainda não representa certificação regulatória.
 

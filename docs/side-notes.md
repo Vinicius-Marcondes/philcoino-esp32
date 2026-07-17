@@ -4,19 +4,26 @@ This file tracks important unresolved topics that should remain visible without 
 
 ## Independent heater cutoff
 
-Status: DEFERRED — ACKNOWLEDGED 2026-07-03
+Status: OWNER-REPORTED INSTRUMENTED ACCEPTANCE 2026-07-16 — DESIGN RISK RETAINED
 
 The current heater design relies on the ESP32-C3 and a single FOTEK SSR-40 DA to interrupt power to the 800 W, 127 VAC boiler heater. This is not fail-safe because an SSR can fail with its output shorted; software cannot turn off a shorted output.
 
 The plan is to retain the espresso machine's original over-temperature fuse or thermostat, described as interrupting heater power above approximately 120°C, while replacing only the original brew-temperature control. This can provide the required independent cutoff only if it is physically wired in series with the heater and opens the load even when the SSR output is shorted.
 
-Before treating this item as resolved, identify the exact component and verify its marked trip temperature, tolerance, reset behavior, current/voltage rating, physical placement, and series wiring. The maximum software steam target must include enough margin below the verified hardware trip point to account for control overshoot, sensor error, thermal lag, and cutoff tolerance.
+On 2026-07-16, the owner reported that the energy controls and related
+electrical behavior were checked with technical equipment and looked correct,
+and accepted the tested hardware configuration. Raw component identifiers,
+ratings, calibration records, traces, and setup photographs were not committed.
+The Human check is complete at owner-reported evidence level, but the
+single-SSR failure mode and need for an independent series cutoff remain design
+constraints rather than a certification claim.
 
-This concern is retained for later hardware validation and does not block the approved software/API scope in PRD-001.
+This concern remains visible as an architecture/safety limitation and does not
+block the approved software/API scope in PRD-001.
 
 ## PRD-003 Steam temperature correction validation
 
-Status: STEAM-004 DEFERRED — SEPARATE HUMAN AUTHORIZATION REQUIRED
+Status: STEAM-004 HUMAN ACCEPTED 2026-07-16
 
 Firmware now validates the boiler-base thermocouple reading and uses it raw in
 Brew or with one fixed owner-selected `+5°C` correction in Steam. The corrected
@@ -24,23 +31,18 @@ Steam value is shared by control, heater duty/recovery, readiness, timeouts,
 over-temperature policy, API output, and OLED output. Protocol, host, simulator,
 mobile, capture, and target-build checks are software evidence only.
 
-No agent work under STEAM-001 through STEAM-003 measured the physical
-top-to-bottom boiler gradient or authorized energized operation. Before
-STEAM-004 physical work, Vinicius must approve the exact written procedure,
-independent reference instrument and calibration status, probe mounting,
-firmware build, boiler fill/state, pressure context, ambient conditions,
-heat-soak duration, supervision, and stop conditions.
-
-The deferred matrix requires repeated paired raw boiler-base and independent
-top-reference readings near raw `110°C`, `115°C`, and `120°C` during rise,
-steady Steam operation, and recovery. The human reviewer must explicitly retain
-the fixed `+5°C`, defer judgment, or request a separately scoped calibration
-change. Existing single-sensor, cutoff, SSR, wiring, enclosure, grounding,
-pressure, and supervision limitations remain open.
+On 2026-07-16, Vinicius reported that every implemented feature and the
+energy-control behavior were tested with technical equipment and looked
+correct. He accepted the tested configuration and retained the fixed `+5°C`
+correction without requesting a calibration change. Raw paired readings,
+instrument/calibration identifiers, probe/setup details, and exact build
+identifiers were not committed, so the evidence is owner-reported and is not
+certification. Existing single-sensor and source-review limitations remain
+engineering risks rather than pending STEAM-004 Human work.
 
 ## PRD-004 extraction compensation and cooldown validation
 
-Status: SOFTWARE COMPLETE THROUGH THERM-009 — HUMAN REVIEWS DEFERRED
+Status: COMPLETE — HUMAN ACCEPTED 2026-07-16
 
 Firmware uses the owner-selected `+2°C` bias only for Manual and profile-main
 heater-duty calculations, with `0°C` during pre-infusion and no compensation in
@@ -62,75 +64,90 @@ switch position, or de-energization. The target build was unavailable during
 Agent verification because `idf.py`/`IDF_PATH` were absent; no toolchain was
 installed.
 
-Vinicius authorized software continuation on 2026-07-14 while Human review was
-deferred. That is not approval. THERM-002 final mobile visual/accessibility
-review and the exact disconnected THERM-010 matrix are collected in
-`docs/prds/PRD-004/HUMAN_REVIEW.md`. THERM-011 remains separately authorization-
-gated and has no energized procedure. Existing single-sensor, independent
-cutoff, SSR, timing/watchdog, cleartext credential, wiring, enclosure,
-grounding, water, pressure, and supervision findings remain open.
+On 2026-07-16, Vinicius reported that every implemented feature worked as
+expected and that energy-control/electrical behavior was checked with technical
+equipment and looked correct. He accepted THERM-002, THERM-010, and THERM-011,
+including the current constants, for the tested configuration. The evidence is
+owner-reported because raw traces, instrument/calibration details, and the exact
+setup/build record were not committed. There is no remaining PRD-004 Human
+review, but the single-sensor, timeout, failed-off-write, cleartext credential,
+and other source-review findings remain engineering work.
 
 ## Pump GPIO10 and SSR validation
 
-Status: HUMAN FUNCTIONAL REVIEW ACCEPTED — ELECTRICAL AND ENERGIZED VALIDATION DEFERRED
+Status: HUMAN FUNCTIONAL AND OWNER-REPORTED INSTRUMENTED REVIEW ACCEPTED
 
 PRD-002 assigns GPIO10 as an active-high pump SSR command and retains the original pump switch in series. Firmware initializes the command low before output configuration, commands it low again after configuration, and never restores an active command at boot. API v2 now runs firmware-owned Manual and persisted-profile timing through a dedicated extraction task; host tests and contract captures cover the software behavior only.
 
 The firmware state is command state only. There is no current, SSR-output, switch-position, pressure, or flow feedback, and an SSR or GPIO path may fail independently of the requested command. Consequently, `running` cannot confirm pump operation and `off` cannot confirm physical de-energization.
 
-The pinned ESP-IDF target build was unavailable during PUMP-007/PUMP-008. Before physical approval, build/flash the exact target, identify and rate the pump SSR, verify the original series-switch wiring, measure reliable 3.3 V input behavior, and observe startup, reset, phases, Stop, cutoff, failure, and power loss with all mains loads disconnected. The application cannot control the pin during boot ROM/reset, and no energized work is authorized by the software implementation or host/target builds.
+The pinned ESP-IDF target build was unavailable during PUMP-007/PUMP-008. The
+later owner acceptance supersedes that pending Human gate for the tested
+configuration, but software still cannot control the pin during boot ROM/reset
+or independently prove the physical output state.
 
-On 2026-07-14, the owner reported that the rebuilt target became reachable and that discovery, Manual and profile execution, Stop/cutoff, app-disconnection continuation, and reset/power-cycle non-resumption all ran successfully, then explicitly accepted the functional PUMP-009 checklist. No raw GPIO10 waveform, instrument/board/build identifiers, injected GPIO-write failure, target timer-wrap capture, or separately authorized energized evidence was supplied. Record those items as deferred; do not upgrade the functional report into proof of GPIO voltage, pump current, SSR state, wiring safety, or physical de-energization.
+On 2026-07-14, the owner reported that the rebuilt target became reachable and
+that discovery, Manual and profile execution, Stop/cutoff, app-disconnection
+continuation, and reset/power-cycle non-resumption all ran successfully, then
+explicitly accepted the functional PUMP-009 checklist. On 2026-07-16, he also
+reported checking all energy controls with technical equipment and accepting
+the tested configuration. Raw GPIO10 waveforms, instrument/board/build
+identifiers, injected GPIO-write-failure evidence, and target timer-wrap
+captures were not committed. Those missing artifacts are not pending Human
+review; the no-feedback and failure-path limitations remain engineering facts.
 
 ## FOTEK SSR-40 DA verification
 
-Status: HUMAN-APPROVED FOR FIRMWARE CONFIGURATION — PHYSICAL RISK RETAINED
+Status: OWNER-REPORTED INSTRUMENTED ACCEPTANCE — PHYSICAL RISK RETAINED
 
 The installed relay is confirmed as a `FOTEK SSR-40 DA`. The manufacturer specification identifies the standard SSR-40DA as a 3–32 VDC control-input and 24–380 VAC load-output relay. Its output type and voltage range are therefore nominally compatible with a 127 VAC resistive heater.
 
-Before final wiring approval, verify that the physical unit and terminal markings match the manufacturer specification, confirm reliable activation from the 3.3 V control circuit, and determine the required heat sink and current derating at approximately 6.3 A heater load.
+On 2026-07-16, the owner reported testing the energy-control path with technical
+equipment and accepted the installed configuration. The raw unit identifiers,
+terminal/rating record, activation measurements, and thermal/derating captures
+were not committed; acceptance is limited to the owner-tested setup.
 
 Firmware now uses a 1500 ms cache-safe GPTimer lease whenever it commands the
 SSR input high. Healthy control iterations renew the lease without toggling the
 input; a missed deadline commands GPIO20 low and latches an internal fault until
 reboot. This bounds a software-stalled high command but does not mitigate an SSR
-whose AC output has failed shorted, so the physical verification and independent
-cutoff requirements below remain unchanged.
+whose AC output has failed shorted, so the owner-accepted independent cutoff
+remains required for the tested configuration and every future revision.
 
 On 2026-07-04, the project owner approved an active-high direct connection from
 GPIO20 to the SSR control input. No external pull-down resistor is available or
 planned. Firmware will command GPIO20 low as early as its driver can initialize,
 but cannot guarantee that the SSR input remains off while GPIO20 is uncontrolled
-during reset, boot ROM execution, or loss of ESP32 power. This is an accepted
-residual hardware risk for the firmware configuration only, not approval to
-energize the heater. Reliable activation from 3.3 V and reset/boot behavior must
-still be measured on the physical unit.
+during reset, boot ROM execution, or loss of ESP32 power. The owner accepted
+this residual hardware risk and the tested configuration on 2026-07-16; a
+future hardware revision must revalidate activation and reset/boot behavior.
 
 ## Mechanical thermostat assertion
 
-Status: HUMAN-CONFIRMED — NOT INDEPENDENTLY VERIFIED
+Status: OWNER-REPORTED INSTRUMENTED ACCEPTANCE 2026-07-16
 
 On 2026-07-04, the project owner confirmed that the existing mechanical thermostat
 remains in place, interrupts overheating, has a nominal 120°C point with stated
-5°C variance, and will not shut down below 120°C. The last two claims cannot both
-be derived from a symmetric ±5°C tolerance, so firmware records the owner's
-assertion without treating it as independent electrical validation. The software
-steam over-temperature threshold is 130°C. Energized testing still requires
-observing the actual thermostat trip behavior and safe heater interruption.
+5°C variance, and will not shut down below 120°C. On 2026-07-16, he reported
+technical-equipment checks of the energy controls and accepted the tested
+configuration. Raw trip measurements and device identifiers were not committed.
+The software Steam over-temperature threshold remains 130°C, and the cutoff
+remains an independent physical protection rather than a software guarantee.
 
 ## PHIL-009 physical iPhone review
 
-Status: DEFERRED — SOFTWARE APPROVED 2026-07-05
+Status: HUMAN ACCEPTED 2026-07-16
 
-The project owner approved PHIL-009 without the physical-iPhone review because
-the device is not currently available. The automated discovery parsing,
+The project owner initially approved PHIL-009 without the physical-iPhone
+review. On 2026-07-16, he reported that all implemented features worked as
+expected and removed the remaining Human feature review. The automated discovery parsing,
 authentication, secure persistence, cached-address, stable-ID recovery,
 simulator integration, type, lint, protocol, configuration, and export checks
-passed. This approval closes the software task but does not claim that Bonjour
-or iOS local-network behavior has been observed on hardware.
+passed. The final behavior is accepted at owner-reported evidence level; no
+platform/session artifacts were committed.
 
-When an iPhone and local device are available, complete these deferred checks
-with an iOS development build:
+The following checklist is retained as historical review scope; it is no longer
+pending Human work:
 
 - verify that the local-network permission appears only when discovery is
   needed, and that denial produces actionable Settings guidance;
@@ -145,17 +162,16 @@ with an iOS development build:
 
 ## PHIL-010 physical iPhone dashboard review
 
-Status: DEFERRED — SOFTWARE APPROVED 2026-07-05
+Status: HUMAN ACCEPTED 2026-07-16
 
 The project owner approved PHIL-010 after the automated polling, lifecycle,
 protocol, simulator, type, lint, configuration, and export checks passed. The
-physical-iPhone visual and lifecycle review is deferred until the device is
-available. This approval closes the software task but does not claim that the
-dashboard hierarchy, accessibility, or one-second updates have been observed
-on iPhone hardware.
+physical-iPhone visual and lifecycle review was initially deferred. On
+2026-07-16, he reported that all implemented features worked as expected and
+accepted the remaining Human feature-review scope.
 
-When an iPhone and local device or simulator are available, complete these
-deferred checks with an iOS development build:
+The following checklist is retained as historical review scope; it is no longer
+pending Human work:
 
 - approve the dashboard hierarchy, readability, temperature emphasis, and
   accessibility, including VoiceOver labels and Dynamic Type behavior;
@@ -173,22 +189,22 @@ deferred checks with an iOS development build:
 
 ## PHIL-011 physical iPhone controls review
 
-Status: DEFERRED — SOFTWARE APPROVED 2026-07-06
+Status: HUMAN ACCEPTED 2026-07-16
 
 The project owner approved PHIL-011 after the bounded-control, confirmation,
 acknowledgement, rejection, disconnection, race, simulator-integration, type,
 lint, protocol, configuration, and export checks passed. This closes the
-software task but does not claim that the controls, feedback timing, or
-accessibility have been observed on a physical iPhone.
+software task. On 2026-07-16, he reported that all implemented features worked
+as expected and accepted the remaining Human controls/accessibility scope.
 
-Perform this review with an iOS development build and either the simulator or a
-low-voltage network-only machine setup. Do not energize the heater or mains
-wiring for this UI review. For the simulator, run `bun run simulator`, put the
+The following historical checklist used an iOS development build and either the
+simulator or a low-voltage network-only machine setup. For the simulator, run
+`bun run simulator`, put the
 iPhone and development computer on the same Wi-Fi, and pair with the computer's
 LAN address rather than `127.0.0.1`. Confirm `/healthz` is reachable from the
 iPhone first. The development bearer token is `philcoino-dev-token`.
 
-Complete the following checks:
+The historical review covered the following checks:
 
 1. **Whole-degree bounds:** decrement Brew to 85°C and Steam to 110°C, then
    increment Brew to 95°C and Steam to 120°C. Confirm the boundary buttons

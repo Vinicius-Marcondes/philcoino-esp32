@@ -92,4 +92,5 @@ Define the language-neutral API v2 contract for profiles and acknowledged extrac
 
 ### Remaining blockers or human acceptance
 
-- None for PUMP-001. PUMP-002 remains a Human-review task and must receive explicit design approval before PUMP-003 begins.
+- None for PUMP-001. PUMP-002 was the next Human-review task and later received
+  explicit design approval before the remaining implementation advanced.

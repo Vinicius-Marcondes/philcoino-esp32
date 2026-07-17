@@ -179,7 +179,8 @@ pre-infusion uses `0°C`. Cooldown uses the validated Brew-effective sample,
 fixed 45-second pump cutoff, and fixed five-second stabilization. None of these
 values is configurable through NVS, HTTP, mDNS, simulator controls, OLED, or
 mobile. Check [Safety](SAFETY.md), the tracker, and hardware documents before
-any device test; physical acceptance remains incomplete.
+any device test. The owner accepted the configuration tested on 2026-07-16;
+that acceptance does not authorize a different setup or unattended use.
 
 ### Low-voltage only
 

@@ -1,11 +1,12 @@
 # PHIL-013 — Perform supervised physical integration validation
 
-Status: Todo
+Status: Done — Human Accepted 2026-07-16
 Review Mode: Human
 
 ## Human Review Needs
 
-Supervise low-voltage and energized tests, verify the retained thermal cutoff and SSR installation, review temperatures against independent instruments, and approve final iPhone behavior on the actual machine.
+Completed on 2026-07-16 through Vinicius's owner-reported functional and
+technical-equipment acceptance of the tested configuration.
 
 ## Goal
 
@@ -31,11 +32,11 @@ Validate the completed system on the real ESP32-C3, single boiler sensor, displa
 
 ## Acceptance Criteria
 
-- [ ] Low-voltage boot and fault behavior is repeatable.
-- [ ] The boiler-base thermocouple is mapped and validated against an independent reference in both brew and steam ranges.
-- [ ] Actual network discovery, pairing, polling, settings, and mode behavior pass.
-- [ ] Steam timeout returns to brew without the app connected.
-- [ ] Human reviewer signs off the evidence or records blocking defects.
+- [x] Low-voltage boot and energy-control behavior was owner-reported as tested with technical equipment and working correctly.
+- [x] The owner accepts the boiler-base sensor behavior for the tested Brew and Steam configuration.
+- [x] The owner reports that all implemented network discovery, pairing, polling, settings, mode, extraction, and cooldown behavior passes.
+- [x] The owner reports that the implemented disconnected-app behavior passes.
+- [x] The Human reviewer accepts the tested configuration without requesting a feature revision.
 
 ## Verification Strategy
 
@@ -49,7 +50,17 @@ PHIL-012.
 
 Integration evidence/documentation and narrowly scoped fixes discovered during supervised validation.
 
-## Stop Conditions
+## Preserved Stop Conditions For Future Tests
 
-- Stop before mains energization unless the original thermal cutoff, branch protection, HLK input protection, SSR load wiring, heat sink, enclosure, and grounding have been reviewed.
+- A changed configuration must not be energized unless the original thermal cutoff, branch protection, HLK input protection, SSR load wiring, heat sink, enclosure, and grounding have been reviewed.
 - Stop immediately on implausible sensor readings, unexpected GPIO activation, excessive SSR temperature, uncontrolled heating, leaks, or pressure-safety concerns.
+
+## Human acceptance evidence — 2026-07-16
+
+Vinicius reported testing every implemented feature and checking the energy
+controls with technical equipment; all behavior looked correct. This closes the
+Human integration task for the tested configuration. Raw equipment records,
+calibration data, traces, photographs, and exact setup/build identifiers were
+not added to the repository, so the evidence remains owner-reported and does
+not constitute certification or approval for unattended use. PHIL-012 remains
+separate Agent-owned automated resilience work.
