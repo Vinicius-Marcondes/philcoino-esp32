@@ -96,5 +96,7 @@ Add fail-off GPIO10 pump command ownership and atomic four-slot profile persiste
 
 ### Remaining blockers or human acceptance
 
-- None for PUMP-005 software scope. The ESP-IDF target build and PUMP-009 disconnected low-voltage/human acceptance remain required later.
+- None for PUMP-005 software scope. The ESP-IDF target and PUMP-009 Human
+  acceptance were completed by later work; adversarial target artifacts remain
+  an engineering evidence gap.
 - PUMP-006 through PUMP-009 were not started as part of this requested range.

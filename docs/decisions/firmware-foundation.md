@@ -50,13 +50,16 @@ Wi-Fi is enabled. The owner superseded the original dual-sensor decision after
 two boiler-mounted thermocouples interfered with reliable readings. Firmware now
 permanently reads one boiler-base sensor every 500 ms and applies its measurement
 to both control modes without mirroring or alternate sensor GPIOs. `kOledEnabled`
-is enabled; OLED and single-sensor physical acceptance remain part of PHIL-013.
+is enabled. The owner accepted OLED and the tested single-sensor configuration
+under PHIL-013 on 2026-07-16; lack of sensor redundancy remains an architecture
+limitation.
 
 The human owner explicitly approved direct GPIO20 drive with no external pull-down
 resistor available. Firmware must configure the output low at the earliest possible
 boot stage, but software cannot guarantee a low level while the pin is uncontrolled
 during reset or before GPIO initialization. This residual risk is tracked in
-`docs/side-notes.md` and must be checked before energized testing.
+`docs/side-notes.md`. The owner accepted the tested configuration on 2026-07-16;
+the same risk must be reconsidered for any hardware revision.
 
 The ESP32-C3 GPTimer provides a firmware-only fail-off lease while GPIO20 is
 commanded high. The controller renews it during healthy 500 ms updates without

@@ -107,8 +107,8 @@ The Brew threshold, 45-second cutoff, and five-second stabilization are
 owner-selected software hypotheses. API, OLED, simulator, host, and target-build
 agreement cannot establish physical flow, water use, cooling rate, SSR state,
 heater current, or safe thermal behavior. Changing any fixed constant based on
-physical observations requires separately authorized, repeatable THERM-011
-measurement and a new scoped product decision.
+physical observations requires a new scoped product decision. THERM-011 was
+owner-accepted for the tested configuration on 2026-07-16.
 
 ## GPTimer fail-off safety lease
 
@@ -241,11 +241,12 @@ thermal inertia, sensor lag, or hardware current flow outside firmware control.
 
 ## Future tuning boundary
 
-The notes below are hypotheses for a separately authorized, supervised tuning
-session. They are not authorization to flash, connect loads, run water, or
-energize the machine. THERM-011 must first record the exact build, setup,
-instruments/calibration, independent cutoff, qualified supervision, and stop
-conditions.
+The notes below are hypotheses for any future separately authorized,
+supervised tuning session. They are not authorization to flash, connect loads,
+run water, or energize another configuration. THERM-011 was owner-accepted for
+the configuration tested on 2026-07-16; a future session must record its own
+exact build, setup, instruments/calibration, independent cutoff, qualified
+supervision, and stop conditions.
 
 Make one small change at a time, flash, and observe at least several full heat
 cycles. For brew tuning, focus on the brew constants first.
@@ -318,9 +319,10 @@ Useful observations:
 - Approximate time from lowest point back to target.
 - Whether the SSR LED is solid on, pulsing, or off.
 
-Physical acceptance of the Steam correction is deferred to STEAM-004 and
-requires separate authorization. Record the reference instrument and
-calibration status, exact probe locations, firmware build, boiler fill/state,
+Physical acceptance of the Steam correction was completed by the owner in
+STEAM-004 on 2026-07-16 for the tested configuration. For any future
+revalidation, record the reference instrument and calibration status, exact
+probe locations, firmware build, boiler fill/state,
 pressure context, ambient conditions, heat-soak duration, and supervision.
 Collect repeated paired raw-base and independent top-reference readings near
 raw `110°C`, `115°C`, and `120°C` during rise, steady Steam operation, and

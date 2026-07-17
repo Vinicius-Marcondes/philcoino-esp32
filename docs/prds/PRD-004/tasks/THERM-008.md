@@ -126,5 +126,5 @@ Expose the integrated compensation and cooldown policies through strict independ
 
 - No Agent blocker remains for THERM-008.
 - Cross-layer regression/documentation remains THERM-009. THERM-010 and
-  THERM-011 remain deferred Human gates with no supplied physical evidence or
-  energized authorization.
+  THERM-011 were deferred when this task completed and were later accepted by
+  the owner on 2026-07-16 for the tested configuration.

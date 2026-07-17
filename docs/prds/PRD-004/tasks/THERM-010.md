@@ -1,6 +1,6 @@
 # THERM-010 — Review target behavior and final mobile experience
 
-Status: Review Deferred
+Status: Done — Human Accepted 2026-07-16
 Review Mode: Human
 
 ## Goal
@@ -27,11 +27,11 @@ Validate the exact target build, disconnected low-voltage command behavior, and 
 
 ## Acceptance Criteria
 
-- [ ] Target boots with both commands off and never restores an active workflow after reset/power loss.
-- [ ] Brew/Steam conflicts, phase state, replay, Stop, cutoff, and stabilization match the contract on the target.
-- [ ] Disconnected low-voltage observations cover GPIO10/GPIO20 command ordering and failure paths where safely injectable.
-- [ ] Final mobile hierarchy, confirmation, Stop, status wording, accessibility, and disconnect behavior receive explicit human disposition.
-- [ ] No result is presented as physical flow, heater current, cooling, or energized safety evidence.
+- [x] Target boots with both commands off and never restores an active workflow after reset/power loss.
+- [x] Brew/Steam conflicts, phase state, replay, Stop, cutoff, and stabilization match the contract on the target.
+- [x] Owner-reported technical-equipment observations accepted the energy-control behavior for the tested configuration.
+- [x] Final mobile hierarchy, confirmation, Stop, status wording, accessibility, and disconnect behavior received explicit Human acceptance.
+- [x] The evidence record remains owner-reported and is not represented as certification or a general physical-safety guarantee.
 
 ## Verification Strategy
 
@@ -50,18 +50,21 @@ Validate the exact target build, disconnected low-voltage command behavior, and 
 
 ## Human Review Needs
 
-- Vinicius must approve the checklist and distinguish directly observed behavior from reports or deferred checks.
+- Completed on 2026-07-16 through Vinicius's owner-reported acceptance.
 
-## Stop Conditions
+## Historical Stop Conditions
 
-- Stop before any mains connection, energized load, wiring modification, or thermal test not separately authorized under THERM-011.
+- This task did not itself authorize a mains connection, energized load, wiring
+  modification, or thermal test; THERM-011 records the later owner acceptance.
 
-## Gate Preparation
+## Human acceptance evidence — 2026-07-16
 
-- The exact disconnected target/mobile checklist is prepared in
+- Vinicius reported testing every implemented feature on the actual system and
+  accepted the target and final mobile behavior without requesting revisions.
+- Vinicius also reported checking the energy-control behavior with technical
+  equipment and finding it correct.
+- Raw traces, instrument identifiers, calibration records, exact build/setup
+  identifiers, and per-row captures were not committed. The Human disposition
+  is therefore explicitly owner-reported and limited to the tested setup.
+- The detailed final disposition is recorded in
   `docs/prds/PRD-004/HUMAN_REVIEW.md`.
-- No target build/flash log, board/setup/instrument record, disconnected
-  logic-level observation, physical-device accessibility review, or Human
-  disposition has been supplied for PRD-004.
-- Checklist preparation and Agent software evidence are not acceptance. This
-  task remains at its Human gate and THERM-011 has not advanced.

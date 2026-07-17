@@ -7,7 +7,12 @@ Philcoino is a local-first espresso-machine monitoring, temperature-control, and
 The phone discovers and authenticates one machine, displays live state, and submits target/mode/heater-permission changes. The ESP32 remains authoritative for sensor readings, persisted targets, readiness, heater output, timeouts, and faults.
 
 > [!CAUTION]
-> This project is not approved for production, unattended, or mains-powered heater operation. The current review identifies unresolved control-loop, sensor-monitoring, transport, credential, and physical-safety risks. Use the simulator or low-voltage hardware only, read [Safety and project status](SAFETY.md), and do not treat passing tests as electrical or thermal certification.
+> This project is not approved for production or unattended use. On 2026-07-16,
+> the owner accepted one tested configuration after functional and technical-
+> equipment energy-control checks; that is not certification or general
+> authorization for another energized configuration. For development, use the
+> simulator or low-voltage hardware, read [Safety and project status](SAFETY.md),
+> and preserve the open findings.
 
 ## What is implemented
 
@@ -24,7 +29,10 @@ The phone discovers and authenticates one machine, displays live state, and subm
   firmware-acknowledged pre-infusion/soak/main extraction, Stop, and 60-second
   Manual cutoff.
 
-The product is still a prototype. PRD-001 acceptance and physical validation are incomplete; see [the tracker](../TRACKER.md) and [known findings](../../CODEBASE_REVIEW_REPORT.md).
+The product is still a prototype. Human review of the tested configuration was
+accepted on 2026-07-16, while PHIL-012 automated resilience work and the known
+engineering/security findings remain; see [the tracker](../TRACKER.md) and
+[known findings](../../CODEBASE_REVIEW_REPORT.md).
 
 ## System at a glance
 

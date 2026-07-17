@@ -66,9 +66,9 @@ Prove mobile, simulator, protocol, and firmware agree on PRD-004 behavior and ac
   stabilization, active/terminal replay, conflicts, disconnect/reconnect,
   reset/power-cycle, sensor/fault/output failures, shared-pump ownership, and
   unchanged extraction/profile/v1 behavior.
-- `HUMAN_REVIEW.md` now contains the exact THERM-010 disconnected target/mobile
-  checklist and THERM-011 authorization prerequisites. Neither checklist was
-  performed or treated as approval.
+- `HUMAN_REVIEW.md` contained the exact THERM-010 disconnected target/mobile
+  checklist and THERM-011 authorization prerequisites. Both were later accepted
+  by the owner on 2026-07-16 for the tested configuration.
 
 ### Decisions
 
@@ -92,13 +92,15 @@ Prove mobile, simulator, protocol, and firmware agree on PRD-004 behavior and ac
   semantics only. API/OLED `running`, `off`, `heaterActive`, and
   `heaterInhibited` do not establish water flow, cooling, current, SSR state,
   switch position, or de-energization.
-- The fixed Steam `+5°C`, extraction `+2°C`, pre-infusion `0°C`, Brew cooldown
-  threshold, 45-second cutoff, and five-second stabilization remain unmeasured
-  hypotheses rather than accepted physical constants.
+- The owner accepted the fixed Steam `+5°C`, extraction `+2°C`, pre-infusion
+  `0°C`, Brew cooldown threshold, 45-second cutoff, and five-second
+  stabilization for the configuration tested on 2026-07-16. Raw measurement
+  artifacts were not committed.
 - Single-sensor plausibility, independent cutoff, SSR failure/drive/thermal
   behavior, watchdog/target timing, timeout reset, cleartext credentials/device
   identity, wiring, grounding, enclosure, water/pressure, and supervised
-  operation remain unresolved or Human-gated.
+  operation remain unresolved engineering limitations rather than pending
+  Human gates.
 - No package, program, CLI, SDK, or dependency was installed. No generated,
   dependency, cache, build, coverage, database, secret, `managed_components`,
   or `sdkconfig` path was inspected.
@@ -130,9 +132,5 @@ Prove mobile, simulator, protocol, and firmware agree on PRD-004 behavior and ac
 
 - No Agent blocker remains for THERM-009; the PRD-004 software scope is complete
   through its final Agent task.
-- THERM-002 and THERM-010 require Vinicius's explicit Human disposition using
-  `HUMAN_REVIEW.md`. Missing target/native evidence must remain individually
-  deferred rather than assumed.
-- THERM-011 remains blocked on accepted THERM-010 evidence plus separate
-  authorization for an exact setup/procedure. No energized procedure or
-  authorization exists.
+- Vinicius explicitly accepted THERM-002, THERM-010, and THERM-011 on
+  2026-07-16. No PRD-004 Human acceptance remains pending.

@@ -122,5 +122,5 @@ Integrate compensation and cooldown into the ESP-IDF runtime without allowing cr
 
 - No Agent blocker remains for THERM-007.
 - THERM-008 must finish strict route/serialization/OLED integration before the
-  runtime is contract-complete. THERM-010 and THERM-011 remain deferred Human
-  gates; no physical evidence or energized authorization was supplied.
+  runtime is contract-complete. THERM-010 and THERM-011 were deferred when this
+  task completed and were later accepted by the owner on 2026-07-16.

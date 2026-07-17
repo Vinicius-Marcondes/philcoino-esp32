@@ -7,7 +7,12 @@ Philcoino é um protótipo local-first para monitoramento, controle de temperatu
 O celular descobre e autentica uma máquina, exibe o estado em tempo real e envia alterações de target, mode e permissão do heater. O ESP32 continua sendo a autoridade sobre leituras dos sensores, targets persistidos, readiness, saída do heater, timeouts e faults.
 
 > [!CAUTION]
-> Este projeto não está aprovado para produção, uso sem supervisão ou operação do heater ligado à rede elétrica. A revisão atual registra riscos ainda não resolvidos no control loop, monitoramento dos sensores, transporte, credenciais e segurança física. Use apenas o simulador ou hardware em baixa tensão, leia [Segurança e status do projeto](docs/SAFETY.md) e não trate testes aprovados como certificação elétrica ou térmica.
+> Este projeto não está aprovado para produção ou uso sem supervisão. Em
+> 2026-07-16, o owner aceitou uma configuração testada após checks funcionais e
+> dos controles de energia com equipamento técnico; isso não é certificação nem
+> autorização geral para outra configuração energizada. Para desenvolvimento,
+> use o simulador ou hardware em baixa tensão, leia
+> [Segurança e status do projeto](docs/SAFETY.md) e preserve os findings abertos.
 
 ## O que está implementado
 

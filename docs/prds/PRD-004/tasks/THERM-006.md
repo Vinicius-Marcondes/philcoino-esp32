@@ -124,5 +124,5 @@ Implement a deterministic firmware-owned cooldown state machine over injected te
 
 - No Agent blocker remains for THERM-006.
 - FreeRTOS/API/runtime coordination is intentionally pending THERM-007 onward.
-  THERM-010 and THERM-011 remain deferred Human gates with no supplied physical
-  evidence or energized authorization.
+  THERM-010 and THERM-011 were deferred when this task completed and were later
+  accepted by the owner on 2026-07-16 for the tested configuration.

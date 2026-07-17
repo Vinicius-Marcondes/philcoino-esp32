@@ -130,5 +130,5 @@ Add the fixed phase-aware Brew heater-duty bias without changing targets, readin
 
 - No Agent blocker remains for THERM-005.
 - Runtime phase coordination is intentionally pending THERM-007/THERM-008.
-  THERM-010/THERM-011 Human evidence and authorization remain deferred and no
-  physical behavior is claimed.
+  THERM-010/THERM-011 were deferred when this task completed and were later
+  accepted by the owner on 2026-07-16 for the tested configuration.

@@ -1,6 +1,6 @@
 # THERM-011 — Validate physical thermal behavior
 
-Status: Todo
+Status: Done — Human Accepted 2026-07-16
 Review Mode: Human
 
 ## Goal
@@ -28,11 +28,11 @@ Measure whether extraction compensation and cooldown are repeatable on the actua
 
 ## Acceptance Criteria
 
-- [ ] Exact setup, instruments, calibration, probes, build, conditions, authorization, and supervision are recorded.
-- [ ] Repeated comparable extraction observations assess the `+2°C` bias without confusing command state with physical output.
-- [ ] Cooldown observations distinguish target completion, cutoff, actual flow, water use, stabilization, and post-cycle recovery.
-- [ ] Stop conditions, independent cutoff, SSR/wiring/enclosure, pressure/leak, and single-sensor limitations remain explicit.
-- [ ] Human review explicitly accepts, defers, or requests a new PRD for any constant/architecture change.
+- [x] The owner reported instrumented checks of the energy-control behavior for the tested hardware configuration.
+- [x] The owner reported that all implemented extraction and thermal-workflow features worked as expected.
+- [x] The owner accepted cooldown target/cutoff/Stop/stabilization and recovery behavior for the tested configuration.
+- [x] Independent cutoff, SSR/wiring/enclosure, pressure/leak, and single-sensor limitations remain explicit in the project safety documentation.
+- [x] Human review retains the current constants and requests no constant or architecture change.
 
 ## Verification Strategy
 
@@ -53,9 +53,22 @@ Measure whether extraction compensation and cooldown are repeatable on the actua
 
 ## Human Review Needs
 
-- Vinicius must separately approve the exact procedure and setup, supervise or identify qualified supervision, and decide the disposition of each fixed constant.
+- Completed on 2026-07-16 through Vinicius's owner-reported acceptance of the
+  tested setup and current constants.
 
-## Stop Conditions
+## Preserved Stop Conditions For Future Tests
 
-- Stop before energized work until all applicable `docs/SAFETY.md` prerequisites and unresolved BLOCKER/MAJOR findings are satisfied or explicitly dispositioned for the exact setup.
+- Do not treat this one-configuration acceptance as authorization for a changed
+  setup; reapply `docs/SAFETY.md` prerequisites and explicitly disposition
+  relevant BLOCKER/MAJOR findings.
 - Stop immediately for implausible readings, uncontrolled heating, unexpected SSR behavior, cutoff concerns, insufficient water, leaks, pressure concerns, wiring/enclosure issues, or loss of independent instrumentation.
+
+## Human acceptance evidence — 2026-07-16
+
+Vinicius reported that the energy controls and related physical behavior were
+tested with technical equipment and looked correct, and that every implemented
+feature worked as expected. He explicitly removed this scope from pending Human
+review. The repository does not contain the raw traces, instrument/calibration
+identifiers, exact setup/build identifiers, or repeated-run measurements, so
+the acceptance is owner-reported, applies to the tested configuration, and is
+not regulatory certification or approval for unattended use.

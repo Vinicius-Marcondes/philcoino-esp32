@@ -2,24 +2,25 @@
 
 [Português do Brasil](../SAFETY.md)
 
-Philcoino is an experimental, mains-adjacent espresso-machine controller. The repository contains useful software and host-test coverage, but it is not a certified safety controller and is not approved for production, unattended use, or mains-powered heater operation.
+Philcoino is an experimental, mains-adjacent espresso-machine controller. The repository contains useful software and host-test coverage, but it is not a certified safety controller and is not approved for production or unattended use. On 2026-07-16, the owner accepted the tested configuration after reporting functional tests and technical-equipment checks of the energy controls; that acceptance is not general certification.
 
 ## Current status
 
-- PRD-001 software tasks have progressed through mobile monitoring and acknowledged controls, but the tracker still lists later review/physical tasks as incomplete.
+- Human review of every implemented feature and the tested physical configuration was accepted by the owner on 2026-07-16. The Agent-owned PHIL-012 automated contract/resilience task remains pending.
 - The current codebase review contains unresolved BLOCKER and MAJOR findings in firmware timing, sensor monitoring, timeout behavior, physical output certainty, transport, and credential/device identity.
 - Current firmware permanently uses one boiler-base thermocouple for both brew and steam. It is a single point of control failure and provides no independent sensor cross-check.
 - PRD-003 implements an owner-selected fixed `+5°C` correction only after raw
   validation and only in Steam. The corrected value drives control, limits,
-  API, and OLED behavior, but still depends on the same single sensor and awaits
-  repeatable instrumented physical validation in STEAM-004.
+  API, and OLED behavior. The owner accepted the value for the tested
+  configuration in STEAM-004; raw instrument/measurement records are not in the repository.
 - PRD-004 software adds a fixed Manual/main `+2°C` heater-duty-only bias and a
   firmware-owned cooldown command workflow with a 45-second pump cutoff and
-  five-second stabilization. THERM-002 visual/accessibility review and all
-  THERM-010/THERM-011 target/physical acceptance remain pending in the Human
-  Review Ledger; no physical cooling or energized claim was produced.
+  five-second stabilization. The owner accepted THERM-002, THERM-010, and
+  THERM-011 on 2026-07-16 after reporting tests of every feature and technical-
+  equipment checks of the energy controls. Evidence is owner-reported and
+  limited to the tested configuration.
 - Current firmware source enables the OLED (`kOledEnabled = true`), while tracker text records a temporary disabled-OLED state. Treat this as an unresolved documentation/configuration discrepancy, not an approved hardware state.
-- Physical iPhone discovery, final sensor behavior, relay/SSR installation, independent cutoff, and supervised energized validation remain human checks.
+- No Human feature or tested-configuration checks remain pending. Architecture, firmware, and security findings remain engineering work.
 
 See the [codebase review](../../CODEBASE_REVIEW_REPORT.md), [tracker](../TRACKER.md), and [side notes](../side-notes.md) for the detailed evidence.
 
@@ -61,8 +62,9 @@ review.
 The current review identifies, among others:
 
 - the GPTimer lease and bounded workflow mutex reduce software-command timing
-  exposure, but the pinned target build/runtime stall matrix, watchdog recovery,
-  physical GPIO/SSR response, and independent cutoff remain unverified;
+  exposure, but the pinned target build/runtime stall matrix and watchdog
+  recovery remain unresolved in source-review evidence; the owner accepted the
+  tested physical GPIO/SSR/cutoff configuration without adding raw traces;
 - the permanent single control sensor cannot detect a plausible but incorrect reading through sensor disagreement;
 - some valid remote/no-op writes can reset heating deadlines, allowing a client to extend timeout protection;
 - a failed GPIO off-write can still be presented as heater off even when physical state is unknown;
@@ -74,7 +76,7 @@ The current review identifies, among others:
 - plaintext HTTP bearer credentials lack minimum-strength enforcement, throttling, rotation, and transport confidentiality;
 - the simulator omits critical firmware timing, sensor, scheduler, persistence-stall, and GPIO failure behavior.
 
-Do not soften or hide these findings in user-facing documentation. Resolve and verify them before reconsidering energized operation.
+Do not soften or hide these findings in user-facing documentation. Resolve and verify them before production, unattended use, or use of another hardware configuration.
 
 ## Physical safety boundary
 
@@ -125,7 +127,7 @@ Until the known findings are resolved:
 
 Always state which level produced a claim.
 
-## Requirements before energized consideration
+## Requirements before production, unattended use, or another energized configuration
 
 At minimum:
 
@@ -139,7 +141,7 @@ At minimum:
 6. resolve device identity, token strength, throttling, transport, and recovery security;
 7. complete the pinned ESP-IDF build and target-runtime checks;
 8. verify independent cutoff, SSR drive/current/thermal behavior, wiring, enclosure, and protection with qualified supervision;
-9. record explicit human acceptance for the exact hardware configuration.
+9. record explicit human acceptance for each exact hardware configuration; the configuration tested on 2026-07-16 has owner-reported acceptance.
 
 Completion of this list still does not imply regulatory certification.
 

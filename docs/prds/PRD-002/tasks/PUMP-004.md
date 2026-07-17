@@ -98,4 +98,6 @@ Connect the approved mobile design to durable local profiles and API v2 while pr
 
 ### Remaining blockers or human acceptance
 
-- None for PUMP-004. Physical mobile review remains deferred and firmware API v2 integration is outside the requested PUMP-005 boundary.
+- None for PUMP-004. Physical mobile review was later accepted by the owner on
+  2026-07-16; firmware API v2 integration remained outside the PUMP-004 boundary
+  and was completed by later tasks.

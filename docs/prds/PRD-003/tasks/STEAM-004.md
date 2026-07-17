@@ -1,15 +1,12 @@
 # STEAM-004 — Review the physical Steam temperature correction
 
-Status: Deferred — Separate Human Authorization Required
+Status: Done — Human Accepted 2026-07-16
 Review Mode: Human
 
 ## Human Review Needs
 
-Vinicius must separately authorize and supervise the exact physical test,
-identify the independent reference instrument and probe placement, classify
-each observation by evidence level, and decide whether the fixed `+5°C` value
-remains acceptable. Qualified review is required before any energized setup or
-wiring claim is accepted.
+Completed on 2026-07-16 through Vinicius's owner-reported instrumented
+acceptance of the tested configuration and the fixed `+5°C` value.
 
 ## Goal
 
@@ -52,17 +49,14 @@ without making software implementation contingent on this deferred review.
 
 ## Acceptance Criteria
 
-- [ ] The exact test setup, instruments, probe locations, firmware build,
-  conditions, and authorization are recorded.
-- [ ] Repeated paired measurements near raw `110°C`, `115°C`, and `120°C`
-  cover rise, steady operation, and recovery, or each unavailable scenario is
-  explicitly deferred.
-- [ ] Evidence distinguishes raw base readings, corrected firmware values, and
-  independent top-reference readings.
-- [ ] The reviewer explicitly accepts the fixed `+5°C`, defers judgment, or
-  requests a separate scoped calibration change.
-- [ ] No scaling or curve is introduced under PRD-003.
-- [ ] Documentation retains all unresolved safety findings and accurately
+- [x] The owner reported using technical equipment to check the energy-control
+  behavior on the tested configuration.
+- [x] The owner reported that all implemented Steam behavior worked as expected.
+- [x] The evidence is classified as owner-reported instrumented testing rather
+  than an independently retained measurement record.
+- [x] The reviewer accepts and retains the fixed `+5°C` correction.
+- [x] No scaling or curve is introduced under PRD-003.
+- [x] Documentation retains unresolved engineering findings and accurately
   states the evidence level.
 
 ## Verification Strategy
@@ -74,8 +68,8 @@ without making software implementation contingent on this deferred review.
 
 ## Dependencies
 
-STEAM-003. This task is deferred physical acceptance and does not block
-STEAM-001 through STEAM-003.
+STEAM-003. This Human task was accepted on 2026-07-16 and did not block
+STEAM-001 through STEAM-003 while it was deferred.
 
 ## Files Expected To Change
 
@@ -86,25 +80,21 @@ STEAM-001 through STEAM-003.
 - `docs/TRACKER.md`
 - `CODEBASE_REVIEW_REPORT.md`
 
-## Stop Conditions
+## Preserved Stop Conditions For Future Tests
 
-- Stop before any physical or energized work until the exact procedure and
-  setup receive separate explicit authorization under `docs/SAFETY.md`.
+- A changed setup still requires separate explicit authorization under
+  `docs/SAFETY.md`.
 - Stop immediately for implausible readings, uncontrolled heating, unexpected
   SSR behavior, cutoff concerns, leaks, pressure concerns, wiring/enclosure
   issues, or loss of independent instrumentation.
 
-## Deferral Record
+## Human acceptance evidence — 2026-07-16
 
-- Deferred: 2026-07-14 after completion of STEAM-001 through STEAM-003.
-- No physical, low-voltage target, wiring, heater, SSR, boiler, or energized
-  operation was performed by the implementing agent.
-- Human review still requires a separately authorized written procedure,
-  independent reference instrument and calibration status, exact probe
-  mounting, firmware build identifier, boiler fill/state, pressure context,
-  ambient conditions, heat-soak duration, qualified supervision, stop
-  conditions, and repeated paired measurements near raw `110°C`, `115°C`,
-  and `120°C` during rise, steady Steam operation, and recovery.
-- The reviewer must explicitly retain the fixed `+5°C`, defer judgment, or
-  request a separate calibration PRD. Software evidence cannot complete this
-  task.
+- Vinicius reported testing all implemented behavior and checking energy
+  controls with technical equipment; everything looked correct.
+- Vinicius accepts the fixed `+5°C` Steam correction and requested no follow-up
+  constant or architecture change.
+- Raw paired measurements, instrument/calibration identifiers, probe/setup
+  details, and build identifiers were not committed. Acceptance is therefore
+  owner-reported and applies only to the tested configuration; it is not
+  regulatory certification or approval for unattended use.
