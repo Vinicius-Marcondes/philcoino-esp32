@@ -1,6 +1,6 @@
 # ESP32 API v2 workflow outline
 
-Status: IMPLEMENTED; PHYSICAL ACCEPTANCE PENDING
+Status: IMPLEMENTED; HUMAN ACCEPTED 2026-07-16
 
 The authoritative wire contract is
 [`packages/protocol/openapi.yaml`](../../packages/protocol/openapi.yaml). API v2
@@ -76,7 +76,8 @@ de-energization, or temperature reduction, and an SSR may fail shorted.
 
 OpenAPI/Zod tests, simulator scenarios, mobile integration tests, C++ host tests,
 and firmware captures establish software/contract behavior at their respective
-levels. The PRD-004 target build, disconnected low-voltage command matrix, and
-final physical-device UI review remain THERM-010 Human work. Energized and
-instrumented thermal measurement remains separately authorization-gated under
-THERM-011; no software result authorizes it.
+levels. On 2026-07-16, the owner reported that every implemented feature and
+technical-equipment energy-control check passed, and accepted THERM-010 and
+THERM-011 for the tested configuration. Raw instrument/setup artifacts were not
+committed; this Human acceptance is not certification and does not change the
+command-state boundary above.

@@ -1,6 +1,6 @@
 # THERM-002 — Approve the mobile thermal-workflow design
 
-Status: Review Deferred — Software Continuation Authorized
+Status: Done — Human Accepted 2026-07-16
 Review Mode: Human
 
 ## Goal
@@ -32,7 +32,7 @@ Build and approve the Dashboard experience for Steam-blocked extraction, acknowl
 - [x] Stop is prominent during pumping; stabilization clearly shows pump off and heater inhibited.
 - [x] Debug state cannot call a device and cannot be mistaken for acknowledged live state.
 - [x] Mobile tests, lint, typecheck, Expo config inspection, and debug web export pass.
-- [ ] Vinicius explicitly approves hierarchy, copy, interactions, large-text behavior, and accessibility before THERM-003 begins.
+- [x] Vinicius explicitly approved hierarchy, copy, interactions, large-text behavior, and accessibility on 2026-07-16.
 
 ## Verification Strategy
 
@@ -138,14 +138,14 @@ Build and approve the Dashboard experience for Steam-blocked extraction, acknowl
 
 ### Remaining blockers and human acceptance
 
-- Final THERM-002 acceptance remains open until Vinicius explicitly approves or
-  requests in-scope revisions to Dashboard placement, confirmation clarity,
-  Stop prominence, phase/outcome wording, non-color-only feedback, large-text
-  behavior, and accessibility semantics.
+- Final THERM-002 acceptance was completed by Vinicius on 2026-07-16 after he
+  reported that all implemented features worked as expected; no in-scope
+  revision was requested.
 - On 2026-07-14, Vinicius explicitly authorized the supervised software
   workflow to continue while all Human-review items are collected in
   `docs/prds/PRD-004/HUMAN_REVIEW.md`. This authorization advances THERM-003
-  without representing the design as Human-approved.
+  without representing the design as Human-approved at that time. This was
+  superseded by the explicit 2026-07-16 Human acceptance.
 
 ### 2026-07-15 requested hierarchy revision
 

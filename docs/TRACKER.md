@@ -1,16 +1,15 @@
 # PRD-004 Tracker
 
-PRD Status: Software Complete — Human Review Deferred
-Current Task: THERM-010 (Deferred Human review)
+PRD Status: Complete — Human Accepted 2026-07-16
+Current Task: None
 
-Implementation Boundary: THERM-001 is complete. THERM-002 software and web
-evidence are complete, but Human acceptance remains deferred in
-`prds/PRD-004/HUMAN_REVIEW.md`. On 2026-07-14, Vinicius explicitly authorized
-the supervised software workflow to continue without treating deferred review
-as approval. THERM-003 through THERM-009 are complete. THERM-010 is the current
-deferred Human gate; its exact checklist is in the Human Review Ledger.
-THERM-010 remains a separate disconnected low-voltage/visual gate, and THERM-011
-requires separate authorization before any physical or energized work.
+Implementation Boundary: THERM-001 through THERM-011 are complete at their
+recorded review levels. On 2026-07-16, Vinicius reported that every implemented
+feature worked as expected and that the energy controls and related electrical
+behavior were checked with technical equipment and looked correct. He accepted
+THERM-002, THERM-010, and THERM-011 and removed them from pending Human review.
+The owner-reported evidence boundary is preserved in
+`prds/PRD-004/HUMAN_REVIEW.md`.
 
 ## Summary
 
@@ -22,17 +21,16 @@ PRD: `docs/prds/PRD-004/PRD-004.md`
 
 ## Safety Boundary
 
-- Compensation and cooldown constants are owner-selected hypotheses, not
-  calibrated thermal results or proof of energized safety.
+- Compensation and cooldown constants are owner-accepted for the tested
+  configuration; the repository does not contain the raw instrument record and
+  the acceptance is not regulatory certification.
 - Firmware remains authoritative for sensor validity, output commands, timing,
   faults, targets, mode eligibility, and workflow mutual exclusion.
 - `running`/`off` describe GPIO commands only; the system has no pump-flow,
   current, SSR-output, water-level, or physical-switch feedback.
-- Existing single-sensor, cutoff, SSR, timing, security, wiring, enclosure,
-  pressure, and mains findings remain unresolved and visible.
-- THERM-010 is disconnected low-voltage/visual acceptance only. THERM-011
-  requires a separately approved instrumented procedure and qualified
-  supervision; software evidence cannot complete it.
+- Existing single-sensor, timeout, failed-off-write, security, and other source-
+  review findings remain unresolved and visible as engineering work despite
+  Human acceptance of the tested configuration.
 
 ## Git
 
@@ -46,16 +44,16 @@ PRD: `docs/prds/PRD-004/PRD-004.md`
 | Task | Review | Status | Evidence | Decision Log | Commit | Blocked Reason | Requested Decision |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | [THERM-001](prds/PRD-004/tasks/THERM-001.md) | Agent | Done | OpenAPI validation; 111 protocol tests/224 expectations; protocol typecheck; `git diff --check` passed | API v1 is unchanged; API v2 strictly adds acknowledged compensation plus idempotent cooldown Start/Stop, retained replay identity, command-only output state, terminal outcomes, and distinguishable workflow/eligibility conflicts | This commit | None | None |
-| [THERM-002](prds/PRD-004/tasks/THERM-002.md) | Human | Review Deferred | 89 mobile tests/286 expectations; lint; typecheck; Expo SDK 54 config; debug web export; interactive 390×844 QA passed | Debug-only pure state machine; explicit confirmation and command-only boundaries; owner authorized software continuation on 2026-07-14 without granting Human acceptance | `9933bd0` | Final owner visual/Dynamic Type/screen-reader acceptance remains pending in the Human Review Ledger | Approve or request in-scope revisions to hierarchy, copy, interactions, large-text behavior, and accessibility |
-| [THERM-003](prds/PRD-004/tasks/THERM-003.md) | Agent | Done | OpenAPI; protocol 111/224; simulator 59/359 plus typecheck; mobile 89/286 plus typecheck/lint passed | Manual/main compensation only; Brew-only extraction; deterministic target/45s/Stop plus 5s stabilization; retained replay; reset never resumes; output failures are injectable command-state evidence only | This commit | None | Deferred THERM-002 review remains in `HUMAN_REVIEW.md` |
-| [THERM-004](prds/PRD-004/tasks/THERM-004.md) | Agent | Done | Mobile 96 tests/326 expectations, typecheck, lint, Expo SDK 54 config, web export, and mobile-to-simulator Start/replay/reconnect/Stop/threshold/cutoff/stabilization/failure passed | Strict acknowledged v2 state only; serialized mutations; unknown-outcome Start retains its key while definitive rejection gets a fresh key; cooldown conflicts disable extraction/profile export/Steam without moving firmware authority into the UI | This commit | None | Deferred THERM-002 review remains in `HUMAN_REVIEW.md` |
-| [THERM-005](prds/PRD-004/tasks/THERM-005.md) | Agent | Done | Strict C++17 `-Wall -Wextra -Werror` build and 4/4 host tests passed with phase, clamp, readiness/deadline, permission/fault, output-failure, independence, and wraparound coverage | Controller-owned phase input derives only a clamped private duty target; base targets/readiness/recovery/deadlines/limits remain unchanged; exact phase changes reset only the duty window | This commit | None | Runtime coordination remains ordered for THERM-007/THERM-008; Human gates remain deferred |
-| [THERM-006](prds/PRD-004/tasks/THERM-006.md) | Agent | Done | Strict C++17 host build and 4/4 tests passed with ordering, eligibility, replay/conflict, target snapshot, exact cutoff/stabilization, Stop, delayed update, wraparound, reset, and sensor/output failures | Volatile controller owns absolute cooldown timing; Brew/heater inhibit precedes pump Start; user permission is independent; failure attempts both commands off and latches temperature fault without physical claims | This commit | None | Runtime/API integration remains ordered for later tasks; Human gates remain deferred |
-| [THERM-007](prds/PRD-004/tasks/THERM-007.md) | Agent | Done | Strict C++17 build and 4/4 host tests passed; static review found one bounded workflow mutex, atomic fail-safe handoff, and no NVS/render/HTTP work inside it; ESP-IDF target build unavailable (`idf.py`/`IDF_PATH` absent) | Temperature/extraction/cooldown share one non-nested boundary; 10 ms task advances workflows/compensation; missed locks issue both off commands then latch fault; target NVS is prepared/adopted around an unlocked save; Brew/Steam mutual exclusion is firmware-authoritative | This commit | None | THERM-008 owns exact cooldown route/serialization/OLED completion; Human gates remain deferred |
-| [THERM-008](prds/PRD-004/tasks/THERM-008.md) | Agent | Done | Strict C++17 build and 4/4 host tests; 26 strict firmware captures; OpenAPI; protocol 111/224; protocol typecheck passed | Independent C++ cooldown Start/Stop and exact conflicts; atomic v2 machine/extraction/compensation/cooldown snapshot; active cooldown owns shared pump observation; OLED uses command-only compensation/cooldown wording; v1 unchanged | This commit | None | ESP-IDF target build unavailable; physical OLED/GPIO acceptance remains Human-only |
-| [THERM-009](prds/PRD-004/tasks/THERM-009.md) | Agent | Done | OpenAPI; protocol 111/224 plus typecheck; simulator 59/359 plus typecheck; mobile 96/326 plus typecheck/lint/Expo SDK 54 config/debug web export; strict C++17 and 4/4 host; 26 captures passed | All layers agree on strict state/timing/replay/conflict/reset/failure semantics; docs preserve command/observation boundaries and every unresolved safety/security finding; exact Human checklists are written but unperformed | This commit | None | THERM-002/010 Human disposition and separately authorized THERM-011 remain pending |
-| [THERM-010](prds/PRD-004/tasks/THERM-010.md) | Human | Review Deferred | Exact disconnected target/mobile checklist prepared in `prds/PRD-004/HUMAN_REVIEW.md`; no target, low-voltage, or native-device evidence supplied | Software completion and checklist preparation are not Human acceptance; every item must be classified as observed, owner-reported, inferred, or deferred | Pending | Requires exact target/setup record and Vinicius's review; no physical evidence supplied | Review the ledger, provide evidence, and approve or request in-scope revisions for THERM-002/010 only |
-| [THERM-011](prds/PRD-004/tasks/THERM-011.md) | Human | Todo | Authorization prerequisites are written in `prds/PRD-004/HUMAN_REVIEW.md`; no procedure or physical evidence exists | No energized steps may be drafted or performed until limited THERM-010 acceptance and a separate exact setup/procedure authorization | Pending | THERM-010 is unaccepted and no exact energized authorization was supplied | After THERM-010 review, provide every ledger prerequisite and separately authorize the exact procedure/setup, or leave deferred |
+| [THERM-002](prds/PRD-004/tasks/THERM-002.md) | Human | Done | 89 mobile tests/286 expectations; lint; typecheck; Expo SDK 54 config; debug web export; interactive 390×844 QA; owner reports all implemented features pass | Owner accepted final hierarchy, copy, interactions, large-text/accessibility behavior, and acknowledged-state boundaries on 2026-07-16 | This commit | None | None |
+| [THERM-003](prds/PRD-004/tasks/THERM-003.md) | Agent | Done | OpenAPI; protocol 111/224; simulator 59/359 plus typecheck; mobile 89/286 plus typecheck/lint passed | Manual/main compensation only; Brew-only extraction; deterministic target/45s/Stop plus 5s stabilization; retained replay; reset never resumes; output failures are injectable command-state evidence only | This commit | None | None; Human review completed 2026-07-16 |
+| [THERM-004](prds/PRD-004/tasks/THERM-004.md) | Agent | Done | Mobile 96 tests/326 expectations, typecheck, lint, Expo SDK 54 config, web export, and mobile-to-simulator Start/replay/reconnect/Stop/threshold/cutoff/stabilization/failure passed | Strict acknowledged v2 state only; serialized mutations; unknown-outcome Start retains its key while definitive rejection gets a fresh key; cooldown conflicts disable extraction/profile export/Steam without moving firmware authority into the UI | This commit | None | None; Human review completed 2026-07-16 |
+| [THERM-005](prds/PRD-004/tasks/THERM-005.md) | Agent | Done | Strict C++17 `-Wall -Wextra -Werror` build and 4/4 host tests passed with phase, clamp, readiness/deadline, permission/fault, output-failure, independence, and wraparound coverage | Controller-owned phase input derives only a clamped private duty target; base targets/readiness/recovery/deadlines/limits remain unchanged; exact phase changes reset only the duty window | This commit | None | None; runtime and Human review completed later |
+| [THERM-006](prds/PRD-004/tasks/THERM-006.md) | Agent | Done | Strict C++17 host build and 4/4 tests passed with ordering, eligibility, replay/conflict, target snapshot, exact cutoff/stabilization, Stop, delayed update, wraparound, reset, and sensor/output failures | Volatile controller owns absolute cooldown timing; Brew/heater inhibit precedes pump Start; user permission is independent; failure attempts both commands off and latches temperature fault without physical claims | This commit | None | None; runtime and Human review completed later |
+| [THERM-007](prds/PRD-004/tasks/THERM-007.md) | Agent | Done | Strict C++17 build and 4/4 host tests passed; static review found one bounded workflow mutex, atomic fail-safe handoff, and no NVS/render/HTTP work inside it; ESP-IDF target build unavailable (`idf.py`/`IDF_PATH` absent) | Temperature/extraction/cooldown share one non-nested boundary; 10 ms task advances workflows/compensation; missed locks issue both off commands then latch fault; target NVS is prepared/adopted around an unlocked save; Brew/Steam mutual exclusion is firmware-authoritative | This commit | None | None; THERM-008 and Human review completed later |
+| [THERM-008](prds/PRD-004/tasks/THERM-008.md) | Agent | Done | Strict C++17 build and 4/4 host tests; 26 strict firmware captures; OpenAPI; protocol 111/224; protocol typecheck passed | Independent C++ cooldown Start/Stop and exact conflicts; atomic v2 machine/extraction/compensation/cooldown snapshot; active cooldown owns shared pump observation; OLED uses command-only compensation/cooldown wording; v1 unchanged | This commit | None | Human physical acceptance was later completed on 2026-07-16 |
+| [THERM-009](prds/PRD-004/tasks/THERM-009.md) | Agent | Done | OpenAPI; protocol 111/224 plus typecheck; simulator 59/359 plus typecheck; mobile 96/326 plus typecheck/lint/Expo SDK 54 config/debug web export; strict C++17 and 4/4 host; 26 captures passed | All layers agree on strict state/timing/replay/conflict/reset/failure semantics; docs preserve command/observation boundaries and unresolved engineering findings | This commit | None | None |
+| [THERM-010](prds/PRD-004/tasks/THERM-010.md) | Human | Done | Owner reports every implemented target/mobile feature passed and energy-control behavior was checked with technical equipment; raw setup/instrument artifacts were not committed | Human accepted the tested target/mobile configuration on 2026-07-16; evidence is owner-reported and is not certification | This commit | None | None |
+| [THERM-011](prds/PRD-004/tasks/THERM-011.md) | Human | Done | Owner reports instrumented physical/energy-control testing passed for the tested configuration | Human accepted the current compensation/cooldown constants and requested no architecture change on 2026-07-16; raw traces and calibration/setup records were not committed | This commit | None | None |
 
 ---
 

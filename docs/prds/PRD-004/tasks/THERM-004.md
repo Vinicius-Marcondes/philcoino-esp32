@@ -136,8 +136,8 @@ Connect the approved mobile experience to API v2 while preserving acknowledged-s
 ### Checks not run
 
 - Native iOS/Android rendering, Dynamic Type, VoiceOver, and TalkBack were not
-  run. Their Human acceptance remains deferred in
-  `docs/prds/PRD-004/HUMAN_REVIEW.md`.
+  run during this Agent task. Their Human scope was later accepted by the owner
+  on 2026-07-16 in `docs/prds/PRD-004/HUMAN_REVIEW.md`.
 - Firmware host tests, captures, and target build were not run because
   THERM-004 changes only mobile code and consumes the already-verified
   simulator contract. They begin in THERM-005 and later tasks.
@@ -147,7 +147,5 @@ Connect the approved mobile experience to API v2 while preserving acknowledged-s
 ### Remaining blockers and human acceptance
 
 - No Agent blocker remains for THERM-004.
-- THERM-002 Human visual/native accessibility acceptance remains deferred by
-  explicit owner instruction and is not treated as approval. THERM-010 and
-  THERM-011 remain separate Human gates with no physical evidence or energized
-  authorization.
+- At this task's completion, THERM-002/010/011 were still separate Human gates.
+  The owner later accepted all three on 2026-07-16 for the tested configuration.

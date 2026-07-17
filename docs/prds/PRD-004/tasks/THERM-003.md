@@ -124,6 +124,6 @@ Implement the API v2 compensation and cooldown contract in the development simul
 ### Remaining blockers and human acceptance
 
 - No Agent blocker remains for THERM-003.
-- Deferred THERM-002 Human acceptance remains recorded in
-  `docs/prds/PRD-004/HUMAN_REVIEW.md`; the owner explicitly authorized software
-  continuation without converting that review into approval.
+- THERM-002 Human acceptance was deferred when this Agent task completed and
+  was later accepted by the owner on 2026-07-16, as recorded in
+  `docs/prds/PRD-004/HUMAN_REVIEW.md`.
