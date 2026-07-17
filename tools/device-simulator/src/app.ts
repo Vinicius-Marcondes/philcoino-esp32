@@ -279,6 +279,14 @@ export function createSimulator(
         "Switch the machine to Brew before starting extraction.",
       );
     }
+    if (!result.ok && result.reason === "idempotency-mismatch") {
+      return contractV2Error(
+        c,
+        409,
+        "idempotency_mismatch",
+        "The idempotency key was already used with a different selection.",
+      );
+    }
     if (!result.ok) {
       return contractV2Error(
         c,

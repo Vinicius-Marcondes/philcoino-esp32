@@ -19,6 +19,8 @@ class EspNetworkServer {
  private:
   bool start_wifi(const char* ssid, const char* password);
   bool start_mdns();
+  void start_mdns_retry();
+  static void mdns_retry_task(void* context);
   bool start_http();
   void handle_wifi_event(const char* event_base, std::int32_t event_id,
                          void* event_data);
@@ -31,6 +33,9 @@ class EspNetworkServer {
   void* wifi_event_handler_{nullptr};
   void* ip_event_handler_{nullptr};
   std::atomic<WifiStatus> wifi_status_{WifiStatus::kOff};
+  std::atomic<bool> mdns_started_{false};
+  std::atomic<bool> mdns_starting_{false};
+  std::atomic<bool> mdns_retry_running_{false};
 };
 
 }  // namespace philcoino::networking

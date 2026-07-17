@@ -12,6 +12,7 @@ import {
   ModeResponseSchema,
   ProfileSetSchema,
   RunningExtractionStateSchema,
+  StartExtractionResponseSchema,
   STEAM_TIMEOUT_MS,
   TemperatureSettingsResponseSchema,
   type ExtractionSelection,
@@ -258,12 +259,27 @@ describe("API v2 deterministic extraction", () => {
     const first = await startExtraction("same-key-start-01", { kind: "manual" });
     await advance(12_345);
     const replay = await startExtraction("same-key-start-01", {
-      kind: "profile",
-      profileId: "profile-1",
+      kind: "manual",
     });
     expect(replay.extractionId).toBe(first.extractionId);
     expect(replay.selection).toEqual({ kind: "manual" });
     expect(replay.elapsedMs).toBe(12_345);
+
+    const mismatchResponse = await simulator.app.request(
+      "/api/v2/extractions/start",
+      jsonRequest(
+        "POST",
+        {
+          idempotencyKey: "same-key-start-01",
+          selection: { kind: "profile", profileId: "profile-1" },
+        },
+        authorization,
+      ),
+    );
+    expect(mismatchResponse.status).toBe(409);
+    expect(
+      ApiV2ErrorResponseSchema.parse(await mismatchResponse.json()).error.code,
+    ).toBe("idempotency_mismatch");
 
     const response = await simulator.app.request(
       "/api/v2/extractions/start",
@@ -282,6 +298,36 @@ describe("API v2 deterministic extraction", () => {
     );
     expect(conflict.activeExtraction.extractionId).toBe(first.extractionId);
     expect(conflict.activeExtraction.elapsedMs).toBe(12_345);
+  });
+
+  it("replays terminal extraction identity without starting a second run", async () => {
+    const first = await startExtraction("terminal-replay-01", {
+      kind: "manual",
+    });
+    await advance(60_000);
+
+    const response = await simulator.app.request(
+      "/api/v2/extractions/start",
+      jsonRequest(
+        "POST",
+        {
+          idempotencyKey: "terminal-replay-01",
+          selection: { kind: "manual" },
+        },
+        authorization,
+      ),
+    );
+    expect(response.status).toBe(200);
+    expect(StartExtractionResponseSchema.parse(await response.json())).toEqual({
+      status: "idle",
+      extractionId: first.extractionId,
+      selection: { kind: "manual" },
+      phase: "idle",
+      elapsedMs: 60_000,
+      remainingMs: null,
+      pumpCommand: "off",
+      outcome: "completed",
+    });
   });
 
   it("makes Stop idempotent and acknowledges idle", async () => {

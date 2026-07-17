@@ -146,8 +146,8 @@ class FreeRtosApiSynchronization final
         xSemaphoreTake(workflow_mutex_, pdMS_TO_TICKS(50)) == pdTRUE) {
       return true;
     }
-    pump_.force_off();
-    heater_.force_off();
+    pump_.emergency_off();
+    heater_.emergency_off();
     fail_safe_requested_.store(true, std::memory_order_release);
     return false;
   }
@@ -224,7 +224,7 @@ void workflow_control_task(void* argument) {
             false, std::memory_order_acq_rel)) {
       context->temperature->latch_fault(
           philcoino::control::FaultCode::kInternalError);
-      extraction_result = context->extraction->stop()
+      extraction_result = context->extraction->stop(now_ms)
                               ? philcoino::control::ExtractionUpdateResult::kCompleted
                               : philcoino::control::ExtractionUpdateResult::kOutputFailure;
       if (context->cooldown->active()) {
@@ -242,12 +242,17 @@ void workflow_control_task(void* argument) {
       context->temperature->set_extraction_phase(
           context->extraction->snapshot(now_ms).phase, now_ms);
     }
+    if (extraction_result ==
+        philcoino::control::ExtractionUpdateResult::kOutputFailure) {
+      context->temperature->latch_fault(
+          philcoino::control::FaultCode::kInternalError);
+    }
     context->synchronization->unlock(
         philcoino::networking::ApiDomain::kExtraction);
     if (extraction_result ==
         philcoino::control::ExtractionUpdateResult::kOutputFailure) {
       ESP_LOGE(kLogTag,
-               "Pump command failed; extraction ended with an off command");
+               "Pump off command is unconfirmed; fault is latched and low is retried");
     }
     if (cooldown_result == philcoino::control::CooldownUpdateResult::kFailed) {
       ESP_LOGE(kLogTag,
@@ -263,7 +268,9 @@ extern "C" void app_main() {
   using namespace philcoino::peripherals;
 
   static EspGpioOutput pump_gpio(philcoino::config::kPumpGpio);
-  static FailOffPump pump(pump_gpio, philcoino::config::kPumpActiveHigh);
+  static EspOutputCriticalSection pump_critical_section;
+  static FailOffPump pump(pump_gpio, pump_critical_section,
+                          philcoino::config::kPumpActiveHigh);
   if (!pump.initialize()) {
     ESP_LOGE(kLogTag, "Pump fail-off initialization failed");
     return;
@@ -272,7 +279,8 @@ extern "C" void app_main() {
   static EspGpioOutput ssr_gpio(philcoino::config::kSsrGpio);
   static EspGptimerSafetyLease ssr_safety_lease(
       philcoino::config::kSsrGpio, philcoino::config::kSsrActiveHigh);
-  static FailOffSsr ssr(ssr_gpio, ssr_safety_lease,
+  static EspOutputCriticalSection ssr_critical_section;
+  static FailOffSsr ssr(ssr_gpio, ssr_safety_lease, ssr_critical_section,
                         philcoino::config::kSsrActiveHigh);
   if (!ssr.initialize()) {
     ESP_LOGE(kLogTag, "SSR fail-off initialization failed");
@@ -444,7 +452,7 @@ extern "C" void app_main() {
     if (fail_safe_requested.exchange(false, std::memory_order_acq_rel)) {
       controller.latch_fault(
           philcoino::control::FaultCode::kInternalError);
-      extraction_controller.stop();
+      extraction_controller.stop(uptime_ms());
       if (cooldown_controller.active()) {
         const auto failed_snapshot = controller.snapshot(uptime_ms());
         cooldown_controller.update(

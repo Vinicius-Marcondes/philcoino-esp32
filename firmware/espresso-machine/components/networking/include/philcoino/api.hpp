@@ -48,6 +48,7 @@ DiscoveryTxt discovery_txt(const DeviceIdentity& identity);
 
 bool constant_time_bearer_matches(const char* authorization,
                                   const std::string& expected_token);
+bool request_requires_auth(HttpMethod method, const std::string& path);
 
 class FirmwareApi {
  public:
@@ -62,6 +63,7 @@ class FirmwareApi {
   HttpResponse handle(HttpMethod method, const std::string& path,
                       const char* authorization, const std::string& body,
                       std::uint64_t uptime_ms);
+  bool authorized(const char* authorization) const;
 
  private:
   HttpResponse health(std::uint64_t uptime_ms) const;

@@ -332,7 +332,7 @@ describe("DeviceApiClient", () => {
     });
     await expect(client.startExtraction({
       idempotencyKey: "mobile-integration-01",
-      selection: { kind: "manual" },
+      selection: { kind: "profile", profileId: "profile-2" },
     })).resolves.toMatchObject({
       extractionId: started.extractionId,
       elapsedMs: 10_000,

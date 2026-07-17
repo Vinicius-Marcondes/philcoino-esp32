@@ -33,10 +33,12 @@ import {
   type TemperatureSettingsRequest,
   type TemperatureSettingsResponse,
   type ExtractionProfile,
+  type ExtractionOutcome,
   type ExtractionSelection,
   type ExtractionState,
   type ProfileSet,
   type RunningExtractionState,
+  type TerminalExtractionState,
 } from "@philcoino/protocol";
 
 const AMBIENT_TEMPERATURE_C = 24;
@@ -102,7 +104,7 @@ export type ReplaceProfilesResult =
   | { ok: false; reason: "persistence" };
 
 export type StartExtractionResult =
-  | { ok: true; extraction: RunningExtractionState }
+  | { ok: true; extraction: RunningExtractionState | TerminalExtractionState }
   | {
       ok: false;
       reason: "active";
@@ -113,7 +115,13 @@ export type StartExtractionResult =
       reason: "cooldown-active";
       activeCooldown: ActiveCooldownState;
     }
-  | { ok: false; reason: "brew-mode-required" | "profile-not-configured" };
+  | {
+      ok: false;
+      reason:
+        | "brew-mode-required"
+        | "profile-not-configured"
+        | "idempotency-mismatch";
+    };
 
 export type StartCooldownResult =
   | { ok: true; cooldown: CooldownState }
@@ -153,6 +161,14 @@ interface ActiveExtraction {
   selection: ExtractionSelection;
 }
 
+interface TerminalExtraction {
+  elapsedMs: number;
+  extractionId: string;
+  idempotencyKey: string;
+  outcome: ExtractionOutcome;
+  selection: ExtractionSelection;
+}
+
 interface CooldownRecord {
   cooldownId: string;
   idempotencyKey: string;
@@ -179,6 +195,7 @@ export class SimulatorMachine {
   private uptimeMs = 0;
   private profiles = cloneProfileSet(DEFAULT_PROFILE_SET);
   private activeExtraction: ActiveExtraction | null = null;
+  private terminalExtraction: TerminalExtraction | null = null;
   private extractionCounter = 0;
   private cooldown: CooldownRecord | null = null;
   private cooldownCounter = 0;
@@ -296,13 +313,20 @@ export class SimulatorMachine {
     const current = this.getExtractionState();
     if (current.status === "running") {
       if (this.activeExtraction?.idempotencyKey === idempotencyKey) {
-        return { ok: true, extraction: current };
+        return sameSelection(this.activeExtraction.selection, selection)
+          ? { ok: true, extraction: current }
+          : { ok: false, reason: "idempotency-mismatch" };
       }
       return {
         ok: false,
         reason: "active",
         activeExtraction: current,
       };
+    }
+    if (this.terminalExtraction?.idempotencyKey === idempotencyKey) {
+      return sameSelection(this.terminalExtraction.selection, selection)
+        ? { ok: true, extraction: current as TerminalExtractionState }
+        : { ok: false, reason: "idempotency-mismatch" };
     }
 
     const cooldown = this.getCooldownState();
@@ -328,6 +352,7 @@ export class SimulatorMachine {
     }
 
     this.extractionCounter += 1;
+    this.terminalExtraction = null;
     this.activeExtraction = {
       elapsedMs: 0,
       extractionId: `sim-run-${this.extractionCounter}`,
@@ -342,12 +367,33 @@ export class SimulatorMachine {
   }
 
   stopExtraction(): ExtractionState {
-    this.activeExtraction = null;
+    if (this.activeExtraction !== null) {
+      this.terminalExtraction = {
+        elapsedMs: this.activeExtraction.elapsedMs,
+        extractionId: this.activeExtraction.extractionId,
+        idempotencyKey: this.activeExtraction.idempotencyKey,
+        outcome: "stopped",
+        selection: this.activeExtraction.selection,
+      };
+      this.activeExtraction = null;
+    }
     return this.getExtractionState();
   }
 
   getExtractionState(): ExtractionState {
     if (this.activeExtraction === null) {
+      if (this.terminalExtraction !== null) {
+        return ExtractionStateSchema.parse({
+          status: "idle",
+          extractionId: this.terminalExtraction.extractionId,
+          selection: this.terminalExtraction.selection,
+          phase: "idle",
+          elapsedMs: this.terminalExtraction.elapsedMs,
+          remainingMs: null,
+          pumpCommand: "off",
+          outcome: this.terminalExtraction.outcome,
+        });
+      }
       return ExtractionStateSchema.parse({
         status: "idle",
         extractionId: null,
@@ -480,7 +526,6 @@ export class SimulatorMachine {
         activeExtraction: extraction,
       };
     }
-
     const current = this.getCooldownState();
     if (this.cooldown?.idempotencyKey === idempotencyKey) {
       return { ok: true, cooldown: current };
@@ -723,6 +768,13 @@ export class SimulatorMachine {
         : profileDurationMs(this.activeExtraction.profile);
     const nextElapsedMs = this.activeExtraction.elapsedMs + milliseconds;
     if (nextElapsedMs >= durationMs) {
+      this.terminalExtraction = {
+        elapsedMs: durationMs,
+        extractionId: this.activeExtraction.extractionId,
+        idempotencyKey: this.activeExtraction.idempotencyKey,
+        outcome: "completed",
+        selection: this.activeExtraction.selection,
+      };
       this.activeExtraction = null;
       return;
     }
@@ -822,6 +874,7 @@ export class SimulatorMachine {
     this.steamTimeoutRemainingMs = null;
     this.uptimeMs = 0;
     this.activeExtraction = null;
+    this.terminalExtraction = null;
     this.extractionCounter = 0;
     this.cooldown = null;
     this.cooldownCounter = 0;
@@ -888,6 +941,17 @@ function profileDurationMs(profile: ExtractionProfile | null): number {
       profile.soakSeconds +
       profile.mainExtractionSeconds) *
     1_000
+  );
+}
+
+function sameSelection(
+  left: ExtractionSelection,
+  right: ExtractionSelection,
+): boolean {
+  return (
+    left.kind === right.kind &&
+    (left.kind === "manual" ||
+      (right.kind === "profile" && left.profileId === right.profileId))
   );
 }
 

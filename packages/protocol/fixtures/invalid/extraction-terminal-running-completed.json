@@ -1,0 +1,10 @@
+{
+  "status": "idle",
+  "extractionId": "run-184220",
+  "selection": { "kind": "manual" },
+  "phase": "idle",
+  "elapsedMs": 60000,
+  "remainingMs": null,
+  "pumpCommand": "running",
+  "outcome": "completed"
+}

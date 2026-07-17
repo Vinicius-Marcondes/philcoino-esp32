@@ -1,5 +1,15 @@
 #include "philcoino/esp_peripherals.hpp"
 
+#include "sdkconfig.h"
+
+#if !CONFIG_GPTIMER_ISR_CACHE_SAFE
+#error "PhilcoINO requires CONFIG_GPTIMER_ISR_CACHE_SAFE for the heater lease"
+#endif
+
+#if !CONFIG_GPIO_CTRL_FUNC_IN_IRAM
+#error "PhilcoINO requires CONFIG_GPIO_CTRL_FUNC_IN_IRAM for the heater lease"
+#endif
+
 #include <algorithm>
 #include <array>
 #include <cinttypes>
@@ -435,5 +445,9 @@ bool EspOledTransport::write(std::uint8_t control, const std::uint8_t* bytes,
   return i2c_master_transmit(as_i2c_device(device_), packet.data(), length + 1,
                              100) == ESP_OK;
 }
+
+void EspOutputCriticalSection::enter() { portENTER_CRITICAL(&lock_); }
+
+void EspOutputCriticalSection::exit() { portEXIT_CRITICAL(&lock_); }
 
 }  // namespace philcoino::peripherals

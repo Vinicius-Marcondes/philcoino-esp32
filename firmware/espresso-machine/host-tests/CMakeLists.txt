@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.22)
 project(philcoino_firmware_host_tests LANGUAGES CXX)
 
+find_package(Threads REQUIRED)
+
 enable_testing()
 
 add_executable(
@@ -32,6 +34,7 @@ target_include_directories(
 )
 target_compile_features(peripherals_test PRIVATE cxx_std_17)
 target_compile_options(peripherals_test PRIVATE -Wall -Wextra -Werror)
+target_link_libraries(peripherals_test PRIVATE Threads::Threads)
 
 add_test(NAME peripherals_test COMMAND peripherals_test)
 

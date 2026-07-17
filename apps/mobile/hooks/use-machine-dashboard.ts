@@ -103,6 +103,7 @@ export function useMachineDashboard(
       const profileController = new AbortController();
       const polling = new DashboardPollingSession({
         client,
+        onDeviceRestart: () => mutationSession.current?.handleDeviceRestart(),
         onConnectionChange: setConnection,
         onSnapshotChange: (nextSnapshot) => {
           setSnapshot(nextSnapshot?.machine ?? null);

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 
@@ -118,6 +119,13 @@ class DigitalOutput {
   virtual bool configure_output() = 0;
 };
 
+class OutputCriticalSection {
+ public:
+  virtual ~OutputCriticalSection() = default;
+  virtual void enter() = 0;
+  virtual void exit() = 0;
+};
+
 class SsrSafetyLease {
  public:
   virtual ~SsrSafetyLease() = default;
@@ -130,12 +138,15 @@ class SsrSafetyLease {
 class FailOffSsr {
  public:
   FailOffSsr(DigitalOutput& output, SsrSafetyLease& safety_lease,
+             OutputCriticalSection& critical_section,
              bool active_high = true);
 
   bool initialize();
   bool set_enabled(bool enabled);
   bool force_off();
+  bool emergency_off();
   bool is_enabled() const;
+  bool emergency_inhibited() const;
   bool safety_cutoff_tripped() const;
 
  private:
@@ -143,29 +154,38 @@ class FailOffSsr {
 
   DigitalOutput& output_;
   SsrSafetyLease& safety_lease_;
+  OutputCriticalSection& critical_section_;
   bool active_high_{true};
   bool initialized_{false};
-  bool enabled_{false};
+  std::atomic<bool> enabled_{false};
+  std::atomic<bool> emergency_inhibited_{false};
 };
 
 enum class PumpCommand { kOff, kRunning };
 
 class FailOffPump {
  public:
-  explicit FailOffPump(DigitalOutput& output, bool active_high = true);
+  FailOffPump(DigitalOutput& output, OutputCriticalSection& critical_section,
+              bool active_high = true);
 
   bool initialize();
   bool set_running(bool running);
   bool force_off();
+  bool emergency_off();
   PumpCommand command() const;
+  bool output_state_unknown() const;
+  bool emergency_inhibited() const;
 
  private:
   bool write_command(PumpCommand command);
 
   DigitalOutput& output_;
+  OutputCriticalSection& critical_section_;
   bool active_high_{true};
   bool initialized_{false};
-  PumpCommand command_{PumpCommand::kOff};
+  std::atomic<PumpCommand> command_{PumpCommand::kOff};
+  std::atomic<bool> output_state_unknown_{true};
+  std::atomic<bool> emergency_inhibited_{false};
 };
 
 enum class DisplayMode { kUnknown, kBrew, kSteam };

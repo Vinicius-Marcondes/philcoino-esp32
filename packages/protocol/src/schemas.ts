@@ -301,9 +301,34 @@ export const RunningExtractionStateSchema = z.union([
   }),
 ]);
 
+export const ExtractionOutcomeSchema = z.enum([
+  "completed",
+  "stopped",
+  "failed",
+]);
+const TerminalExtractionBaseSchema = z.strictObject({
+  status: z.literal("idle"),
+  extractionId: ExtractionIdSchema,
+  selection: ExtractionSelectionSchema,
+  phase: z.literal("idle"),
+  elapsedMs: ExtractionElapsedMsSchema,
+  remainingMs: z.null(),
+});
+export const TerminalExtractionStateSchema = z.union([
+  TerminalExtractionBaseSchema.extend({
+    pumpCommand: z.literal("off"),
+    outcome: z.enum(["completed", "stopped"]),
+  }),
+  TerminalExtractionBaseSchema.extend({
+    pumpCommand: PumpCommandSchema,
+    outcome: z.literal("failed"),
+  }),
+]);
+
 export const ExtractionStateSchema = z.union([
   IdleExtractionStateSchema,
   RunningExtractionStateSchema,
+  TerminalExtractionStateSchema,
 ]);
 
 export const CompensationPhaseSchema = z.enum(["manual", "main-extraction"]);
@@ -473,14 +498,34 @@ export const MachineStateV2Schema = z
           "A failed cooldown acknowledgement requires the machine fault state that keeps heating suppressed.",
       });
     }
+
+    if (
+      state.extraction.status === "idle" &&
+      "outcome" in state.extraction &&
+      state.extraction.outcome === "failed" &&
+      state.machine.status !== "fault"
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["extraction", "outcome"],
+        message:
+          "A failed extraction acknowledgement requires the machine fault state that keeps further output commands suppressed.",
+      });
+    }
   });
 
 export const StartExtractionRequestSchema = z.strictObject({
   idempotencyKey: IdempotencyKeySchema,
   selection: ExtractionSelectionSchema,
 });
-export const StartExtractionResponseSchema = RunningExtractionStateSchema;
-export const StopExtractionResponseSchema = IdleExtractionStateSchema;
+export const StartExtractionResponseSchema = z.union([
+  RunningExtractionStateSchema,
+  TerminalExtractionStateSchema,
+]);
+export const StopExtractionResponseSchema = z.union([
+  IdleExtractionStateSchema,
+  TerminalExtractionStateSchema,
+]);
 
 export const StartCooldownRequestSchema = z.strictObject({
   idempotencyKey: IdempotencyKeySchema,
@@ -498,6 +543,7 @@ export const ApiV2ErrorCodeSchema = z.enum([
   "sensor_unavailable",
   "machine_faulted",
   "profile_not_configured",
+  "idempotency_mismatch",
   "persistence_failure",
   "internal_error",
 ]);
@@ -556,8 +602,12 @@ export type ExtractionSelection = z.infer<typeof ExtractionSelectionSchema>;
 export type PumpCommand = z.infer<typeof PumpCommandSchema>;
 export type ExtractionPhase = z.infer<typeof ExtractionPhaseSchema>;
 export type ExtractionState = z.infer<typeof ExtractionStateSchema>;
+export type ExtractionOutcome = z.infer<typeof ExtractionOutcomeSchema>;
 export type RunningExtractionState = z.infer<
   typeof RunningExtractionStateSchema
+>;
+export type TerminalExtractionState = z.infer<
+  typeof TerminalExtractionStateSchema
 >;
 export type CompensationPhase = z.infer<typeof CompensationPhaseSchema>;
 export type CompensationState = z.infer<typeof CompensationStateSchema>;

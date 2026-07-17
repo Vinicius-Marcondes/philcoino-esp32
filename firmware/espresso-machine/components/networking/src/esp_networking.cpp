@@ -1,5 +1,6 @@
 #include "philcoino/esp_networking.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstring>
@@ -18,6 +19,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
 #include "freertos/semphr.h"
+#include "freertos/task.h"
 #include "mdns.h"
 #include "philcoino/config.hpp"
 
@@ -29,6 +31,9 @@ constexpr EventBits_t kConnectedBit = BIT0;
 constexpr EventBits_t kConnectionFailedBit = BIT1;
 constexpr std::size_t kMaximumAuthorizationLength = 512;
 constexpr std::size_t kMaximumRequestBodyLength = 1024;
+constexpr std::int64_t kRequestBodyDeadlineUs = 2'000'000;
+constexpr unsigned kMaximumBodyTimeouts = 3;
+constexpr std::uint32_t kMaximumMdnsRetryDelayMs = 30'000;
 constexpr std::array<std::pair<const char*, httpd_method_t>, 14> kRoutes{{
     {"/healthz", HTTP_GET},
     {"/api/v1/device", HTTP_GET},
@@ -70,6 +75,15 @@ HttpMethod request_method(int method) {
   }
 }
 
+class AtomicFlagReset final {
+ public:
+  explicit AtomicFlagReset(std::atomic<bool>& flag) : flag_(flag) {}
+  ~AtomicFlagReset() { flag_.store(false, std::memory_order_release); }
+
+ private:
+  std::atomic<bool>& flag_;
+};
+
 }  // namespace
 
 EspNetworkServer::EspNetworkServer(FirmwareApi& api,
@@ -81,11 +95,12 @@ bool EspNetworkServer::start(const char* ssid, const char* password) {
     return false;
   }
   if (!start_mdns()) {
-    httpd_stop(static_cast<httpd_handle_t>(http_server_));
-    http_server_ = nullptr;
-    return false;
+    ESP_LOGW(kLogTag,
+             "mDNS advertisement is degraded; API remains available by address");
+    start_mdns_retry();
+  } else {
+    ESP_LOGI(kLogTag, "HTTP and mDNS services started");
   }
-  ESP_LOGI(kLogTag, "HTTP and mDNS services started");
   return true;
 }
 
@@ -217,13 +232,28 @@ void EspNetworkServer::handle_wifi_event(const char* event_base,
                          kConnectionFailedBit);
     xEventGroupSetBits(static_cast<EventGroupHandle_t>(event_group_),
                        kConnectedBit);
+    if (!mdns_started_.load(std::memory_order_acquire)) {
+      start_mdns_retry();
+    }
   }
 }
 
 bool EspNetworkServer::start_mdns() {
-  if (mdns_init() != ESP_OK ||
-      mdns_hostname_set(identity_.device_id.c_str()) != ESP_OK ||
+  if (mdns_started_.load(std::memory_order_acquire)) {
+    return true;
+  }
+  bool expected = false;
+  if (!mdns_starting_.compare_exchange_strong(
+          expected, true, std::memory_order_acq_rel)) {
+    return mdns_started_.load(std::memory_order_acquire);
+  }
+  AtomicFlagReset starting_reset(mdns_starting_);
+  if (mdns_init() != ESP_OK) {
+    return false;
+  }
+  if (mdns_hostname_set(identity_.device_id.c_str()) != ESP_OK ||
       mdns_instance_name_set(identity_.name.c_str()) != ESP_OK) {
+    mdns_free();
     return false;
   }
 
@@ -238,15 +268,50 @@ bool EspNetworkServer::start_mdns() {
     mdns_free();
     return false;
   }
+  mdns_started_.store(true, std::memory_order_release);
   return true;
 }
 
+void EspNetworkServer::start_mdns_retry() {
+  bool expected = false;
+  if (!mdns_retry_running_.compare_exchange_strong(
+          expected, true, std::memory_order_acq_rel)) {
+    return;
+  }
+  if (xTaskCreate(mdns_retry_task, "philcoino-mdns", 3072, this, 3, nullptr) !=
+      pdPASS) {
+    mdns_retry_running_.store(false, std::memory_order_release);
+    ESP_LOGE(kLogTag, "Could not start bounded mDNS recovery task");
+  }
+}
+
+void EspNetworkServer::mdns_retry_task(void* context) {
+  auto* server = static_cast<EspNetworkServer*>(context);
+  std::uint32_t delay_ms = 1000;
+  while (!server->mdns_started_.load(std::memory_order_acquire)) {
+    vTaskDelay(pdMS_TO_TICKS(delay_ms));
+    if (server->wifi_status() == WifiStatus::kConnected &&
+        server->start_mdns()) {
+      ESP_LOGI(kLogTag, "mDNS advertisement recovered without restarting API");
+      break;
+    }
+    delay_ms = std::min(delay_ms * 2U, kMaximumMdnsRetryDelayMs);
+  }
+  server->mdns_retry_running_.store(false, std::memory_order_release);
+  vTaskDelete(nullptr);
+}
+
 bool EspNetworkServer::start_http() {
+  if (http_server_ != nullptr) {
+    return true;
+  }
   httpd_config_t configuration = HTTPD_DEFAULT_CONFIG();
   configuration.server_port = kHttpPort;
   configuration.stack_size = 6144;
   configuration.max_uri_handlers =
       static_cast<std::uint16_t>(kRoutes.size());
+  configuration.recv_wait_timeout = 1;
+  configuration.send_wait_timeout = 2;
   httpd_handle_t server = nullptr;
   if (httpd_start(&server, &configuration) != ESP_OK) {
     return false;
@@ -286,31 +351,60 @@ int EspNetworkServer::handle_http_request(void* opaque_request) {
     }
   }
 
+  const auto method = request_method(request->method);
+  const std::string path(request->uri);
+  const char* authorization_value =
+      authorization.empty() ? nullptr : authorization.c_str();
+  if (request_requires_auth(method, path) &&
+      !api_.authorized(authorization_value)) {
+    const HttpResponse response =
+        api_.handle(method, path, authorization_value, "", uptime_ms());
+    httpd_resp_set_status(request, status_text(response.status));
+    httpd_resp_set_type(request, "application/json");
+    if (response.bearer_challenge) {
+      httpd_resp_set_hdr(request, "WWW-Authenticate",
+                         "Bearer realm=\"philcoino\"");
+    }
+    return httpd_resp_send(request, response.body.c_str(),
+                           response.body.size());
+  }
+
   std::string body;
   if (request->content_len > 0 &&
       static_cast<std::size_t>(request->content_len) <=
           kMaximumRequestBodyLength) {
     body.resize(static_cast<std::size_t>(request->content_len));
     std::size_t received = 0;
+    unsigned timeout_count = 0;
+    const auto deadline_us = esp_timer_get_time() + kRequestBodyDeadlineUs;
     while (received < body.size()) {
+      if (esp_timer_get_time() >= deadline_us) {
+        return ESP_FAIL;
+      }
       const int result = httpd_req_recv(request, body.data() + received,
                                         body.size() - received);
       if (result == HTTPD_SOCK_ERR_TIMEOUT) {
+        ++timeout_count;
+        if (timeout_count >= kMaximumBodyTimeouts ||
+            esp_timer_get_time() >= deadline_us) {
+          return ESP_FAIL;
+        }
         continue;
       }
       if (result <= 0) {
         return ESP_FAIL;
       }
       received += static_cast<std::size_t>(result);
+      if (received < body.size() && esp_timer_get_time() >= deadline_us) {
+        return ESP_FAIL;
+      }
     }
   } else if (request->content_len > 0) {
     body = "invalid";
   }
 
   const HttpResponse response = api_.handle(
-      request_method(request->method), request->uri,
-      authorization.empty() ? nullptr : authorization.c_str(), body,
-      uptime_ms());
+      method, path, authorization_value, body, uptime_ms());
   httpd_resp_set_status(request, status_text(response.status));
   httpd_resp_set_type(request, "application/json");
   if (response.bearer_challenge) {

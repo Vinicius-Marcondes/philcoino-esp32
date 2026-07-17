@@ -64,6 +64,7 @@ class TemperatureController {
   bool brew_effective_temperature(float& temperature_c) const;
   bool extraction_compensation_active() const;
   bool cooldown_inhibited() const;
+  bool target_update_in_progress() const;
 
   bool set_mode(ControlMode mode, std::uint32_t now_ms);
   void set_extraction_phase(ExtractionPhase phase, std::uint32_t now_ms);
@@ -75,10 +76,12 @@ class TemperatureController {
                       peripherals::TargetStorage& storage,
                       std::uint32_t now_ms);
   bool prepare_target_update(
-      const peripherals::TemperatureTargets& targets);
+      const peripherals::TemperatureTargets& targets,
+      std::uint32_t now_ms);
   bool adopt_persisted_targets(
       const peripherals::TemperatureTargets& targets,
       std::uint32_t now_ms);
+  bool rollback_target_update(std::uint32_t now_ms);
   bool update_brew_target(std::int32_t brew_c,
                           peripherals::TargetStorage& storage,
                           std::uint32_t now_ms);
@@ -123,11 +126,17 @@ class TemperatureController {
   bool heater_enabled_permission_{true};
   ExtractionPhase extraction_phase_{ExtractionPhase::kIdle};
   bool cooldown_inhibited_{false};
+  bool target_update_in_progress_{false};
+  bool pending_active_target_change_{false};
+  peripherals::TemperatureTargets pending_targets_{};
   bool fault_latched_{false};
   bool ready_band_active_{false};
   std::uint32_t ready_band_since_ms_{0};
-  bool heating_demand_active_{false};
-  std::uint32_t heating_demand_since_ms_{0};
+  bool warmup_deadline_active_{false};
+  std::uint32_t warmup_started_ms_{0};
+  bool readiness_achieved_{false};
+  bool recovery_deadline_active_{false};
+  std::uint32_t recovery_started_ms_{0};
   std::uint32_t heater_control_window_started_ms_{0};
   bool recovery_heat_armed_{false};
   bool recovery_heat_active_{false};
@@ -136,6 +145,7 @@ class TemperatureController {
 };
 
 enum class ExtractionStatus { kIdle, kRunning };
+enum class ExtractionOutcome { kNone, kCompleted, kStopped, kFailed };
 enum class ExtractionSelectionKind { kManual, kProfile };
 
 struct ExtractionSelection {
@@ -151,16 +161,20 @@ struct ExtractionSnapshot {
   std::uint32_t elapsed_ms{0};
   std::uint32_t remaining_ms{0};
   peripherals::PumpCommand pump_command{peripherals::PumpCommand::kOff};
+  ExtractionOutcome outcome{ExtractionOutcome::kNone};
 };
 
 enum class StartExtractionResult {
   kStarted,
   kReplay,
+  kIdempotencyMismatch,
   kConflict,
   kProfileNotConfigured,
   kInvalidRequest,
   kOutputFailure,
 };
+
+enum class ExtractionReplayStatus { kNone, kMatch, kMismatch };
 
 enum class ReplaceProfilesResult {
   kReplaced,
@@ -178,6 +192,9 @@ class ExtractionController {
 
   const peripherals::ExtractionProfiles& profiles() const;
   bool active() const;
+  ExtractionReplayStatus replay_status(
+      const std::string& idempotency_key,
+      const ExtractionSelection& selection) const;
   ExtractionSnapshot snapshot(std::uint32_t now_ms) const;
 
   ReplaceProfilesResult replace_profiles(
@@ -188,7 +205,7 @@ class ExtractionController {
   StartExtractionResult start(const std::string& idempotency_key,
                               ExtractionSelection selection,
                               std::uint32_t now_ms);
-  bool stop();
+  bool stop(std::uint32_t now_ms = 0);
   ExtractionUpdateResult update(std::uint32_t now_ms);
 
  private:
@@ -196,7 +213,9 @@ class ExtractionController {
   ExtractionPhase phase_at(std::uint32_t elapsed_ms) const;
   std::uint32_t total_duration_ms() const;
   bool command_for_phase(ExtractionPhase phase);
-  void clear_active();
+  void finish(ExtractionOutcome outcome, std::uint32_t elapsed_ms);
+  static bool selections_equal(const ExtractionSelection& left,
+                               const ExtractionSelection& right);
 
   peripherals::ExtractionProfiles profiles_{};
   peripherals::FailOffPump& pump_;
@@ -208,6 +227,8 @@ class ExtractionController {
   ExtractionSelection selection_{};
   peripherals::ExtractionProfile active_profile_{};
   ExtractionPhase phase_{ExtractionPhase::kIdle};
+  ExtractionOutcome outcome_{ExtractionOutcome::kNone};
+  std::uint32_t terminal_elapsed_ms_{0};
 };
 
 enum class CooldownStatus { kIdle, kPumping, kStabilizing };

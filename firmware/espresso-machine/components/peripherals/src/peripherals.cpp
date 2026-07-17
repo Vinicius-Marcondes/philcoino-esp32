@@ -17,6 +17,23 @@ bool deadline_reached(std::uint32_t now, std::uint32_t deadline) {
   return static_cast<std::int32_t>(now - deadline) >= 0;
 }
 
+class ScopedOutputCriticalSection {
+ public:
+  explicit ScopedOutputCriticalSection(OutputCriticalSection& critical_section)
+      : critical_section_(critical_section) {
+    critical_section_.enter();
+  }
+
+  ~ScopedOutputCriticalSection() { critical_section_.exit(); }
+
+  ScopedOutputCriticalSection(const ScopedOutputCriticalSection&) = delete;
+  ScopedOutputCriticalSection& operator=(const ScopedOutputCriticalSection&) =
+      delete;
+
+ private:
+  OutputCriticalSection& critical_section_;
+};
+
 std::array<std::uint8_t, 5> glyph(char value) {
   switch (value) {
     case 'A': return {0x7E, 0x11, 0x11, 0x11, 0x7E};
@@ -255,12 +272,17 @@ bool ProfileStorage::save(const ExtractionProfiles& profiles) {
 }
 
 FailOffSsr::FailOffSsr(DigitalOutput& output, SsrSafetyLease& safety_lease,
+                       OutputCriticalSection& critical_section,
                        bool active_high)
-    : output_(output), safety_lease_(safety_lease), active_high_(active_high) {}
+    : output_(output),
+      safety_lease_(safety_lease),
+      critical_section_(critical_section),
+      active_high_(active_high) {}
 
 bool FailOffSsr::initialize() {
   initialized_ = false;
-  enabled_ = false;
+  enabled_.store(false, std::memory_order_relaxed);
+  emergency_inhibited_.store(false, std::memory_order_relaxed);
   if (!write_enabled_level(false)) {
     return false;
   }
@@ -283,21 +305,32 @@ bool FailOffSsr::initialize() {
 bool FailOffSsr::set_enabled(bool enabled) {
   if (!initialized_) {
     write_enabled_level(false);
-    enabled_ = false;
+    enabled_.store(false, std::memory_order_relaxed);
     return false;
   }
 
-  if (safety_lease_.tripped()) {
+  if (safety_lease_.tripped() ||
+      emergency_inhibited_.load(std::memory_order_acquire)) {
+    ScopedOutputCriticalSection lock(critical_section_);
     write_enabled_level(false);
-    enabled_ = false;
+    enabled_.store(false, std::memory_order_relaxed);
     return false;
   }
 
   if (enabled) {
     if (!safety_lease_.arm(config::kHeaterSafetyLeaseMs) ||
+        safety_lease_.tripped() ||
+        emergency_inhibited_.load(std::memory_order_acquire)) {
+      ScopedOutputCriticalSection lock(critical_section_);
+      write_enabled_level(false);
+      enabled_.store(false, std::memory_order_relaxed);
+      return false;
+    }
+    ScopedOutputCriticalSection lock(critical_section_);
+    if (emergency_inhibited_.load(std::memory_order_acquire) ||
         safety_lease_.tripped()) {
       write_enabled_level(false);
-      enabled_ = false;
+      enabled_.store(false, std::memory_order_relaxed);
       return false;
     }
     if (!write_enabled_level(true)) {
@@ -305,15 +338,16 @@ bool FailOffSsr::set_enabled(bool enabled) {
       if (forced_off) {
         safety_lease_.disarm();
       }
-      enabled_ = false;
+      enabled_.store(false, std::memory_order_relaxed);
       return false;
     }
-    enabled_ = true;
+    enabled_.store(true, std::memory_order_relaxed);
     return true;
   }
 
+  ScopedOutputCriticalSection lock(critical_section_);
   const bool forced_off = write_enabled_level(false);
-  enabled_ = enabled;
+  enabled_.store(false, std::memory_order_relaxed);
   if (!forced_off) {
     return false;
   }
@@ -321,15 +355,33 @@ bool FailOffSsr::set_enabled(bool enabled) {
 }
 
 bool FailOffSsr::force_off() {
-  enabled_ = false;
+  ScopedOutputCriticalSection lock(critical_section_);
+  enabled_.store(false, std::memory_order_relaxed);
   if (!write_enabled_level(false)) {
     return false;
+  }
+  if (emergency_inhibited_.load(std::memory_order_acquire)) {
+    return true;
   }
   return safety_lease_.disarm();
 }
 
+bool FailOffSsr::emergency_off() {
+  ScopedOutputCriticalSection lock(critical_section_);
+  emergency_inhibited_.store(true, std::memory_order_release);
+  enabled_.store(false, std::memory_order_relaxed);
+  // Keep an already armed lease active as a second independent low transition.
+  return write_enabled_level(false);
+}
+
 bool FailOffSsr::is_enabled() const {
-  return enabled_ && !safety_lease_.tripped();
+  return enabled_.load(std::memory_order_relaxed) &&
+         !emergency_inhibited_.load(std::memory_order_acquire) &&
+         !safety_lease_.tripped();
+}
+
+bool FailOffSsr::emergency_inhibited() const {
+  return emergency_inhibited_.load(std::memory_order_acquire);
 }
 
 bool FailOffSsr::safety_cutoff_tripped() const {
@@ -341,21 +393,27 @@ bool FailOffSsr::write_enabled_level(bool enabled) {
   return output_.set_level(output_high);
 }
 
-FailOffPump::FailOffPump(DigitalOutput& output, bool active_high)
-    : output_(output), active_high_(active_high) {}
+FailOffPump::FailOffPump(DigitalOutput& output,
+                         OutputCriticalSection& critical_section,
+                         bool active_high)
+    : output_(output),
+      critical_section_(critical_section),
+      active_high_(active_high) {}
 
 bool FailOffPump::initialize() {
   initialized_ = false;
-  command_ = PumpCommand::kOff;
-  if (!write_command(PumpCommand::kOff)) {
+  command_.store(PumpCommand::kOff, std::memory_order_relaxed);
+  output_state_unknown_.store(true, std::memory_order_relaxed);
+  emergency_inhibited_.store(false, std::memory_order_relaxed);
+  if (!force_off()) {
     return false;
   }
   if (!output_.configure_output()) {
-    write_command(PumpCommand::kOff);
+    force_off();
     return false;
   }
-  if (!write_command(PumpCommand::kOff)) {
-    write_command(PumpCommand::kOff);
+  if (!force_off()) {
+    force_off();
     return false;
   }
   initialized_ = true;
@@ -365,25 +423,77 @@ bool FailOffPump::initialize() {
 bool FailOffPump::set_running(bool running) {
   const auto requested = running ? PumpCommand::kRunning : PumpCommand::kOff;
   if (!initialized_) {
-    command_ = PumpCommand::kOff;
-    write_command(PumpCommand::kOff);
+    force_off();
+    return false;
+  }
+  if (running && (emergency_inhibited_.load(std::memory_order_acquire) ||
+                  output_state_unknown_.load(std::memory_order_acquire))) {
+    force_off();
+    return false;
+  }
+
+  ScopedOutputCriticalSection lock(critical_section_);
+  if (running && emergency_inhibited_.load(std::memory_order_acquire)) {
+    const bool forced_off = write_command(PumpCommand::kOff);
+    if (forced_off) {
+      command_.store(PumpCommand::kOff, std::memory_order_relaxed);
+      output_state_unknown_.store(false, std::memory_order_release);
+    } else {
+      output_state_unknown_.store(true, std::memory_order_release);
+    }
     return false;
   }
   if (!write_command(requested)) {
-    command_ = PumpCommand::kOff;
-    write_command(PumpCommand::kOff);
+    if (requested == PumpCommand::kRunning &&
+        write_command(PumpCommand::kOff)) {
+      command_.store(PumpCommand::kOff, std::memory_order_relaxed);
+      output_state_unknown_.store(false, std::memory_order_release);
+    } else {
+      output_state_unknown_.store(true, std::memory_order_release);
+    }
     return false;
   }
-  command_ = requested;
+  command_.store(requested, std::memory_order_relaxed);
+  output_state_unknown_.store(false, std::memory_order_release);
   return true;
 }
 
 bool FailOffPump::force_off() {
-  command_ = PumpCommand::kOff;
-  return write_command(PumpCommand::kOff);
+  ScopedOutputCriticalSection lock(critical_section_);
+  const bool forced_off = write_command(PumpCommand::kOff);
+  if (forced_off) {
+    command_.store(PumpCommand::kOff, std::memory_order_relaxed);
+    output_state_unknown_.store(false, std::memory_order_release);
+  } else {
+    output_state_unknown_.store(true, std::memory_order_release);
+  }
+  return forced_off;
 }
 
-PumpCommand FailOffPump::command() const { return command_; }
+bool FailOffPump::emergency_off() {
+  ScopedOutputCriticalSection lock(critical_section_);
+  emergency_inhibited_.store(true, std::memory_order_release);
+  const bool forced_off = write_command(PumpCommand::kOff);
+  if (forced_off) {
+    command_.store(PumpCommand::kOff, std::memory_order_relaxed);
+    output_state_unknown_.store(false, std::memory_order_release);
+  } else {
+    output_state_unknown_.store(true, std::memory_order_release);
+  }
+  return forced_off;
+}
+
+PumpCommand FailOffPump::command() const {
+  return command_.load(std::memory_order_relaxed);
+}
+
+bool FailOffPump::output_state_unknown() const {
+  return output_state_unknown_.load(std::memory_order_acquire);
+}
+
+bool FailOffPump::emergency_inhibited() const {
+  return emergency_inhibited_.load(std::memory_order_acquire);
+}
 
 bool FailOffPump::write_command(PumpCommand command) {
   const bool running = command == PumpCommand::kRunning;
@@ -421,6 +531,10 @@ void format_display_workflow_line(char* output, std::size_t length,
                                                                   : "OFF",
                   snapshot.extraction_phase,
                   snapshot.compensation_active ? " +2C" : "");
+    return;
+  }
+  if (snapshot.pump_command == PumpCommand::kRunning) {
+    std::snprintf(output, length, "PUMP CMD RUN FAULT");
     return;
   }
   std::snprintf(output, length, "HEATER %s WIFI %s",
