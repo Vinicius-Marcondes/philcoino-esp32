@@ -1,9 +1,13 @@
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cassert>
+#include <condition_variable>
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <mutex>
+#include <thread>
 #include <vector>
 
 #include "philcoino/config.hpp"
@@ -135,6 +139,66 @@ class FakeDigitalOutput final : public DigitalOutput {
   bool preserve_level_on_failure{false};
 };
 
+class FakeOutputCriticalSection final : public OutputCriticalSection {
+ public:
+  void enter() override {
+    assert(!entered);
+    entered = true;
+  }
+  void exit() override {
+    assert(entered);
+    entered = false;
+  }
+
+  bool entered{false};
+};
+
+class MutexOutputCriticalSection final : public OutputCriticalSection {
+ public:
+  void enter() override { mutex_.lock(); }
+  void exit() override { mutex_.unlock(); }
+
+ private:
+  std::mutex mutex_;
+};
+
+class BlockingHighOutput final : public DigitalOutput {
+ public:
+  bool set_level(bool high) override {
+    if (high) {
+      std::unique_lock<std::mutex> lock(barrier_mutex_);
+      high_entered_ = true;
+      barrier_.notify_all();
+      barrier_.wait(lock, [this] { return release_high_; });
+    }
+    level = high;
+    events.push_back(high ? OutputEvent::kHigh : OutputEvent::kLow);
+    return true;
+  }
+
+  bool configure_output() override { return true; }
+
+  void wait_for_high() {
+    std::unique_lock<std::mutex> lock(barrier_mutex_);
+    barrier_.wait(lock, [this] { return high_entered_; });
+  }
+
+  void release_high() {
+    std::lock_guard<std::mutex> lock(barrier_mutex_);
+    release_high_ = true;
+    barrier_.notify_all();
+  }
+
+  std::vector<OutputEvent> events{};
+  bool level{true};
+
+ private:
+  std::condition_variable barrier_;
+  std::mutex barrier_mutex_;
+  bool high_entered_{false};
+  bool release_high_{false};
+};
+
 class FakeSafetyLease final : public SsrSafetyLease {
  public:
   explicit FakeSafetyLease(FakeDigitalOutput& output, bool off_high = false)
@@ -167,6 +231,22 @@ class FakeSafetyLease final : public SsrSafetyLease {
   bool fail_initialize{false};
   bool fail_arm{false};
   bool fail_disarm{false};
+  bool tripped_{false};
+};
+
+class SimpleSafetyLease final : public SsrSafetyLease {
+ public:
+  bool initialize() override { return true; }
+  bool arm(std::uint32_t) override { return !tripped_; }
+  bool disarm() override {
+    ++disarm_count;
+    return true;
+  }
+  bool tripped() const override { return tripped_; }
+
+  int disarm_count{0};
+
+ private:
   bool tripped_{false};
 };
 
@@ -344,8 +424,9 @@ void test_profile_storage() {
 }
 
 void test_fail_off_pump() {
+  FakeOutputCriticalSection critical_section;
   FakeDigitalOutput output;
-  FailOffPump pump(output);
+  FailOffPump pump(output, critical_section);
   assert(pump.initialize());
   assert((output.events == std::vector<OutputEvent>{OutputEvent::kLow,
                                                     OutputEvent::kConfigure,
@@ -361,14 +442,14 @@ void test_fail_off_pump() {
 
   FakeDigitalOutput configuration_error;
   configuration_error.fail_configure = true;
-  FailOffPump failed_pump(configuration_error);
+  FailOffPump failed_pump(configuration_error, critical_section);
   assert(!failed_pump.initialize());
   assert(!configuration_error.level);
   assert(failed_pump.command() == PumpCommand::kOff);
   assert(!failed_pump.set_running(true));
 
   FakeDigitalOutput high_error;
-  FailOffPump high_error_pump(high_error);
+  FailOffPump high_error_pump(high_error, critical_section);
   assert(high_error_pump.initialize());
   high_error.fail_high = true;
   const auto failure_start = high_error.events.size();
@@ -380,20 +461,28 @@ void test_fail_off_pump() {
   assert(high_error_pump.command() == PumpCommand::kOff);
 
   FakeDigitalOutput stuck_high;
-  FailOffPump stuck_high_pump(stuck_high);
+  FailOffPump stuck_high_pump(stuck_high, critical_section);
   assert(stuck_high_pump.initialize());
   assert(stuck_high_pump.set_running(true));
   stuck_high.fail_low = true;
   stuck_high.preserve_level_on_failure = true;
   assert(!stuck_high_pump.force_off());
   assert(stuck_high.level);
+  assert(stuck_high_pump.command() == PumpCommand::kRunning);
+  assert(stuck_high_pump.output_state_unknown());
+  assert(!stuck_high_pump.set_running(true));
+  assert(stuck_high_pump.output_state_unknown());
+  stuck_high.fail_low = false;
+  assert(stuck_high_pump.force_off());
   assert(stuck_high_pump.command() == PumpCommand::kOff);
+  assert(!stuck_high_pump.output_state_unknown());
 }
 
 void test_fail_off_ssr() {
+  FakeOutputCriticalSection critical_section;
   FakeDigitalOutput output;
   FakeSafetyLease safety_lease(output);
-  FailOffSsr ssr(output, safety_lease);
+  FailOffSsr ssr(output, safety_lease, critical_section);
   assert(ssr.initialize());
   assert((output.events == std::vector<OutputEvent>{OutputEvent::kLow,
                                                     OutputEvent::kConfigure,
@@ -430,7 +519,8 @@ void test_fail_off_ssr() {
   FakeDigitalOutput configuration_error;
   configuration_error.fail_configure = true;
   FakeSafetyLease configuration_error_lease(configuration_error);
-  FailOffSsr failed_ssr(configuration_error, configuration_error_lease);
+  FailOffSsr failed_ssr(configuration_error, configuration_error_lease,
+                        critical_section);
   assert(!failed_ssr.initialize());
   assert(!configuration_error.level);
   assert(!failed_ssr.set_enabled(true));
@@ -438,7 +528,8 @@ void test_fail_off_ssr() {
 
   FakeDigitalOutput active_low_output;
   FakeSafetyLease active_low_lease(active_low_output, true);
-  FailOffSsr active_low_ssr(active_low_output, active_low_lease, false);
+  FailOffSsr active_low_ssr(active_low_output, active_low_lease,
+                            critical_section, false);
   assert(active_low_ssr.initialize());
   assert(active_low_output.level);
   assert(active_low_ssr.set_enabled(true));
@@ -448,14 +539,16 @@ void test_fail_off_ssr() {
 
   FakeDigitalOutput lease_failure_output;
   FakeSafetyLease lease_failure(lease_failure_output);
-  FailOffSsr lease_failure_ssr(lease_failure_output, lease_failure);
+  FailOffSsr lease_failure_ssr(lease_failure_output, lease_failure,
+                               critical_section);
   lease_failure.fail_initialize = true;
   assert(!lease_failure_ssr.initialize());
   assert(!lease_failure_output.level);
 
   FakeDigitalOutput arm_failure_output;
   FakeSafetyLease arm_failure(arm_failure_output);
-  FailOffSsr arm_failure_ssr(arm_failure_output, arm_failure);
+  FailOffSsr arm_failure_ssr(arm_failure_output, arm_failure,
+                             critical_section);
   assert(arm_failure_ssr.initialize());
   arm_failure.fail_arm = true;
   assert(!arm_failure_ssr.set_enabled(true));
@@ -463,7 +556,8 @@ void test_fail_off_ssr() {
 
   FakeDigitalOutput disarm_failure_output;
   FakeSafetyLease disarm_failure(disarm_failure_output);
-  FailOffSsr disarm_failure_ssr(disarm_failure_output, disarm_failure);
+  FailOffSsr disarm_failure_ssr(disarm_failure_output, disarm_failure,
+                                critical_section);
   assert(disarm_failure_ssr.initialize());
   assert(disarm_failure_ssr.set_enabled(true));
   disarm_failure.fail_disarm = true;
@@ -472,7 +566,7 @@ void test_fail_off_ssr() {
 
   FakeDigitalOutput expired_output;
   FakeSafetyLease expiring_lease(expired_output);
-  FailOffSsr expired_ssr(expired_output, expiring_lease);
+  FailOffSsr expired_ssr(expired_output, expiring_lease, critical_section);
   assert(expired_ssr.initialize());
   assert(expired_ssr.set_enabled(true));
   expiring_lease.expire();
@@ -481,6 +575,68 @@ void test_fail_off_ssr() {
   assert(!expired_ssr.is_enabled());
   assert(!expired_ssr.set_enabled(true));
   assert(!expired_output.level);
+}
+
+void test_emergency_inhibit_serializes_with_in_progress_high_commands() {
+  {
+    MutexOutputCriticalSection critical_section;
+    BlockingHighOutput output;
+    SimpleSafetyLease safety_lease;
+    FailOffSsr ssr(output, safety_lease, critical_section);
+    assert(ssr.initialize());
+
+    std::atomic<bool> emergency_started{false};
+    std::thread enable([&] { assert(ssr.set_enabled(true)); });
+    output.wait_for_high();
+    std::thread emergency([&] {
+      emergency_started.store(true, std::memory_order_release);
+      assert(ssr.emergency_off());
+    });
+    while (!emergency_started.load(std::memory_order_acquire)) {
+      std::this_thread::yield();
+    }
+    assert(!ssr.emergency_inhibited());
+    output.release_high();
+    enable.join();
+    emergency.join();
+
+    assert(ssr.emergency_inhibited());
+    assert(!ssr.is_enabled());
+    assert(!output.level);
+    assert(safety_lease.disarm_count == 0);
+    assert(ssr.force_off());
+    assert(safety_lease.disarm_count == 0);
+    assert(!ssr.set_enabled(true));
+    assert(!output.level);
+  }
+
+  {
+    MutexOutputCriticalSection critical_section;
+    BlockingHighOutput output;
+    FailOffPump pump(output, critical_section);
+    assert(pump.initialize());
+
+    std::atomic<bool> emergency_started{false};
+    std::thread enable([&] { assert(pump.set_running(true)); });
+    output.wait_for_high();
+    std::thread emergency([&] {
+      emergency_started.store(true, std::memory_order_release);
+      assert(pump.emergency_off());
+    });
+    while (!emergency_started.load(std::memory_order_acquire)) {
+      std::this_thread::yield();
+    }
+    assert(!pump.emergency_inhibited());
+    output.release_high();
+    enable.join();
+    emergency.join();
+
+    assert(pump.emergency_inhibited());
+    assert(pump.command() == PumpCommand::kOff);
+    assert(!output.level);
+    assert(!pump.set_running(true));
+    assert(!output.level);
+  }
 }
 
 void test_oled() {
@@ -558,6 +714,11 @@ void test_oled() {
   format_display_workflow_line(workflow_line.data(), workflow_line.size(),
                                snapshot);
   assert(std::string(workflow_line.data()) == "STAB CMD PUMP OFF");
+  snapshot.cooldown_status = DisplayCooldownStatus::kIdle;
+  snapshot.pump_command = PumpCommand::kRunning;
+  format_display_workflow_line(workflow_line.data(), workflow_line.size(),
+                               snapshot);
+  assert(std::string(workflow_line.data()) == "PUMP CMD RUN FAULT");
   assert(transport.commands.size() == 61);
 }
 
@@ -569,6 +730,7 @@ int main() {
   test_profile_storage();
   test_fail_off_pump();
   test_fail_off_ssr();
+  test_emergency_inhibit_serializes_with_in_progress_high_commands();
   test_oled();
   return 0;
 }

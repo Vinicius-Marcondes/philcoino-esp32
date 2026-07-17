@@ -10,6 +10,15 @@
 
 namespace philcoino::peripherals {
 
+class EspOutputCriticalSection final : public OutputCriticalSection {
+ public:
+  void enter() override;
+  void exit() override;
+
+ private:
+  portMUX_TYPE lock_ = portMUX_INITIALIZER_UNLOCKED;
+};
+
 class EspMax6675Transport final : public Max6675Transport {
  public:
   bool initialize();

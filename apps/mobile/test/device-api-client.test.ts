@@ -48,7 +48,14 @@ describe("DeviceApiClient", () => {
     const error = await captureError(client.getState());
     expect(error).toBeInstanceOf(ApiClientError);
     expect((error as ApiClientError).kind).toBe("protocol");
-    expect(connectionStateFromError(error)).toEqual({ status: "protocol-error" });
+    expect(connectionStateFromError(error)).toEqual({
+      protocol: {
+        endpoint: "/api/v1/state",
+        issuePaths: ["$"],
+        status: 200,
+      },
+      status: "protocol-error",
+    });
   });
 
   test("maps a validated 401 response to unauthorized", async () => {
@@ -76,6 +83,11 @@ describe("DeviceApiClient", () => {
 
     const error = await captureError(client.getState());
     expect((error as ApiClientError).kind).toBe("protocol");
+    expect(error).toMatchObject({
+      endpoint: "/api/v1/state",
+      issuePaths: ["error"],
+      status: 401,
+    });
   });
 
   test("maps a 404 address to not found", async () => {
@@ -332,7 +344,7 @@ describe("DeviceApiClient", () => {
     });
     await expect(client.startExtraction({
       idempotencyKey: "mobile-integration-01",
-      selection: { kind: "manual" },
+      selection: { kind: "profile", profileId: "profile-2" },
     })).resolves.toMatchObject({
       extractionId: started.extractionId,
       elapsedMs: 10_000,
@@ -460,6 +472,83 @@ describe("DeviceApiClient", () => {
         outcome: "failed",
         pumpCommand: "off",
       },
+    });
+  });
+
+  test("accepts retained workflow snapshots across shared-pump handoffs", async () => {
+    const simulator = createSimulator();
+    const request = simulator.app.request.bind(simulator.app);
+    const fetch: FetchImplementation = (url, init) =>
+      Promise.resolve(
+        request(url, {
+          body: init.body,
+          headers: init.headers,
+          method: init.method,
+          signal: init.signal,
+        }),
+      );
+    const client = new DeviceApiClient({
+      address: "http://127.0.0.1:3000",
+      fetch,
+      token: DEFAULT_SIMULATOR_TOKEN,
+    });
+    const control = (method: string, path: string, body?: unknown) =>
+      simulator.app.request(path, {
+        body: body === undefined ? undefined : JSON.stringify(body),
+        headers:
+          body === undefined ? undefined : { "content-type": "application/json" },
+        method,
+      });
+
+    await client.startExtraction({
+      idempotencyKey: "mobile-before-cooldown-01",
+      selection: { kind: "manual" },
+    });
+    await client.stopExtraction();
+    await control("PUT", "/_simulator/temperatures", {
+      boilerTemperatureC: 110,
+    });
+    const cooldown = await client.startCooldown({
+      idempotencyKey: "mobile-owner-cooldown-01",
+    });
+
+    await expect(client.getStateV2()).resolves.toMatchObject({
+      extraction: {
+        status: "idle",
+        outcome: "stopped",
+        pumpCommand: "off",
+      },
+      cooldown: {
+        cooldownId: cooldown.cooldownId,
+        status: "pumping",
+        pumpCommand: "running",
+      },
+    });
+
+    await client.stopCooldown();
+    await control("POST", "/_simulator/advance", { milliseconds: 5_000 });
+    await client.startExtraction({
+      idempotencyKey: "mobile-after-cooldown-01",
+      selection: { kind: "manual" },
+    });
+    await expect(client.stopCooldown()).resolves.toMatchObject({
+      cooldownId: cooldown.cooldownId,
+      status: "idle",
+      pumpCommand: "off",
+    });
+    await expect(client.getStateV2()).resolves.toMatchObject({
+      extraction: { status: "running", pumpCommand: "running" },
+      cooldown: { status: "idle", pumpCommand: "off" },
+    });
+    await expect(
+      client.startCooldown({ idempotencyKey: "mobile-owner-cooldown-01" }),
+    ).resolves.toMatchObject({
+      cooldownId: cooldown.cooldownId,
+      status: "idle",
+      pumpCommand: "off",
+    });
+    await expect(client.getStateV2()).resolves.toMatchObject({
+      extraction: { status: "running", pumpCommand: "running" },
     });
   });
 

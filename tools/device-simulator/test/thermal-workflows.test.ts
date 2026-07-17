@@ -269,6 +269,54 @@ describe("API v2 deterministic cooldown", () => {
     expect((await getStateV2()).machine.activeMode).toBe("brew");
   });
 
+  it("keeps retained workflow commands isolated across shared-pump handoffs", async () => {
+    await startExtraction("extract-before-cool-01", { kind: "manual" });
+    await advance(1_000);
+    await stopExtraction();
+    await setTemperature(1000);
+    const started = await startCooldown("cooldown-owner-isolation");
+
+    let state = await getStateV2();
+    expect(state).toMatchObject({
+      extraction: {
+        status: "idle",
+        outcome: "stopped",
+        pumpCommand: "off",
+      },
+      cooldown: {
+        cooldownId: started.cooldownId,
+        status: "pumping",
+        pumpCommand: "running",
+      },
+    });
+
+    await stopCooldown();
+    await advance(5_000);
+    await startExtraction("extract-after-cool-001", { kind: "manual" });
+    const idleStop = await stopCooldown();
+    expect(idleStop).toMatchObject({
+      cooldownId: started.cooldownId,
+      status: "idle",
+      pumpCommand: "off",
+    });
+    state = await getStateV2();
+    expect(state).toMatchObject({
+      extraction: { status: "running", pumpCommand: "running" },
+      cooldown: { status: "idle", pumpCommand: "off" },
+    });
+
+    const replay = await startCooldown("cooldown-owner-isolation");
+    expect(replay).toMatchObject({
+      cooldownId: started.cooldownId,
+      status: "idle",
+      pumpCommand: "off",
+    });
+    expect((await getStateV2()).extraction).toMatchObject({
+      status: "running",
+      pumpCommand: "running",
+    });
+  });
+
   it("rejects ineligible temperature and distinguishable faults", async () => {
     let response = await simulator.app.request(
       "/api/v2/cooldowns/start",

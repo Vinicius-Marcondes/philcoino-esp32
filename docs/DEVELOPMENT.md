@@ -239,7 +239,11 @@ Run the host commands above for pure C++ changes. Run the pinned `idf.py build` 
 
 ### The app reports protocol error
 
-The host answered, but the success/error body failed strict API v1/v2 validation. Compare it with `packages/protocol/openapi.yaml`; do not weaken the app schema as a workaround.
+The host answered, but the success/error body failed strict API v1/v2
+validation. The connection detail includes the endpoint, HTTP status, and up to
+eight sanitized invalid-field paths when the parser provides them; it never
+includes response values or credentials. Compare those paths with
+`packages/protocol/openapi.yaml`; do not weaken the app schema as a workaround.
 
 ### A mutation is not shown
 

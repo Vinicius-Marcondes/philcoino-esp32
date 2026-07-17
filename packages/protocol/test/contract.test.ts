@@ -50,6 +50,7 @@ import {
   PumpCommandSchema,
   PumpingCooldownStateSchema,
   RunningExtractionStateSchema,
+  TerminalExtractionStateSchema,
   STEAM_TARGET_MAX_C,
   STEAM_TARGET_MIN_C,
   SteamTargetSchema,
@@ -99,6 +100,7 @@ const documentedSchemas: Record<string, ZodType> = {
   ProfileSet: ProfileSetSchema,
   IdleExtractionState: IdleExtractionStateSchema,
   RunningExtractionState: RunningExtractionStateSchema,
+  TerminalExtractionState: TerminalExtractionStateSchema,
   MachineStateV2: MachineStateV2Schema,
   StartExtractionRequest: StartExtractionRequestSchema,
   ApiV2ErrorResponse: ApiV2ErrorResponseSchema,
@@ -127,6 +129,7 @@ const validFixtures = [
   ["valid/profile-set.json", ProfileSetSchema],
   ["valid/extraction-idle.json", IdleExtractionStateSchema],
   ["valid/extraction-running.json", RunningExtractionStateSchema],
+  ["valid/extraction-terminal-replay.json", TerminalExtractionStateSchema],
   ["valid/extraction-start-request.json", StartExtractionRequestSchema],
   [
     "valid/extraction-active-conflict.json",
@@ -138,6 +141,7 @@ const validFixtures = [
   ["valid/cooldown-pumping.json", PumpingCooldownStateSchema],
   ["valid/cooldown-stabilizing.json", StabilizingCooldownStateSchema],
   ["valid/cooldown-terminal-replay.json", IdleCooldownStateSchema],
+  ["valid/cooldown-terminal-failed-running.json", IdleCooldownStateSchema],
   ["valid/cooldown-start-request.json", StartCooldownRequestSchema],
   ["valid/cooldown-active-conflict.json", CooldownActiveConflictResponseSchema],
   ["valid/brew-mode-required-error.json", ApiV2ErrorResponseSchema],
@@ -171,6 +175,10 @@ const invalidFixtures = [
   ["invalid/extraction-start-key-short.json", StartExtractionRequestSchema],
   ["invalid/extraction-running-wrong-command.json", ExtractionStateSchema],
   [
+    "invalid/extraction-terminal-running-completed.json",
+    ExtractionStateSchema,
+  ],
+  [
     "invalid/extraction-conflict-with-idle.json",
     ExtractionActiveConflictResponseSchema,
   ],
@@ -184,6 +192,7 @@ const invalidFixtures = [
     CooldownStateSchema,
   ],
   ["invalid/cooldown-terminal-without-outcome.json", CooldownStateSchema],
+  ["invalid/cooldown-terminal-running-cutoff.json", CooldownStateSchema],
   ["invalid/cooldown-start-key-short.json", StartCooldownRequestSchema],
   [
     "invalid/cooldown-conflict-with-idle.json",
@@ -194,6 +203,10 @@ const invalidFixtures = [
   ["invalid/machine-v2-compensation-disabled.json", MachineStateV2Schema],
   [
     "invalid/machine-v2-failed-cooldown-without-fault.json",
+    MachineStateV2Schema,
+  ],
+  [
+    "invalid/machine-v2-failed-extraction-without-fault.json",
     MachineStateV2Schema,
   ],
 ] as const;
@@ -249,6 +262,9 @@ describe("documented OpenAPI examples", () => {
       ProfileSet: [await fixture("valid/profile-set.json")],
       IdleExtractionState: [await fixture("valid/extraction-idle.json")],
       RunningExtractionState: [await fixture("valid/extraction-running.json")],
+      TerminalExtractionState: [
+        await fixture("valid/extraction-terminal-replay.json"),
+      ],
       MachineStateV2: [
         openApi.components.schemas.MachineStateV2.examples?.[0],
       ],
@@ -274,6 +290,7 @@ describe("documented OpenAPI examples", () => {
       IdleCooldownState: [
         await fixture("valid/cooldown-idle.json"),
         await fixture("valid/cooldown-terminal-replay.json"),
+        await fixture("valid/cooldown-terminal-failed-running.json"),
       ],
       PumpingCooldownState: [await fixture("valid/cooldown-pumping.json")],
       StabilizingCooldownState: [

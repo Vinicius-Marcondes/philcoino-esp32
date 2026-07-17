@@ -142,6 +142,39 @@ describe("DashboardPollingSession", () => {
     expect(scheduler.size).toBe(0);
   });
 
+  test("reports an uptime reset so volatile mutation keys are not replayed", async () => {
+    const scheduler = new FakeScheduler();
+    const uptimes = [1000, 10];
+    let restarts = 0;
+    const session = new DashboardPollingSession({
+      client: {
+        getProfiles: async () => profiles,
+        getStateV2: async () => ({
+          ...validStateV2,
+          machine: {
+            ...validStateV2.machine,
+            uptimeMs: uptimes.shift() ?? 10,
+          },
+        }),
+      },
+      onConnectionChange: () => {},
+      onDeviceRestart: () => {
+        restarts += 1;
+      },
+      onSnapshotChange: () => {},
+      scheduler,
+    });
+
+    session.start();
+    await settle();
+    session.stop();
+    session.start();
+    await settle();
+
+    expect(restarts).toBe(1);
+    session.stop();
+  });
+
   test("pauses an active read and resumes immediately without clearing live state", async () => {
     const scheduler = new FakeScheduler();
     const connections: ConnectionState[] = [];

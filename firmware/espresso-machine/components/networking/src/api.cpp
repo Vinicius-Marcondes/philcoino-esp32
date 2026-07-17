@@ -628,11 +628,16 @@ const char* phase_name(control::ExtractionPhase phase) {
 }
 
 std::string serialize_extraction(const control::ExtractionSnapshot& snapshot) {
-  if (snapshot.status == control::ExtractionStatus::kIdle) {
+  if (snapshot.status == control::ExtractionStatus::kIdle &&
+      snapshot.extraction_id.empty()) {
     return "{\"status\":\"idle\",\"extractionId\":null,\"selection\":null,\"phase\":\"idle\",\"elapsedMs\":0,\"remainingMs\":null,\"pumpCommand\":\"off\"}";
   }
   std::ostringstream output;
-  output << "{\"status\":\"running\",\"extractionId\":\""
+  output << "{\"status\":\""
+         << (snapshot.status == control::ExtractionStatus::kRunning
+                 ? "running"
+                 : "idle")
+         << "\",\"extractionId\":\""
          << snapshot.extraction_id << "\",\"selection\":{";
   if (snapshot.selection.kind == control::ExtractionSelectionKind::kManual) {
     output << "\"kind\":\"manual\"";
@@ -642,12 +647,29 @@ std::string serialize_extraction(const control::ExtractionSnapshot& snapshot) {
   }
   output << "},\"phase\":\"" << phase_name(snapshot.phase)
          << "\",\"elapsedMs\":" << snapshot.elapsed_ms
-         << ",\"remainingMs\":" << snapshot.remaining_ms
+         << ",\"remainingMs\":";
+  if (snapshot.status == control::ExtractionStatus::kIdle) {
+    output << "null";
+  } else {
+    output << snapshot.remaining_ms;
+  }
+  output
          << ",\"pumpCommand\":\""
          << (snapshot.pump_command == peripherals::PumpCommand::kRunning
                  ? "running"
                  : "off")
-         << "\"}";
+         << "\"";
+  if (snapshot.status == control::ExtractionStatus::kIdle) {
+    const char* outcome = "failed";
+    switch (snapshot.outcome) {
+      case control::ExtractionOutcome::kCompleted: outcome = "completed"; break;
+      case control::ExtractionOutcome::kStopped: outcome = "stopped"; break;
+      case control::ExtractionOutcome::kFailed: outcome = "failed"; break;
+      case control::ExtractionOutcome::kNone: outcome = "failed"; break;
+    }
+    output << ",\"outcome\":\"" << outcome << "\"";
+  }
+  output << '}';
   return output.str();
 }
 
@@ -835,6 +857,26 @@ bool constant_time_bearer_matches(const char* authorization,
   return valid_scheme && !expected_token.empty() && difference == 0U;
 }
 
+bool request_requires_auth(HttpMethod method, const std::string& path) {
+  return (method == HttpMethod::kGet && path == "/api/v1/state") ||
+         (method == HttpMethod::kPatch &&
+          path == "/api/v1/settings/temperatures") ||
+         (method == HttpMethod::kPut && path == "/api/v1/mode") ||
+         (method == HttpMethod::kPut && path == "/api/v1/heater") ||
+         (method == HttpMethod::kPost &&
+          path == "/api/v1/faults/over-temperature/dismiss") ||
+         (method == HttpMethod::kGet && path == "/api/v2/state") ||
+         (method == HttpMethod::kGet && path == "/api/v2/profiles") ||
+         (method == HttpMethod::kPut && path == "/api/v2/profiles") ||
+         (method == HttpMethod::kPost &&
+          path == "/api/v2/extractions/start") ||
+         (method == HttpMethod::kPost &&
+          path == "/api/v2/extractions/stop") ||
+         (method == HttpMethod::kPost &&
+          path == "/api/v2/cooldowns/start") ||
+         (method == HttpMethod::kPost && path == "/api/v2/cooldowns/stop");
+}
+
 FirmwareApi::FirmwareApi(DeviceIdentity identity, std::string bearer_token,
                          control::TemperatureController& controller,
                          peripherals::TargetStorage& target_storage,
@@ -851,6 +893,10 @@ FirmwareApi::FirmwareApi(DeviceIdentity identity, std::string bearer_token,
       profile_storage_(profile_storage),
       synchronization_(synchronization) {}
 
+bool FirmwareApi::authorized(const char* authorization) const {
+  return constant_time_bearer_matches(authorization, bearer_token_);
+}
+
 HttpResponse FirmwareApi::handle(HttpMethod method, const std::string& path,
                                  const char* authorization,
                                  const std::string& body,
@@ -862,28 +908,11 @@ HttpResponse FirmwareApi::handle(HttpMethod method, const std::string& path,
     return device();
   }
 
-  const bool protected_path =
-      (method == HttpMethod::kGet && path == "/api/v1/state") ||
-      (method == HttpMethod::kPatch &&
-       path == "/api/v1/settings/temperatures") ||
-      (method == HttpMethod::kPut && path == "/api/v1/mode") ||
-      (method == HttpMethod::kPut && path == "/api/v1/heater") ||
-      (method == HttpMethod::kPost &&
-       path == "/api/v1/faults/over-temperature/dismiss") ||
-      (method == HttpMethod::kGet && path == "/api/v2/state") ||
-      (method == HttpMethod::kGet && path == "/api/v2/profiles") ||
-      (method == HttpMethod::kPut && path == "/api/v2/profiles") ||
-      (method == HttpMethod::kPost &&
-       path == "/api/v2/extractions/start") ||
-      (method == HttpMethod::kPost &&
-       path == "/api/v2/extractions/stop") ||
-      (method == HttpMethod::kPost &&
-       path == "/api/v2/cooldowns/start") ||
-      (method == HttpMethod::kPost && path == "/api/v2/cooldowns/stop");
+  const bool protected_path = request_requires_auth(method, path);
   if (!protected_path) {
     return error_response(404, "internal_error", "The requested endpoint does not exist.");
   }
-  if (!constant_time_bearer_matches(authorization, bearer_token_)) {
+  if (!authorized(authorization)) {
     return error_response(401, "unauthorized",
                           "A valid bearer token is required.", true);
   }
@@ -972,14 +1001,40 @@ HttpResponse FirmwareApi::update_temperatures(const std::string& body,
         400, "temperature_out_of_range",
         "Temperature targets must be whole values within their allowed ranges.");
   }
+  bool no_change = false;
   {
     ScopedApiLock lock(synchronization_, ApiDomain::kTemperature);
-    if (!lock.locked() || !controller_.prepare_target_update(updated)) {
+    if (!lock.locked()) {
+      return error_response(500, "internal_error",
+                            "Temperature control synchronization failed.");
+    }
+    current = controller_.targets();
+    if (!parse_temperatures(body, current, updated, constraint_violation) ||
+        constraint_violation) {
+      return error_response(400, "malformed_request", kMalformedMessage);
+    }
+    no_change = updated.brew_c == current.brew_c &&
+                updated.steam_c == current.steam_c;
+    if (!no_change && !controller_.prepare_target_update(
+                          updated, static_cast<std::uint32_t>(uptime_ms))) {
       return error_response(500, "internal_error",
                             "Temperature control synchronization failed.");
     }
   }
+  if (no_change) {
+    std::ostringstream output;
+    output << "{\"brewTargetC\":" << current.brew_c
+           << ",\"steamTargetC\":" << current.steam_c << '}';
+    return json_response(200, output.str());
+  }
   if (!target_storage_.save(updated)) {
+    ScopedApiLock lock(synchronization_, ApiDomain::kTemperature);
+    if (!lock.locked() || !controller_.rollback_target_update(
+                              static_cast<std::uint32_t>(uptime_ms))) {
+      return error_response(
+          500, "internal_error",
+          "Target persistence failed and safe rollback could not be acknowledged.");
+    }
     return error_response(500, "persistence_failure",
                           "Temperature targets could not be persisted.");
   }
@@ -1064,7 +1119,10 @@ HttpResponse FirmwareApi::state_v2(std::uint64_t uptime_ms) const {
     }
     const auto now_ms = static_cast<std::uint32_t>(uptime_ms);
     if (!cooldown_controller_.active()) {
-      extraction_controller_.update(now_ms);
+      if (extraction_controller_.update(now_ms) ==
+          control::ExtractionUpdateResult::kOutputFailure) {
+        controller_.latch_fault(control::FaultCode::kInternalError);
+      }
     }
     extraction = extraction_controller_.snapshot(
         now_ms);
@@ -1121,7 +1179,13 @@ HttpResponse FirmwareApi::replace_profiles(const std::string& body,
               static_cast<std::uint32_t>(uptime_ms)),
           "Profiles cannot be replaced while cooldown is active.");
     }
-    extraction_controller_.update(static_cast<std::uint32_t>(uptime_ms));
+    if (extraction_controller_.update(
+            static_cast<std::uint32_t>(uptime_ms)) ==
+        control::ExtractionUpdateResult::kOutputFailure) {
+      controller_.latch_fault(control::FaultCode::kInternalError);
+      return error_response(500, "internal_error",
+                            "The pump off command could not be confirmed.");
+    }
     if (extraction_controller_.active()) {
       return extraction_conflict(
           extraction_controller_.snapshot(
@@ -1156,22 +1220,45 @@ HttpResponse FirmwareApi::start_extraction(const std::string& body,
     return error_response(500, "internal_error",
                           "Extraction control synchronization failed.");
   }
+  const auto now_ms = static_cast<std::uint32_t>(uptime_ms);
+  const auto replay_before_update =
+      extraction_controller_.replay_status(key, selection);
   if (cooldown_controller_.active()) {
+    if (replay_before_update == control::ExtractionReplayStatus::kMatch) {
+      return json_response(
+          200, serialize_extraction(extraction_controller_.snapshot(now_ms)));
+    }
+    if (replay_before_update == control::ExtractionReplayStatus::kMismatch) {
+      return error_response(
+          409, "idempotency_mismatch",
+          "The idempotency key was already used with a different selection.");
+    }
     return cooldown_conflict(
-        cooldown_controller_.snapshot(
-            static_cast<std::uint32_t>(uptime_ms)),
+        cooldown_controller_.snapshot(now_ms),
         "Extraction cannot start while cooldown is active.");
   }
-  extraction_controller_.update(static_cast<std::uint32_t>(uptime_ms));
+  if (extraction_controller_.update(now_ms) ==
+      control::ExtractionUpdateResult::kOutputFailure) {
+    controller_.latch_fault(control::FaultCode::kInternalError);
+  }
+  switch (extraction_controller_.replay_status(key, selection)) {
+    case control::ExtractionReplayStatus::kMatch:
+      return json_response(
+          200, serialize_extraction(extraction_controller_.snapshot(now_ms)));
+    case control::ExtractionReplayStatus::kMismatch:
+      return error_response(
+          409, "idempotency_mismatch",
+          "The idempotency key was already used with a different selection.");
+    case control::ExtractionReplayStatus::kNone: break;
+  }
   if (controller_.mode() != control::ControlMode::kBrew) {
     return error_response(
         409, "brew_mode_required",
         "Extraction can start only while Brew mode is acknowledged.");
   }
   const auto result = extraction_controller_.start(
-      key, selection, static_cast<std::uint32_t>(uptime_ms));
-  const auto snapshot = extraction_controller_.snapshot(
-      static_cast<std::uint32_t>(uptime_ms));
+      key, selection, now_ms);
+  const auto snapshot = extraction_controller_.snapshot(now_ms);
   switch (result) {
     case control::StartExtractionResult::kStarted:
     case control::StartExtractionResult::kReplay:
@@ -1179,12 +1266,17 @@ HttpResponse FirmwareApi::start_extraction(const std::string& body,
     case control::StartExtractionResult::kConflict:
       return extraction_conflict(snapshot,
                                  "A different extraction is already active.");
+    case control::StartExtractionResult::kIdempotencyMismatch:
+      return error_response(
+          409, "idempotency_mismatch",
+          "The idempotency key was already used with a different selection.");
     case control::StartExtractionResult::kProfileNotConfigured:
       return error_response(409, "profile_not_configured",
                             "The selected custom profile slot is empty.");
     case control::StartExtractionResult::kInvalidRequest:
       return error_response(400, "malformed_request", kMalformedMessage);
     case control::StartExtractionResult::kOutputFailure:
+      controller_.latch_fault(control::FaultCode::kInternalError);
       return error_response(500, "internal_error",
                             "The pump command could not be started safely.");
   }
@@ -1192,7 +1284,7 @@ HttpResponse FirmwareApi::start_extraction(const std::string& body,
                         "The extraction command failed.");
 }
 
-HttpResponse FirmwareApi::stop_extraction(std::uint64_t) {
+HttpResponse FirmwareApi::stop_extraction(std::uint64_t uptime_ms) {
   ScopedApiLock lock(synchronization_, ApiDomain::kExtraction);
   if (!lock.locked()) {
     return error_response(500, "internal_error",
@@ -1201,11 +1293,14 @@ HttpResponse FirmwareApi::stop_extraction(std::uint64_t) {
   if (cooldown_controller_.active()) {
     return json_response(200, serialize_extraction({}));
   }
-  if (!extraction_controller_.stop()) {
+  if (!extraction_controller_.stop(static_cast<std::uint32_t>(uptime_ms))) {
+    controller_.latch_fault(control::FaultCode::kInternalError);
     return error_response(500, "internal_error",
                           "The pump off command could not be completed.");
   }
-  return json_response(200, serialize_extraction({}));
+  return json_response(
+      200, serialize_extraction(extraction_controller_.snapshot(
+               static_cast<std::uint32_t>(uptime_ms))));
 }
 
 HttpResponse FirmwareApi::start_cooldown(const std::string& body,

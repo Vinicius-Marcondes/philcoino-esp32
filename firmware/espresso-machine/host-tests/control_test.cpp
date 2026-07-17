@@ -140,6 +140,15 @@ class FakeSafetyLease final : public SsrSafetyLease {
   bool tripped_{false};
 };
 
+class FakeOutputCriticalSection final : public OutputCriticalSection {
+ public:
+  void enter() override { assert(!entered_); entered_ = true; }
+  void exit() override { assert(entered_); entered_ = false; }
+
+ private:
+  bool entered_{false};
+};
+
 ThermocoupleReading ok(float temperature_c) {
   return {ThermocoupleStatus::kOk, temperature_c, 0};
 }
@@ -162,24 +171,29 @@ struct ControllerHarness {
 
   FakeDigitalOutput output{};
   FakeSafetyLease safety_lease{output};
-  FailOffSsr ssr{output, safety_lease};
+  FakeOutputCriticalSection critical_section{};
+  FailOffSsr ssr{output, safety_lease, critical_section};
   TemperatureController controller;
 };
 
 struct ExtractionHarness {
   ExtractionHarness()
-      : pump(output), controller(default_extraction_profiles(), pump) {
+      : pump(output, critical_section),
+        controller(default_extraction_profiles(), pump) {
     assert(pump.initialize());
   }
 
   FakeDigitalOutput output{};
+  FakeOutputCriticalSection critical_section{};
   FailOffPump pump;
   ExtractionController controller;
 };
 
 struct CooldownHarness {
   explicit CooldownHarness(TemperatureTargets targets = {})
-      : temperature(targets), pump(pump_output), cooldown(temperature.controller, pump) {
+      : temperature(targets),
+        pump(pump_output, critical_section),
+        cooldown(temperature.controller, pump) {
     assert(pump.initialize());
     pump_output.cooldown_guard = &temperature.controller;
     assert(cooldown.reset(0));
@@ -187,7 +201,27 @@ struct CooldownHarness {
 
   ControllerHarness temperature;
   FakeDigitalOutput pump_output{};
+  FakeOutputCriticalSection critical_section{};
   FailOffPump pump;
+  CooldownController cooldown;
+};
+
+struct WorkflowHarness {
+  WorkflowHarness()
+      : temperature({93, 115}),
+        pump(pump_output, critical_section),
+        extraction(default_extraction_profiles(), pump),
+        cooldown(temperature.controller, pump) {
+    assert(pump.initialize());
+    pump_output.cooldown_guard = &temperature.controller;
+    assert(cooldown.reset(0));
+  }
+
+  ControllerHarness temperature;
+  FakeDigitalOutput pump_output{};
+  FakeOutputCriticalSection critical_section{};
+  FailOffPump pump;
+  ExtractionController extraction;
   CooldownController cooldown;
 };
 
@@ -400,13 +434,133 @@ void test_target_updates_validate_and_persist_before_state_change() {
   assert(state.targets.steam_c == 115);
   assert(!harness.output.level);
   assert(!state.heater_was_high_during_save);
-  assert(harness.safety_lease.disarm_count == 1);
+  assert(harness.safety_lease.disarm_count == 2);
 
   state.fail_save = false;
   assert(harness.controller.update_steam_target(116, storage, 0));
   assert(harness.controller.targets().steam_c == 116);
   assert(state.targets.steam_c == 116);
   assert(state.save_count == 1);
+}
+
+void test_noop_and_inactive_target_updates_preserve_warmup_deadline() {
+  MemoryState state;
+  state.targets = {93, 115};
+  MemoryBackend backend(state);
+  TargetStorage storage(backend);
+  ControllerHarness harness(state.targets);
+
+  auto snapshot = harness.controller.update(reading(80.0F), 0);
+  assert(snapshot.heater_enabled);
+  assert(harness.controller.update_brew_target(93, storage, 1000));
+  assert(state.save_count == 0);
+  assert(harness.output.level);
+
+  assert(harness.controller.update_steam_target(
+      116, storage, philcoino::config::kHeatingTimeoutMs / 2U));
+  assert(state.save_count == 1);
+  assert(harness.controller.targets().steam_c == 116);
+  snapshot = harness.controller.update(
+      reading(93.0F), philcoino::config::kHeatingTimeoutMs - 1000U);
+  assert(!snapshot.fault_active);
+  snapshot = harness.controller.update(
+      reading(80.0F), philcoino::config::kHeatingTimeoutMs);
+  assert(snapshot.fault.code == FaultCode::kHeatingTimeout);
+}
+
+void test_target_transaction_inhibits_heater_until_adopt_or_rollback() {
+  ControllerHarness adopted({93, 115});
+  auto snapshot = adopted.controller.update(reading(80.0F), 0);
+  assert(snapshot.heater_enabled);
+  assert(adopted.controller.prepare_target_update({94, 115}, 100));
+  assert(adopted.controller.target_update_in_progress());
+  assert(!adopted.output.level);
+  snapshot = adopted.controller.update(reading(80.0F), 101);
+  assert(!snapshot.heater_enabled);
+  snapshot = adopted.controller.update(reading(80.0F), 5000);
+  assert(!snapshot.heater_enabled);
+  assert(adopted.controller.adopt_persisted_targets({94, 115}, 5001));
+  assert(!adopted.controller.target_update_in_progress());
+  assert(adopted.controller.targets().brew_c == 94);
+
+  ControllerHarness rolled_back({93, 115});
+  rolled_back.controller.update(reading(80.0F), 0);
+  assert(rolled_back.controller.prepare_target_update({94, 115}, 100));
+  assert(rolled_back.controller.update(reading(80.0F), 200).heater_enabled ==
+         false);
+  assert(rolled_back.controller.rollback_target_update(201));
+  assert(!rolled_back.controller.target_update_in_progress());
+  assert(rolled_back.controller.targets().brew_c == 93);
+  assert(rolled_back.controller.update(reading(80.0F), 202).heater_enabled);
+
+  ControllerHarness failed_adoption({93, 115});
+  assert(failed_adoption.controller.prepare_target_update({94, 115}, 0));
+  assert(!failed_adoption.controller.adopt_persisted_targets({84, 115}, 1));
+  assert(failed_adoption.controller.target_update_in_progress());
+  assert(failed_adoption.controller.has_fault());
+  assert(!failed_adoption.controller.update(reading(80.0F), 2).heater_enabled);
+
+  ControllerHarness failed_rollback({93, 115});
+  assert(failed_rollback.controller.prepare_target_update({94, 115}, 0));
+  failed_rollback.output.fail_low = true;
+  assert(!failed_rollback.controller.rollback_target_update(1));
+  assert(failed_rollback.controller.target_update_in_progress());
+  assert(failed_rollback.controller.has_fault());
+  assert(!failed_rollback.controller.update(reading(80.0F), 2).heater_enabled);
+}
+
+void test_target_crossings_do_not_restart_absolute_warmup_deadline() {
+  ControllerHarness harness({93, 115});
+  auto snapshot = harness.controller.update(reading(80.0F), 0);
+  assert(snapshot.heater_enabled);
+
+  snapshot = harness.controller.update(
+      reading(93.0F), philcoino::config::kHeatingTimeoutMs - 2000U);
+  assert(!snapshot.fault_active);
+  assert(!snapshot.heater_enabled);
+  snapshot = harness.controller.update(
+      reading(80.0F), philcoino::config::kHeatingTimeoutMs - 1000U);
+  assert(!snapshot.fault_active);
+  snapshot = harness.controller.update(
+      reading(93.0F), philcoino::config::kHeatingTimeoutMs);
+  assert(snapshot.fault.code == FaultCode::kHeatingTimeout);
+  assert(!snapshot.heater_enabled);
+}
+
+void test_active_target_change_does_not_extend_running_warmup_deadline() {
+  MemoryState state;
+  state.targets = {93, 115};
+  MemoryBackend backend(state);
+  TargetStorage storage(backend);
+  ControllerHarness harness(state.targets);
+
+  auto snapshot = harness.controller.update(reading(80.0F), 0);
+  assert(snapshot.heater_enabled);
+  assert(harness.controller.update_brew_target(
+      94, storage, philcoino::config::kHeatingTimeoutMs / 2U));
+  assert(harness.controller.targets().brew_c == 94);
+
+  snapshot = harness.controller.update(
+      reading(80.0F), philcoino::config::kHeatingTimeoutMs);
+  assert(snapshot.fault.code == FaultCode::kHeatingTimeout);
+  assert(!snapshot.heater_enabled);
+}
+
+void test_post_readiness_recovery_uses_a_separate_absolute_deadline() {
+  ControllerHarness harness({93, 115});
+  auto snapshot = harness.controller.update(reading(93.0F), 0);
+  assert(!snapshot.fault_active);
+  snapshot = harness.controller.update(
+      reading(93.0F), philcoino::config::kReadyStabilityMs);
+  assert(snapshot.status == ControlStatus::kReady);
+
+  const auto recovery_started_ms = philcoino::config::kReadyStabilityMs + 1U;
+  snapshot = harness.controller.update(reading(80.0F), recovery_started_ms);
+  assert(!snapshot.fault_active);
+  snapshot = harness.controller.update(
+      reading(80.0F),
+      recovery_started_ms + philcoino::config::kHeatingTimeoutMs);
+  assert(snapshot.fault.code == FaultCode::kHeatingTimeout);
 }
 
 void test_safety_lease_renews_without_normal_off_transition() {
@@ -951,7 +1105,24 @@ void test_manual_extraction_cutoff_replay_conflict_and_stop() {
          ExtractionUpdateResult::kCompleted);
   assert(!harness.controller.active());
   assert(!harness.output.level);
-  assert(harness.controller.stop());
+  const auto terminal = harness.controller.snapshot(61000);
+  assert(terminal.extraction_id == started.extraction_id);
+  assert(terminal.outcome == ExtractionOutcome::kCompleted);
+  assert(terminal.elapsed_ms == 60000U);
+  const auto events_before_replay = harness.output.events.size();
+  assert(harness.controller.start(kStartKey,
+                                  {ExtractionSelectionKind::kManual, 0}, 62000) ==
+         StartExtractionResult::kReplay);
+  assert(harness.output.events.size() == events_before_replay);
+  assert(harness.controller.start(kStartKey,
+                                  {ExtractionSelectionKind::kProfile, 0}, 62000) ==
+         StartExtractionResult::kIdempotencyMismatch);
+  assert(harness.controller.start(kOtherStartKey,
+                                  {ExtractionSelectionKind::kManual, 0}, 62000) ==
+         StartExtractionResult::kStarted);
+  assert(harness.controller.snapshot(62000).extraction_id !=
+         terminal.extraction_id);
+  assert(harness.controller.stop(62001));
   assert(!harness.output.level);
 }
 
@@ -1059,7 +1230,15 @@ void test_pump_output_failures_end_extraction_off() {
   assert(transition_failure.controller.update(5000) ==
          ExtractionUpdateResult::kOutputFailure);
   assert(!transition_failure.controller.active());
+  assert(transition_failure.pump.command() == PumpCommand::kRunning);
+  assert(transition_failure.pump.output_state_unknown());
+  assert(transition_failure.controller.update(5001) ==
+         ExtractionUpdateResult::kOutputFailure);
+  transition_failure.output.fail_low = false;
+  assert(transition_failure.controller.update(5002) ==
+         ExtractionUpdateResult::kOk);
   assert(transition_failure.pump.command() == PumpCommand::kOff);
+  assert(!transition_failure.pump.output_state_unknown());
 }
 
 void test_cooldown_start_orders_outputs_and_preserves_permission() {
@@ -1079,6 +1258,45 @@ void test_cooldown_start_orders_outputs_and_preserves_permission() {
   assert(harness.temperature.controller.mode() == ControlMode::kBrew);
   assert(!harness.temperature.controller.heater_enabled_permission());
   assert(!harness.temperature.controller.heater_enabled());
+}
+
+void test_shared_pump_snapshots_keep_workflow_ownership() {
+  WorkflowHarness harness;
+  assert(harness.extraction.start(
+             "start-terminal-before-cooldown", {ExtractionSelectionKind::kManual, 0},
+             1000) == StartExtractionResult::kStarted);
+  assert(harness.extraction.stop(2000));
+  auto extraction = harness.extraction.snapshot(2000);
+  assert(extraction.status == ExtractionStatus::kIdle);
+  assert(extraction.outcome == ExtractionOutcome::kStopped);
+  assert(extraction.pump_command == PumpCommand::kOff);
+
+  harness.temperature.controller.update(ok(96.0F), 2500);
+  assert(harness.cooldown.start("cooldown-owner-key-01", cooldown_input(96.0F),
+                                3000) == StartCooldownResult::kStarted);
+  assert(harness.pump.command() == PumpCommand::kRunning);
+  extraction = harness.extraction.snapshot(3000);
+  assert(extraction.outcome == ExtractionOutcome::kStopped);
+  assert(extraction.pump_command == PumpCommand::kOff);
+  assert(harness.cooldown.snapshot(3000).pump_command == PumpCommand::kRunning);
+
+  assert(harness.cooldown.stop(4000) == CooldownUpdateResult::kOk);
+  assert(harness.cooldown.stop(9000) == CooldownUpdateResult::kCompleted);
+  auto cooldown = harness.cooldown.snapshot(9000);
+  assert(cooldown.status == CooldownStatus::kIdle);
+  assert(cooldown.pump_command == PumpCommand::kOff);
+
+  assert(harness.extraction.start(
+             "start-after-terminal-cooldown", {ExtractionSelectionKind::kManual, 0},
+             10000) == StartExtractionResult::kStarted);
+  assert(harness.pump.command() == PumpCommand::kRunning);
+  cooldown = harness.cooldown.snapshot(10000);
+  assert(cooldown.status == CooldownStatus::kIdle);
+  assert(cooldown.pump_command == PumpCommand::kOff);
+
+  assert(harness.cooldown.stop(10001) == CooldownUpdateResult::kOk);
+  assert(harness.extraction.active());
+  assert(harness.pump.command() == PumpCommand::kRunning);
 }
 
 void test_cooldown_replay_conflict_target_snapshot_and_threshold() {
@@ -1242,8 +1460,17 @@ void test_cooldown_eligibility_failures_reset_and_output_fail_off() {
   off_failure.pump_output.fail_low = true;
   assert(off_failure.cooldown.stop(1000) == CooldownUpdateResult::kFailed);
   assert(off_failure.cooldown.snapshot(1000).outcome == CooldownOutcome::kFailed);
-  assert(off_failure.pump.command() == PumpCommand::kOff);
+  assert(off_failure.cooldown.snapshot(1000).pump_command ==
+         PumpCommand::kRunning);
+  assert(off_failure.pump.command() == PumpCommand::kRunning);
+  assert(off_failure.pump.output_state_unknown());
   assert(off_failure.temperature.controller.has_fault());
+  assert(off_failure.cooldown.update(cooldown_input(110.0F), 1001) ==
+         CooldownUpdateResult::kFailed);
+  off_failure.pump_output.fail_low = false;
+  assert(off_failure.cooldown.update(cooldown_input(110.0F), 1002) ==
+         CooldownUpdateResult::kOk);
+  assert(off_failure.pump.command() == PumpCommand::kOff);
 
   CooldownHarness heater_off_failure;
   assert(heater_off_failure.cooldown.start(
@@ -1283,6 +1510,11 @@ int main() {
   test_steam_heating_timeout_tracks_corrected_demand();
   test_mode_changes_recompute_effective_temperature_and_reset_steam_state();
   test_target_updates_validate_and_persist_before_state_change();
+  test_noop_and_inactive_target_updates_preserve_warmup_deadline();
+  test_target_transaction_inhibits_heater_until_adopt_or_rollback();
+  test_target_crossings_do_not_restart_absolute_warmup_deadline();
+  test_active_target_change_does_not_extend_running_warmup_deadline();
+  test_post_readiness_recovery_uses_a_separate_absolute_deadline();
   test_safety_lease_renews_without_normal_off_transition();
   test_safety_lease_expiry_latches_internal_fault_until_reboot();
   test_safety_lease_control_failures_latch_internal_fault();
@@ -1313,6 +1545,7 @@ int main() {
   test_extraction_wraparound_disconnect_and_heater_fault_independence();
   test_pump_output_failures_end_extraction_off();
   test_cooldown_start_orders_outputs_and_preserves_permission();
+  test_shared_pump_snapshots_keep_workflow_ownership();
   test_cooldown_replay_conflict_target_snapshot_and_threshold();
   test_cooldown_cutoff_stop_delayed_update_and_wraparound();
   test_cooldown_eligibility_failures_reset_and_output_fail_off();

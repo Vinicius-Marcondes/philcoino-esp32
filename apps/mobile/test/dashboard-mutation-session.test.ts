@@ -308,6 +308,27 @@ describe("DashboardMutationSession", () => {
     });
   });
 
+  test("uses a fresh Start key after a detected device reboot", async () => {
+    const requests: string[] = [];
+    const keys = ["pre-reboot-key-01", "post-reboot-key-1"];
+    const client = mutationClient({
+      startExtraction: async (request) => {
+        requests.push(request.idempotencyKey);
+        throw new ApiClientError("offline", "socket closed");
+      },
+    });
+    const harness = createHarness(client, () => keys.shift() ?? "unexpected-key");
+    harness.session.start();
+
+    harness.session.startExtraction({ kind: "manual" });
+    await settle();
+    harness.session.handleDeviceRestart();
+    harness.session.startExtraction({ kind: "manual" });
+    await settle();
+
+    expect(requests).toEqual(["pre-reboot-key-01", "post-reboot-key-1"]);
+  });
+
   test("publishes cooldown state only after acknowledgement and reuses its key after transport loss", async () => {
     const requests: string[] = [];
     const acknowledged: CooldownState = {

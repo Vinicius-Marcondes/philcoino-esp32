@@ -110,6 +110,10 @@ bool TemperatureController::cooldown_inhibited() const {
   return cooldown_inhibited_;
 }
 
+bool TemperatureController::target_update_in_progress() const {
+  return target_update_in_progress_;
+}
+
 void TemperatureController::set_extraction_phase(ExtractionPhase phase,
                                                  std::uint32_t now_ms) {
   if (extraction_phase_ == phase) {
@@ -152,13 +156,18 @@ bool TemperatureController::end_cooldown_inhibit(std::uint32_t now_ms) {
 }
 
 bool TemperatureController::set_mode(ControlMode mode, std::uint32_t now_ms) {
+  if (target_update_in_progress_) {
+    return false;
+  }
   if (mode_ == mode) {
     return true;
   }
   mode_ = mode;
   reset_readiness(now_ms);
   reset_heater_control_window(now_ms);
-  heating_demand_active_ = false;
+  warmup_deadline_active_ = false;
+  readiness_achieved_ = false;
+  recovery_deadline_active_ = false;
   reset_recovery_heat();
   steam_timeout_active_ = false;
   if (fault_latched_) {
@@ -179,12 +188,17 @@ bool TemperatureController::set_heater_enabled(bool enabled,
     latch_fault(FaultCode::kInternalError);
     return false;
   }
+  if (enabled && target_update_in_progress_) {
+    return false;
+  }
   if (heater_enabled_permission_ == enabled) {
     return enabled || heater_.force_off();
   }
   heater_enabled_permission_ = enabled;
   reset_heater_control_window(now_ms);
-  heating_demand_active_ = false;
+  warmup_deadline_active_ = false;
+  readiness_achieved_ = false;
+  recovery_deadline_active_ = false;
   reset_recovery_heat();
   if (!enabled || fault_latched_) {
     return heater_.force_off();
@@ -195,17 +209,34 @@ bool TemperatureController::set_heater_enabled(bool enabled,
 bool TemperatureController::update_targets(
     const peripherals::TemperatureTargets& targets,
     peripherals::TargetStorage& storage, std::uint32_t now_ms) {
-  if (!prepare_target_update(targets) || !storage.save(targets)) {
+  if (targets.brew_c == targets_.brew_c && targets.steam_c == targets_.steam_c) {
+    return true;
+  }
+  if (!prepare_target_update(targets, now_ms)) {
+    return false;
+  }
+  if (!storage.save(targets)) {
+    rollback_target_update(now_ms);
     return false;
   }
   return adopt_persisted_targets(targets, now_ms);
 }
 
 bool TemperatureController::prepare_target_update(
-    const peripherals::TemperatureTargets& targets) {
-  if (!peripherals::targets_are_valid(targets)) {
+    const peripherals::TemperatureTargets& targets, std::uint32_t now_ms) {
+  if (target_update_in_progress_ ||
+      !peripherals::targets_are_valid(targets)) {
     return false;
   }
+  if (targets.brew_c == targets_.brew_c && targets.steam_c == targets_.steam_c) {
+    return true;
+  }
+  pending_targets_ = targets;
+  pending_active_target_change_ =
+      mode_ == ControlMode::kBrew ? targets.brew_c != targets_.brew_c
+                                  : targets.steam_c != targets_.steam_c;
+  target_update_in_progress_ = true;
+  reset_heater_control_window(now_ms);
   if (!heater_.force_off()) {
     latch_fault(FaultCode::kInternalError);
     return false;
@@ -219,15 +250,47 @@ bool TemperatureController::adopt_persisted_targets(
     latch_fault(FaultCode::kInternalError);
     return false;
   }
+  if (!target_update_in_progress_ || targets.brew_c != pending_targets_.brew_c ||
+      targets.steam_c != pending_targets_.steam_c) {
+    latch_fault(FaultCode::kInternalError);
+    return false;
+  }
+  const bool active_target_changed = pending_active_target_change_;
   targets_ = targets;
-  reset_readiness(now_ms);
-  reset_heater_control_window(now_ms);
-  heating_demand_active_ = false;
-  reset_recovery_heat();
-  steam_timeout_active_ = false;
-  if (!fault_latched_) {
+  if (active_target_changed) {
+    const bool deadline_already_active =
+        warmup_deadline_active_ || recovery_deadline_active_;
+    reset_readiness(now_ms);
+    reset_heater_control_window(now_ms);
+    if (!deadline_already_active) {
+      readiness_achieved_ = false;
+    }
+    reset_recovery_heat();
+  }
+  pending_active_target_change_ = false;
+  target_update_in_progress_ = false;
+  if (!fault_latched_ && active_target_changed) {
     status_ = ControlStatus::kHeating;
   }
+  return true;
+}
+
+bool TemperatureController::rollback_target_update(std::uint32_t now_ms) {
+  if (!target_update_in_progress_) {
+    return false;
+  }
+  if (!peripherals::targets_are_valid(targets_)) {
+    latch_fault(FaultCode::kInternalError);
+    return false;
+  }
+  if (!heater_.force_off()) {
+    latch_fault(FaultCode::kInternalError);
+    return false;
+  }
+  pending_targets_ = targets_;
+  pending_active_target_change_ = false;
+  reset_heater_control_window(now_ms);
+  target_update_in_progress_ = false;
   return true;
 }
 
@@ -256,7 +319,9 @@ bool TemperatureController::dismiss_over_temperature(std::uint32_t now_ms) {
   fault_latched_ = false;
   reset_readiness(now_ms);
   reset_heater_control_window(now_ms);
-  heating_demand_active_ = false;
+  warmup_deadline_active_ = false;
+  readiness_achieved_ = false;
+  recovery_deadline_active_ = false;
   reset_recovery_heat();
   return !update(raw_boiler_temperature_, now_ms).fault_active;
 }
@@ -294,18 +359,32 @@ ControlSnapshot TemperatureController::update(
   }
 
   if (!heater_enabled_permission_) {
-    heating_demand_active_ = false;
-  } else if (active_temperature_demands_heat() && !ready) {
-    if (!heating_demand_active_) {
-      heating_demand_active_ = true;
-      heating_demand_since_ms_ = now_ms;
-    } else if (elapsed(now_ms, heating_demand_since_ms_,
-                       config::kHeatingTimeoutMs)) {
+    warmup_deadline_active_ = false;
+    recovery_deadline_active_ = false;
+  } else if (ready) {
+    warmup_deadline_active_ = false;
+    recovery_deadline_active_ = false;
+    readiness_achieved_ = true;
+  } else if (readiness_achieved_) {
+    if (!recovery_deadline_active_ && active_temperature_demands_heat()) {
+      recovery_deadline_active_ = true;
+      recovery_started_ms_ = now_ms;
+    }
+    if (recovery_deadline_active_ &&
+        elapsed(now_ms, recovery_started_ms_, config::kHeatingTimeoutMs)) {
       latch_fault(FaultCode::kHeatingTimeout);
       return snapshot(now_ms);
     }
   } else {
-    heating_demand_active_ = false;
+    if (!warmup_deadline_active_ && active_temperature_demands_heat()) {
+      warmup_deadline_active_ = true;
+      warmup_started_ms_ = now_ms;
+    }
+    if (warmup_deadline_active_ &&
+        elapsed(now_ms, warmup_started_ms_, config::kHeatingTimeoutMs)) {
+      latch_fault(FaultCode::kHeatingTimeout);
+      return snapshot(now_ms);
+    }
   }
 
   update_recovery_heat();
@@ -338,6 +417,8 @@ void TemperatureController::latch_fault(FaultCode code) {
   fault_latched_ = true;
   fault_code_ = code;
   status_ = ControlStatus::kFault;
+  warmup_deadline_active_ = false;
+  recovery_deadline_active_ = false;
   heater_.force_off();
 }
 
@@ -471,7 +552,9 @@ void TemperatureController::return_to_brew(std::uint32_t now_ms) {
   steam_timeout_active_ = false;
   reset_readiness(now_ms);
   reset_heater_control_window(now_ms);
-  heating_demand_active_ = false;
+  warmup_deadline_active_ = false;
+  readiness_achieved_ = false;
+  recovery_deadline_active_ = false;
   reset_recovery_heat();
   status_ = ControlStatus::kHeating;
 }
@@ -505,6 +588,10 @@ bool TemperatureController::update_readiness(std::uint32_t now_ms) {
 bool TemperatureController::update_heater(std::uint32_t now_ms) {
   if (fault_latched_) {
     return heater_.force_off();
+  }
+  if (target_update_in_progress_) {
+    reset_heater_control_window(now_ms);
+    return heater_.set_enabled(false);
   }
   if (cooldown_inhibited_) {
     reset_heater_control_window(now_ms);
@@ -556,9 +643,34 @@ const peripherals::ExtractionProfiles& ExtractionController::profiles() const {
 
 bool ExtractionController::active() const { return active_; }
 
+ExtractionReplayStatus ExtractionController::replay_status(
+    const std::string& idempotency_key,
+    const ExtractionSelection& selection) const {
+  if (idempotency_key_.empty() || idempotency_key != idempotency_key_) {
+    return ExtractionReplayStatus::kNone;
+  }
+  return selections_equal(selection, selection_)
+             ? ExtractionReplayStatus::kMatch
+             : ExtractionReplayStatus::kMismatch;
+}
+
 ExtractionSnapshot ExtractionController::snapshot(std::uint32_t now_ms) const {
   if (!active_) {
-    return {};
+    if (idempotency_key_.empty()) {
+      return {};
+    }
+    return {
+        ExtractionStatus::kIdle,
+        extraction_id_,
+        selection_,
+        ExtractionPhase::kIdle,
+        terminal_elapsed_ms_,
+        0,
+        outcome_ == ExtractionOutcome::kFailed
+            ? pump_.command()
+            : peripherals::PumpCommand::kOff,
+        outcome_,
+    };
   }
 
   const auto total_ms = total_duration_ms();
@@ -572,6 +684,7 @@ ExtractionSnapshot ExtractionController::snapshot(std::uint32_t now_ms) const {
       elapsed_ms,
       total_ms - elapsed_ms,
       pump_.command(),
+      ExtractionOutcome::kNone,
   };
 }
 
@@ -608,10 +721,13 @@ StartExtractionResult ExtractionController::start(
        selection.profile_index >= profiles_.size())) {
     return StartExtractionResult::kInvalidRequest;
   }
-  if (active_) {
-    return idempotency_key == idempotency_key_
+  if (!idempotency_key_.empty() && idempotency_key == idempotency_key_) {
+    return selections_equal(selection, selection_)
                ? StartExtractionResult::kReplay
-               : StartExtractionResult::kConflict;
+               : StartExtractionResult::kIdempotencyMismatch;
+  }
+  if (active_) {
+    return StartExtractionResult::kConflict;
   }
 
   peripherals::ExtractionProfile selected_profile{};
@@ -629,38 +745,57 @@ StartExtractionResult ExtractionController::start(
   ++extraction_counter_;
   extraction_id_ = "run-" + std::to_string(extraction_counter_);
   phase_ = phase_at(0);
+  outcome_ = ExtractionOutcome::kNone;
+  terminal_elapsed_ms_ = 0;
   active_ = true;
   if (!command_for_phase(phase_)) {
-    clear_active();
     pump_.force_off();
+    finish(ExtractionOutcome::kFailed, 0);
     return StartExtractionResult::kOutputFailure;
   }
   return StartExtractionResult::kStarted;
 }
 
-bool ExtractionController::stop() {
-  clear_active();
-  return pump_.force_off();
+bool ExtractionController::stop(std::uint32_t now_ms) {
+  const auto elapsed_ms = active_
+                              ? std::min(static_cast<std::uint32_t>(
+                                             now_ms - started_at_ms_),
+                                         total_duration_ms())
+                              : terminal_elapsed_ms_;
+  const bool forced_off = pump_.force_off();
+  if (active_) {
+    finish(forced_off ? ExtractionOutcome::kStopped
+                      : ExtractionOutcome::kFailed,
+           elapsed_ms);
+  }
+  return forced_off;
 }
 
 ExtractionUpdateResult ExtractionController::update(std::uint32_t now_ms) {
   if (!active_) {
-    return pump_.command() == peripherals::PumpCommand::kOff || pump_.force_off()
+    return (!pump_.output_state_unknown() &&
+            pump_.command() == peripherals::PumpCommand::kOff) ||
+                   pump_.force_off()
                ? ExtractionUpdateResult::kOk
                : ExtractionUpdateResult::kOutputFailure;
   }
 
   const auto elapsed_ms = static_cast<std::uint32_t>(now_ms - started_at_ms_);
   if (elapsed_ms >= total_duration_ms()) {
-    clear_active();
-    return pump_.force_off() ? ExtractionUpdateResult::kCompleted
-                             : ExtractionUpdateResult::kOutputFailure;
+    const auto total_ms = total_duration_ms();
+    const bool forced_off = pump_.force_off();
+    finish(forced_off ? ExtractionOutcome::kCompleted
+                      : ExtractionOutcome::kFailed,
+           total_ms);
+    return forced_off ? ExtractionUpdateResult::kCompleted
+                      : ExtractionUpdateResult::kOutputFailure;
   }
 
   const auto next_phase = phase_at(elapsed_ms);
   if (next_phase != phase_ && !command_for_phase(next_phase)) {
-    clear_active();
     pump_.force_off();
+    finish(ExtractionOutcome::kFailed,
+           std::min(elapsed_ms, total_duration_ms()));
     return ExtractionUpdateResult::kOutputFailure;
   }
   phase_ = next_phase;
@@ -720,14 +855,21 @@ bool ExtractionController::command_for_phase(ExtractionPhase phase) {
                            phase == ExtractionPhase::kMainExtraction);
 }
 
-void ExtractionController::clear_active() {
+void ExtractionController::finish(ExtractionOutcome outcome,
+                                  std::uint32_t elapsed_ms) {
   active_ = false;
   started_at_ms_ = 0;
-  extraction_id_.clear();
-  idempotency_key_.clear();
-  selection_ = {};
   active_profile_ = {};
   phase_ = ExtractionPhase::kIdle;
+  outcome_ = outcome;
+  terminal_elapsed_ms_ = elapsed_ms;
+}
+
+bool ExtractionController::selections_equal(
+    const ExtractionSelection& left, const ExtractionSelection& right) {
+  return left.kind == right.kind &&
+         (left.kind == ExtractionSelectionKind::kManual ||
+          left.profile_index == right.profile_index);
 }
 
 CooldownController::CooldownController(TemperatureController& temperature,
@@ -743,9 +885,10 @@ CooldownSnapshot CooldownController::snapshot(std::uint32_t now_ms) const {
   value.status = status_;
   value.cooldown_id = cooldown_id_;
   value.brew_target_c = brew_target_c_;
-  value.pump_command = status_ == CooldownStatus::kIdle
-                           ? peripherals::PumpCommand::kOff
-                           : pump_.command();
+  value.pump_command =
+      status_ != CooldownStatus::kIdle || outcome_ == CooldownOutcome::kFailed
+          ? pump_.command()
+          : peripherals::PumpCommand::kOff;
   value.heater_inhibited = temperature_.cooldown_inhibited();
   value.outcome = outcome_;
   if (cooldown_id_.empty()) {
@@ -821,7 +964,9 @@ StartCooldownResult CooldownController::start(
 CooldownUpdateResult CooldownController::update(const CooldownInput& input,
                                                 std::uint32_t now_ms) {
   if (!active()) {
-    return pump_.command() == peripherals::PumpCommand::kOff || pump_.force_off()
+    return (!pump_.output_state_unknown() &&
+            pump_.command() == peripherals::PumpCommand::kOff) ||
+                   pump_.force_off()
                ? CooldownUpdateResult::kOk
                : CooldownUpdateResult::kFailed;
   }
@@ -865,9 +1010,7 @@ CooldownUpdateResult CooldownController::update(const CooldownInput& input,
 
 CooldownUpdateResult CooldownController::stop(std::uint32_t now_ms) {
   if (status_ == CooldownStatus::kIdle) {
-    return pump_.command() == peripherals::PumpCommand::kOff || pump_.force_off()
-               ? CooldownUpdateResult::kOk
-               : CooldownUpdateResult::kFailed;
+    return CooldownUpdateResult::kOk;
   }
   if (status_ == CooldownStatus::kStabilizing) {
     return update({true, temperature_.has_fault(), false,

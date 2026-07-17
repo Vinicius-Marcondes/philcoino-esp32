@@ -184,6 +184,11 @@ export class DashboardMutationSession {
     this.activeController = null;
   }
 
+  handleDeviceRestart(): void {
+    this.pendingStart = null;
+    this.pendingCooldownStartKey = null;
+  }
+
   setMode(mode: Mode): void {
     void this.perform(
       "mode",
@@ -277,6 +282,14 @@ export class DashboardMutationSession {
         return translate("mutation.extractionStarted");
       },
       translate("mutation.extractionStartPending"),
+      (error) => {
+        if (
+          error instanceof ApiClientError &&
+          (error.kind === "http" || error.kind === "invalid-request")
+        ) {
+          this.pendingStart = null;
+        }
+      },
     );
   }
 
@@ -465,6 +478,8 @@ function localizedRejectionMessage(
       return translate("mutation.rejections.extractionActive");
     case "internal_error":
       return translate("mutation.rejections.internalError");
+    case "idempotency_mismatch":
+      return translate("mutation.rejections.idempotencyMismatch");
     case "machine_faulted":
       return translate("mutation.rejections.machineFaulted");
     case "malformed_request":

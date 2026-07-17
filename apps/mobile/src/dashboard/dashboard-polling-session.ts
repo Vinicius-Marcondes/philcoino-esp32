@@ -23,6 +23,7 @@ interface DashboardPollingSessionOptions {
   client: DashboardStateClient;
   intervalMs?: number;
   onConnectionChange: (connection: ConnectionState) => void;
+  onDeviceRestart?: () => void;
   onSnapshotChange: (snapshot: MachineStateV2 | null) => void;
   scheduler?: PollingScheduler;
 }
@@ -37,6 +38,7 @@ export class DashboardPollingSession {
   private readonly client: DashboardStateClient;
   private readonly intervalMs: number;
   private readonly onConnectionChange: (connection: ConnectionState) => void;
+  private readonly onDeviceRestart: () => void;
   private readonly onSnapshotChange: (snapshot: MachineStateV2 | null) => void;
   private readonly scheduler: PollingScheduler;
 
@@ -45,11 +47,13 @@ export class DashboardPollingSession {
   private paused = false;
   private running = false;
   private timer: unknown | null = null;
+  private lastUptimeMs: number | null = null;
 
   constructor(options: DashboardPollingSessionOptions) {
     this.client = options.client;
     this.intervalMs = options.intervalMs ?? DASHBOARD_POLL_INTERVAL_MS;
     this.onConnectionChange = options.onConnectionChange;
+    this.onDeviceRestart = options.onDeviceRestart ?? (() => undefined);
     this.onSnapshotChange = options.onSnapshotChange;
     this.scheduler = options.scheduler ?? systemScheduler;
   }
@@ -114,6 +118,13 @@ export class DashboardPollingSession {
       if (!this.isCurrent(generation)) {
         return;
       }
+      if (
+        this.lastUptimeMs !== null &&
+        snapshot.machine.uptimeMs < this.lastUptimeMs
+      ) {
+        this.onDeviceRestart();
+      }
+      this.lastUptimeMs = snapshot.machine.uptimeMs;
       this.onSnapshotChange(snapshot);
       this.onConnectionChange(onlineState);
     } catch (error) {

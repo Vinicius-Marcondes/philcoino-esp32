@@ -1,0 +1,10 @@
+{
+  "status": "idle",
+  "extractionId": "run-184220",
+  "selection": { "kind": "profile", "profileId": "profile-2" },
+  "phase": "idle",
+  "elapsedMs": 35000,
+  "remainingMs": null,
+  "pumpCommand": "off",
+  "outcome": "completed"
+}

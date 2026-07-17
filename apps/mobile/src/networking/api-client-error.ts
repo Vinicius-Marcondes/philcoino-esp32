@@ -22,6 +22,8 @@ export type ApiClientErrorKind =
   | "unauthorized";
 
 export class ApiClientError extends Error {
+  readonly endpoint?: string;
+  readonly issuePaths?: readonly string[];
   readonly kind: ApiClientErrorKind;
   readonly response?: ApiErrorResponse;
   readonly status?: number;
@@ -29,10 +31,17 @@ export class ApiClientError extends Error {
   constructor(
     kind: ApiClientErrorKind,
     message: string,
-    options: { response?: ApiErrorResponse; status?: number } = {},
+    options: {
+      endpoint?: string;
+      issuePaths?: readonly string[];
+      response?: ApiErrorResponse;
+      status?: number;
+    } = {},
   ) {
     super(message);
     this.name = "ApiClientError";
+    this.endpoint = options.endpoint;
+    this.issuePaths = options.issuePaths;
     this.kind = kind;
     this.response = options.response;
     this.status = options.status;

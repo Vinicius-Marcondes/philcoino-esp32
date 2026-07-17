@@ -260,7 +260,7 @@
       "post": {
         "operationId": "startExtraction",
         "summary": "Start Manual or one persisted profile idempotently",
-        "description": "Start is accepted only in acknowledged Brew mode and while cooldown is idle. Replaying the same idempotency key returns the same active extraction without resetting its monotonic timing. A different key while active is rejected.",
+        "description": "Start is accepted only in acknowledged Brew mode and while cooldown is idle. Replaying the same idempotency key and normalized selection returns the retained active or terminal extraction without issuing another pump-high command. Reusing a retained key with a different selection is rejected as idempotency_mismatch. A terminal record remains volatile until another key is successfully accepted or the device reboots.",
         "security": [{ "bearerAuth": [] }],
         "requestBody": {
           "required": true,
@@ -272,10 +272,15 @@
         },
         "responses": {
           "200": {
-            "description": "The same acknowledged active extraction for a new or replayed key.",
+            "description": "The same acknowledged active or terminal extraction for a new or replayed key.",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/RunningExtractionState" }
+                "schema": {
+                  "oneOf": [
+                    { "$ref": "#/components/schemas/RunningExtractionState" },
+                    { "$ref": "#/components/schemas/TerminalExtractionState" }
+                  ]
+                }
               }
             }
           },
@@ -306,10 +311,15 @@
         "security": [{ "bearerAuth": [] }],
         "responses": {
           "200": {
-            "description": "Acknowledged idle state, including when extraction was already idle.",
+            "description": "Acknowledged idle or retained terminal state, including when extraction was already idle.",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/IdleExtractionState" }
+                "schema": {
+                  "oneOf": [
+                    { "$ref": "#/components/schemas/IdleExtractionState" },
+                    { "$ref": "#/components/schemas/TerminalExtractionState" }
+                  ]
+                }
               }
             }
           },
@@ -1007,10 +1017,62 @@
           }
         ]
       },
+      "ExtractionOutcome": {
+        "type": "string",
+        "enum": ["completed", "stopped", "failed"]
+      },
+      "TerminalExtractionState": {
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["status", "extractionId", "selection", "phase", "elapsedMs", "remainingMs", "pumpCommand", "outcome"],
+            "properties": {
+              "status": { "const": "idle" },
+              "extractionId": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$" },
+              "selection": { "$ref": "#/components/schemas/ExtractionSelection" },
+              "phase": { "const": "idle" },
+              "elapsedMs": { "type": "integer", "minimum": 0, "maximum": 60000 },
+              "remainingMs": { "type": "null" },
+              "pumpCommand": { "const": "off" },
+              "outcome": { "enum": ["completed", "stopped"] }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["status", "extractionId", "selection", "phase", "elapsedMs", "remainingMs", "pumpCommand", "outcome"],
+            "properties": {
+              "status": { "const": "idle" },
+              "extractionId": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$" },
+              "selection": { "$ref": "#/components/schemas/ExtractionSelection" },
+              "phase": { "const": "idle" },
+              "elapsedMs": { "type": "integer", "minimum": 0, "maximum": 60000 },
+              "remainingMs": { "type": "null" },
+              "pumpCommand": { "$ref": "#/components/schemas/PumpCommand" },
+              "outcome": { "const": "failed" }
+            }
+          }
+        ],
+        "description": "Volatile terminal idempotency acknowledgement retained through completion, Stop, or output failure. It is evicted only by a successfully accepted different key or reboot. A failed low write may retain pumpCommand running because command state is not physical-flow feedback.",
+        "examples": [
+          {
+            "status": "idle",
+            "extractionId": "run-184220",
+            "selection": { "kind": "profile", "profileId": "profile-2" },
+            "phase": "idle",
+            "elapsedMs": 35000,
+            "remainingMs": null,
+            "pumpCommand": "off",
+            "outcome": "completed"
+          }
+        ]
+      },
       "ExtractionState": {
         "oneOf": [
           { "$ref": "#/components/schemas/IdleExtractionState" },
-          { "$ref": "#/components/schemas/RunningExtractionState" }
+          { "$ref": "#/components/schemas/RunningExtractionState" },
+          { "$ref": "#/components/schemas/TerminalExtractionState" }
         ]
       },
       "CompensationPhase": {
@@ -1079,20 +1141,39 @@
         }
       },
       "TerminalIdleCooldownState": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["status", "cooldownId", "brewTargetC", "elapsedMs", "remainingMs", "pumpCommand", "heaterInhibited", "outcome"],
-        "properties": {
-          "status": { "const": "idle" },
-          "cooldownId": { "$ref": "#/components/schemas/CooldownId" },
-          "brewTargetC": { "$ref": "#/components/schemas/BrewTarget" },
-          "elapsedMs": { "type": "integer", "minimum": 0, "maximum": 50000, "description": "Total acknowledged monotonic elapsed time from the retained cooldown Start." },
-          "remainingMs": { "type": "null" },
-          "pumpCommand": { "const": "off" },
-          "heaterInhibited": { "const": false },
-          "outcome": { "$ref": "#/components/schemas/CooldownOutcome" }
-        },
-        "description": "The retained terminal acknowledgement for the most recent cooldown. It preserves identity, the snapshotted Brew threshold, total acknowledged elapsed time, and the terminal reason so a same-key replay cannot be interpreted as a new workflow. Reset or power loss returns the initial idle shape.",
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["status", "cooldownId", "brewTargetC", "elapsedMs", "remainingMs", "pumpCommand", "heaterInhibited", "outcome"],
+            "properties": {
+              "status": { "const": "idle" },
+              "cooldownId": { "$ref": "#/components/schemas/CooldownId" },
+              "brewTargetC": { "$ref": "#/components/schemas/BrewTarget" },
+              "elapsedMs": { "type": "integer", "minimum": 0, "maximum": 50000 },
+              "remainingMs": { "type": "null" },
+              "pumpCommand": { "const": "off" },
+              "heaterInhibited": { "const": false },
+              "outcome": { "enum": ["target-reached", "cutoff", "stopped"] }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["status", "cooldownId", "brewTargetC", "elapsedMs", "remainingMs", "pumpCommand", "heaterInhibited", "outcome"],
+            "properties": {
+              "status": { "const": "idle" },
+              "cooldownId": { "$ref": "#/components/schemas/CooldownId" },
+              "brewTargetC": { "$ref": "#/components/schemas/BrewTarget" },
+              "elapsedMs": { "type": "integer", "minimum": 0, "maximum": 50000 },
+              "remainingMs": { "type": "null" },
+              "pumpCommand": { "$ref": "#/components/schemas/PumpCommand" },
+              "heaterInhibited": { "const": false },
+              "outcome": { "const": "failed" }
+            }
+          }
+        ],
+        "description": "The retained terminal acknowledgement for the most recent cooldown. Successful target, cutoff, and Stop outcomes retain the cooldown-owned off command even when another workflow later owns the shared pump. A failed off write may retain pumpCommand running; command state does not prove physical flow or de-energization. Reset or power loss returns the initial idle shape.",
         "examples": [
           {
             "status": "idle",
@@ -1103,6 +1184,16 @@
             "pumpCommand": "off",
             "heaterInhibited": false,
             "outcome": "cutoff"
+          },
+          {
+            "status": "idle",
+            "cooldownId": "cooldown-184221",
+            "brewTargetC": 93,
+            "elapsedMs": 12000,
+            "remainingMs": null,
+            "pumpCommand": "running",
+            "heaterInhibited": false,
+            "outcome": "failed"
           }
         ]
       },
@@ -1131,6 +1222,16 @@
             "pumpCommand": "off",
             "heaterInhibited": false,
             "outcome": "cutoff"
+          },
+          {
+            "status": "idle",
+            "cooldownId": "cooldown-failed-off",
+            "brewTargetC": 93,
+            "elapsedMs": 12000,
+            "remainingMs": null,
+            "pumpCommand": "running",
+            "heaterInhibited": false,
+            "outcome": "failed"
           }
         ]
       },
@@ -1304,6 +1405,7 @@
           "sensor_unavailable",
           "machine_faulted",
           "profile_not_configured",
+          "idempotency_mismatch",
           "persistence_failure",
           "internal_error"
         ]
