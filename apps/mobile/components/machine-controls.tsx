@@ -11,9 +11,13 @@ import { useEffect, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import type { DashboardMutationState } from "@/src/dashboard/dashboard-mutation-session";
+import {
+  MUTATION_FEEDBACK_DISMISS_MS,
+  mutationFeedbackIsVisible,
+  mutationFeedbackShouldAutoDismiss,
+  type MutationFeedbackVisibility,
+} from "@/src/dashboard/mutation-feedback";
 import { translate } from "@/src/localization/i18n";
-
-const MUTATION_FEEDBACK_DISMISS_MS = 30_000;
 
 interface MachineControlsProps {
   faultMutation: DashboardMutationState;
@@ -186,12 +190,14 @@ export function MachineControls({
 export function MutationFeedback({
   onDismiss,
   state,
+  visibility = "all",
 }: {
   onDismiss: () => void;
   state: DashboardMutationState;
+  visibility?: MutationFeedbackVisibility;
 }) {
   useEffect(() => {
-    if (state.status === "idle") {
+    if (!mutationFeedbackShouldAutoDismiss(state.status)) {
       return;
     }
 
@@ -199,7 +205,7 @@ export function MutationFeedback({
     return () => clearTimeout(timer);
   }, [onDismiss, state.message, state.status]);
 
-  if (state.status === "idle") {
+  if (!mutationFeedbackIsVisible(state.status, visibility)) {
     return null;
   }
 

@@ -52,7 +52,10 @@ import {
   steamCountdownContext,
   type TemperatureSample,
 } from "@/src/dashboard/dashboard-view-model";
-import type { DashboardMutationState } from "@/src/dashboard/dashboard-mutation-session";
+import {
+  idleMutationState,
+  type DashboardMutationState,
+} from "@/src/dashboard/dashboard-mutation-session";
 import { isDebugDeviceModeEnabled } from "@/src/debug-device-mode";
 import { debugMobileProfileRepository } from "@/src/debug/debug-mobile-profile-repository";
 import {
@@ -157,6 +160,9 @@ export function DashboardScreen({
   } | null>(null);
   const [selectedExtraction, setSelectedExtraction] =
     useState<ExtractionSelection>({ kind: "manual" });
+  const [localProfileMutation, setLocalProfileMutation] =
+    useState<DashboardMutationState>(idleMutationState);
+  const localProfileSaveGeneration = useRef(0);
   const idlePreviewState = useMemo(createExtractionPreviewState, []);
   const extractionUiState: ExtractionPreviewState = useMemo(
     () => ({
@@ -226,6 +232,10 @@ export function DashboardScreen({
     () => dismissMutation("profiles"),
     [dismissMutation],
   );
+  const dismissLocalProfileMutation = useCallback(
+    () => setLocalProfileMutation(idleMutationState),
+    [],
+  );
   const mutationPending =
     cooldownStartMutation.status === "pending" ||
     cooldownStopMutation.status === "pending" ||
@@ -255,9 +265,26 @@ export function DashboardScreen({
         setSelectedExtraction(next.selected);
       }
       if (!profileSetsEqual(next.mobileProfiles, extractionUiState.mobileProfiles)) {
-        void saveMobileProfiles(next.mobileProfiles);
+        const generation = ++localProfileSaveGeneration.current;
+        setLocalProfileMutation({
+          message: translate("mutation.profileSavePending"),
+          status: "pending",
+        });
+        void saveMobileProfiles(next.mobileProfiles).then((saved) => {
+          if (localProfileSaveGeneration.current !== generation) {
+            return;
+          }
+          setLocalProfileMutation({
+            message: saved
+              ? translate("mutation.profileSavedLocally")
+              : translate("extractionPreview.profileSaveError"),
+            status: saved ? "acknowledged" : "rejected",
+          });
+        });
       }
       if (!profileSetsEqual(next.machineProfiles, extractionUiState.machineProfiles)) {
+        localProfileSaveGeneration.current += 1;
+        setLocalProfileMutation(idleMutationState);
         exportProfiles();
       }
       if (
@@ -374,22 +401,27 @@ export function DashboardScreen({
             <MutationFeedback
               onDismiss={dismissFaultMutation}
               state={faultMutation}
+              visibility="errors-only"
             />
             <MutationFeedback
               onDismiss={dismissExtractionStartMutation}
               state={extractionStartMutation}
+              visibility="errors-only"
             />
             <MutationFeedback
               onDismiss={dismissExtractionStopMutation}
               state={extractionStopMutation}
+              visibility="errors-only"
             />
             <MutationFeedback
               onDismiss={dismissCooldownStartMutation}
               state={cooldownStartMutation}
+              visibility="errors-only"
             />
             <MutationFeedback
               onDismiss={dismissCooldownStopMutation}
               state={cooldownStopMutation}
+              visibility="errors-only"
             />
 
             {connection.status === "online" && snapshot !== null ? (
@@ -465,8 +497,16 @@ export function DashboardScreen({
               <ProfileLoadingCard error={profileStorageError} />
             ) : null}
             <MutationFeedback
-              onDismiss={dismissProfileMutation}
-              state={profileMutation}
+              onDismiss={
+                profileMutation.status === "idle"
+                  ? dismissLocalProfileMutation
+                  : dismissProfileMutation
+              }
+              state={
+                profileMutation.status === "idle"
+                  ? localProfileMutation
+                  : profileMutation
+              }
             />
             {mobileProfiles !== null && machineProfiles !== null ? (
               <ExtractionPreview
@@ -491,6 +531,7 @@ export function DashboardScreen({
             <MutationFeedback
               onDismiss={dismissModeMutation}
               state={modeMutation}
+              visibility="errors-only"
             />
             <MutationFeedback
               onDismiss={dismissTemperatureMutation}
