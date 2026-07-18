@@ -23,7 +23,7 @@ void test_generic_json_syntax_boundary() {
   assert(fields.size() == 1U);
   assert(fields[0].value.string == "a");
 
-  for (const std::string& valid : {
+  for (const std::string valid : {
            " {\"text\":\"a\\n\\u0041\"} ",
            "{\"number\":-1.25e+2}", "{\"flag\":true}",
            "{\"nested\":null}",
@@ -34,7 +34,7 @@ void test_generic_json_syntax_boundary() {
     assert(valid_parser.parse(valid_fields));
   }
 
-  for (const std::string& invalid : {
+  for (const std::string invalid : {
            "", "[]", "{\"x\":1,\"x\":2}", "{\"x\":01}",
            "{\"x\":1.}", "{\"x\":1e}", "{\"x\":\"\\u0000\"}",
            "{\"x\":\"\\u0080\"}", "{\"x\":1} trailing"}) {
