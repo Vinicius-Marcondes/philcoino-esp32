@@ -48,7 +48,6 @@ DiscoveryTxt discovery_txt(const DeviceIdentity& identity);
 
 bool constant_time_bearer_matches(const char* authorization,
                                   const std::string& expected_token);
-bool request_requires_auth(HttpMethod method, const std::string& path);
 
 class FirmwareApi {
  public:

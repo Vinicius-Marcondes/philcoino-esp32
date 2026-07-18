@@ -1,0 +1,15 @@
+# Minimal invalid objects and protocol temperature fixtures
+{}
+{"brewTargetC":93}
+{"brewTargetC":85,"steamTargetC":120}
+{"steamTargetC":115,"brewTargetC":93}
+# Machine request fixtures
+{"mode":"steam"}
+{"heaterEnabled":false}
+# Cooldown and extraction Start request fixtures
+{"idempotencyKey":"abcdefghijklmnop"}
+{"idempotencyKey":"abcdefghijklmnop","selection":{"kind":"manual"}}
+# Firmware profiles response/request capture
+{"profiles":[{"id":"profile-1","profile":{"name":"Short20","preInfusionSeconds":0,"soakSeconds":0,"mainExtractionSeconds":20}},{"id":"profile-2","profile":{"name":"Pre5Soak5","preInfusionSeconds":5,"soakSeconds":5,"mainExtractionSeconds":25}},{"id":"profile-3","profile":null},{"id":"profile-4","profile":null}]}
+# Generic JSON regression seed
+{"x":"\u0041","n":-1.5e2,"a":[{"b":true}]}

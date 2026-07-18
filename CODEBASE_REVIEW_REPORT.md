@@ -11,7 +11,7 @@ The checked-out `main` branch contains only the original Expo starter. The actua
 
 The working tree also contains untracked native/build output from the feature branch. Generated, dependency, cache, binary, and secret-bearing local configuration paths were excluded from inspection as required by `AGENTS.md`.
 
-This review covers authored firmware control/peripheral/networking code, firmware host tests, mobile discovery/pairing/networking/dashboard/control code, the OpenAPI/Zod contract, simulator behavior, project documentation, and repository scripts. Physical mains wiring, SSR authenticity, thermal cutoff behavior, sensor mounting, and energized validation remain human/hardware review items rather than claims established by source inspection.
+This review covers authored firmware control/peripheral/networking code, firmware host tests, mobile discovery/pairing/networking/dashboard/control code, the OpenAPI/Zod contract, simulator behavior, project documentation, and repository scripts. Physical mains wiring, SSR authenticity, thermal cutoff behavior, sensor mounting, and energized behavior are not claims established by source inspection. The owner accepted the tested hardware configuration on 2026-07-16 from reported functional and technical-equipment checks; raw instrument/setup artifacts were not added to this source-review record.
 
 ## Executive summary
 
@@ -46,9 +46,12 @@ The owner completed and accepted the PUMP-009 target functional review on
 profile execution, Stop/cutoff, disconnect continuation, and reset/power-cycle
 non-resumption. No independently reviewed GPIO waveform, exact
 board/build/instrument record, injected GPIO failure, target timer-wrap capture,
-or separately authorized energized evidence was supplied. The review decision
-therefore remains REQUEST CHANGES and no electrical, energized, or
-production-safe claim is made.
+or separately authorized energized evidence was supplied at that time. On
+2026-07-16, the owner additionally reported technical-equipment checks of all
+energy controls and accepted the tested configuration. Raw waveforms,
+instrument/setup identifiers, and injected-failure evidence were not committed.
+The review decision remains REQUEST CHANGES because of the engineering findings
+below; no production-safe or unattended-use claim is made.
 
 ### PRD-003 implementation addendum — 2026-07-14
 
@@ -63,9 +66,15 @@ This does not close or downgrade any finding below. In particular, B2 remains
 open because the correction still relies on one sensor and cannot detect a
 plausible incorrect reading. API/OLED agreement, host tests, simulator tests,
 contract captures, and a target build establish software behavior only. The
-physical gradient, sensor mounting/lag/error, independent cutoff, SSR behavior,
-and energized safety require the separately authorized STEAM-004 instrumented
-human review.
+single-sensor architecture remains unable to detect a plausible incorrect
+reading through an independent channel.
+
+On 2026-07-16, the owner reported that all implemented behavior and technical-
+equipment energy-control checks passed, accepted STEAM-004 for the tested
+configuration, and retained the fixed `+5°C` correction. Raw paired readings,
+instrument/calibration records, and exact setup/build identifiers were not
+committed. Human review is complete; B2 remains an engineering architecture
+finding rather than a pending physical-review task.
 
 The final affected software matrix passed OpenAPI validation, 71 protocol
 tests, 44 simulator tests, 79 mobile tests, all configured TypeScript
@@ -112,14 +121,19 @@ expectations, all configured TypeScript typechecks and mobile lint, Expo SDK 54
 config, debug web export, strict C++17 build and 4/4 firmware host tests, and 26
 strict generated firmware response captures. The ESP-IDF 6.0.2 target build was
 not run because `idf.py`/`IDF_PATH` were unavailable, and no toolchain was
-installed. THERM-002, THERM-010, and THERM-011 Human evidence remains pending;
-the REQUEST CHANGES and non-production/non-energized assessment is unchanged.
+installed. On 2026-07-16, the owner reported that every implemented feature and
+technical-equipment energy-control check passed, accepted THERM-002, THERM-010,
+and THERM-011 for the tested configuration, and requested no constant or
+architecture change. Raw traces, calibration/setup records, and exact build
+identifiers were not committed. Human review is complete; the REQUEST CHANGES
+and non-production/non-unattended assessment remains because of the unresolved
+engineering findings below.
 
 ## Findings
 
 ### BLOCKER
 
-#### B1. Heater timing still lacks complete target-runtime and physical validation
+#### B1. Heater timing still lacks complete target-runtime robustness evidence
 
 **Evidence:**
 
@@ -136,7 +150,9 @@ the REQUEST CHANGES and non-production/non-energized assessment is unchanged.
   matrix were unavailable for PRD-004 Agent review. Host tests cannot execute
   FreeRTOS scheduling, flash stalls, cache/interrupt behavior, or actual GPIO.
 - A GPIO-low request still cannot interrupt an SSR whose AC output is failed
-  shorted; the independent physical thermal cutoff remains unverified.
+  shorted. The owner accepted the tested SSR/cutoff configuration on 2026-07-16,
+  but the source architecture still depends on that independent protection and
+  no raw trip/stall evidence was committed.
 
 The prior unbounded-mutex/NVS pulse-extension path is materially mitigated in
 source, but the complete target timing and physical fail-off claim is not
@@ -147,8 +163,8 @@ the safety lease bounds the commanded GPIO-high interval.
 **Required direction:** Build and exercise the pinned target with controlled
 task/lock/flash/display/network stalls, verify the GPTimer deadline and latched
 fault at logic level, add watchdog recovery evidence, and preserve the bounded
-no-I/O workflow boundary. Independently verify the correctly rated thermal
-cutoff and SSR failure behavior before any energized consideration.
+no-I/O workflow boundary. Preserve the owner-accepted independent cutoff and
+SSR protection in every hardware revision.
 
 #### B2. The permanent single control sensor has no independent plausibility cross-check
 
@@ -163,7 +179,11 @@ cutoff and SSR failure behavior before any energized consideration.
 
 The sensor, its mounting, converter, wiring, and thermal coupling are therefore a single point of control failure. Software tests cannot establish the accuracy of that physical measurement.
 
-**Required direction:** Validate the retained sensor across brew and steam ranges against an independent calibrated instrument, quantify lag/error/overshoot, and verify open-probe fail-off behavior. Retain a correctly rated independent thermal cutoff in series with the heater. Do not treat the single-sensor architecture or passing software tests as evidence for energized safety.
+**Required direction:** Add an independent plausibility channel or explicitly
+retain the permanent single-point-of-control risk as an architecture decision.
+Preserve the owner-accepted independent thermal cutoff in series with the
+heater. The 2026-07-16 Human acceptance closes the tested-configuration review
+but cannot make one sensor detect its own plausible incorrect readings.
 
 #### B3. A reusable physical-control credential and commands travel over cleartext HTTP
 
@@ -319,15 +339,18 @@ Passing tests do not cover the blocker/major failure sequences listed above.
 1. Validate the implemented GPTimer fail-off lease and bounded workflow
    coordination under pinned-target stalls, add watchdog evidence, and retain
    the independent physical cutoff.
-2. Validate the permanent single sensor against an independent instrument and verify the independent thermal cutoff before any energized consideration.
+2. Add an independent sensor plausibility channel or explicitly retain and
+   document the permanent single-point-of-control risk.
 3. Make heating and steam deadlines monotonic against no-op/remote-reset traffic and require readiness to clear heating timeout.
 4. Preserve the implemented NVS/network/display exclusion and heater-off-before-
    persistence ordering; add adversarial target-runtime evidence.
 5. Secure pairing and transport with cryptographic device identity plus encrypted authenticated commands; enforce strong rotating credentials.
 6. Correct the OLED diagnostic flag and keep manual HTTP available when mDNS fails.
 7. Add the missing adversarial firmware tests and behavioral conformance suite; then rerun all gates plus ESP-IDF target build.
-8. Only after software blockers are closed, execute PHIL-013 low-voltage and supervised physical validation with the independent thermal cutoff verified.
+8. Complete PHIL-012 automated end-to-end contract/resilience coverage and keep
+   the 2026-07-16 owner-accepted physical configuration traceable through future
+   hardware or firmware changes.
 
 ## Final assessment
 
-The architecture is promising and much of the non-real-time application code is careful, but the temperature-control safety case is incomplete. The branch should not be merged as production-ready or used for unattended/energized operation until all BLOCKER findings and the timeout/persistence MAJOR findings are resolved and verified with adversarial host tests plus supervised hardware validation.
+The architecture is promising and much of the non-real-time application code is careful, but the temperature-control safety case is incomplete. Human review of the tested configuration is complete. The branch should not be merged as production-ready or used unattended until all BLOCKER findings and the timeout/persistence MAJOR findings are resolved and verified with adversarial target/host evidence.
