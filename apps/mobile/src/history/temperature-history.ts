@@ -1,11 +1,12 @@
 import type {
+  ExtractionState,
   FaultCode,
   MachineState,
   MachineStatus,
   Mode,
 } from "@philcoino/protocol";
 
-export const LIVE_HISTORY_WINDOW_MS = 3 * 60 * 1_000;
+export const LIVE_HISTORY_WINDOW_MS = 60 * 1_000;
 export const HISTORY_GAP_THRESHOLD_MS = 2_500;
 export const TODAY_GRAPH_TARGET_POINTS = 360;
 
@@ -19,6 +20,7 @@ export interface TemperatureHistorySample {
   heaterActive: boolean;
   heaterEnabled: boolean;
   machineStatus: MachineStatus;
+  pumpActive: boolean | null;
   recordedAtMs: number;
   steamTargetC: number;
   uptimeMs: number;
@@ -29,9 +31,15 @@ export interface LocalDayRange {
   startMs: number;
 }
 
+export interface TemperatureHistoryWindow {
+  endMs: number;
+  startMs: number;
+}
+
 export function createTemperatureHistorySample(
   deviceId: string,
   snapshot: MachineState,
+  extraction: ExtractionState,
   recordedAtMs = Date.now(),
 ): TemperatureHistorySample {
   return {
@@ -47,6 +55,7 @@ export function createTemperatureHistorySample(
     heaterActive: snapshot.heaterActive,
     heaterEnabled: snapshot.heaterEnabled,
     machineStatus: snapshot.status,
+    pumpActive: extraction.pumpCommand === "running",
     recordedAtMs,
     steamTargetC: snapshot.steamTargetC,
     uptimeMs: snapshot.uptimeMs,
@@ -101,6 +110,31 @@ export function liveTemperatureHistory(
   return samples.filter((sample) => sample.recordedAtMs >= cutoff);
 }
 
+export function temperatureHistoryWindows(
+  samples: TemperatureHistorySample[],
+  windowMs = LIVE_HISTORY_WINDOW_MS,
+): TemperatureHistoryWindow[] {
+  const first = samples[0];
+  const last = samples.at(-1);
+  if (
+    first === undefined ||
+    last === undefined ||
+    !Number.isFinite(windowMs) ||
+    windowMs <= 0
+  ) {
+    return [];
+  }
+
+  const durationMs = Math.max(0, last.recordedAtMs - first.recordedAtMs);
+  const windowCount = Math.max(1, Math.ceil(durationMs / windowMs));
+  const firstWindowStartMs = last.recordedAtMs - windowCount * windowMs;
+
+  return Array.from({ length: windowCount }, (_, index) => ({
+    endMs: firstWindowStartMs + (index + 1) * windowMs,
+    startMs: firstWindowStartMs + index * windowMs,
+  }));
+}
+
 export function isTemperatureHistoryGap(
   previous: TemperatureHistorySample,
   next: TemperatureHistorySample,
@@ -137,6 +171,7 @@ export function downsampleTemperatureHistory(
     if (
       isTemperatureHistoryGap(previous, sample) ||
       previous.heaterActive !== sample.heaterActive ||
+      previous.pumpActive !== sample.pumpActive ||
       previous.activeMode !== sample.activeMode ||
       previous.machineStatus !== sample.machineStatus ||
       previous.faultCode !== sample.faultCode
