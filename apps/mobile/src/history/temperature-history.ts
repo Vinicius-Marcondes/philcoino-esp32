@@ -29,6 +29,11 @@ export interface LocalDayRange {
   startMs: number;
 }
 
+export interface TemperatureHistoryWindow {
+  endMs: number;
+  startMs: number;
+}
+
 export function createTemperatureHistorySample(
   deviceId: string,
   snapshot: MachineState,
@@ -99,6 +104,31 @@ export function liveTemperatureHistory(
   }
   const cutoff = latest.recordedAtMs - windowMs;
   return samples.filter((sample) => sample.recordedAtMs >= cutoff);
+}
+
+export function temperatureHistoryWindows(
+  samples: TemperatureHistorySample[],
+  windowMs = LIVE_HISTORY_WINDOW_MS,
+): TemperatureHistoryWindow[] {
+  const first = samples[0];
+  const last = samples.at(-1);
+  if (
+    first === undefined ||
+    last === undefined ||
+    !Number.isFinite(windowMs) ||
+    windowMs <= 0
+  ) {
+    return [];
+  }
+
+  const durationMs = Math.max(0, last.recordedAtMs - first.recordedAtMs);
+  const windowCount = Math.max(1, Math.ceil(durationMs / windowMs));
+  const firstWindowStartMs = last.recordedAtMs - windowCount * windowMs;
+
+  return Array.from({ length: windowCount }, (_, index) => ({
+    endMs: firstWindowStartMs + (index + 1) * windowMs,
+    startMs: firstWindowStartMs + index * windowMs,
+  }));
 }
 
 export function isTemperatureHistoryGap(

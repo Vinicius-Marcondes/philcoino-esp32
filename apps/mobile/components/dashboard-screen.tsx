@@ -14,6 +14,7 @@ import {
 import {
   ActivityIndicator,
   Alert,
+  FlatList,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -69,8 +70,10 @@ import {
   downsampleTemperatureHistory,
   formatHistoryDurationMs,
   isTemperatureHistoryGap,
-  liveTemperatureHistory,
+  LIVE_HISTORY_WINDOW_MS,
+  temperatureHistoryWindows,
   type TemperatureHistorySample,
+  type TemperatureHistoryWindow,
 } from "@/src/history/temperature-history";
 import {
   temperatureHistoryRepository,
@@ -792,12 +795,9 @@ function TemperatureCurve({
   loading: boolean;
   onExport: () => void;
 }) {
-  const [view, setView] = useState<"live" | "today">("today");
+  const [view, setView] = useState<"live" | "today">("live");
   const displayHistory = useMemo(
-    () =>
-      view === "live"
-        ? liveTemperatureHistory(history)
-        : downsampleTemperatureHistory(history),
+    () => (view === "live" ? history : downsampleTemperatureHistory(history)),
     [history, view],
   );
   const values = displayHistory.flatMap((sample) => [
@@ -813,8 +813,17 @@ function TemperatureCurve({
   const duration =
     first === undefined || last === undefined
       ? translate("viewModel.collecting")
-      : formatHistoryDurationMs(last.recordedAtMs - first.recordedAtMs);
+      : formatHistoryDurationMs(
+          view === "live"
+            ? LIVE_HISTORY_WINDOW_MS
+            : last.recordedAtMs - first.recordedAtMs,
+        );
   const mode = history.at(-1)?.activeMode;
+  const canScrollHistory =
+    view === "live" &&
+    first !== undefined &&
+    last !== undefined &&
+    last.recordedAtMs - first.recordedAtMs > LIVE_HISTORY_WINDOW_MS;
 
   return (
     <View style={styles.curveCard}>
@@ -871,6 +880,12 @@ function TemperatureCurve({
         <LegendItem color="#F29A52" label={translate("dashboard.heater")} />
       </View>
 
+      {canScrollHistory ? (
+        <Text selectable style={styles.historyScrollHint}>
+          {translate("dashboard.historyScrollHint")}
+        </Text>
+      ) : null}
+
       {error !== null ? (
         <Text accessibilityLiveRegion="polite" selectable style={styles.historyError}>
           {translate(
@@ -894,11 +909,19 @@ function TemperatureCurve({
           </Text>
         </View>
         {displayHistory.length > 0 ? (
-          <LineGraph
-            maximumValue={maximumValue}
-            minimumValue={minimumValue}
-            samples={displayHistory}
-          />
+          view === "live" ? (
+            <PaginatedLineGraph
+              maximumValue={maximumValue}
+              minimumValue={minimumValue}
+              samples={displayHistory}
+            />
+          ) : (
+            <LineGraph
+              maximumValue={maximumValue}
+              minimumValue={minimumValue}
+              samples={displayHistory}
+            />
+          )
         ) : (
           <View style={styles.historyEmpty}>
             {loading ? <ActivityIndicator size="small" /> : null}
@@ -956,7 +979,7 @@ interface ChartPoint {
   y: number;
 }
 
-function LineGraph({
+function PaginatedLineGraph({
   maximumValue,
   minimumValue,
   samples,
@@ -965,15 +988,117 @@ function LineGraph({
   minimumValue: number;
   samples: TemperatureHistorySample[];
 }) {
+  const list = useRef<FlatList<TemperatureHistoryWindow>>(null);
+  const followsLatest = useRef(true);
+  const hasPositionedInitialWindow = useRef(false);
+  const [viewportWidth, setViewportWidth] = useState(0);
+  const windows = useMemo(() => temperatureHistoryWindows(samples), [samples]);
+  const currentRecordedAtMs = samples.at(-1)?.recordedAtMs;
+
+  return (
+    <View
+      accessibilityHint={translate("dashboard.historyScrollHint")}
+      onLayout={(event) => {
+        setViewportWidth(event.nativeEvent.layout.width);
+      }}
+      style={styles.curveCanvas}>
+      {viewportWidth > 0 ? (
+        <FlatList
+          data={windows}
+          decelerationRate="fast"
+          getItemLayout={(_, index) => ({
+            index,
+            length: viewportWidth,
+            offset: viewportWidth * index,
+          })}
+          horizontal
+          initialNumToRender={2}
+          keyExtractor={(_, index) => `history-window-${index}`}
+          maxToRenderPerBatch={3}
+          onContentSizeChange={() => {
+            if (
+              !hasPositionedInitialWindow.current ||
+              followsLatest.current
+            ) {
+              list.current?.scrollToEnd({ animated: false });
+              hasPositionedInitialWindow.current = true;
+            }
+          }}
+          onScroll={(event) => {
+            if (!hasPositionedInitialWindow.current) {
+              return;
+            }
+            const { contentOffset, contentSize, layoutMeasurement } =
+              event.nativeEvent;
+            followsLatest.current =
+              contentSize.width -
+                layoutMeasurement.width -
+                contentOffset.x <=
+              8;
+          }}
+          pagingEnabled
+          ref={list}
+          renderItem={({ item }) => {
+            const windowSamples = samples.filter(
+              (sample) =>
+                sample.recordedAtMs >= item.startMs &&
+                sample.recordedAtMs <= item.endMs,
+            );
+            return (
+              <View style={{ height: "100%", width: viewportWidth }}>
+                <LineGraph
+                  currentRecordedAtMs={currentRecordedAtMs}
+                  endMs={item.endMs}
+                  maximumValue={maximumValue}
+                  minimumValue={minimumValue}
+                  paginated
+                  samples={windowSamples}
+                  startMs={item.startMs}
+                />
+              </View>
+            );
+          }}
+          scrollEnabled={windows.length > 1}
+          scrollEventThrottle={32}
+          showsHorizontalScrollIndicator={windows.length > 1}
+          style={styles.historyPager}
+          windowSize={3}
+        />
+      ) : null}
+    </View>
+  );
+}
+
+function LineGraph({
+  currentRecordedAtMs,
+  endMs,
+  maximumValue,
+  minimumValue,
+  paginated = false,
+  samples,
+  startMs,
+}: {
+  currentRecordedAtMs?: number;
+  endMs?: number;
+  maximumValue: number;
+  minimumValue: number;
+  paginated?: boolean;
+  samples: TemperatureHistorySample[];
+  startMs?: number;
+}) {
   const [plotSize, setPlotSize] = useState({ height: 0, width: 0 });
   const readyToDraw = plotSize.width > 0 && plotSize.height > 0;
+  const graphStartMs = startMs ?? samples[0]?.recordedAtMs ?? 0;
+  const graphEndMs = endMs ?? samples.at(-1)?.recordedAtMs ?? graphStartMs;
+  const latestRecordedAtMs =
+    currentRecordedAtMs ?? samples.at(-1)?.recordedAtMs;
   const points = readyToDraw
     ? samples.map((sample) =>
         samplePoint(
           sample.boilerTemperatureC,
           sample.recordedAtMs,
-          samples[0].recordedAtMs,
-          samples[samples.length - 1].recordedAtMs,
+          graphStartMs,
+          graphEndMs,
           minimumValue,
           maximumValue,
           plotSize,
@@ -985,8 +1110,8 @@ function LineGraph({
         samplePoint(
           sample.activeTargetC,
           sample.recordedAtMs,
-          samples[0].recordedAtMs,
-          samples[samples.length - 1].recordedAtMs,
+          graphStartMs,
+          graphEndMs,
           minimumValue,
           maximumValue,
           plotSize,
@@ -1000,7 +1125,7 @@ function LineGraph({
         const { height, width } = event.nativeEvent.layout;
         setPlotSize({ height, width });
       }}
-      style={styles.curveCanvas}>
+      style={paginated ? styles.curvePageCanvas : styles.curveCanvas}>
       {readyToDraw
         ? samples.map((sample, index) =>
             sample.heaterActive ? (
@@ -1050,7 +1175,8 @@ function LineGraph({
           key={`dot-${samples[index].recordedAtMs}`}
           style={[
             styles.curveDot,
-            index === points.length - 1 && styles.currentCurveDot,
+            samples[index].recordedAtMs === latestRecordedAtMs &&
+              styles.currentCurveDot,
             {
               left: point.x - 4,
               top: point.y - 4,
@@ -1596,6 +1722,12 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     lineHeight: 18,
   },
+  historyScrollHint: {
+    color: "#6B5B51",
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  historyPager: { flex: 1 },
   curveLegend: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
   legendItem: { alignItems: "center", flexDirection: "row", gap: 6 },
   legendSwatch: { borderRadius: 999, height: 8, width: 8 },
@@ -1654,6 +1786,11 @@ const styles = StyleSheet.create({
     position: "absolute",
     right: 10,
     top: 10,
+  },
+  curvePageCanvas: {
+    flex: 1,
+    overflow: "hidden",
+    position: "relative",
   },
   historyEmpty: {
     alignItems: "center",
