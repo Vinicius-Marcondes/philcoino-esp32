@@ -2,14 +2,12 @@ import { describe, expect, test } from "bun:test";
 import type { MachineState } from "@philcoino/protocol";
 
 import {
-  appendTemperatureSample,
   boilerTargetC,
   boilerTemperatureC,
   connectionCopy,
   faultDetail,
   faultLabel,
   formatSteamCountdown,
-  formatHistoryDuration,
   formatTarget,
   formatTemperature,
   formatUptime,
@@ -111,30 +109,4 @@ describe("dashboard view model", () => {
     expect(formatSteamCountdown(null)).toBe("Not running");
   });
 
-  test("keeps bounded in-memory temperature samples", () => {
-    const first = appendTemperatureSample([], {
-      ...steamState,
-      boilerTemperatureC: 85,
-      uptimeMs: 1_000,
-    });
-    const replaced = appendTemperatureSample(first, {
-      ...steamState,
-      boilerTemperatureC: 86,
-      uptimeMs: 1_000,
-    });
-    expect(replaced).toHaveLength(1);
-    expect(replaced[0].boilerTemperatureC).toBe(86);
-
-    const capped = appendTemperatureSample(
-      appendTemperatureSample(replaced, { ...steamState, uptimeMs: 2_000 }),
-      { ...steamState, uptimeMs: 3_000 },
-      2,
-    );
-    expect(capped.map((sample) => sample.uptimeMs)).toEqual([2_000, 3_000]);
-    expect(formatHistoryDuration(capped)).toBe("1s");
-
-    expect(
-      appendTemperatureSample(capped, { ...steamState, uptimeMs: 500 }),
-    ).toHaveLength(1);
-  });
 });

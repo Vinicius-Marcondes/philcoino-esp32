@@ -138,7 +138,9 @@ export class DashboardMutationSession {
   private readonly cooldownStartKeyFactory: () => string;
 
   private activeController: AbortController | null = null;
+  private activeKind: DashboardMutationKind | null = null;
   private generation = 0;
+  private paused = false;
   private pending = false;
   private running = false;
   private pendingStart: {
@@ -171,17 +173,47 @@ export class DashboardMutationSession {
     }
 
     this.running = true;
+    this.paused = false;
     for (const kind of mutationKinds) {
       this.onMutationChange(kind, idleMutationState);
     }
   }
 
+  pause(): void {
+    if (!this.running || this.paused) {
+      return;
+    }
+
+    this.paused = true;
+    this.generation += 1;
+    this.activeController?.abort();
+    this.activeController = null;
+    if (this.pending && this.activeKind !== null) {
+      this.onMutationChange(this.activeKind, {
+        message: translate("mutation.backgrounded"),
+        status: "disconnected",
+      });
+    }
+    this.pending = false;
+    this.activeKind = null;
+  }
+
+  resume(): void {
+    if (!this.running || !this.paused) {
+      return;
+    }
+
+    this.paused = false;
+  }
+
   stop(): void {
     this.running = false;
+    this.paused = false;
     this.pending = false;
     this.generation += 1;
     this.activeController?.abort();
     this.activeController = null;
+    this.activeKind = null;
   }
 
   handleDeviceRestart(): void {
@@ -361,11 +393,12 @@ export class DashboardMutationSession {
     pendingMessage: string,
     onFailure?: (error: unknown) => void,
   ): Promise<void> {
-    if (!this.running || this.pending) {
+    if (!this.running || this.paused || this.pending) {
       return;
     }
 
     this.pending = true;
+    this.activeKind = kind;
     const controller = new AbortController();
     this.activeController = controller;
     const generation = ++this.generation;
@@ -403,13 +436,14 @@ export class DashboardMutationSession {
       if (this.isCurrent(generation)) {
         this.pending = false;
         this.activeController = null;
+        this.activeKind = null;
         this.polling.resume();
       }
     }
   }
 
   private isCurrent(generation: number): boolean {
-    return this.running && this.generation === generation;
+    return !this.paused && this.running && this.generation === generation;
   }
 }
 

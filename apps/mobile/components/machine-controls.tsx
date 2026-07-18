@@ -20,6 +20,7 @@ import {
 import { translate } from "@/src/localization/i18n";
 
 interface MachineControlsProps {
+  disabled?: boolean;
   faultMutation: DashboardMutationState;
   heaterMutation: DashboardMutationState;
   modeMutation: DashboardMutationState;
@@ -33,6 +34,7 @@ interface MachineControlsProps {
 }
 
 export function MachineControls({
+  disabled = false,
   faultMutation,
   heaterMutation,
   modeMutation,
@@ -46,6 +48,7 @@ export function MachineControls({
   const [confirmingTargets, setConfirmingTargets] = useState(false);
   const [steamTargetC, setSteamTargetC] = useState(snapshot.steamTargetC);
   const mutationPending =
+    disabled ||
     faultMutation.status === "pending" ||
     heaterMutation.status === "pending" ||
     modeMutation.status === "pending" ||

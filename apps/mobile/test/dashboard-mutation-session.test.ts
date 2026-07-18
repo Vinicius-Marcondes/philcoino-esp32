@@ -268,6 +268,45 @@ describe("DashboardMutationSession", () => {
     expect(harness.polling.resumes).toBe(0);
   });
 
+  test("marks a background-interrupted mutation unknown and ignores its late response", async () => {
+    const response = deferred<{ mode: Mode }>();
+    let request = 0;
+    const client = mutationClient({
+      setMode: ({ mode }) => {
+        request += 1;
+        return request === 1 ? response.promise : Promise.resolve({ mode });
+      },
+    });
+    const harness = createHarness(client);
+
+    harness.session.start();
+    harness.session.setMode("steam");
+    harness.session.pause();
+
+    expect(harness.outcomes.at(-1)).toEqual({
+      kind: "mode",
+      state: {
+        message:
+          "The app moved to the background before acknowledgement. Refresh the machine state before trying again.",
+        status: "disconnected",
+      },
+    });
+
+    response.resolve({ mode: "steam" });
+    await settle();
+    expect(harness.acknowledgedModes).toEqual([]);
+    expect(harness.polling.resumes).toBe(0);
+
+    harness.session.setMode("brew");
+    await settle();
+    expect(harness.acknowledgedModes).toEqual([]);
+
+    harness.session.resume();
+    harness.session.setMode("brew");
+    await settle();
+    expect(harness.acknowledgedModes).toEqual(["brew"]);
+  });
+
   test("reuses one Start key after an unacknowledged retry and publishes only the acknowledgement", async () => {
     const requests: string[] = [];
     let attempt = 0;

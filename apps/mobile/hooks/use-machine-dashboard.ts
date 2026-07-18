@@ -13,6 +13,10 @@ import { useCallback, useRef, useState } from "react";
 import { AppState } from "react-native";
 
 import {
+  DashboardAppLifecycle,
+  type DashboardFreshness,
+} from "@/src/dashboard/dashboard-app-lifecycle";
+import {
   DashboardMutationSession,
   idleMutationState,
   type DashboardMutationClient,
@@ -43,6 +47,7 @@ export interface MachineDashboardState {
   extraction: ExtractionState | null;
   extractionStartMutation: DashboardMutationState;
   extractionStopMutation: DashboardMutationState;
+  freshness: DashboardFreshness;
   heaterMutation: DashboardMutationState;
   modeMutation: DashboardMutationState;
   machineProfiles: ProfileSet | null;
@@ -59,6 +64,7 @@ export interface MachineDashboardState {
   setMode: (mode: Mode) => void;
   setHeaterEnabled: (heaterEnabled: boolean) => void;
   snapshot: MachineState | null;
+  snapshotRevision: number;
   temperatureMutation: DashboardMutationState;
   updateTemperatureSettings: (settings: TemperatureSettingsRequest) => void;
 }
@@ -76,11 +82,14 @@ export function useMachineDashboard(
     useState<DashboardMutationState>(idleMutationState);
   const [faultMutation, setFaultMutation] =
     useState<DashboardMutationState>(idleMutationState);
+  const [freshness, setFreshness] =
+    useState<DashboardFreshness>("connecting");
   const [heaterMutation, setHeaterMutation] =
     useState<DashboardMutationState>(idleMutationState);
   const [modeMutation, setModeMutation] =
     useState<DashboardMutationState>(idleMutationState);
   const [snapshot, setSnapshot] = useState<MachineState | null>(null);
+  const [snapshotRevision, setSnapshotRevision] = useState(0);
   const [extraction, setExtraction] = useState<ExtractionState | null>(null);
   const [extractionStartMutation, setExtractionStartMutation] =
     useState<DashboardMutationState>(idleMutationState);
@@ -100,16 +109,25 @@ export function useMachineDashboard(
   useFocusEffect(
     useCallback(() => {
       let active = true;
+      let lifecycle: DashboardAppLifecycle | null = null;
       const profileController = new AbortController();
       const polling = new DashboardPollingSession({
         client,
         onDeviceRestart: () => mutationSession.current?.handleDeviceRestart(),
-        onConnectionChange: setConnection,
+        onConnectionChange: (nextConnection) => {
+          setConnection(nextConnection);
+          if (nextConnection.status === "online") {
+            lifecycle?.handleFreshSnapshot();
+          }
+        },
         onSnapshotChange: (nextSnapshot) => {
           setSnapshot(nextSnapshot?.machine ?? null);
           setExtraction(nextSnapshot?.extraction ?? null);
           setCompensation(nextSnapshot?.compensation ?? null);
           setCooldown(nextSnapshot?.cooldown ?? null);
+          if (nextSnapshot !== null) {
+            setSnapshotRevision((current) => current + 1);
+          }
         },
       });
       const mutations = new DashboardMutationSession({
@@ -206,6 +224,11 @@ export function useMachineDashboard(
         },
         polling,
       });
+      lifecycle = new DashboardAppLifecycle({
+        mutations,
+        onFreshnessChange: setFreshness,
+        polling,
+      });
       mutationSession.current = mutations;
 
       void Promise.all([
@@ -228,13 +251,7 @@ export function useMachineDashboard(
         });
 
       const synchronizePolling = (appState: typeof AppState.currentState) => {
-        if (appState === "active") {
-          polling.start();
-          mutations.start();
-        } else {
-          mutations.stop();
-          polling.stop();
-        }
+        lifecycle?.synchronize(appState);
       };
 
       synchronizePolling(AppState.currentState);
@@ -247,8 +264,8 @@ export function useMachineDashboard(
         active = false;
         profileController.abort();
         subscription.remove();
-        mutations.stop();
-        polling.stop();
+        lifecycle?.stop();
+        lifecycle = null;
         if (mutationSession.current === mutations) {
           mutationSession.current = null;
         }
@@ -337,6 +354,7 @@ export function useMachineDashboard(
     extraction,
     extractionStartMutation,
     extractionStopMutation,
+    freshness,
     heaterMutation,
     modeMutation,
     machineProfiles,
@@ -353,6 +371,7 @@ export function useMachineDashboard(
     setHeaterEnabled,
     setMode,
     snapshot,
+    snapshotRevision,
     temperatureMutation,
     updateTemperatureSettings,
   };

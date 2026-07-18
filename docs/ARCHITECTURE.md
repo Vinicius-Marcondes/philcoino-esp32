@@ -121,7 +121,12 @@ Connection mapping deliberately collapses some transport errors to `offline`, pr
 
 ### Polling and mutations
 
-`useMachineDashboard` creates one polling session and one mutation session while the route is focused. React Native `AppState` starts them only while the app is active and stops/aborts them in the background.
+`useMachineDashboard` creates one polling session and one mutation session while
+the route is focused. React Native `AppState` starts them only while the app is
+active, pauses/aborts active work in the background without clearing the last
+acknowledged snapshot, and resumes polling immediately on return. Retained data
+is labeled refreshing and all mutations stay paused until a newly validated
+combined snapshot arrives. Route blur/unmount still fully stops both sessions.
 
 `DashboardPollingSession` performs completion-driven API v2 combined-state
 polling: the next one-second timer is scheduled only after the current request
@@ -151,6 +156,15 @@ acknowledged whole-set export matches the local set. A Start retry after an
 unacknowledged transport outcome reuses its client-generated key. Cooldown uses
 the same rule; a definitive firmware rejection clears the key so the next user
 request is fresh, while an unknown transport outcome retains it for replay.
+
+Each validated foreground poll also appends a device-scoped temperature-history
+row to mobile SQLite. Rows include phone UTC capture time plus acknowledged
+firmware uptime, temperature, targets, mode, heater permission/command, status,
+and fault context. The repository retains only the current local calendar day;
+background/offline periods and firmware uptime resets remain explicit graph
+gaps. Live and Today views may downsample presentation, while CSV export reads
+every stored row. This observational data never participates in firmware
+control and contains neither bearer tokens nor network addresses.
 
 ## Simulator runtime
 
@@ -285,7 +299,8 @@ The ESP-IDF adapter owns the 512-byte authorization-header limit, 1,024-byte req
 | Active mode | Firmware RAM | Yes while powered | No; boots brew |
 | Heater permission | Firmware RAM | Yes while powered | No; boots enabled |
 | Fault latch | Firmware RAM | Yes while powered | No; over-temperature may also be dismissed after cooldown |
-| Dashboard samples/mutation feedback | Mobile component state | No | Not applicable |
+| Current-day Dashboard temperature samples | Mobile SQLite | Yes, until local-day pruning or the machine is forgotten | Not applicable |
+| Dashboard mutation feedback | Mobile component state | No | Not applicable |
 | Simulator targets | Simulator process model | During simulated power-cycle | Reset endpoint restores defaults |
 
 ## Safety and security boundary

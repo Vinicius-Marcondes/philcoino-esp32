@@ -1,0 +1,151 @@
+import type { MachineState } from "@philcoino/protocol";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { AppState } from "react-native";
+
+import type { DashboardFreshness } from "@/src/dashboard/dashboard-app-lifecycle";
+import type { TemperatureHistoryExporter } from "@/src/history/temperature-history-export";
+import type { TemperatureHistoryRepository } from "@/src/history/temperature-history-repository";
+import {
+  appendTodaySample,
+  createTemperatureHistorySample,
+  type TemperatureHistorySample,
+} from "@/src/history/temperature-history";
+
+export type TemperatureHistoryError = "export" | "storage";
+export type TemperatureHistoryStatus = "loading" | "ready";
+
+export interface TemperatureHistoryState {
+  clear: () => Promise<void>;
+  error: TemperatureHistoryError | null;
+  exportAll: () => Promise<void>;
+  exporting: boolean;
+  samples: TemperatureHistorySample[];
+  status: TemperatureHistoryStatus;
+}
+
+export function useTemperatureHistory(
+  deviceId: string,
+  snapshot: MachineState | null,
+  snapshotRevision: number,
+  freshness: DashboardFreshness,
+  repository: TemperatureHistoryRepository,
+  exporter: TemperatureHistoryExporter,
+): TemperatureHistoryState {
+  const [error, setError] = useState<TemperatureHistoryError | null>(null);
+  const [exporting, setExporting] = useState(false);
+  const [samples, setSamples] = useState<TemperatureHistorySample[]>([]);
+  const [status, setStatus] =
+    useState<TemperatureHistoryStatus>("loading");
+  const generation = useRef(0);
+  const lastRecordedRevision = useRef(0);
+  const operationQueue = useRef<Promise<void>>(Promise.resolve());
+
+  const refresh = useCallback(() => {
+    const currentGeneration = generation.current;
+    operationQueue.current = operationQueue.current
+      .then(async () => {
+        await repository.initialize();
+        const loaded = await repository.loadToday(deviceId);
+        if (generation.current === currentGeneration) {
+          setSamples(loaded);
+          setError(null);
+          setStatus("ready");
+        }
+      })
+      .catch(() => {
+        if (generation.current === currentGeneration) {
+          setError("storage");
+          setStatus("ready");
+        }
+      });
+  }, [deviceId, repository]);
+
+  useEffect(() => {
+    generation.current += 1;
+    lastRecordedRevision.current = 0;
+    setSamples([]);
+    setStatus("loading");
+    refresh();
+
+    const subscription = AppState.addEventListener("change", (appState) => {
+      if (appState === "active") {
+        refresh();
+      }
+    });
+    return () => {
+      generation.current += 1;
+      subscription.remove();
+    };
+  }, [refresh]);
+
+  useEffect(() => {
+    if (
+      freshness !== "live" ||
+      snapshot === null ||
+      lastRecordedRevision.current === snapshotRevision
+    ) {
+      return;
+    }
+
+    lastRecordedRevision.current = snapshotRevision;
+    const sample = createTemperatureHistorySample(deviceId, snapshot);
+    const currentGeneration = generation.current;
+    operationQueue.current = operationQueue.current
+      .then(async () => {
+        await repository.append(sample);
+        if (generation.current === currentGeneration) {
+          setSamples((current) => appendTodaySample(current, sample));
+          setError(null);
+          setStatus("ready");
+        }
+      })
+      .catch(() => {
+        if (generation.current === currentGeneration) {
+          setError("storage");
+          setStatus("ready");
+        }
+      });
+  }, [deviceId, freshness, repository, snapshot, snapshotRevision]);
+
+  const exportAll = useCallback(async () => {
+    if (exporting) {
+      return;
+    }
+    setExporting(true);
+    let stored: TemperatureHistorySample[];
+    try {
+      await operationQueue.current;
+      stored = [];
+      for await (const sample of repository.iterateToday(deviceId)) {
+        stored.push(sample);
+      }
+      setSamples(stored);
+      if (stored.length === 0) {
+        setError(null);
+        setExporting(false);
+        return;
+      }
+    } catch {
+      setError("storage");
+      setExporting(false);
+      return;
+    }
+
+    try {
+      await exporter.share(stored);
+      setError(null);
+    } catch {
+      setError("export");
+    } finally {
+      setExporting(false);
+    }
+  }, [deviceId, exporter, exporting, repository]);
+
+  const clear = useCallback(async () => {
+    await operationQueue.current;
+    await repository.clearDevice(deviceId);
+    setSamples([]);
+  }, [deviceId, repository]);
+
+  return { clear, error, exportAll, exporting, samples, status };
+}

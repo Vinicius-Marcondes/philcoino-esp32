@@ -5,7 +5,6 @@ import type {
 } from "@philcoino/protocol";
 import {
   useCallback,
-  useEffect,
   useMemo,
   useRef,
   useState,
@@ -35,14 +34,13 @@ import {
   ThermalWorkflowStatus,
 } from "@/components/thermal-workflow-preview";
 import { useMachineDashboard } from "@/hooks/use-machine-dashboard";
+import { useTemperatureHistory } from "@/hooks/use-temperature-history";
 import {
-  appendTemperatureSample,
   boilerTargetC,
   boilerTemperatureC,
   connectionCopy,
   faultDetail,
   faultLabel,
-  formatHistoryDuration,
   formatSteamCountdown,
   formatTarget,
   formatTemperature,
@@ -50,7 +48,6 @@ import {
   machineActivityLabel,
   modeLabel,
   steamCountdownContext,
-  type TemperatureSample,
 } from "@/src/dashboard/dashboard-view-model";
 import {
   idleMutationState,
@@ -62,6 +59,21 @@ import {
   createExtractionPreviewState,
   type ExtractionPreviewState,
 } from "@/src/debug/extraction-preview-model";
+import {
+  temperatureHistoryExporter,
+  type TemperatureHistoryExporter,
+} from "@/src/history/temperature-history-export";
+import {
+  downsampleTemperatureHistory,
+  formatHistoryDurationMs,
+  isTemperatureHistoryGap,
+  liveTemperatureHistory,
+  type TemperatureHistorySample,
+} from "@/src/history/temperature-history";
+import {
+  temperatureHistoryRepository,
+  type TemperatureHistoryRepository,
+} from "@/src/history/temperature-history-repository";
 import { translate } from "@/src/localization/i18n";
 import { createDebugDeviceApiClient } from "@/src/networking/debug-device-api-client";
 import { createDeviceApiClient } from "@/src/networking/expo-device-api-client";
@@ -74,6 +86,8 @@ type DashboardPage = "dashboard" | "profiles" | "machine";
 
 interface DashboardScreenProps {
   deviceName: string;
+  historyExporter?: TemperatureHistoryExporter;
+  historyRepository?: TemperatureHistoryRepository;
   initialNote: string;
   onForget: () => void;
   selectedDevice: SelectedDevice;
@@ -81,6 +95,8 @@ interface DashboardScreenProps {
 
 export function DashboardScreen({
   deviceName,
+  historyExporter = temperatureHistoryExporter,
+  historyRepository = temperatureHistoryRepository,
   initialNote,
   onForget,
   selectedDevice,
@@ -113,6 +129,7 @@ export function DashboardScreen({
     extractionStartMutation,
     extractionStopMutation,
     exportProfiles,
+    freshness,
     heaterMutation,
     modeMutation,
     machineProfiles,
@@ -123,6 +140,7 @@ export function DashboardScreen({
     setHeaterEnabled,
     setMode,
     snapshot,
+    snapshotRevision,
     startCooldown,
     startExtraction,
     stopCooldown,
@@ -141,11 +159,23 @@ export function DashboardScreen({
     4,
     (safeAreaInsets.bottom + 4) / 2,
   );
-  const connectionContent = connectionCopy(connection);
+  const refreshing = freshness === "refreshing" && snapshot !== null;
+  const connectionContent = refreshing
+    ? {
+        detail: translate("dashboard.refreshingDetail"),
+        label: translate("dashboard.refreshing"),
+      }
+    : connectionCopy(connection);
   const metricWidth = width >= 700 ? "48.5%" : "100%";
-  const [temperatureHistory, setTemperatureHistory] = useState<
-    TemperatureSample[]
-  >([]);
+  const temperatureHistory = useTemperatureHistory(
+    selectedDevice.deviceId,
+    snapshot,
+    snapshotRevision,
+    freshness,
+    historyRepository,
+    historyExporter,
+  );
+  const clearTemperatureHistory = temperatureHistory.clear;
   const [dashboardPage, setDashboardPage] =
     useState<DashboardPage>("dashboard");
   const dashboardScrollView = useRef<ScrollView>(null);
@@ -237,6 +267,7 @@ export function DashboardScreen({
     [],
   );
   const mutationPending =
+    freshness !== "live" ||
     cooldownStartMutation.status === "pending" ||
     cooldownStopMutation.status === "pending" ||
     extractionStartMutation.status === "pending" ||
@@ -247,18 +278,11 @@ export function DashboardScreen({
     profileMutation.status === "pending" ||
     temperatureMutation.status === "pending";
 
-  useEffect(() => {
-    if (connection.status !== "online" || snapshot === null) {
-      setTemperatureHistory([]);
-      return;
-    }
-    setTemperatureHistory((history) =>
-      appendTemperatureSample(history, snapshot),
-    );
-  }, [connection.status, snapshot]);
-
   const applyExtractionUiState = useCallback(
     (update: SetStateAction<ExtractionPreviewState>) => {
+      if (freshness !== "live") {
+        return;
+      }
       const next =
         typeof update === "function" ? update(extractionUiState) : update;
       if (JSON.stringify(next.selected) !== JSON.stringify(extractionUiState.selected)) {
@@ -302,11 +326,18 @@ export function DashboardScreen({
     [
       exportProfiles,
       extractionUiState,
+      freshness,
       saveMobileProfiles,
       startExtraction,
       stopExtraction,
     ],
   );
+
+  const forgetMachine = useCallback(() => {
+    const clearingHistory = clearTemperatureHistory();
+    onForget();
+    void clearingHistory.catch(() => undefined);
+  }, [clearTemperatureHistory, onForget]);
 
   const openDashboardPage = useCallback(
     (page: DashboardPage) => {
@@ -373,7 +404,7 @@ export function DashboardScreen({
               <View
                 style={[
                   styles.statusDot,
-                  connection.status === "online"
+                  connection.status === "online" && freshness === "live"
                     ? styles.statusDotOnline
                     : styles.statusDotUnavailable,
                 ]}
@@ -381,7 +412,7 @@ export function DashboardScreen({
               <Text selectable style={styles.connectionPillLabel}>
                 {connectionContent.label}
               </Text>
-              {connection.status === "connecting" ? (
+              {connection.status === "connecting" || refreshing ? (
                 <ActivityIndicator
                   accessibilityLabel={translate("dashboard.connecting")}
                   size="small"
@@ -395,6 +426,20 @@ export function DashboardScreen({
             )}
           </Text>
         </View>
+
+        {refreshing ? (
+          <View accessibilityLiveRegion="polite" style={styles.refreshingCard}>
+            <ActivityIndicator size="small" />
+            <View style={styles.refreshingCopy}>
+              <Text selectable style={styles.refreshingTitle}>
+                {translate("dashboard.refreshing")}
+              </Text>
+              <Text selectable style={styles.refreshingDetail}>
+                {translate("dashboard.refreshingDetail")}
+              </Text>
+            </View>
+          </View>
+        ) : null}
 
         {dashboardPage === "dashboard" ? (
           <>
@@ -427,6 +472,7 @@ export function DashboardScreen({
             {connection.status === "online" && snapshot !== null ? (
               <>
                 <MachineStatus
+                  disabled={freshness !== "live"}
                   faultMutation={faultMutation}
                   onDismissOverTemperature={dismissOverTemperature}
                   snapshot={snapshot}
@@ -440,8 +486,11 @@ export function DashboardScreen({
                   />
                 </View>
                 <TemperatureCurve
-                  history={temperatureHistory}
-                  snapshot={snapshot}
+                  error={temperatureHistory.error}
+                  exporting={temperatureHistory.exporting}
+                  history={temperatureHistory.samples}
+                  loading={temperatureHistory.status === "loading"}
+                  onExport={() => void temperatureHistory.exportAll()}
                 />
                 {mobileProfiles !== null && machineProfiles !== null ? (
                   <ExtractionPreview
@@ -457,6 +506,7 @@ export function DashboardScreen({
                           : null
                     }
                     workflowMutationPending={
+                      freshness !== "live" ||
                       cooldownStartMutation.status === "pending" ||
                       cooldownStopMutation.status === "pending"
                     }
@@ -488,6 +538,15 @@ export function DashboardScreen({
                 </Text>
               </View>
             )}
+            {connection.status !== "online" || snapshot === null ? (
+              <TemperatureCurve
+                error={temperatureHistory.error}
+                exporting={temperatureHistory.exporting}
+                history={temperatureHistory.samples}
+                loading={temperatureHistory.status === "loading"}
+                onExport={() => void temperatureHistory.exportAll()}
+              />
+            ) : null}
           </>
         ) : null}
 
@@ -516,6 +575,7 @@ export function DashboardScreen({
                 view="profiles"
                 workflowBlock={cooldownActive ? "cooldown" : null}
                 workflowMutationPending={
+                  freshness !== "live" ||
                   cooldownStartMutation.status === "pending" ||
                   cooldownStopMutation.status === "pending"
                 }
@@ -545,6 +605,7 @@ export function DashboardScreen({
             {connection.status === "online" && snapshot !== null ? (
               <>
                 <MachineControls
+                  disabled={freshness !== "live"}
                   faultMutation={faultMutation}
                   heaterMutation={heaterMutation}
                   modeMutation={modeMutation}
@@ -606,7 +667,7 @@ export function DashboardScreen({
               </Text>
               <Pressable
                 accessibilityRole="button"
-                onPress={onForget}
+                onPress={forgetMachine}
                 style={({ pressed }) => [
                   styles.forgetButton,
                   pressed && styles.pressed,
@@ -716,33 +777,41 @@ function DashboardTab({
 }
 
 function TemperatureCurve({
+  error,
+  exporting,
   history,
-  snapshot,
+  loading,
+  onExport,
 }: {
-  history: TemperatureSample[];
-  snapshot: MachineState;
+  error: "export" | "storage" | null;
+  exporting: boolean;
+  history: TemperatureHistorySample[];
+  loading: boolean;
+  onExport: () => void;
 }) {
-  const visibleHistory = history.slice(-72);
-  const currentSample: TemperatureSample = {
-    activeMode: snapshot.activeMode,
-    brewTargetC: snapshot.brewTargetC,
-    boilerTemperatureC: snapshot.boilerTemperatureC,
-    heaterActive: snapshot.heaterActive,
-    steamTargetC: snapshot.steamTargetC,
-    uptimeMs: snapshot.uptimeMs,
-  };
-  const displayHistory =
-    visibleHistory.length === 0 ? [currentSample] : visibleHistory;
-  const values = [
-    boilerTemperatureC(snapshot),
-    boilerTargetC(snapshot),
-    ...displayHistory.flatMap((sample) => [
-      boilerTemperatureC(sample),
-      boilerTargetC(sample),
-    ]),
-  ];
-  const minimumValue = Math.floor(Math.min(...values) - 1);
-  const maximumValue = Math.ceil(Math.max(...values) + 1);
+  const [view, setView] = useState<"live" | "today">("today");
+  const displayHistory = useMemo(
+    () =>
+      view === "live"
+        ? liveTemperatureHistory(history)
+        : downsampleTemperatureHistory(history),
+    [history, view],
+  );
+  const values = displayHistory.flatMap((sample) => [
+    sample.boilerTemperatureC,
+    sample.activeTargetC,
+  ]);
+  const minimumValue =
+    values.length === 0 ? 0 : Math.floor(Math.min(...values) - 1);
+  const maximumValue =
+    values.length === 0 ? 1 : Math.ceil(Math.max(...values) + 1);
+  const first = displayHistory[0];
+  const last = displayHistory.at(-1);
+  const duration =
+    first === undefined || last === undefined
+      ? translate("viewModel.collecting")
+      : formatHistoryDurationMs(last.recordedAtMs - first.recordedAtMs);
+  const mode = history.at(-1)?.activeMode;
 
   return (
     <View style={styles.curveCard}>
@@ -750,14 +819,47 @@ function TemperatureCurve({
         <View style={styles.curveTitleGroup}>
           <Text selectable style={styles.cardLabel}>{translate("dashboard.temperatureCurve")}</Text>
           <Text selectable style={styles.curveTitle}>
-            {translate("dashboard.controlTrend", { mode: modeLabel(snapshot.activeMode) })}
+            {mode === undefined
+              ? translate("dashboard.historyTitle")
+              : translate("dashboard.controlTrend", { mode: modeLabel(mode) })}
           </Text>
         </View>
         <View style={styles.curveWindowPill}>
           <Text selectable style={styles.curveWindowText}>
-            {formatHistoryDuration(history)}
+            {duration}
           </Text>
         </View>
+      </View>
+
+      <View style={styles.curveActions}>
+        <View accessibilityRole="tablist" style={styles.curveTabs}>
+          <CurveTab
+            active={view === "live"}
+            label={translate("dashboard.historyLive")}
+            onPress={() => setView("live")}
+          />
+          <CurveTab
+            active={view === "today"}
+            label={translate("dashboard.historyToday")}
+            onPress={() => setView("today")}
+          />
+        </View>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityState={{ disabled: exporting || history.length === 0 }}
+          disabled={exporting || history.length === 0}
+          onPress={onExport}
+          style={({ pressed }) => [
+            styles.exportButton,
+            (exporting || history.length === 0) && styles.disabled,
+            pressed && styles.pressed,
+          ]}>
+          <Text style={styles.exportButtonText}>
+            {exporting
+              ? translate("dashboard.historyExporting")
+              : translate("dashboard.historyExport")}
+          </Text>
+        </Pressable>
       </View>
 
       <View style={styles.curveLegend}>
@@ -765,6 +867,16 @@ function TemperatureCurve({
         <LegendItem color="#D39A42" label={translate("dashboard.target")} />
         <LegendItem color="#F29A52" label={translate("dashboard.heater")} />
       </View>
+
+      {error !== null ? (
+        <Text accessibilityLiveRegion="polite" selectable style={styles.historyError}>
+          {translate(
+            error === "storage"
+              ? "dashboard.historyStorageError"
+              : "dashboard.historyExportError",
+          )}
+        </Text>
+      ) : null}
 
       <View style={styles.curvePlot}>
         <View style={styles.curveGridLineTop} />
@@ -778,13 +890,52 @@ function TemperatureCurve({
             {minimumValue}°
           </Text>
         </View>
-        <LineGraph
-          maximumValue={maximumValue}
-          minimumValue={minimumValue}
-          samples={displayHistory}
-        />
+        {displayHistory.length > 0 ? (
+          <LineGraph
+            maximumValue={maximumValue}
+            minimumValue={minimumValue}
+            samples={displayHistory}
+          />
+        ) : (
+          <View style={styles.historyEmpty}>
+            {loading ? <ActivityIndicator size="small" /> : null}
+            <Text selectable style={styles.historyEmptyText}>
+              {translate(
+                loading
+                  ? "dashboard.historyLoading"
+                  : "dashboard.historyEmpty",
+              )}
+            </Text>
+          </View>
+        )}
       </View>
     </View>
+  );
+}
+
+function CurveTab({
+  active,
+  label,
+  onPress,
+}: {
+  active: boolean;
+  label: string;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      accessibilityRole="tab"
+      accessibilityState={{ selected: active }}
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.curveTab,
+        active && styles.curveTabActive,
+        pressed && styles.pressed,
+      ]}>
+      <Text style={[styles.curveTabText, active && styles.curveTabTextActive]}>
+        {label}
+      </Text>
+    </Pressable>
   );
 }
 
@@ -809,16 +960,17 @@ function LineGraph({
 }: {
   maximumValue: number;
   minimumValue: number;
-  samples: TemperatureSample[];
+  samples: TemperatureHistorySample[];
 }) {
   const [plotSize, setPlotSize] = useState({ height: 0, width: 0 });
   const readyToDraw = plotSize.width > 0 && plotSize.height > 0;
   const points = readyToDraw
-    ? samples.map((sample, index) =>
+    ? samples.map((sample) =>
         samplePoint(
-          boilerTemperatureC(sample),
-          index,
-          samples.length,
+          sample.boilerTemperatureC,
+          sample.recordedAtMs,
+          samples[0].recordedAtMs,
+          samples[samples.length - 1].recordedAtMs,
           minimumValue,
           maximumValue,
           plotSize,
@@ -826,20 +978,18 @@ function LineGraph({
       )
     : [];
   const targetPoints = readyToDraw
-    ? samples.map((sample, index) =>
+    ? samples.map((sample) =>
         samplePoint(
-          boilerTargetC(sample),
-          index,
-          samples.length,
+          sample.activeTargetC,
+          sample.recordedAtMs,
+          samples[0].recordedAtMs,
+          samples[samples.length - 1].recordedAtMs,
           minimumValue,
           maximumValue,
           plotSize,
         ),
       )
     : [];
-  const heaterBandWidth =
-    samples.length <= 1 ? plotSize.width : plotSize.width / samples.length;
-
   return (
     <View
       accessibilityLabel={translate("dashboard.curveAccessibility", { count: samples.length })}
@@ -852,39 +1002,49 @@ function LineGraph({
         ? samples.map((sample, index) =>
             sample.heaterActive ? (
               <View
-                key={`heater-${sample.uptimeMs}`}
+                key={`heater-${sample.recordedAtMs}`}
                 style={[
                   styles.heaterPulseBand,
                   {
-                    left: Math.max(0, points[index].x - heaterBandWidth / 2),
-                    width: Math.max(2, heaterBandWidth),
+                    left: points[index].x,
+                    width: Math.max(
+                      2,
+                      index < samples.length - 1 &&
+                        !isTemperatureHistoryGap(sample, samples[index + 1])
+                        ? points[index + 1].x - points[index].x
+                        : 2,
+                    ),
                   },
                 ]}
               />
             ) : null,
           )
         : null}
-      {targetPoints.slice(1).map((point, index) => (
-        <LineSegment
-          color="#D39A42"
-          from={targetPoints[index]}
-          key={`target-${samples[index + 1].uptimeMs}`}
-          thickness={2}
-          to={point}
-        />
-      ))}
-      {points.slice(1).map((point, index) => (
-        <LineSegment
-          color="#8B3A2B"
-          from={points[index]}
-          key={`boiler-${samples[index + 1].uptimeMs}`}
-          thickness={4}
-          to={point}
-        />
-      ))}
+      {targetPoints.slice(1).map((point, index) =>
+        isTemperatureHistoryGap(samples[index], samples[index + 1]) ? null : (
+          <LineSegment
+            color="#D39A42"
+            from={targetPoints[index]}
+            key={`target-${samples[index + 1].recordedAtMs}`}
+            thickness={2}
+            to={point}
+          />
+        ),
+      )}
+      {points.slice(1).map((point, index) =>
+        isTemperatureHistoryGap(samples[index], samples[index + 1]) ? null : (
+          <LineSegment
+            color="#8B3A2B"
+            from={points[index]}
+            key={`boiler-${samples[index + 1].recordedAtMs}`}
+            thickness={4}
+            to={point}
+          />
+        ),
+      )}
       {points.map((point, index) => (
         <View
-          key={`dot-${samples[index].uptimeMs}`}
+          key={`dot-${samples[index].recordedAtMs}`}
           style={[
             styles.curveDot,
             index === points.length - 1 && styles.currentCurveDot,
@@ -934,14 +1094,17 @@ function LineSegment({
 
 function samplePoint(
   value: number,
-  index: number,
-  count: number,
+  recordedAtMs: number,
+  startMs: number,
+  endMs: number,
   minimumValue: number,
   maximumValue: number,
   plotSize: { height: number; width: number },
 ): ChartPoint {
   const x =
-    count <= 1 ? plotSize.width / 2 : (index / (count - 1)) * plotSize.width;
+    endMs <= startMs
+      ? plotSize.width / 2
+      : ((recordedAtMs - startMs) / (endMs - startMs)) * plotSize.width;
   const topPercent = curvePointTop(value, minimumValue, maximumValue);
   return { x, y: (topPercent / 100) * plotSize.height };
 }
@@ -952,10 +1115,12 @@ function curvePointTop(value: number, minimumValue: number, maximumValue: number
 }
 
 function MachineStatus({
+  disabled,
   faultMutation,
   onDismissOverTemperature,
   snapshot,
 }: {
+  disabled: boolean;
   faultMutation: DashboardMutationState;
   onDismissOverTemperature: () => void;
   snapshot: MachineState;
@@ -1044,14 +1209,19 @@ function MachineStatus({
               <Pressable
                 accessibilityRole="button"
                 accessibilityState={{
-                  disabled: !canDismissOverTemperature || dismissPending,
+                  disabled:
+                    disabled || !canDismissOverTemperature || dismissPending,
                 }}
-                disabled={!canDismissOverTemperature || dismissPending}
+                disabled={
+                  disabled || !canDismissOverTemperature || dismissPending
+                }
                 onPress={confirmDismissOverTemperature}
                 style={({ pressed }) => [
                   styles.faultRecoveryButton,
-                  (!canDismissOverTemperature || dismissPending) && styles.disabled,
+                  (disabled || !canDismissOverTemperature || dismissPending) &&
+                    styles.disabled,
                   pressed &&
+                    !disabled &&
                     canDismissOverTemperature &&
                     !dismissPending &&
                     styles.pressed,
@@ -1285,6 +1455,20 @@ const styles = StyleSheet.create({
   statusDotOnline: { backgroundColor: "#2D7547" },
   statusDotUnavailable: { backgroundColor: "#A54B36" },
   connectionPillLabel: { color: "#4A3E37", fontSize: 12, fontWeight: "800" },
+  refreshingCard: {
+    alignItems: "center",
+    backgroundColor: "#F5E8C9",
+    borderColor: "#D4B86F",
+    borderCurve: "continuous",
+    borderRadius: 16,
+    borderWidth: 1,
+    flexDirection: "row",
+    gap: 12,
+    padding: 14,
+  },
+  refreshingCopy: { flex: 1, gap: 3 },
+  refreshingTitle: { color: "#604A15", fontSize: 15, fontWeight: "800" },
+  refreshingDetail: { color: "#6F5B29", fontSize: 13, lineHeight: 18 },
   machineStateCard: {
     backgroundColor: "#241B17",
     borderCurve: "continuous",
@@ -1361,6 +1545,47 @@ const styles = StyleSheet.create({
     fontVariant: ["tabular-nums"],
     fontWeight: "800",
   },
+  curveActions: {
+    alignItems: "center",
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+    justifyContent: "space-between",
+  },
+  curveTabs: {
+    backgroundColor: "#EFE6DA",
+    borderRadius: 12,
+    flexDirection: "row",
+    gap: 3,
+    padding: 3,
+  },
+  curveTab: {
+    borderCurve: "continuous",
+    borderRadius: 9,
+    justifyContent: "center",
+    minHeight: 36,
+    paddingHorizontal: 13,
+  },
+  curveTabActive: { backgroundColor: "#8B3A2B" },
+  curveTabText: { color: "#695A50", fontSize: 13, fontWeight: "800" },
+  curveTabTextActive: { color: "#FFFFFF" },
+  exportButton: {
+    alignItems: "center",
+    borderColor: "#8B3A2B",
+    borderCurve: "continuous",
+    borderRadius: 12,
+    borderWidth: 1,
+    justifyContent: "center",
+    minHeight: 42,
+    paddingHorizontal: 14,
+  },
+  exportButtonText: { color: "#7A3025", fontSize: 13, fontWeight: "800" },
+  historyError: {
+    color: "#8C2F24",
+    fontSize: 13,
+    fontWeight: "700",
+    lineHeight: 18,
+  },
   curveLegend: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
   legendItem: { alignItems: "center", flexDirection: "row", gap: 6 },
   legendSwatch: { borderRadius: 999, height: 8, width: 8 },
@@ -1419,6 +1644,22 @@ const styles = StyleSheet.create({
     position: "absolute",
     right: 10,
     top: 10,
+  },
+  historyEmpty: {
+    alignItems: "center",
+    bottom: 0,
+    gap: 8,
+    justifyContent: "center",
+    left: 40,
+    position: "absolute",
+    right: 0,
+    top: 0,
+  },
+  historyEmptyText: {
+    color: "#6B5B51",
+    fontSize: 14,
+    fontWeight: "700",
+    textAlign: "center",
   },
   lineSegment: {
     borderRadius: 999,

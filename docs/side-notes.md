@@ -243,3 +243,28 @@ The historical review covered the following checks:
    Dynamic Type. Confirm stepper actions, disabled bounds, selected mode,
    confirmation actions, and pending/rejected/disconnected announcements are
    understandable without relying only on color.
+
+## PRD-006 Dashboard continuity and history review
+
+Status: HUMAN REVIEW PENDING
+
+Automated tests cover lifecycle pause/resume, interrupted mutations, current-day
+retention, device scoping, graph gaps/downsampling, and complete CSV
+serialization. The following checks still require a physical iPhone and do not
+constitute heater or pump safety evidence:
+
+- minimize and restore the app while connected; confirm the last acknowledged
+  Dashboard remains visible as refreshing, controls are unavailable, and the
+  first fresh poll restores live state without a blank reconnect screen;
+- minimize during a pending mutation; confirm no late response appears as an
+  acknowledgement and the refreshed firmware state remains authoritative;
+- force-close and reopen during the same local day; confirm the saved curve
+  restores after pairing recovery while current machine state reconnects
+  normally;
+- confirm minimized/offline intervals and an ESP32 restart appear as graph gaps
+  rather than connected or interpolated lines;
+- review Live/Today readability with larger Dynamic Type and VoiceOver;
+- export through Files and AirDrop, inspect the CSV headers/rows, and confirm no
+  bearer token or local network address is present; and
+- cross local midnight or use a controlled date test, then confirm prior-day
+  samples are pruned and no longer exported.
