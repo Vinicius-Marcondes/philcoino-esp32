@@ -65,9 +65,6 @@ jobs:
     name: Firmware host
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    env:
-      FIRMWARE_HOST_BUILD_DIR: ${{ runner.temp }}/philcoino-host-tests
-      FIRMWARE_CONTRACT_DIR: ${{ runner.temp }}/philcoino-firmware-contract
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -81,26 +78,26 @@ jobs:
       - name: Configure sanitizer-enabled host tests
         run: >-
           cmake -S firmware/espresso-machine/host-tests
-          -B "$FIRMWARE_HOST_BUILD_DIR"
+          -B "$RUNNER_TEMP/philcoino-host-tests"
           -DPHILCOINO_ENABLE_SANITIZERS=ON
 
       - name: Build host tests
-        run: cmake --build "$FIRMWARE_HOST_BUILD_DIR" --parallel
+        run: cmake --build "$RUNNER_TEMP/philcoino-host-tests" --parallel
 
       - name: Run host tests
         run: >-
-          ctest --test-dir "$FIRMWARE_HOST_BUILD_DIR"
+          ctest --test-dir "$RUNNER_TEMP/philcoino-host-tests"
           --output-on-failure
 
       - name: Generate firmware contract captures
         run: >-
-          "$FIRMWARE_HOST_BUILD_DIR/firmware_api_test"
-          "$FIRMWARE_CONTRACT_DIR"
+          "$RUNNER_TEMP/philcoino-host-tests/firmware_api_test"
+          "$RUNNER_TEMP/philcoino-firmware-contract"
 
       - name: Validate firmware contract captures
         run: >-
           bun run firmware/espresso-machine/host-tests/validate_contract.ts
-          "$FIRMWARE_CONTRACT_DIR"
+          "$RUNNER_TEMP/philcoino-firmware-contract"
 
   firmware-esp-idf:
     name: Firmware ESP-IDF
