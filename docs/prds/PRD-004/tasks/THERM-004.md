@@ -1,6 +1,6 @@
 # THERM-004 — Integrate mobile cooldown and compensation state
 
-Status: Done
+Status: Done — 2026-07-18 Presentation Revision Pending Human Review
 Review Mode: Agent
 Review Reason: Strict parsing, acknowledged mutations, retry identity, polling races, and simulator integration are deterministic and testable after visual approval.
 
@@ -149,3 +149,23 @@ Connect the approved mobile experience to API v2 while preserving acknowledged-s
 - No Agent blocker remains for THERM-004.
 - At this task's completion, THERM-002/010/011 were still separate Human gates.
   The owner later accepted all three on 2026-07-16 for the tested configuration.
+
+### 2026-07-18 compact compensation presentation revision
+
+- The acknowledged compensation state now renders inside Boiler temperature as
+  a compact active/inactive indicator. The former production compensation card
+  and explanatory paragraph were removed to reduce Dashboard height.
+- Polling, mutation serialization, combined-state validation, disconnect
+  clearing, targets, API v1/v2, simulator behavior, and firmware behavior are
+  unchanged. A null/unavailable compensation state never produces a badge.
+- English and Brazilian Portuguese visible and accessibility labels describe
+  the state without exposing a numerical offset. The deterministic debug
+  scenario uses the same compact component.
+- A dependency-free Bun syntax bundle and static assertions passed for
+  acknowledged data flow, absence of the production card, unavailable state,
+  localization, accessibility, and the no-offset boundary. The configured
+  mobile checks and debug web export were attempted but could not start because
+  this worktree has no installed dependencies or local `tsc`/Expo executables;
+  no dependency was installed.
+- Final native presentation acceptance is tracked in `HUMAN_REVIEW.md`. No
+  firmware or physical validation was reopened by this mobile-only change.
