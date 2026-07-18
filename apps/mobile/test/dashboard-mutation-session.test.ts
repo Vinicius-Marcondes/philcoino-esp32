@@ -188,7 +188,7 @@ describe("DashboardMutationSession", () => {
     expect(harness.outcomes.at(-1)).toEqual({
       kind: "heater",
       state: {
-        message: "Machine turned heater output off.",
+        message: "ESP32 acknowledged: automatic heater control was turned off.",
         status: "acknowledged",
       },
     });
