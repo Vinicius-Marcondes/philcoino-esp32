@@ -55,7 +55,7 @@ remains unchanged and temperature-control-only. Contract, simulator, and
 host-test agreement does not establish physical pump, heater, or cooling
 behavior.
 
-`packages/protocol/src/schemas.ts` mirrors the contract as strict Zod schemas. Mobile and simulator imports come from `@philcoino/protocol`; firmware deliberately does not. C++ request parsing and serialization in `components/networking/src/api.cpp` must be kept aligned through tests and firmware contract captures.
+`packages/protocol/src/schemas.ts` mirrors the contract as strict Zod schemas. Mobile and simulator imports come from `@philcoino/protocol`; firmware deliberately does not. Firmware independently implements the contract through the bounded generic JSON boundary in `api_json.cpp`, typed machine and workflow codecs in `api_machine_codec.cpp` and `api_workflow_codec.cpp`, shared response/error helpers in `api_codec.cpp`, and firmware contract captures validated against the strict schemas.
 
 Boundary rules:
 
@@ -185,7 +185,7 @@ validation.
 - `firmware_config` contains identity, GPIOs, ranges, timeouts, duty-curve constants, and diagnostic flags.
 - `peripherals` defines pure interfaces/policies for MAX6675, target/profile storage, independent heater SSR and pump command outputs, and SSD1306. `esp_peripherals.cpp` supplies GPIO/I2C/NVS implementations.
 - `control` contains the pure `TemperatureController` state machine.
-- `networking` contains the pure `FirmwareApi` plus ESP-IDF Wi-Fi/HTTP/mDNS adapters.
+- `networking` separates bounded generic JSON syntax, typed machine/workflow codecs, immutable response serialization, authoritative route/access metadata, `FirmwareApi` controller/storage orchestration, and ESP-IDF Wi-Fi/HTTP/mDNS transport adapters.
 - `main/app_main.cpp` owns startup order, shared objects, mutex wiring, the sampling loop, display rendering, and network task creation.
 
 ### Startup and fail-off ordering
@@ -267,9 +267,9 @@ Sensor, over-temperature, heating-timeout, and internal faults latch and command
 
 ### Networking
 
-The ESP-IDF server connects as a Wi-Fi station, limits TX power when possible, registers reconnect handlers, serves port 80, and advertises identity through mDNS TXT records. `FirmwareApi` owns strict routing, constant-time length-aware bearer comparison, request parsing, controller/storage delegation, and response serialization.
+The ESP-IDF server connects as a Wi-Fi station, limits TX power when possible, registers reconnect handlers, serves port 80, and advertises identity through mDNS TXT records. One immutable route table in `api_routes.cpp` owns method/path/access metadata for HTTP registration, pre-body access checks, and `FirmwareApi` dispatch. `FirmwareApi` retains constant-time length-aware bearer comparison and explicit controller/storage orchestration; pure codec modules parse and serialize without locks, persistence, controller mutation, output access, or network I/O.
 
-Request bodies are capped at 1024 bytes and authorization headers at 512 bytes. The current adapter reads bodies before authentication, waits indefinitely on repeated socket timeouts, and tears down HTTP if mDNS startup fails; these are known findings, not recommended patterns.
+The ESP-IDF adapter owns the 512-byte authorization-header limit, 1,024-byte request-body limit, two-second absolute body deadline, bounded timeout count, and response/challenge transmission. Protected requests are authenticated before their bodies are read. HTTP remains available if mDNS advertisement fails, so direct/manual address access remains usable.
 
 ## Persistence and reset semantics
 

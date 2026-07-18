@@ -35,6 +35,12 @@ The app remembers the stable device ID, resolved address, and token. It tries th
 
 ## Implemented endpoints
 
+Firmware implements the wire contract independently. Bounded JSON syntax,
+machine/workflow codecs, response serialization, route/access metadata, and
+controller/storage orchestration have separate owners under
+`firmware/espresso-machine/components/networking`; contract captures remain the
+cross-language compatibility evidence.
+
 ### Public
 
 - `GET /healthz`: minimal process and networking health.

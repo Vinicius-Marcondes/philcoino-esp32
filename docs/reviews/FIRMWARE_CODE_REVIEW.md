@@ -589,7 +589,7 @@ delay heater Stop/state traffic indefinitely.
 
 **Severity:** NIT  
 **Category:** Maintainability / code smell  
-**Status:** Validated — dedicated PRD approved, planning pending
+**Status:** Implemented — PRD-005 acceptance evidence pending
 
 **Planning decision (2026-07-16):** FW-013 is important architectural work and
 must become its own reviewed PRD before implementation. It is explicitly outside
@@ -635,6 +635,22 @@ reviewed dependency decision; it is not required for the initial refactor.
 **Required verification:** Preserve byte/shape compatibility for all captures,
 run malformed-input fuzzing under sanitizers on host, and keep the pinned target
 size/build budget visible.
+
+**Implementation update (2026-07-17):** PRD-005 was approved, split into
+FWAPI-001 through FWAPI-007, and implemented on
+`feature/PRD-005-firmware-api-codec`. Generic JSON syntax, machine codecs,
+workflow codecs, response/error helpers, route/access metadata, orchestration,
+and ESP-IDF transport now have separate owners. All 29 final captures are
+byte-identical to the untouched `main` baseline and validate against the strict
+protocol schemas; native and ASan/UBSan suites pass; and the pinned ESP-IDF
+6.0.2 target image grows by 496 bytes (0.0439%) with no `.data + .bss` growth.
+
+FW-013 is not yet marked closed. Connected-target request heap and HTTP
+high-water stack measurements are unavailable, and separate target snapshots
+were not preserved for every logical extraction stage. The exact evidence and
+remaining acceptance checks are recorded in
+`docs/prds/PRD-005/evidence/IMPLEMENTATION.md`. FW-005 remains separate and
+release-blocking.
 
 ## Rejected candidates
 

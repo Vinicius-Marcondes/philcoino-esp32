@@ -21,6 +21,7 @@
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "mdns.h"
+#include "philcoino/api_routes.hpp"
 #include "philcoino/config.hpp"
 
 namespace philcoino::networking {
@@ -34,23 +35,6 @@ constexpr std::size_t kMaximumRequestBodyLength = 1024;
 constexpr std::int64_t kRequestBodyDeadlineUs = 2'000'000;
 constexpr unsigned kMaximumBodyTimeouts = 3;
 constexpr std::uint32_t kMaximumMdnsRetryDelayMs = 30'000;
-constexpr std::array<std::pair<const char*, httpd_method_t>, 14> kRoutes{{
-    {"/healthz", HTTP_GET},
-    {"/api/v1/device", HTTP_GET},
-    {"/api/v1/state", HTTP_GET},
-    {"/api/v1/settings/temperatures", HTTP_PATCH},
-    {"/api/v1/mode", HTTP_PUT},
-    {"/api/v1/heater", HTTP_PUT},
-    {"/api/v1/faults/over-temperature/dismiss", HTTP_POST},
-    {"/api/v2/state", HTTP_GET},
-    {"/api/v2/profiles", HTTP_GET},
-    {"/api/v2/profiles", HTTP_PUT},
-    {"/api/v2/extractions/start", HTTP_POST},
-    {"/api/v2/extractions/stop", HTTP_POST},
-    {"/api/v2/cooldowns/start", HTTP_POST},
-    {"/api/v2/cooldowns/stop", HTTP_POST},
-}};
-
 std::uint64_t uptime_ms() {
   return static_cast<std::uint64_t>(esp_timer_get_time() / 1000);
 }
@@ -73,6 +57,16 @@ HttpMethod request_method(int method) {
     case HTTP_PUT: return HttpMethod::kPut;
     default: return HttpMethod::kGet;
   }
+}
+
+httpd_method_t http_method(HttpMethod method) {
+  switch (method) {
+    case HttpMethod::kPatch: return HTTP_PATCH;
+    case HttpMethod::kPost: return HTTP_POST;
+    case HttpMethod::kPut: return HTTP_PUT;
+    case HttpMethod::kGet: return HTTP_GET;
+  }
+  return HTTP_GET;
 }
 
 class AtomicFlagReset final {
@@ -309,7 +303,7 @@ bool EspNetworkServer::start_http() {
   configuration.server_port = kHttpPort;
   configuration.stack_size = 6144;
   configuration.max_uri_handlers =
-      static_cast<std::uint16_t>(kRoutes.size());
+      static_cast<std::uint16_t>(kApiRoutes.size());
   configuration.recv_wait_timeout = 1;
   configuration.send_wait_timeout = 2;
   httpd_handle_t server = nullptr;
@@ -323,10 +317,10 @@ bool EspNetworkServer::start_http() {
         static_cast<EspNetworkServer*>(request->user_ctx)
             ->handle_http_request(request));
   };
-  for (const auto& route : kRoutes) {
+  for (const auto& route : kApiRoutes) {
     httpd_uri_t uri{};
-    uri.uri = route.first;
-    uri.method = route.second;
+    uri.uri = route.path;
+    uri.method = http_method(route.method);
     uri.handler = handler;
     uri.user_ctx = this;
     if (httpd_register_uri_handler(server, &uri) != ESP_OK) {

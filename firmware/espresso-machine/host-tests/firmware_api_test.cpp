@@ -203,6 +203,19 @@ void test_public_contract_and_authentication() {
          std::string::npos);
   assert(device.body.find("test-secret") == std::string::npos);
 
+  for (const auto& unsupported :
+       std::vector<std::pair<HttpMethod, const char*>>{
+           {HttpMethod::kPost, "/healthz"},
+           {HttpMethod::kGet, "/unknown"},
+       }) {
+    const auto missing_route =
+        harness.request(unsupported.first, unsupported.second);
+    assert(missing_route.status == 404);
+    assert(missing_route.body ==
+           "{\"error\":{\"code\":\"internal_error\",\"message\":\"The requested endpoint does not exist.\"}}");
+    assert(!missing_route.bearer_challenge);
+  }
+
   for (const auto& request :
        std::vector<std::pair<HttpMethod, const char*>>{
            {HttpMethod::kGet, "/api/v1/state"},
@@ -224,7 +237,11 @@ void test_public_contract_and_authentication() {
   assert(response.status == 200);
 
   assert(constant_time_bearer_matches("Bearer test-secret", "test-secret"));
+  assert(constant_time_bearer_matches("Bearer\ttest-secret", "test-secret"));
   assert(!constant_time_bearer_matches("Bearer test-secreu", "test-secret"));
+  assert(!constant_time_bearer_matches("Basic test-secret", "test-secret"));
+  assert(!constant_time_bearer_matches("Bearertest-secret", "test-secret"));
+  assert(!constant_time_bearer_matches("Bearer ", "test-secret"));
   assert(!constant_time_bearer_matches(nullptr, "test-secret"));
 }
 

@@ -158,6 +158,24 @@ v2 extraction, compensation, cooldown Start/replay/conflict/Stop/terminal,
 eligibility errors, and failed terminal state. Capture validation proves only
 that independent C++ serialization matches the wire schemas.
 
+Run the pure API codec/property targets and deterministic mutation campaign
+under AddressSanitizer and UndefinedBehaviorSanitizer with:
+
+```bash
+cmake -S firmware/espresso-machine/host-tests \
+  -B /tmp/philcoino-host-tests-sanitized \
+  -DPHILCOINO_ENABLE_SANITIZERS=ON
+cmake --build /tmp/philcoino-host-tests-sanitized
+ctest --test-dir /tmp/philcoino-host-tests-sanitized --output-on-failure
+```
+
+`api_codec_mutation_test` applies fixed-seed truncation, byte mutation,
+whitespace, permutation, duplicate/unknown-field, scalar substitution,
+malformed token/composite, and size-bound cases to every pure request parser.
+Its `LLVMFuzzerTestOneInput` entry point can be linked to an already-available
+coverage-guided engine, but PRD-005 does not require or authorize installing
+one.
+
 ### ESP-IDF target
 
 Activate the pinned ESP-IDF 6.0.2 environment, then run from `firmware/espresso-machine`:

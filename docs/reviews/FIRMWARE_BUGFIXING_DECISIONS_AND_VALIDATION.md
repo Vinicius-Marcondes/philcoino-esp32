@@ -9,8 +9,9 @@ Source review: `docs/reviews/FIRMWARE_CODE_REVIEW.md`
 
 This batch implements the approved remediation for FW-001, FW-002, FW-003,
 FW-006, FW-007, FW-008, FW-009, FW-011, and FW-012. FW-004 and FW-010 retain
-their approved accepted/mitigated behavior. FW-013 is intentionally excluded for
-its dedicated PRD.
+their approved accepted/mitigated behavior. FW-013 was intentionally excluded
+from this batch and is now implemented separately under PRD-005; its remaining
+target-runtime and incremental resource evidence stays tracked there.
 
 FW-005 is **not implemented**. It remains a release-blocking security finding.
 The mobile half requires an Expo 54 local native module for authenticated TLS

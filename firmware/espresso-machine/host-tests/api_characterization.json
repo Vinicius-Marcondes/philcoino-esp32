@@ -1,0 +1,72 @@
+{
+  "version": 1,
+  "compatibility": "byte-stable-api-v1-v2",
+  "evidence": {
+    "routeAndMutationTests": "firmware_api_test",
+    "directCodecTests": "api_codec_test",
+    "deterministicMutationRunner": "api_codec_mutation_test",
+    "responseCaptureProducer": "firmware_api_test <output-directory>",
+    "responseCaptureValidator": "validate_contract.ts",
+    "deterministicResponseCaptureCount": 29
+  },
+  "transport": {
+    "maximumAuthorizationBytes": 512,
+    "maximumBodyBytes": 1024,
+    "bodyDeadlineMs": 2000,
+    "maximumBodyTimeouts": 3,
+    "receiveTimeoutSeconds": 1,
+    "sendTimeoutSeconds": 2
+  },
+  "routes": [
+    { "method": "GET", "path": "/healthz", "access": "public" },
+    { "method": "GET", "path": "/api/v1/device", "access": "public" },
+    { "method": "GET", "path": "/api/v1/state", "access": "bearer" },
+    { "method": "PATCH", "path": "/api/v1/settings/temperatures", "access": "bearer", "body": "temperatures" },
+    { "method": "PUT", "path": "/api/v1/mode", "access": "bearer", "body": "mode" },
+    { "method": "PUT", "path": "/api/v1/heater", "access": "bearer", "body": "heater" },
+    { "method": "POST", "path": "/api/v1/faults/over-temperature/dismiss", "access": "bearer" },
+    { "method": "GET", "path": "/api/v2/state", "access": "bearer" },
+    { "method": "GET", "path": "/api/v2/profiles", "access": "bearer" },
+    { "method": "PUT", "path": "/api/v2/profiles", "access": "bearer", "body": "profiles" },
+    { "method": "POST", "path": "/api/v2/extractions/start", "access": "bearer", "body": "extractionStart" },
+    { "method": "POST", "path": "/api/v2/extractions/stop", "access": "bearer" },
+    { "method": "POST", "path": "/api/v2/cooldowns/start", "access": "bearer", "body": "cooldownStart" },
+    { "method": "POST", "path": "/api/v2/cooldowns/stop", "access": "bearer" }
+  ],
+  "authenticationClasses": [
+    "missing",
+    "malformed-scheme",
+    "wrong-token",
+    "case-insensitive-bearer-scheme",
+    "valid-token"
+  ],
+  "bodyClasses": [
+    "empty",
+    "valid-field-order-permutations",
+    "allowed-whitespace",
+    "duplicate-field",
+    "unknown-field",
+    "wrong-scalar-type",
+    "invalid-number-grammar",
+    "non-finite-number",
+    "invalid-escape",
+    "unsupported-unicode-escape",
+    "truncated-at-every-byte",
+    "nested-object-or-array",
+    "trailing-data",
+    "constraint-boundary",
+    "domain-conflict",
+    "persistence-or-output-failure"
+  ],
+  "unsupported": {
+    "classes": ["unsupported-method-for-known-path", "unknown-path"],
+    "status": 404,
+    "errorCode": "internal_error",
+    "message": "The requested endpoint does not exist."
+  },
+  "unauthorized": {
+    "status": 401,
+    "errorCode": "unauthorized",
+    "bearerChallenge": true
+  }
+}
