@@ -1,0 +1,115 @@
+name: CI
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  typescript:
+    name: TypeScript workspaces
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 20.19.0
+          package-manager-cache: false
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install locked dependencies
+        run: bun ci
+
+      - name: Validate OpenAPI contract
+        run: bun run validate:openapi
+
+      - name: Type-check protocol
+        run: bun run typecheck:protocol
+
+      - name: Test protocol
+        run: bun run test:protocol
+
+      - name: Type-check simulator
+        run: bun run typecheck:simulator
+
+      - name: Test simulator
+        run: bun run test:simulator
+
+      - name: Type-check mobile app
+        run: bun run typecheck
+
+      - name: Test mobile app
+        run: bun run --cwd apps/mobile test
+
+      - name: Lint mobile app
+        run: bun run lint
+
+  firmware-host:
+    name: Firmware host
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install locked dependencies
+        run: bun ci
+
+      - name: Configure sanitizer-enabled host tests
+        run: >-
+          cmake -S firmware/espresso-machine/host-tests
+          -B "$RUNNER_TEMP/philcoino-host-tests"
+          -DPHILCOINO_ENABLE_SANITIZERS=ON
+
+      - name: Build host tests
+        run: cmake --build "$RUNNER_TEMP/philcoino-host-tests" --parallel
+
+      - name: Run host tests
+        run: >-
+          ctest --test-dir "$RUNNER_TEMP/philcoino-host-tests"
+          --output-on-failure
+
+      - name: Generate firmware contract captures
+        run: >-
+          "$RUNNER_TEMP/philcoino-host-tests/firmware_api_test"
+          "$RUNNER_TEMP/philcoino-firmware-contract"
+
+      - name: Validate firmware contract captures
+        run: >-
+          bun run firmware/espresso-machine/host-tests/validate_contract.ts
+          "$RUNNER_TEMP/philcoino-firmware-contract"
+
+  firmware-esp-idf:
+    name: Firmware ESP-IDF
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Build ESP32-C3 firmware
+        uses: espressif/esp-idf-ci-action@v1
+        with:
+          esp_idf_version: v6.0.2
+          target: esp32c3
+          path: firmware/espresso-machine

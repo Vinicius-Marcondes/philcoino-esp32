@@ -129,7 +129,7 @@ void run_deterministic_mutations(const std::string& seed) {
 }
 
 void run_structured_mutation_classes() {
-  for (const std::string& body : {
+  for (const std::string body : {
            "{\"steamTargetC\":120,\"brewTargetC\":85}",
            " { \"brewTargetC\" : 85 , \"steamTargetC\" : 120 } ",
            "{\"brewTargetC\":85,\"brewTargetC\":86}",
