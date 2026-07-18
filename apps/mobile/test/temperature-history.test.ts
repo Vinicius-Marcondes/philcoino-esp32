@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { MachineState } from "@philcoino/protocol";
+import type { ExtractionState, MachineState } from "@philcoino/protocol";
 
 import { temperatureHistoryToCsv } from "../src/history/temperature-history-csv";
 import { InMemoryTemperatureHistoryRepository } from "../src/history/temperature-history-repository";
@@ -27,11 +27,36 @@ const machine: MachineState = {
   uptimeMs: 184_220,
 };
 
+const idleExtraction: ExtractionState = {
+  elapsedMs: 0,
+  extractionId: null,
+  phase: "idle",
+  pumpCommand: "off",
+  remainingMs: null,
+  selection: null,
+  status: "idle",
+};
+
+const pumpingExtraction: ExtractionState = {
+  elapsedMs: 5_000,
+  extractionId: "run-1",
+  phase: "manual",
+  pumpCommand: "running",
+  remainingMs: 40_000,
+  selection: { kind: "manual" },
+  status: "running",
+};
+
 describe("temperature history", () => {
   test("creates an acknowledged sample with wall-clock and firmware context", () => {
     const recordedAtMs = new Date(2026, 6, 18, 10, 30).getTime();
     expect(
-      createTemperatureHistorySample("machine-1", machine, recordedAtMs),
+      createTemperatureHistorySample(
+        "machine-1",
+        machine,
+        pumpingExtraction,
+        recordedAtMs,
+      ),
     ).toEqual({
       activeMode: "brew",
       activeTargetC: 93,
@@ -42,6 +67,7 @@ describe("temperature history", () => {
       heaterActive: true,
       heaterEnabled: true,
       machineStatus: "heating",
+      pumpActive: true,
       recordedAtMs,
       steamTargetC: 115,
       uptimeMs: 184_220,
@@ -85,10 +111,11 @@ describe("temperature history", () => {
       ...sample("machine-1", start + index * 1_000, index * 1_000),
       boilerTemperatureC: index === 123 ? 20 : index === 321 ? 140 : 90,
       heaterActive: index >= 250,
+      pumpActive: index >= 270 && index < 290,
     }));
     const live = liveTemperatureHistory(samples);
-    expect(live[0].recordedAtMs).toBe(start + 319_000);
-    expect(live).toHaveLength(181);
+    expect(live[0].recordedAtMs).toBe(start + 439_000);
+    expect(live).toHaveLength(61);
 
     const today = downsampleTemperatureHistory(samples, 40);
     expect(today.some((entry) => entry.boilerTemperatureC === 20)).toBe(true);
@@ -99,19 +126,31 @@ describe("temperature history", () => {
     expect(today.some((entry) => entry.recordedAtMs === start + 250_000)).toBe(
       true,
     );
+    expect(today.some((entry) => entry.recordedAtMs === start + 269_000)).toBe(
+      true,
+    );
+    expect(today.some((entry) => entry.recordedAtMs === start + 270_000)).toBe(
+      true,
+    );
+    expect(today.some((entry) => entry.recordedAtMs === start + 289_000)).toBe(
+      true,
+    );
+    expect(today.some((entry) => entry.recordedAtMs === start + 290_000)).toBe(
+      true,
+    );
   });
 
-  test("pages history into three-minute windows ending at the latest sample", () => {
+  test("pages history into one-minute windows ending at the latest sample", () => {
     const start = new Date(2026, 6, 18, 8).getTime();
     const samples = Array.from({ length: 500 }, (_, index) =>
       sample("machine-1", start + index * 1_000, index * 1_000),
     );
 
     const windows = temperatureHistoryWindows(samples);
-    expect(windows).toHaveLength(3);
+    expect(windows).toHaveLength(9);
     expect(windows.at(-1)).toEqual({
       endMs: start + 499_000,
-      startMs: start + 319_000,
+      startMs: start + 439_000,
     });
 
     const latestWindow = windows.at(-1)!;
@@ -134,10 +173,11 @@ describe("temperature history", () => {
     ]);
     const lines = csv.trimEnd().split("\r\n");
     expect(lines[0]).toBe(
-      "recorded_at_utc,device_id,machine_uptime_ms,boiler_temperature_c,brew_target_c,steam_target_c,active_mode,active_target_c,heater_enabled,heater_active,machine_status,fault_code",
+      "recorded_at_utc,device_id,machine_uptime_ms,boiler_temperature_c,brew_target_c,steam_target_c,active_mode,active_target_c,heater_enabled,heater_active,pump_active,machine_status,fault_code",
     );
     expect(lines[1]).toContain("2026-07-18T13:00:00.000Z");
     expect(lines[1]).toContain('"\'=machine,1"');
+    expect(lines[1]).toContain(",true,true,false,heating,");
     expect(lines[1].endsWith(",sensor_failure")).toBe(true);
   });
 
@@ -232,6 +272,7 @@ function sample(
   return createTemperatureHistorySample(
     deviceId,
     { ...machine, uptimeMs },
+    idleExtraction,
     recordedAtMs,
   );
 }

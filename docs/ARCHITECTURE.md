@@ -159,12 +159,12 @@ request is fresh, while an unknown transport outcome retains it for replay.
 
 Each validated foreground poll also appends a device-scoped temperature-history
 row to mobile SQLite. Rows include phone UTC capture time plus acknowledged
-firmware uptime, temperature, targets, mode, heater permission/command, status,
-and fault context. The repository retains only the current local calendar day;
-background/offline periods and firmware uptime resets remain explicit graph
-gaps. Live and Today views may downsample presentation, while CSV export reads
-every stored row. This observational data never participates in firmware
-control and contains neither bearer tokens nor network addresses.
+firmware uptime, temperature, targets, mode, heater permission/command, pump
+command, status, and fault context. The repository retains only the current
+local calendar day; background/offline periods and firmware uptime resets remain
+explicit graph gaps. Live and Today views may downsample presentation, while
+CSV export reads every stored row. This observational data never participates
+in firmware control and contains neither bearer tokens nor network addresses.
 
 ## Simulator runtime
 

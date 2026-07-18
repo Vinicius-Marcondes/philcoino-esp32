@@ -1,4 +1,4 @@
-import type { MachineState } from "@philcoino/protocol";
+import type { ExtractionState, MachineState } from "@philcoino/protocol";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AppState } from "react-native";
 
@@ -26,6 +26,7 @@ export interface TemperatureHistoryState {
 export function useTemperatureHistory(
   deviceId: string,
   snapshot: MachineState | null,
+  extraction: ExtractionState | null,
   snapshotRevision: number,
   freshness: DashboardFreshness,
   repository: TemperatureHistoryRepository,
@@ -82,13 +83,18 @@ export function useTemperatureHistory(
     if (
       freshness !== "live" ||
       snapshot === null ||
+      extraction === null ||
       lastRecordedRevision.current === snapshotRevision
     ) {
       return;
     }
 
     lastRecordedRevision.current = snapshotRevision;
-    const sample = createTemperatureHistorySample(deviceId, snapshot);
+    const sample = createTemperatureHistorySample(
+      deviceId,
+      snapshot,
+      extraction,
+    );
     const currentGeneration = generation.current;
     operationQueue.current = operationQueue.current
       .then(async () => {
@@ -105,7 +111,14 @@ export function useTemperatureHistory(
           setStatus("ready");
         }
       });
-  }, [deviceId, freshness, repository, snapshot, snapshotRevision]);
+  }, [
+    deviceId,
+    extraction,
+    freshness,
+    repository,
+    snapshot,
+    snapshotRevision,
+  ]);
 
   const exportAll = useCallback(async () => {
     if (exporting) {

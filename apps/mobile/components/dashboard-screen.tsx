@@ -175,6 +175,7 @@ export function DashboardScreen({
   const temperatureHistory = useTemperatureHistory(
     selectedDevice.deviceId,
     snapshot,
+    extraction,
     snapshotRevision,
     freshness,
     historyRepository,
@@ -878,6 +879,7 @@ function TemperatureCurve({
         <LegendItem color="#8B3A2B" label={translate("dashboard.boiler")} />
         <LegendItem color="#D39A42" label={translate("dashboard.target")} />
         <LegendItem color="#F29A52" label={translate("dashboard.heater")} />
+        <LegendItem color="#3D7B80" label={translate("dashboard.pump")} />
       </View>
 
       {canScrollHistory ? (
@@ -993,7 +995,6 @@ function PaginatedLineGraph({
   const hasPositionedInitialWindow = useRef(false);
   const [viewportWidth, setViewportWidth] = useState(0);
   const windows = useMemo(() => temperatureHistoryWindows(samples), [samples]);
-  const currentRecordedAtMs = samples.at(-1)?.recordedAtMs;
 
   return (
     <View
@@ -1047,7 +1048,6 @@ function PaginatedLineGraph({
             return (
               <View style={{ height: "100%", width: viewportWidth }}>
                 <LineGraph
-                  currentRecordedAtMs={currentRecordedAtMs}
                   endMs={item.endMs}
                   maximumValue={maximumValue}
                   minimumValue={minimumValue}
@@ -1060,7 +1060,7 @@ function PaginatedLineGraph({
           }}
           scrollEnabled={windows.length > 1}
           scrollEventThrottle={32}
-          showsHorizontalScrollIndicator={windows.length > 1}
+          showsHorizontalScrollIndicator={false}
           style={styles.historyPager}
           windowSize={3}
         />
@@ -1070,7 +1070,6 @@ function PaginatedLineGraph({
 }
 
 function LineGraph({
-  currentRecordedAtMs,
   endMs,
   maximumValue,
   minimumValue,
@@ -1078,7 +1077,6 @@ function LineGraph({
   samples,
   startMs,
 }: {
-  currentRecordedAtMs?: number;
   endMs?: number;
   maximumValue: number;
   minimumValue: number;
@@ -1087,11 +1085,13 @@ function LineGraph({
   startMs?: number;
 }) {
   const [plotSize, setPlotSize] = useState({ height: 0, width: 0 });
-  const readyToDraw = plotSize.width > 0 && plotSize.height > 0;
+  const linePlotSize = {
+    height: Math.max(0, plotSize.height - 30),
+    width: plotSize.width,
+  };
+  const readyToDraw = linePlotSize.width > 0 && linePlotSize.height > 0;
   const graphStartMs = startMs ?? samples[0]?.recordedAtMs ?? 0;
   const graphEndMs = endMs ?? samples.at(-1)?.recordedAtMs ?? graphStartMs;
-  const latestRecordedAtMs =
-    currentRecordedAtMs ?? samples.at(-1)?.recordedAtMs;
   const points = readyToDraw
     ? samples.map((sample) =>
         samplePoint(
@@ -1101,7 +1101,7 @@ function LineGraph({
           graphEndMs,
           minimumValue,
           maximumValue,
-          plotSize,
+          linePlotSize,
         ),
       )
     : [];
@@ -1114,9 +1114,15 @@ function LineGraph({
           graphEndMs,
           minimumValue,
           maximumValue,
-          plotSize,
+          linePlotSize,
         ),
       )
+    : [];
+  const heaterBands = readyToDraw
+    ? chartActivityBands(samples, points, (sample) => sample.heaterActive)
+    : [];
+  const pumpBands = readyToDraw
+    ? chartActivityBands(samples, points, (sample) => sample.pumpActive === true)
     : [];
   return (
     <View
@@ -1126,28 +1132,24 @@ function LineGraph({
         setPlotSize({ height, width });
       }}
       style={paginated ? styles.curvePageCanvas : styles.curveCanvas}>
-      {readyToDraw
-        ? samples.map((sample, index) =>
-            sample.heaterActive ? (
-              <View
-                key={`heater-${sample.recordedAtMs}`}
-                style={[
-                  styles.heaterPulseBand,
-                  {
-                    left: points[index].x,
-                    width: Math.max(
-                      2,
-                      index < samples.length - 1 &&
-                        !isTemperatureHistoryGap(sample, samples[index + 1])
-                        ? points[index + 1].x - points[index].x
-                        : 2,
-                    ),
-                  },
-                ]}
-              />
-            ) : null,
-          )
-        : null}
+      {heaterBands.map((band) => (
+        <View
+          key={`heater-${band.key}`}
+          style={[
+            styles.heaterPulseBand,
+            { left: band.left, width: band.width },
+          ]}
+        />
+      ))}
+      {pumpBands.map((band) => (
+        <View
+          key={`pump-${band.key}`}
+          style={[
+            styles.pumpActivityBand,
+            { left: band.left, width: band.width },
+          ]}
+        />
+      ))}
       {targetPoints.slice(1).map((point, index) =>
         isTemperatureHistoryGap(samples[index], samples[index + 1]) ? null : (
           <LineSegment
@@ -1170,22 +1172,49 @@ function LineGraph({
           />
         ),
       )}
-      {points.map((point, index) => (
-        <View
-          key={`dot-${samples[index].recordedAtMs}`}
-          style={[
-            styles.curveDot,
-            samples[index].recordedAtMs === latestRecordedAtMs &&
-              styles.currentCurveDot,
-            {
-              left: point.x - 4,
-              top: point.y - 4,
-            },
-          ]}
-        />
-      ))}
     </View>
   );
+}
+
+function chartActivityBands(
+  samples: TemperatureHistorySample[],
+  points: ChartPoint[],
+  isActive: (sample: TemperatureHistorySample) => boolean,
+): Array<{ key: number; left: number; width: number }> {
+  const bands: Array<{ key: number; left: number; width: number }> = [];
+  let startIndex: number | null = null;
+
+  for (let index = 0; index < samples.length; index += 1) {
+    if (isActive(samples[index]) && startIndex === null) {
+      startIndex = index;
+    }
+    if (startIndex === null) {
+      continue;
+    }
+
+    const next = samples[index + 1];
+    const continuous =
+      next !== undefined &&
+      isActive(next) &&
+      !isTemperatureHistoryGap(samples[index], next);
+    if (continuous) {
+      continue;
+    }
+
+    const canExtendToNextSample =
+      next !== undefined && !isTemperatureHistoryGap(samples[index], next);
+    const right = canExtendToNextSample
+      ? points[index + 1].x
+      : points[index].x + 2;
+    bands.push({
+      key: samples[startIndex].recordedAtMs,
+      left: points[startIndex].x,
+      width: Math.max(2, right - points[startIndex].x),
+    });
+    startIndex = null;
+  }
+
+  return bands;
 }
 
 function LineSegment({
@@ -1767,7 +1796,7 @@ const styles = StyleSheet.create({
     right: 0,
   },
   curveYAxis: {
-    bottom: 12,
+    bottom: 42,
     justifyContent: "space-between",
     left: 10,
     position: "absolute",
@@ -1781,7 +1810,7 @@ const styles = StyleSheet.create({
     fontWeight: "700",
   },
   curveCanvas: {
-    bottom: 42,
+    bottom: 10,
     left: 42,
     position: "absolute",
     right: 10,
@@ -1812,26 +1841,18 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     position: "absolute",
   },
-  curveDot: {
-    backgroundColor: "#8B3A2B",
-    borderColor: "#F7F1E9",
-    borderRadius: 999,
-    borderWidth: 2,
-    height: 8,
-    position: "absolute",
-    width: 8,
-  },
-  currentCurveDot: {
-    backgroundColor: "#F7F1E9",
-    borderColor: "#8B3A2B",
-    height: 11,
-    width: 11,
-  },
   heaterPulseBand: {
     backgroundColor: "#F29A52",
-    borderRadius: 999,
-    bottom: -30,
+    borderRadius: 2,
+    bottom: 14,
     height: 8,
+    position: "absolute",
+  },
+  pumpActivityBand: {
+    backgroundColor: "#3D7B80",
+    borderRadius: 2,
+    bottom: 0,
+    height: 10,
     position: "absolute",
   },
   metricGrid: { flexDirection: "row", flexWrap: "wrap", gap: 12 },

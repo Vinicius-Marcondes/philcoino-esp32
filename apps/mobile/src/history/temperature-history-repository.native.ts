@@ -14,6 +14,7 @@ interface TemperatureHistoryRow {
   heater_active: unknown;
   heater_enabled: unknown;
   machine_status: unknown;
+  pump_active: unknown;
   recorded_at_ms: unknown;
   steam_target_c: unknown;
   uptime_ms: unknown;
@@ -40,9 +41,10 @@ class SQLiteTemperatureHistoryRepository
         active_target_c,
         heater_enabled,
         heater_active,
+        pump_active,
         machine_status,
         fault_code
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(device_id, recorded_at_ms) DO UPDATE SET
         uptime_ms = excluded.uptime_ms,
         boiler_temperature_c = excluded.boiler_temperature_c,
@@ -52,6 +54,7 @@ class SQLiteTemperatureHistoryRepository
         active_target_c = excluded.active_target_c,
         heater_enabled = excluded.heater_enabled,
         heater_active = excluded.heater_active,
+        pump_active = excluded.pump_active,
         machine_status = excluded.machine_status,
         fault_code = excluded.fault_code`,
       sample.deviceId,
@@ -64,6 +67,7 @@ class SQLiteTemperatureHistoryRepository
       sample.activeTargetC,
       sample.heaterEnabled ? 1 : 0,
       sample.heaterActive ? 1 : 0,
+      sample.pumpActive === null ? null : sample.pumpActive ? 1 : 0,
       sample.machineStatus,
       sample.faultCode,
     );
@@ -111,6 +115,7 @@ class SQLiteTemperatureHistoryRepository
         active_target_c,
         heater_enabled,
         heater_active,
+        pump_active,
         machine_status,
         fault_code
       FROM temperature_history
@@ -154,6 +159,7 @@ class SQLiteTemperatureHistoryRepository
         active_target_c REAL NOT NULL,
         heater_enabled INTEGER NOT NULL CHECK(heater_enabled IN (0, 1)),
         heater_active INTEGER NOT NULL CHECK(heater_active IN (0, 1)),
+        pump_active INTEGER CHECK(pump_active IS NULL OR pump_active IN (0, 1)),
         machine_status TEXT NOT NULL CHECK(machine_status IN ('heating', 'ready', 'fault')),
         fault_code TEXT CHECK(fault_code IS NULL OR fault_code IN (
           'sensor_failure',
@@ -165,8 +171,18 @@ class SQLiteTemperatureHistoryRepository
       );
       CREATE INDEX IF NOT EXISTS temperature_history_device_time
         ON temperature_history(device_id, recorded_at_ms);
-      PRAGMA user_version = 1;
     `);
+    const columns = await database.getAllAsync<{ name: unknown }>(
+      "PRAGMA table_info(temperature_history)",
+    );
+    if (!columns.some((column) => column.name === "pump_active")) {
+      await database.execAsync(`
+        ALTER TABLE temperature_history
+          ADD COLUMN pump_active INTEGER
+          CHECK(pump_active IS NULL OR pump_active IN (0, 1));
+      `);
+    }
+    await database.execAsync("PRAGMA user_version = 2;");
     return database;
   }
 }
@@ -200,6 +216,7 @@ function rowToSample(row: TemperatureHistoryRow): TemperatureHistorySample {
     heaterActive: sqliteBoolean(row.heater_active),
     heaterEnabled: sqliteBoolean(row.heater_enabled),
     machineStatus,
+    pumpActive: nullableSqliteBoolean(row.pump_active),
     recordedAtMs: nonNegativeInteger(row.recorded_at_ms),
     steamTargetC: finiteNumber(row.steam_target_c),
     uptimeMs: nonNegativeInteger(row.uptime_ms),
@@ -243,6 +260,10 @@ function sqliteBoolean(value: unknown): boolean {
     throw new Error("Stored temperature history contains an invalid boolean.");
   }
   return value === 1;
+}
+
+function nullableSqliteBoolean(value: unknown): boolean | null {
+  return value === null ? null : sqliteBoolean(value);
 }
 
 export const temperatureHistoryRepository =
