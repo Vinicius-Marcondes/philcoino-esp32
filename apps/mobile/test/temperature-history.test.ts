@@ -10,6 +10,7 @@ import {
   isTemperatureHistoryGap,
   liveTemperatureHistory,
   localDayRange,
+  temperatureHistoryWindows,
   type TemperatureHistorySample,
 } from "../src/history/temperature-history";
 
@@ -98,6 +99,29 @@ describe("temperature history", () => {
     expect(today.some((entry) => entry.recordedAtMs === start + 250_000)).toBe(
       true,
     );
+  });
+
+  test("pages history into three-minute windows ending at the latest sample", () => {
+    const start = new Date(2026, 6, 18, 8).getTime();
+    const samples = Array.from({ length: 500 }, (_, index) =>
+      sample("machine-1", start + index * 1_000, index * 1_000),
+    );
+
+    const windows = temperatureHistoryWindows(samples);
+    expect(windows).toHaveLength(3);
+    expect(windows.at(-1)).toEqual({
+      endMs: start + 499_000,
+      startMs: start + 319_000,
+    });
+
+    const latestWindow = windows.at(-1)!;
+    expect(
+      samples.filter(
+        (entry) =>
+          entry.recordedAtMs >= latestWindow.startMs &&
+          entry.recordedAtMs <= latestWindow.endMs,
+      ),
+    ).toEqual(liveTemperatureHistory(samples));
   });
 
   test("exports every raw row with stable CSV columns and safe text", () => {
