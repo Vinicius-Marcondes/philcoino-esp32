@@ -76,6 +76,29 @@ describe("mobile localization", () => {
     expect(formatTemperature(91.24)).toBe("91,2°");
   });
 
+  test("localizes compact compensation status without exposing an offset", () => {
+    expect(translations.en.dashboard.compensationActive).toBe("Comp active");
+    expect(translations.en.dashboard.compensationInactive).toBe(
+      "Comp inactive",
+    );
+    expect(translations["pt-BR"].dashboard.compensationActive).toBe(
+      "Comp. ativa",
+    );
+    expect(translations["pt-BR"].dashboard.compensationInactive).toBe(
+      "Comp. inativa",
+    );
+    expect(translations.en.dashboard.compensationActiveAccessibility).toBe(
+      "Extraction compensation active",
+    );
+    expect(
+      translations["pt-BR"].dashboard.compensationInactiveAccessibility,
+    ).toBe("Compensação da extração inativa");
+    expect(translations.en.dashboard.compensationActive).not.toContain("°");
+    expect(translations["pt-BR"].dashboard.compensationActive).not.toContain(
+      "°",
+    );
+  });
+
   test("keeps English as the unsupported-locale fallback", () => {
     setAppLocale("de");
 

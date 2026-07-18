@@ -166,15 +166,41 @@ describe("thermal workflow design preview model", () => {
     const hookSource = await Bun.file(
       new URL("../hooks/use-machine-dashboard.ts", import.meta.url),
     ).text();
+    const indicatorSource = await Bun.file(
+      new URL("../components/compensation-indicator.tsx", import.meta.url),
+    ).text();
 
     expect(componentSource).toContain("export function ThermalWorkflowStatus");
     expect(componentSource).toContain("snapshot.cooldown.status");
-    expect(componentSource).toContain("snapshot.compensation.status");
     expect(componentSource).toContain("accessibilityState={{ disabled }}");
-    const compensation = componentSource.indexOf("<CompensationCard");
-    const cooldown = componentSource.indexOf("<CooldownCard", compensation);
-    expect(compensation).toBeGreaterThan(-1);
-    expect(cooldown).toBeGreaterThan(compensation);
+    const productionStart = componentSource.indexOf(
+      "export function ThermalWorkflowStatus",
+    );
+    const previewStart = componentSource.indexOf(
+      "export function ThermalWorkflowPreview",
+    );
+    const productionSource = componentSource.slice(
+      productionStart,
+      previewStart,
+    );
+    expect(productionSource).not.toContain("CompensationIndicator");
+    expect(productionSource).not.toContain("CompensationCard");
+    expect(componentSource).toContain(
+      "<CompensationIndicator compensation={snapshot.compensation} />",
+    );
+    expect(dashboardSource).toContain("compensation={compensation}");
+    expect(dashboardSource).toContain(
+      "<CompensationIndicator compensation={compensation} />",
+    );
+    expect(dashboardSource).toContain("compensation: CompensationState | null");
+    expect(dashboardSource).toContain("compensation === null ? null");
+    expect(indicatorSource).toContain('accessibilityLiveRegion="polite"');
+    expect(indicatorSource).toContain("accessible");
+    expect(indicatorSource).toContain("dashboard.compensationActive");
+    expect(indicatorSource).toContain("dashboard.compensationInactive");
+    expect(indicatorSource).toContain("active ? styles.activeDot");
+    expect(indicatorSource).toContain("active && styles.activeLabel");
+    expect(indicatorSource).not.toContain("brewTargetC");
     expect(dashboardSource).toContain("onStartCooldown={startCooldown}");
     expect(dashboardSource).toContain("onStopCooldown={stopCooldown}");
     expect(dashboardSource).toContain('workflowBlock={cooldownActive ? "cooldown" : null}');
