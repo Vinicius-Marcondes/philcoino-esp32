@@ -263,9 +263,10 @@ constitute heater or pump safety evidence:
   normally;
 - confirm minimized/offline intervals and an ESP32 restart appear as graph gaps
   rather than connected or interpolated lines;
-- confirm Live opens on the latest three minutes, horizontal paging reaches
-  earlier current-day readings, and Live/Today remain readable with larger
-  Dynamic Type and VoiceOver;
+- confirm Live opens on the latest minute, horizontal paging without a visible
+  scrollbar reaches earlier current-day readings, heater/pump bands match the
+  acknowledged command intervals, and marker-free Live/Today lines remain
+  readable with larger Dynamic Type and VoiceOver;
 - export through Files and AirDrop, inspect the CSV headers/rows, and confirm no
   bearer token or local network address is present; and
 - cross local midnight or use a controlled date test, then confirm prior-day

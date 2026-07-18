@@ -11,6 +11,7 @@ const CSV_HEADERS = [
   "active_target_c",
   "heater_enabled",
   "heater_active",
+  "pump_active",
   "machine_status",
   "fault_code",
 ] as const;
@@ -32,6 +33,7 @@ export function temperatureHistoryToCsv(
         sample.activeTargetC,
         sample.heaterEnabled,
         sample.heaterActive,
+        sample.pumpActive ?? "",
         sample.machineStatus,
         sample.faultCode ?? "",
       ]

@@ -1,11 +1,12 @@
 import type {
+  ExtractionState,
   FaultCode,
   MachineState,
   MachineStatus,
   Mode,
 } from "@philcoino/protocol";
 
-export const LIVE_HISTORY_WINDOW_MS = 3 * 60 * 1_000;
+export const LIVE_HISTORY_WINDOW_MS = 60 * 1_000;
 export const HISTORY_GAP_THRESHOLD_MS = 2_500;
 export const TODAY_GRAPH_TARGET_POINTS = 360;
 
@@ -19,6 +20,7 @@ export interface TemperatureHistorySample {
   heaterActive: boolean;
   heaterEnabled: boolean;
   machineStatus: MachineStatus;
+  pumpActive: boolean | null;
   recordedAtMs: number;
   steamTargetC: number;
   uptimeMs: number;
@@ -37,6 +39,7 @@ export interface TemperatureHistoryWindow {
 export function createTemperatureHistorySample(
   deviceId: string,
   snapshot: MachineState,
+  extraction: ExtractionState,
   recordedAtMs = Date.now(),
 ): TemperatureHistorySample {
   return {
@@ -52,6 +55,7 @@ export function createTemperatureHistorySample(
     heaterActive: snapshot.heaterActive,
     heaterEnabled: snapshot.heaterEnabled,
     machineStatus: snapshot.status,
+    pumpActive: extraction.pumpCommand === "running",
     recordedAtMs,
     steamTargetC: snapshot.steamTargetC,
     uptimeMs: snapshot.uptimeMs,
@@ -167,6 +171,7 @@ export function downsampleTemperatureHistory(
     if (
       isTemperatureHistoryGap(previous, sample) ||
       previous.heaterActive !== sample.heaterActive ||
+      previous.pumpActive !== sample.pumpActive ||
       previous.activeMode !== sample.activeMode ||
       previous.machineStatus !== sample.machineStatus ||
       previous.faultCode !== sample.faultCode
