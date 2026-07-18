@@ -66,17 +66,6 @@ const FAULT_DETAIL_KEYS: Record<FaultCode, string> = {
   sensor_failure: "viewModel.faultDetail.sensorFailure",
 };
 
-export const TEMPERATURE_HISTORY_LIMIT = 180;
-
-export interface TemperatureSample {
-  activeMode: Mode;
-  brewTargetC: number;
-  boilerTemperatureC: number;
-  heaterActive: boolean;
-  steamTargetC: number;
-  uptimeMs: number;
-}
-
 export function connectionCopy(connection: ConnectionState) {
   const keys = CONNECTION_COPY_KEYS[connection.status];
   const detail = translate(keys.detail);
@@ -172,50 +161,12 @@ export function steamCountdownContext(snapshot: MachineState): string {
   return translate("viewModel.availableInSteam");
 }
 
-export function boilerTemperatureC(
-  sample: MachineState | TemperatureSample,
-): number {
+export function boilerTemperatureC(sample: MachineState): number {
   return sample.boilerTemperatureC;
 }
 
-export function boilerTargetC(sample: MachineState | TemperatureSample): number {
+export function boilerTargetC(sample: MachineState): number {
   return sample.activeMode === "brew" ? sample.brewTargetC : sample.steamTargetC;
-}
-
-export function appendTemperatureSample(
-  history: TemperatureSample[],
-  snapshot: MachineState,
-  limit = TEMPERATURE_HISTORY_LIMIT,
-): TemperatureSample[] {
-  const sample: TemperatureSample = {
-    activeMode: snapshot.activeMode,
-    brewTargetC: snapshot.brewTargetC,
-    boilerTemperatureC: snapshot.boilerTemperatureC,
-    heaterActive: snapshot.heaterActive,
-    steamTargetC: snapshot.steamTargetC,
-    uptimeMs: snapshot.uptimeMs,
-  };
-  const previous = history.at(-1);
-  if (previous?.uptimeMs === sample.uptimeMs) {
-    return [...history.slice(0, -1), sample];
-  }
-  if (previous !== undefined && sample.uptimeMs < previous.uptimeMs) {
-    return [sample];
-  }
-
-  return [...history, sample].slice(-limit);
-}
-
-export function formatHistoryDuration(history: TemperatureSample[]): string {
-  if (history.length < 2) {
-    return translate("viewModel.collecting");
-  }
-  const durationMs = history[history.length - 1].uptimeMs - history[0].uptimeMs;
-  const seconds = Math.max(0, Math.round(durationMs / 1_000));
-  if (seconds < 60) {
-    return `${seconds}s`;
-  }
-  return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
 }
 
 export function formatUptime(uptimeMs: number): string {
