@@ -1,9 +1,11 @@
 # PRD-004 Human Review Ledger
 
-Status: Complete — Owner accepted 2026-07-16
+Status: Revision Pending — Compact indicator requested 2026-07-18
 
-This ledger records the final Human disposition for PRD-004. There are no
-remaining PRD-004 Human-review tasks.
+This ledger records the Human disposition for PRD-004. The 2026-07-16
+acceptance remains the historical disposition for the tested implementation.
+The owner requested one later mobile presentation revision on 2026-07-18;
+final native visual acceptance of that compact indicator remains pending.
 
 ## Evidence classification
 
@@ -25,7 +27,7 @@ unattended use.
 
 ## THERM-002 — Mobile thermal-workflow design
 
-Decision: Accepted.
+Decision: Accepted on 2026-07-16; compact indicator revision pending review.
 
 The owner accepts the final implemented Dashboard, Profiles, and Machine
 experience, including hierarchy, confirmation and Stop flows, terminal/error/
@@ -35,6 +37,12 @@ revision was requested.
 
 Evidence level: owner-reported testing of all implemented features, supported
 by the previously recorded automated and interactive web checks.
+
+Revision under review: the separate compensation card has been replaced by a
+compact active/inactive indicator beside the Boiler temperature mode pill. The
+review must confirm narrow/wide layout, large Dynamic Type, VoiceOver, TalkBack,
+and active/inactive readability. The revision does not change acknowledged
+state ownership, targets, controls, firmware behavior, or physical behavior.
 
 ## THERM-010 — Target behavior and final mobile experience
 
@@ -69,10 +77,12 @@ must not be represented as regulatory certification or a general safety claim.
 
 ## Final disposition
 
-- THERM-002: Done — Human accepted.
+- THERM-002: Implementation done — 2026-07-18 presentation revision pending
+  Human visual acceptance.
 - THERM-010: Done — Human accepted.
 - THERM-011: Done — Human accepted for the tested configuration.
-- Remaining PRD-004 Human-review items: None.
+- Remaining PRD-004 Human-review item: compact compensation indicator native
+  visual and accessibility review.
 
 Unresolved source-review findings in `CODEBASE_REVIEW_REPORT.md` remain
 engineering work. In particular, the single-sensor architecture, remote

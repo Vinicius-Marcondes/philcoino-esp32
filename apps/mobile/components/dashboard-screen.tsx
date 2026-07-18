@@ -1,4 +1,5 @@
 import type {
+  CompensationState,
   ExtractionSelection,
   MachineState,
   MachineStateV2,
@@ -26,6 +27,7 @@ import {
   MachineControls,
   MutationFeedback,
 } from "@/components/machine-controls";
+import { CompensationIndicator } from "@/components/compensation-indicator";
 import {
   ExtractionPreview,
   phaseLabel,
@@ -482,6 +484,7 @@ export function DashboardScreen({
                 />
                 <View style={styles.metricGrid}>
                   <TemperatureCard
+                    compensation={compensation}
                     mode={snapshot.activeMode}
                     targetC={boilerTargetC(snapshot)}
                     temperatureC={boilerTemperatureC(snapshot)}
@@ -1391,11 +1394,13 @@ function HeaterStatusPill({ heaterActive }: { heaterActive: boolean }) {
 }
 
 function TemperatureCard({
+  compensation,
   mode,
   targetC,
   temperatureC,
   width,
 }: {
+  compensation: CompensationState | null;
   mode: MachineState["activeMode"];
   targetC: number;
   temperatureC: number;
@@ -1405,9 +1410,14 @@ function TemperatureCard({
     <View style={[styles.temperatureCard, { width }, styles.activeCard]}>
       <View style={styles.temperatureHeading}>
         <Text selectable style={styles.temperatureLabel}>{translate("dashboard.boiler")}</Text>
-        <Text selectable style={styles.activePill}>
-          {modeLabel(mode).toUpperCase()}
-        </Text>
+        <View style={styles.temperaturePills}>
+          <Text selectable style={styles.activePill}>
+            {modeLabel(mode).toUpperCase()}
+          </Text>
+          {compensation === null ? null : (
+            <CompensationIndicator compensation={compensation} />
+          )}
+        </View>
       </View>
       <Text selectable style={styles.temperatureValue}>
         {formatTemperature(temperatureC)}
@@ -1835,8 +1845,9 @@ const styles = StyleSheet.create({
     padding: 18,
   },
   activeCard: { borderColor: "#A14B37", borderWidth: 2, padding: 17 },
-  temperatureHeading: { alignItems: "center", flexDirection: "row", gap: 10, justifyContent: "space-between" },
+  temperatureHeading: { alignItems: "flex-start", flexDirection: "row", flexWrap: "wrap", gap: 10, justifyContent: "space-between" },
   temperatureLabel: { color: "#4A3E37", fontSize: 17, fontWeight: "800" },
+  temperaturePills: { alignItems: "center", flexDirection: "row", flexWrap: "wrap", gap: 6, justifyContent: "flex-end" },
   activePill: { backgroundColor: "#8B3A2B", borderRadius: 999, color: "#FFFFFF", fontSize: 10, fontWeight: "900", letterSpacing: 0.7, overflow: "hidden", paddingHorizontal: 9, paddingVertical: 5 },
   temperatureValue: { color: "#241B17", fontSize: 46, fontVariant: ["tabular-nums"], fontWeight: "800", letterSpacing: -1.5 },
   temperatureTarget: { color: "#6B5B51", fontSize: 15, fontVariant: ["tabular-nums"], fontWeight: "600" },

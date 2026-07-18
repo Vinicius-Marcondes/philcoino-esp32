@@ -6,6 +6,7 @@ import type {
 import { useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
+import { CompensationIndicator } from "@/components/compensation-indicator";
 import {
   faultDetail,
   formatTarget,
@@ -66,7 +67,6 @@ export function ThermalWorkflowStatus({
 
   return (
     <View style={styles.section}>
-      <CompensationCard snapshot={snapshot} />
       {snapshot.machine.activeMode === "steam" && !cooldownActive ? (
         <SteamBlockedCard onOpenMachine={onOpenMachine} />
       ) : null}
@@ -118,7 +118,7 @@ export function ThermalWorkflowPreview({
         <DisconnectedCard />
       ) : (
         <>
-          <CompensationCard snapshot={snapshot} />
+          <CompensationIndicator compensation={snapshot.compensation} />
           {state.scenario === "steam-blocked" ? (
             <SteamBlockedCard onOpenMachine={onOpenMachine} />
           ) : null}
@@ -147,35 +147,6 @@ export function ThermalWorkflowPreview({
       )}
 
       <ScenarioControls state={state} onChange={setState} />
-    </View>
-  );
-}
-
-function CompensationCard({ snapshot }: { snapshot: MachineStateV2 }) {
-  const active = snapshot.compensation.status === "active";
-  return (
-    <View style={[styles.card, active && styles.compensationActiveCard]}>
-      <StatusHeader
-        label={translate("thermalPreview.compensationLabel")}
-        status={translate(
-          active
-            ? "thermalPreview.compensationActive"
-            : "thermalPreview.compensationInactive",
-        )}
-      />
-      <Text selectable style={styles.cardTitle}>
-        {active
-          ? translate("thermalPreview.compensationManual")
-          : translate("thermalPreview.compensationNone")}
-      </Text>
-      <Text selectable style={styles.bodyText}>
-        {translate(
-          active
-            ? "thermalPreview.compensationActiveDetail"
-            : "thermalPreview.compensationInactiveDetail",
-          { target: formatTarget(snapshot.machine.brewTargetC) },
-        )}
-      </Text>
     </View>
   );
 }
@@ -641,7 +612,6 @@ const styles = StyleSheet.create({
     gap: 9,
     padding: 18,
   },
-  compensationActiveCard: { backgroundColor: "#E5F1E8", borderColor: "#A9C9B0" },
   statusHeader: { alignItems: "center", flexDirection: "row", flexWrap: "wrap", gap: 8, justifyContent: "space-between" },
   statusLabel: { color: "#8B3A2B", fontSize: 11, fontWeight: "900", letterSpacing: 1.1 },
   statusLabelDark: { color: "#F2B66D" },

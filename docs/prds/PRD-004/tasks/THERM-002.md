@@ -1,6 +1,6 @@
 # THERM-002 — Approve the mobile thermal-workflow design
 
-Status: Done — Human Accepted 2026-07-16
+Status: Done — 2026-07-18 Revision Pending Human Review
 Review Mode: Human
 
 ## Goal
@@ -175,3 +175,25 @@ Build and approve the Dashboard experience for Steam-blocked extraction, acknowl
   --check`, and a debug web export with three static routes. Native visual,
   Dynamic Type, VoiceOver, and TalkBack acceptance remain deferred in the Human
   Review Ledger.
+
+### 2026-07-18 compact compensation indicator revision
+
+- Vinicius requested that the full compensation card stop consuming a separate
+  Dashboard section. A compact acknowledged `Comp active`/`Comp inactive`
+  indicator now sits beside the retained Brew/Steam pill in Boiler temperature.
+- The indicator uses explicit localized text plus distinct active/inactive
+  styling, wraps with large text, and does not expose the fixed firmware bias or
+  alter the displayed Brew target. Unavailable compensation renders no status.
+- The production thermal-workflow section now begins with cooldown/conflict
+  presentation. The deterministic local preview retains the same compact
+  indicator so its active/inactive compensation scenario remains inspectable.
+- A dependency-free Bun syntax bundle passed for all changed TypeScript/TSX
+  entry points. Static assertions confirmed that only the existing validated
+  compensation state reaches the indicator, unavailable state stays hidden,
+  localization remains paired, and the former title/detail copy is absent.
+  Mobile tests, typecheck, lint, and debug web export could not run in this
+  worktree because its dependencies and executables are absent; no dependency
+  was installed.
+- Final native visual review remains pending for narrow/wide layouts, Dynamic
+  Type, VoiceOver, TalkBack, and active/inactive transitions. This presentation
+  revision is not simulator, firmware, GPIO, or physical-safety evidence.
