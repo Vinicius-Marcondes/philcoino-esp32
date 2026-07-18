@@ -27,6 +27,35 @@ Do not add or install a new dependency without approval and a documented reason.
 
 Firmware is not a Bun workspace. Do not inspect or commit generated `build`, `managed_components`, `sdkconfig`, or toolchain caches.
 
+## Continuous integration
+
+GitHub Actions runs `.github/workflows/ci.yml` for every pull request targeting
+`main`, every push to `main`, and manual dispatches. The workflow deliberately
+has no path filters so protocol changes always exercise every consumer. It uses
+read-only repository contents permission and cancels superseded runs for the
+same pull request or branch.
+
+The three stable status checks are:
+
+- `TypeScript workspaces`: Node.js 20.19.0, repository-pinned Bun 1.3.14,
+  `bun ci`, OpenAPI validation, protocol and simulator typechecks/tests, and
+  mobile typecheck/tests/lint;
+- `Firmware host`: sanitizer-enabled C++17 host build, all CTest targets, and
+  independent validation of generated firmware contract captures;
+- `Firmware ESP-IDF`: compile/link of the complete ESP32-C3 project with
+  ESP-IDF 6.0.2.
+
+The active `main` ruleset requires all three checks and requires the pull
+request branch to be up to date before merging. Dependency installation is
+lockfile-frozen: `bun ci` fails instead of changing `bun.lock` when manifests
+and the committed lockfile disagree.
+
+CI does not deploy, flash, sign, publish, upload firmware artifacts, access
+secrets, or interact with hardware. Host tests and simulator checks are software
+evidence; the ESP-IDF job is target compilation evidence only. None of these
+checks demonstrate physical heater/pump behavior, de-energization, wiring, or
+mains safety.
+
 ## Mobile workflows
 
 Start Expo from the repository root:
