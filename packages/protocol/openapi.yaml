@@ -197,6 +197,41 @@
         }
       }
     },
+    "/api/v2/history": {
+      "get": {
+        "operationId": "getTemperatureHistory",
+        "summary": "Read a bounded page of volatile device history",
+        "description": "Returns observational one-Hertz samples from the current boot. Supply neither cursor parameter for an initial page or supply both for continuation.",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          {
+            "name": "bootId",
+            "in": "query",
+            "required": false,
+            "schema": { "$ref": "#/components/schemas/HistoryBootId" }
+          },
+          {
+            "name": "afterSequence",
+            "in": "query",
+            "required": false,
+            "schema": { "$ref": "#/components/schemas/HistorySequence" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One ordered history page and the cursor for the next page.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HistoryPage" }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/V2BadRequest" },
+          "401": { "$ref": "#/components/responses/V2Unauthorized" },
+          "500": { "$ref": "#/components/responses/V2InternalError" }
+        }
+      }
+    },
     "/api/v2/profiles": {
       "get": {
         "operationId": "getExtractionProfiles",
@@ -1354,6 +1389,104 @@
               "heaterInhibited": false,
               "outcome": null
             }
+          }
+        ]
+      },
+      "HistoryBootId": {
+        "type": "string",
+        "minLength": 32,
+        "maxLength": 32,
+        "pattern": "^[0-9a-f]{32}$"
+      },
+      "HistorySequence": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 9007199254740991
+      },
+      "HistoryContinuity": {
+        "type": "string",
+        "enum": ["initial", "continuous", "truncated", "reset"]
+      },
+      "HistoryCursor": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["bootId", "afterSequence"],
+        "properties": {
+          "bootId": { "$ref": "#/components/schemas/HistoryBootId" },
+          "afterSequence": { "$ref": "#/components/schemas/HistorySequence" }
+        }
+      },
+      "HistorySample": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["sequence", "uptimeMs", "boilerTemperatureC", "brewTargetC", "steamTargetC", "activeMode", "heaterEnabled", "heaterActive", "pumpActive", "machineStatus", "faultCode"],
+        "properties": {
+          "sequence": { "$ref": "#/components/schemas/HistorySequence" },
+          "uptimeMs": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+          "boilerTemperatureC": { "type": "number" },
+          "brewTargetC": { "$ref": "#/components/schemas/BrewTarget" },
+          "steamTargetC": { "$ref": "#/components/schemas/SteamTarget" },
+          "activeMode": { "$ref": "#/components/schemas/Mode" },
+          "heaterEnabled": { "type": "boolean" },
+          "heaterActive": { "type": "boolean" },
+          "pumpActive": { "type": "boolean", "description": "Firmware pump command state only; not proof of flow or physical operation." },
+          "machineStatus": { "$ref": "#/components/schemas/MachineStatus" },
+          "faultCode": { "oneOf": [{ "$ref": "#/components/schemas/FaultCode" }, { "type": "null" }] }
+        }
+      },
+      "HistoryPage": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["deviceId", "bootId", "capturedAtUptimeMs", "oldestSequence", "latestSequence", "nextCursor", "hasMore", "continuity", "samples"],
+        "properties": {
+          "deviceId": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$" },
+          "bootId": { "$ref": "#/components/schemas/HistoryBootId" },
+          "capturedAtUptimeMs": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+          "oldestSequence": { "oneOf": [{ "$ref": "#/components/schemas/HistorySequence" }, { "type": "null" }] },
+          "latestSequence": { "oneOf": [{ "$ref": "#/components/schemas/HistorySequence" }, { "type": "null" }] },
+          "nextCursor": { "$ref": "#/components/schemas/HistoryCursor" },
+          "hasMore": { "type": "boolean" },
+          "continuity": { "$ref": "#/components/schemas/HistoryContinuity" },
+          "samples": { "type": "array", "maxItems": 60, "items": { "$ref": "#/components/schemas/HistorySample" } }
+        },
+        "examples": [
+          {
+            "deviceId": "philcoino-c3-a1b2c3",
+            "bootId": "00112233445566778899aabbccddeeff",
+            "capturedAtUptimeMs": 184220,
+            "oldestSequence": 1,
+            "latestSequence": 2,
+            "nextCursor": { "bootId": "00112233445566778899aabbccddeeff", "afterSequence": 2 },
+            "hasMore": false,
+            "continuity": "initial",
+            "samples": [
+              {
+                "sequence": 1,
+                "uptimeMs": 183000,
+                "boilerTemperatureC": 92.75,
+                "brewTargetC": 93,
+                "steamTargetC": 115,
+                "activeMode": "brew",
+                "heaterEnabled": true,
+                "heaterActive": true,
+                "pumpActive": false,
+                "machineStatus": "heating",
+                "faultCode": null
+              },
+              {
+                "sequence": 2,
+                "uptimeMs": 184000,
+                "boilerTemperatureC": 93,
+                "brewTargetC": 93,
+                "steamTargetC": 115,
+                "activeMode": "brew",
+                "heaterEnabled": true,
+                "heaterActive": false,
+                "pumpActive": false,
+                "machineStatus": "ready",
+                "faultCode": null
+              }
+            ]
           }
         ]
       },

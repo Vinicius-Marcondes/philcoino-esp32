@@ -16,6 +16,8 @@ v2 adds no raw-temperature or offset field.
 
 - `GET /api/v2/state` returns one acknowledged
   machine/extraction/compensation/cooldown snapshot.
+- `GET /api/v2/history` returns up to sixty ascending RAM-retained samples with
+  boot/sequence continuity metadata.
 - `GET /api/v2/profiles` returns all four ordered custom slots.
 - `PUT /api/v2/profiles` atomically persists and acknowledges the complete set
   only while extraction and cooldown are idle.
@@ -33,6 +35,16 @@ invalid idempotency keys are rejected independently by firmware C++.
 Extraction Start requires acknowledged Brew mode and idle cooldown. Steam mode
 is rejected during extraction or cooldown. Conflict bodies include the active
 workflow snapshot when the contract requires it.
+
+History authentication is resolved before query parsing. A request either has
+no cursor or has exactly one `bootId` plus one `afterSequence`; unknown,
+duplicate, partial, malformed, evicted, and future cursor cases follow the
+strict contract. No cursor begins at the oldest retained sample. A matching
+cursor is `continuous`, an evicted cursor is `truncated`, and a different boot
+ID is `reset`; `initial` identifies the no-cursor start. Each page includes the
+current boot ID, capture uptime, available sequence bounds, next durable cursor,
+`hasMore`, and complete graph command/status/fault context. Existing API v1 and
+v2 response bodies are unchanged.
 
 ## Authority and timing
 
@@ -72,6 +84,13 @@ Profile and target persistence occur outside the single bounded workflow mutex.
 Phone disconnection cannot interrupt an acknowledged extraction or cooldown.
 Reset or power loss clears volatile workflow/idempotency state and boot never
 restores a running command.
+
+History is also volatile. Firmware retains at most ten minutes at one sample
+per second, assigns a new ephemeral 128-bit boot ID on startup, and never writes
+samples or cursors to NVS. Missing samples are not synthesized. History reads
+copy a bounded page under their own guard and serialize after release; history
+never supplies input to temperature, heater, pump, readiness, timeout, fault,
+or mutation decisions.
 
 ## Command-state boundary
 

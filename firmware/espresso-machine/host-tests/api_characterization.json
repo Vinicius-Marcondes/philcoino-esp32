@@ -1,13 +1,13 @@
 {
   "version": 1,
-  "compatibility": "byte-stable-api-v1-v2",
+  "compatibility": "byte-stable-existing-api-with-additive-v2-history",
   "evidence": {
     "routeAndMutationTests": "firmware_api_test",
     "directCodecTests": "api_codec_test",
     "deterministicMutationRunner": "api_codec_mutation_test",
     "responseCaptureProducer": "firmware_api_test <output-directory>",
     "responseCaptureValidator": "validate_contract.ts",
-    "deterministicResponseCaptureCount": 29
+    "deterministicResponseCaptureCount": 30
   },
   "transport": {
     "maximumAuthorizationBytes": 512,
@@ -26,6 +26,7 @@
     { "method": "PUT", "path": "/api/v1/heater", "access": "bearer", "body": "heater" },
     { "method": "POST", "path": "/api/v1/faults/over-temperature/dismiss", "access": "bearer" },
     { "method": "GET", "path": "/api/v2/state", "access": "bearer" },
+    { "method": "GET", "path": "/api/v2/history", "access": "bearer", "query": "historyCursor" },
     { "method": "GET", "path": "/api/v2/profiles", "access": "bearer" },
     { "method": "PUT", "path": "/api/v2/profiles", "access": "bearer", "body": "profiles" },
     { "method": "POST", "path": "/api/v2/extractions/start", "access": "bearer", "body": "extractionStart" },

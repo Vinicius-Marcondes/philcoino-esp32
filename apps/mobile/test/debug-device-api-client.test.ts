@@ -104,6 +104,11 @@ describe("debug device mode", () => {
     expect((error as ApiClientError).kind).toBe("cancelled");
   });
 
+  test("falls back cleanly when retained history is unavailable", async () => {
+    const error = await captureError(createDebugDeviceApiClient().getHistory());
+    expect(error).toMatchObject({ kind: "not-found", status: 404 });
+  });
+
   test("provides deterministic API v2 profile and acknowledged extraction data", async () => {
     const client = createDebugDeviceApiClient();
     const profiles = await client.getProfiles();

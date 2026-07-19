@@ -8,6 +8,7 @@ import {
   createTemperatureHistorySample,
   downsampleTemperatureHistory,
   isTemperatureHistoryGap,
+  isLatestHistoryPageOffset,
   liveTemperatureHistory,
   localDayRange,
   temperatureHistoryWindows,
@@ -69,6 +70,9 @@ describe("temperature history", () => {
       machineStatus: "heating",
       pumpActive: true,
       recordedAtMs,
+      sourceBootId: null,
+      sourceSequence: null,
+      startsAfterHistoryGap: false,
       steamTargetC: 115,
       uptimeMs: 184_220,
     });
@@ -103,6 +107,22 @@ describe("temperature history", () => {
     expect(
       isTemperatureHistoryGap(first, sample("machine-1", start + 1_000, 100)),
     ).toBe(true);
+    expect(
+      isTemperatureHistoryGap(first, {
+        ...sample("machine-1", start + 1_000, 11_000),
+        startsAfterHistoryGap: true,
+      }),
+    ).toBe(true);
+    expect(
+      isTemperatureHistoryGap(
+        { ...first, sourceBootId: "0".repeat(32), sourceSequence: 1 },
+        {
+          ...sample("machine-1", start + 1_000, 11_000),
+          sourceBootId: "1".repeat(32),
+          sourceSequence: 1,
+        },
+      ),
+    ).toBe(true);
   });
 
   test("keeps a detailed live window and critical today points", () => {
@@ -114,8 +134,8 @@ describe("temperature history", () => {
       pumpActive: index >= 270 && index < 290,
     }));
     const live = liveTemperatureHistory(samples);
-    expect(live[0].recordedAtMs).toBe(start + 439_000);
-    expect(live).toHaveLength(61);
+    expect(live[0].recordedAtMs).toBe(start + 480_000);
+    expect(live).toHaveLength(20);
 
     const today = downsampleTemperatureHistory(samples, 40);
     expect(today.some((entry) => entry.boilerTemperatureC === 20)).toBe(true);
@@ -140,17 +160,17 @@ describe("temperature history", () => {
     );
   });
 
-  test("pages history into one-minute windows ending at the latest sample", () => {
+  test("pages history into 30-second windows ending at the latest sample", () => {
     const start = new Date(2026, 6, 18, 8).getTime();
     const samples = Array.from({ length: 500 }, (_, index) =>
       sample("machine-1", start + index * 1_000, index * 1_000),
     );
 
     const windows = temperatureHistoryWindows(samples);
-    expect(windows).toHaveLength(9);
+    expect(windows).toHaveLength(17);
     expect(windows.at(-1)).toEqual({
-      endMs: start + 499_000,
-      startMs: start + 439_000,
+      endMs: start + 510_000,
+      startMs: start + 480_000,
     });
 
     const latestWindow = windows.at(-1)!;
@@ -158,9 +178,15 @@ describe("temperature history", () => {
       samples.filter(
         (entry) =>
           entry.recordedAtMs >= latestWindow.startMs &&
-          entry.recordedAtMs <= latestWindow.endMs,
+          entry.recordedAtMs < latestWindow.endMs,
       ),
     ).toEqual(liveTemperatureHistory(samples));
+  });
+
+  test("follows only the newest graph page offset", () => {
+    expect(isLatestHistoryPageOffset(600, 900, 300)).toBe(true);
+    expect(isLatestHistoryPageOffset(595, 900, 300)).toBe(true);
+    expect(isLatestHistoryPageOffset(300, 900, 300)).toBe(false);
   });
 
   test("exports every raw row with stable CSV columns and safe text", () => {

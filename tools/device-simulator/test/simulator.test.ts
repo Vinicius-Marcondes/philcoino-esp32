@@ -7,6 +7,7 @@ import {
   ExtractionStateSchema,
   HeaterSettingsResponseSchema,
   HealthResponseSchema,
+  HistoryPageSchema,
   MachineStateSchema,
   MachineStateV2Schema,
   ModeResponseSchema,
@@ -57,6 +58,7 @@ describe("bearer authentication", () => {
     ["PUT", "/api/v1/heater"],
     ["POST", "/api/v1/faults/over-temperature/dismiss"],
     ["GET", "/api/v2/state"],
+    ["GET", "/api/v2/history"],
     ["GET", "/api/v2/profiles"],
     ["PUT", "/api/v2/profiles"],
     ["POST", "/api/v2/extractions/start"],
@@ -82,6 +84,82 @@ describe("bearer authentication", () => {
     expect(ErrorResponseSchema.parse(await response.json()).error.code).toBe(
       "unauthorized",
     );
+  });
+});
+
+describe("API v2 history", () => {
+  it("captures one-Hertz full-context samples and paginates", async () => {
+    simulator.machine.advance(65_000);
+    let response = await simulator.app.request("/api/v2/history", {
+      headers: authorization,
+    });
+    expect(response.status).toBe(200);
+    const first = HistoryPageSchema.parse(await response.json());
+    expect(first.continuity).toBe("initial");
+    expect(first.samples).toHaveLength(60);
+    expect(first.samples[0].uptimeMs).toBe(1_000);
+    expect(first.hasMore).toBe(true);
+
+    const query = new URLSearchParams({
+      bootId: first.nextCursor.bootId,
+      afterSequence: String(first.nextCursor.afterSequence),
+    });
+    response = await simulator.app.request(`/api/v2/history?${query}`, {
+      headers: authorization,
+    });
+    const second = HistoryPageSchema.parse(await response.json());
+    expect(second.continuity).toBe("continuous");
+    expect(second.samples).toHaveLength(5);
+    expect(second.samples[0].sequence).toBe(61);
+    expect(second.hasMore).toBe(false);
+  });
+
+  it("reports truncation and boot reset", async () => {
+    simulator.machine.advance(605_000);
+    const page = HistoryPageSchema.parse(
+      await (
+        await simulator.app.request(
+          "/api/v2/history?bootId=00000000000000000000000000000001&afterSequence=1",
+          { headers: authorization },
+        )
+      ).json(),
+    );
+    expect(page.continuity).toBe("truncated");
+    expect(page.oldestSequence).toBe(6);
+
+    const previousBoot = page.bootId;
+    simulator.machine.powerCycle();
+    simulator.machine.advance(1_000);
+    const reset = HistoryPageSchema.parse(
+      await (
+        await simulator.app.request(
+          `/api/v2/history?bootId=${previousBoot}&afterSequence=${page.nextCursor.afterSequence}`,
+          { headers: authorization },
+        )
+      ).json(),
+    );
+    expect(reset.continuity).toBe("reset");
+    expect(reset.bootId).not.toBe(previousBoot);
+    expect(reset.samples[0].sequence).toBe(1);
+  });
+
+  it("rejects malformed, partial, duplicate, and future cursors", async () => {
+    simulator.machine.advance(1_000);
+    for (const query of [
+      "?bootId=00000000000000000000000000000001",
+      "?afterSequence=0",
+      "?unknown=1",
+      "?bootId=00000000000000000000000000000001&bootId=00000000000000000000000000000001&afterSequence=0",
+      "?bootId=00000000000000000000000000000001&afterSequence=99",
+    ]) {
+      const response = await simulator.app.request(`/api/v2/history${query}`, {
+        headers: authorization,
+      });
+      expect(response.status).toBe(400);
+      expect(
+        ApiV2ErrorResponseSchema.parse(await response.json()).error.code,
+      ).toBe("malformed_request");
+    }
   });
 });
 

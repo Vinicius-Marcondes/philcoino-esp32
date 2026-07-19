@@ -45,6 +45,9 @@ Firmware owns the temperature-control loop and does not rely on app connectivity
 - runs mutually exclusive cooldown through a bounded 10 ms workflow task,
   orders heater inhibit/off before pump Start, and never restores cooldown at
   boot;
+- records up to 600 observational snapshots in RAM and exposes pages of at
+  most 60; history supplies no input to heater, pump, readiness, timeout,
+  fault, or mutation decisions;
 - uses a 1500 ms GPTimer heater-command safety lease and one bounded workflow
   mutex, with NVS, display, and HTTP transmission outside that boundary;
 - starts critical hardware in a fail-off order.
@@ -56,6 +59,11 @@ It does not prove that `+5°C` represents the physical boiler gradient, that
 `+2°C` improves extraction, or that a cooldown command produces flow or cooling.
 It does not replace independent measurement, a thermal cutoff, or energized
 review.
+
+Likewise, historical `heaterActive` and `pumpActive` values describe the last
+known firmware command. Backfill, SQLite, graph, and CSV data do not prove
+physical operation, flow, cooling, or de-energization and must never be used as
+control-loop feedback.
 
 ## Known high-risk limitations
 

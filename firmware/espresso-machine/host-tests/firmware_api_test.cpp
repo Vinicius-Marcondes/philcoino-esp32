@@ -9,6 +9,7 @@
 
 #include "philcoino/api.hpp"
 #include "philcoino/config.hpp"
+#include "philcoino/history.hpp"
 
 namespace {
 
@@ -128,7 +129,7 @@ struct ApiHarness {
         cooldown(controller, pump),
         api({"philcoino-0102AF", "PhilcoINO", "ESP32-C3 Super Mini", "0.2.0"},
             "test-secret", controller, storage, extraction, cooldown,
-            profile_storage, synchronization) {
+            profile_storage, synchronization, &history) {
     assert(ssr.initialize());
     assert(pump.initialize());
     controller.update(ok(87.5F), 1000);
@@ -156,6 +157,7 @@ struct ApiHarness {
   ExtractionController extraction;
   CooldownController cooldown;
   FakeApiSynchronization synchronization;
+  HistoryBuffer history{"00112233445566778899aabbccddeeff"};
   FirmwareApi api;
 };
 
@@ -424,6 +426,7 @@ void test_api_v2_profiles_and_extraction_contract() {
   for (const auto& endpoint :
        std::vector<std::pair<HttpMethod, const char*>>{
            {HttpMethod::kGet, "/api/v2/state"},
+           {HttpMethod::kGet, "/api/v2/history"},
            {HttpMethod::kGet, "/api/v2/profiles"},
            {HttpMethod::kPut, "/api/v2/profiles"},
            {HttpMethod::kPost, "/api/v2/extractions/start"},
@@ -885,6 +888,11 @@ void capture_contract_payloads(const std::filesystem::path& directory) {
   write_capture(directory, "state-v2.json",
                 harness.request(HttpMethod::kGet, "/api/v2/state",
                                 authorization).body);
+  harness.history.record(184000, harness.controller.snapshot(184000),
+                         harness.pump.command());
+  write_capture(directory, "history-v2.json",
+                harness.request(HttpMethod::kGet, "/api/v2/history",
+                                authorization).body);
   ApiHarness steam_harness;
   assert(steam_harness.controller.set_mode(ControlMode::kSteam, 2000));
   steam_harness.controller.update(ok(115.0F), 2500);
@@ -1055,6 +1063,53 @@ void capture_contract_payloads(const std::filesystem::path& directory) {
                                       authorization).body);
 }
 
+void test_bounded_history_contract() {
+  ApiHarness harness;
+  const char* authorization = "Bearer test-secret";
+  for (std::uint64_t second = 1; second <= 605; ++second) {
+    const auto now = second * 1000U;
+    assert(harness.history.record(now,
+                                  harness.controller.snapshot(
+                                      static_cast<std::uint32_t>(now)),
+                                  harness.pump.command()));
+  }
+
+  auto response = harness.request(HttpMethod::kGet, "/api/v2/history",
+                                  authorization, "", 605000);
+  assert(response.status == 200);
+  assert(response.body.find("\"continuity\":\"initial\"") !=
+         std::string::npos);
+  assert(response.body.find("\"oldestSequence\":6") != std::string::npos);
+  assert(response.body.find("\"sequence\":6") != std::string::npos);
+  assert(response.body.find("\"hasMore\":true") != std::string::npos);
+
+  response = harness.request(
+      HttpMethod::kGet,
+      "/api/v2/history?bootId=00112233445566778899aabbccddeeff&afterSequence=1",
+      authorization, "", 605000);
+  assert(response.status == 200);
+  assert(response.body.find("\"continuity\":\"truncated\"") !=
+         std::string::npos);
+
+  response = harness.request(
+      HttpMethod::kGet,
+      "/api/v2/history?bootId=ffeeddccbbaa99887766554433221100&afterSequence=1",
+      authorization, "", 605000);
+  assert(response.status == 200);
+  assert(response.body.find("\"continuity\":\"reset\"") !=
+         std::string::npos);
+
+  expect_error(harness.request(HttpMethod::kGet,
+                               "/api/v2/history?afterSequence=1",
+                               authorization),
+               400, "malformed_request");
+  expect_error(harness.request(
+                   HttpMethod::kGet,
+                   "/api/v2/history?bootId=00112233445566778899aabbccddeeff&afterSequence=9999",
+                   authorization),
+               400, "malformed_request");
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -1068,6 +1123,7 @@ int main(int argc, char** argv) {
   test_target_adoption_lock_failure_retains_the_heater_inhibit();
   test_workflow_mode_coordination_is_authoritative();
   test_api_v2_cooldown_and_compensation_contract();
+  test_bounded_history_contract();
   if (argc == 2) {
     capture_contract_payloads(argv[1]);
   }

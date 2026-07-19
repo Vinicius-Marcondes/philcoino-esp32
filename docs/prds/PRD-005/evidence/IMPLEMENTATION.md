@@ -74,6 +74,8 @@ are reproducible, but separate target-size snapshots were not preserved after
 each logical extraction boundary. The final result is far inside the static
 budgets, but it does not retroactively provide the PRD's per-stage records.
 
-These gaps block full PRD-005/FW-013 acceptance closure. They do not block use
-of the implemented host-testable decomposition for subsequent review, and they
-are not physical heater, pump, wiring, thermal, or mains-safety evidence.
+On 2026-07-18, the owner explicitly accepted the final cumulative static
+evidence and the exception for unavailable connected-target heap/stack
+measurements and missed per-stage snapshots, closing PRD-005/FW-013 acceptance.
+The unavailable measurements remain documented limitations and are not
+physical heater, pump, wiring, thermal, or mains-safety evidence.

@@ -6,6 +6,7 @@ import {
   FaultCodeSchema,
   HeaterSettingsRequestSchema,
   HeaterSettingsResponseSchema,
+  HistoryCursorSchema,
   ModeRequestSchema,
   ModeResponseSchema,
   ProfileSetSchema,
@@ -91,6 +92,7 @@ export function createSimulator(
   app.use("/api/v1/heater", requireBearer);
   app.use("/api/v1/faults/over-temperature/dismiss", requireBearer);
   app.use("/api/v2/state", requireBearerV2);
+  app.use("/api/v2/history", requireBearerV2);
   app.use("/api/v2/profiles", requireBearerV2);
   app.use("/api/v2/extractions/start", requireBearerV2);
   app.use("/api/v2/extractions/stop", requireBearerV2);
@@ -184,6 +186,28 @@ export function createSimulator(
   });
 
   app.get("/api/v2/state", (c) => c.json(machine.getStateV2()));
+
+  app.get("/api/v2/history", (c) => {
+    const cursor = historyCursor(c.req.url);
+    if (!cursor.ok) {
+      return contractV2Error(
+        c,
+        400,
+        "malformed_request",
+        "The history cursor is malformed.",
+      );
+    }
+    const page = machine.getHistoryPage(cursor.value);
+    if (page === null) {
+      return contractV2Error(
+        c,
+        400,
+        "malformed_request",
+        "The history cursor is outside the current sequence.",
+      );
+    }
+    return c.json(page);
+  });
 
   app.get("/api/v2/profiles", (c) => c.json(machine.getProfiles()));
 
@@ -452,6 +476,37 @@ function contractError(
     error: { code, message },
   });
   return c.json(payload, status);
+}
+
+function historyCursor(
+  requestUrl: string,
+): { ok: true; value: undefined | { bootId: string; afterSequence: number } } | { ok: false } {
+  const parameters = new URL(requestUrl).searchParams;
+  for (const key of parameters.keys()) {
+    if (key !== "bootId" && key !== "afterSequence") {
+      return { ok: false };
+    }
+    if (parameters.getAll(key).length !== 1) {
+      return { ok: false };
+    }
+  }
+  const bootId = parameters.get("bootId");
+  const sequenceText = parameters.get("afterSequence");
+  if (bootId === null && sequenceText === null) {
+    return { ok: true, value: undefined };
+  }
+  if (
+    bootId === null ||
+    sequenceText === null ||
+    !/^(0|[1-9][0-9]*)$/.test(sequenceText)
+  ) {
+    return { ok: false };
+  }
+  const parsed = HistoryCursorSchema.safeParse({
+    bootId,
+    afterSequence: Number(sequenceText),
+  });
+  return parsed.success ? { ok: true, value: parsed.data } : { ok: false };
 }
 
 function contractV2Error(

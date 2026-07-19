@@ -2,6 +2,8 @@ import type {
   CompensationState,
   CooldownState,
   HeaterSettingsRequest,
+  HistoryCursor,
+  HistoryPage,
   MachineState,
   ModeRequest,
   StartCooldownRequest,
@@ -16,6 +18,21 @@ const bothUpdate: TemperatureSettingsRequest = {
 };
 const modeUpdate: ModeRequest = { mode: "steam" };
 const heaterUpdate: HeaterSettingsRequest = { heaterEnabled: false };
+const historyCursor: HistoryCursor = {
+  bootId: "00112233445566778899aabbccddeeff",
+  afterSequence: 2,
+};
+const historyPage: HistoryPage = {
+  deviceId: "machine-1",
+  bootId: historyCursor.bootId,
+  capturedAtUptimeMs: 2_500,
+  oldestSequence: 1,
+  latestSequence: 2,
+  nextCursor: historyCursor,
+  hasMore: false,
+  continuity: "continuous",
+  samples: [],
+};
 const cooldownStart: StartCooldownRequest = {
   idempotencyKey: "cooldown-01J2ABCDEF1",
 };
@@ -61,6 +78,8 @@ void [
   bothUpdate,
   modeUpdate,
   heaterUpdate,
+  historyCursor,
+  historyPage,
   cooldownStart,
   compensation,
   cooldown,

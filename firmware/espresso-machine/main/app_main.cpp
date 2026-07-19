@@ -1,9 +1,11 @@
 #include <array>
 #include <atomic>
 #include <cmath>
+#include <cstdio>
 
 #include "esp_log.h"
 #include "esp_mac.h"
+#include "esp_random.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
@@ -13,6 +15,7 @@
 #include "philcoino/control.hpp"
 #include "philcoino/esp_networking.hpp"
 #include "philcoino/esp_peripherals.hpp"
+#include "philcoino/history.hpp"
 #include "sdkconfig.h"
 
 namespace {
@@ -421,10 +424,18 @@ extern "C" void app_main() {
       philcoino::config::kDeviceModel,
       philcoino::config::kFirmwareVersion,
   };
+  std::array<char, 33> history_boot_id{};
+  std::snprintf(history_boot_id.data(), history_boot_id.size(),
+                "%08lx%08lx%08lx%08lx",
+                static_cast<unsigned long>(esp_random()),
+                static_cast<unsigned long>(esp_random()),
+                static_cast<unsigned long>(esp_random()),
+                static_cast<unsigned long>(esp_random()));
+  static philcoino::networking::HistoryBuffer history(history_boot_id.data());
   static philcoino::networking::FirmwareApi api(
       identity, CONFIG_PHILCOINO_BEARER_TOKEN, controller, target_storage,
       extraction_controller, cooldown_controller, profile_storage,
-      synchronization);
+      synchronization, &history);
   static philcoino::networking::EspNetworkServer network(api, identity);
   static const NetworkStartContext network_context{
       &network,
@@ -467,6 +478,8 @@ extern "C" void app_main() {
     const bool compensation_active =
         controller.extraction_compensation_active();
     synchronization.unlock(philcoino::networking::ApiDomain::kTemperature);
+    history.record(static_cast<std::uint64_t>(esp_timer_get_time() / 1000),
+                   snapshot, pump.command());
     if (philcoino::config::kOledEnabled) {
       if (!display.render(display_snapshot(
               snapshot, extraction_snapshot, cooldown_snapshot,

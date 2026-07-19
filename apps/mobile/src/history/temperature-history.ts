@@ -6,7 +6,7 @@ import type {
   Mode,
 } from "@philcoino/protocol";
 
-export const LIVE_HISTORY_WINDOW_MS = 60 * 1_000;
+export const LIVE_HISTORY_WINDOW_MS = 30 * 1_000;
 export const HISTORY_GAP_THRESHOLD_MS = 2_500;
 export const TODAY_GRAPH_TARGET_POINTS = 360;
 
@@ -22,6 +22,9 @@ export interface TemperatureHistorySample {
   machineStatus: MachineStatus;
   pumpActive: boolean | null;
   recordedAtMs: number;
+  sourceBootId: string | null;
+  sourceSequence: number | null;
+  startsAfterHistoryGap: boolean;
   steamTargetC: number;
   uptimeMs: number;
 }
@@ -57,6 +60,9 @@ export function createTemperatureHistorySample(
     machineStatus: snapshot.status,
     pumpActive: extraction.pumpCommand === "running",
     recordedAtMs,
+    sourceBootId: null,
+    sourceSequence: null,
+    startsAfterHistoryGap: false,
     steamTargetC: snapshot.steamTargetC,
     uptimeMs: snapshot.uptimeMs,
   };
@@ -106,8 +112,12 @@ export function liveTemperatureHistory(
   if (latest === undefined) {
     return [];
   }
-  const cutoff = latest.recordedAtMs - windowMs;
-  return samples.filter((sample) => sample.recordedAtMs >= cutoff);
+  const startMs = Math.floor(latest.recordedAtMs / windowMs) * windowMs;
+  return samples.filter(
+    (sample) =>
+      sample.recordedAtMs >= startMs &&
+      sample.recordedAtMs < startMs + windowMs,
+  );
 }
 
 export function temperatureHistoryWindows(
@@ -125,14 +135,26 @@ export function temperatureHistoryWindows(
     return [];
   }
 
-  const durationMs = Math.max(0, last.recordedAtMs - first.recordedAtMs);
-  const windowCount = Math.max(1, Math.ceil(durationMs / windowMs));
-  const firstWindowStartMs = last.recordedAtMs - windowCount * windowMs;
+  const firstWindowStartMs =
+    Math.floor(first.recordedAtMs / windowMs) * windowMs;
+  const latestWindowStartMs =
+    Math.floor(last.recordedAtMs / windowMs) * windowMs;
+  const windowCount =
+    Math.floor((latestWindowStartMs - firstWindowStartMs) / windowMs) + 1;
 
   return Array.from({ length: windowCount }, (_, index) => ({
     endMs: firstWindowStartMs + (index + 1) * windowMs,
     startMs: firstWindowStartMs + index * windowMs,
   }));
+}
+
+export function isLatestHistoryPageOffset(
+  offsetX: number,
+  contentWidth: number,
+  viewportWidth: number,
+  tolerance = 8,
+): boolean {
+  return contentWidth - viewportWidth - offsetX <= tolerance;
 }
 
 export function isTemperatureHistoryGap(
@@ -143,7 +165,17 @@ export function isTemperatureHistoryGap(
     next.recordedAtMs - previous.recordedAtMs > HISTORY_GAP_THRESHOLD_MS ||
     next.recordedAtMs <= previous.recordedAtMs ||
     next.uptimeMs <= previous.uptimeMs ||
-    next.deviceId !== previous.deviceId
+    next.uptimeMs - previous.uptimeMs > HISTORY_GAP_THRESHOLD_MS ||
+    next.deviceId !== previous.deviceId ||
+    next.startsAfterHistoryGap ||
+    (previous.sourceBootId !== null &&
+      next.sourceBootId !== null &&
+      previous.sourceBootId !== next.sourceBootId) ||
+    (previous.sourceBootId !== null &&
+      previous.sourceBootId === next.sourceBootId &&
+      previous.sourceSequence !== null &&
+      next.sourceSequence !== null &&
+      next.sourceSequence !== previous.sourceSequence + 1)
   );
 }
 
