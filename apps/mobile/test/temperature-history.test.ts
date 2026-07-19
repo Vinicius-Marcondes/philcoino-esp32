@@ -95,6 +95,29 @@ describe("temperature history", () => {
     expect(await repository.loadToday("machine-1", today)).toEqual([]);
   });
 
+  test("replaces a retried device sequence even when its anchored timestamp changes", async () => {
+    const repository = new InMemoryTemperatureHistoryRepository();
+    const today = new Date(2026, 6, 18, 12).getTime();
+    const bootId = "0123456789abcdef0123456789abcdef";
+    const recovered = {
+      ...sample("machine-1", today, 2_000),
+      sourceBootId: bootId,
+      sourceSequence: 7,
+    };
+    await repository.storeRecoveredPage("machine-1", {
+      cursor: { afterSequence: 7, bootId },
+      samples: [recovered],
+    });
+    await repository.storeRecoveredPage("machine-1", {
+      cursor: { afterSequence: 7, bootId },
+      samples: [{ ...recovered, recordedAtMs: today + 250 }],
+    });
+
+    const stored = await repository.loadToday("machine-1", today);
+    expect(stored).toHaveLength(1);
+    expect(stored[0].recordedAtMs).toBe(today + 250);
+  });
+
   test("uses timestamp gaps and uptime resets as graph segment boundaries", () => {
     const start = new Date(2026, 6, 18, 8).getTime();
     const first = sample("machine-1", start, 10_000);

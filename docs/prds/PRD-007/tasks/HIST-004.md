@@ -41,9 +41,12 @@ Backfill device history into current-day mobile storage without blocking live be
   gap starts, a unique device-origin index, and transactional durable cursors.
 - Page merge replaces overlapping phone-origin rows while leaving CSV columns
   and current-local-day pruning unchanged.
+- Recovered pages and their cursors commit in one exclusive SQLite transaction;
+  retrying the same boot/sequence is idempotent even when its anchored phone
+  timestamp changes.
 - HTTP 404 silently retains foreground-only history; other history failures
   remain graph-scoped and do not change polling, controls, or mutations.
-- Mobile typecheck, lint, and 131 tests with 859 expectations pass, including
+- Mobile typecheck, lint, and 132 tests with 861 expectations pass, including
   partial-page failure, cursor restart, simulator pagination, and reboot reset.
 - A transient ESP32 HTTP rejection is retried once before showing its
   device-specific warning; polling and controls remain independent.
