@@ -6,13 +6,19 @@ import type { DashboardFreshness } from "@/src/dashboard/dashboard-app-lifecycle
 import type { TemperatureHistoryExporter } from "@/src/history/temperature-history-export";
 import type { TemperatureHistoryRepository } from "@/src/history/temperature-history-repository";
 import {
+  synchronizeTemperatureHistory,
+  type TemperatureHistoryClient,
+} from "@/src/history/temperature-history-sync";
+import {
   appendTodaySample,
   createTemperatureHistorySample,
   type TemperatureHistorySample,
 } from "@/src/history/temperature-history";
+import { ApiClientError } from "@/src/networking/api-client-error";
 
 export type TemperatureHistoryError = "export" | "storage";
 export type TemperatureHistoryStatus = "loading" | "ready";
+export type TemperatureHistorySyncStatus = "idle" | "restoring" | "warning";
 
 export interface TemperatureHistoryState {
   clear: () => Promise<void>;
@@ -21,6 +27,7 @@ export interface TemperatureHistoryState {
   exporting: boolean;
   samples: TemperatureHistorySample[];
   status: TemperatureHistoryStatus;
+  syncStatus: TemperatureHistorySyncStatus;
 }
 
 export function useTemperatureHistory(
@@ -31,12 +38,15 @@ export function useTemperatureHistory(
   freshness: DashboardFreshness,
   repository: TemperatureHistoryRepository,
   exporter: TemperatureHistoryExporter,
+  client: TemperatureHistoryClient,
 ): TemperatureHistoryState {
   const [error, setError] = useState<TemperatureHistoryError | null>(null);
   const [exporting, setExporting] = useState(false);
   const [samples, setSamples] = useState<TemperatureHistorySample[]>([]);
   const [status, setStatus] =
     useState<TemperatureHistoryStatus>("loading");
+  const [syncStatus, setSyncStatus] =
+    useState<TemperatureHistorySyncStatus>("idle");
   const generation = useRef(0);
   const lastRecordedRevision = useRef(0);
   const operationQueue = useRef<Promise<void>>(Promise.resolve());
@@ -78,6 +88,73 @@ export function useTemperatureHistory(
       subscription.remove();
     };
   }, [refresh]);
+
+  useEffect(() => {
+    if (freshness !== "live") {
+      setSyncStatus("idle");
+      return;
+    }
+
+    const controller = new AbortController();
+    const currentGeneration = generation.current;
+    setSyncStatus("restoring");
+    const synchronize = async () => {
+      await operationQueue.current;
+      await synchronizeTemperatureHistory({
+        client,
+        deviceId,
+        onPageCommitted: async () => {
+          await operationQueue.current;
+          const loaded = await repository.loadToday(deviceId);
+          if (
+            generation.current === currentGeneration &&
+            !controller.signal.aborted
+          ) {
+            setSamples(loaded);
+            setStatus("ready");
+          }
+        },
+        repository: {
+          loadSyncCursor: async (selectedDeviceId) => {
+            await operationQueue.current;
+            return await repository.loadSyncCursor(selectedDeviceId);
+          },
+          storeRecoveredPage: async (selectedDeviceId, page) => {
+            const commit = operationQueue.current.then(() =>
+              repository.storeRecoveredPage(selectedDeviceId, page),
+            );
+            operationQueue.current = commit.catch(() => undefined);
+            await commit;
+          },
+        },
+        signal: controller.signal,
+      });
+      if (
+        generation.current === currentGeneration &&
+        !controller.signal.aborted
+      ) {
+        setSyncStatus("idle");
+      }
+    };
+    void synchronize().catch((caught: unknown) => {
+      if (
+        generation.current !== currentGeneration ||
+        controller.signal.aborted
+      ) {
+        return;
+      }
+      if (
+        caught instanceof ApiClientError &&
+        (caught.kind === "not-found" || caught.kind === "cancelled")
+      ) {
+        setSyncStatus("idle");
+        return;
+      }
+      setSyncStatus("warning");
+    });
+
+    return () => controller.abort();
+  }, [client, deviceId, freshness, repository]);
 
   useEffect(() => {
     if (
@@ -160,5 +237,13 @@ export function useTemperatureHistory(
     setSamples([]);
   }, [deviceId, repository]);
 
-  return { clear, error, exportAll, exporting, samples, status };
+  return {
+    clear,
+    error,
+    exportAll,
+    exporting,
+    samples,
+    status,
+    syncStatus,
+  };
 }

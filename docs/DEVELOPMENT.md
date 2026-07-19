@@ -109,7 +109,7 @@ Local HTTP is deliberately enabled for this device protocol. Do not generalize t
 ## Device simulator
 
 Production-compatible routes include the temperature-only API v1 and additive
-profile/extraction/compensation/cooldown API v2. Development controls are
+profile/extraction/compensation/cooldown/history API v2. Development controls are
 separate:
 
 ```text
@@ -137,6 +137,17 @@ curl http://localhost:3000/api/v1/state \
 ```
 
 Manual time never advances in the background. Power-cycle clears volatile state and preserves targets; reset also restores default targets. The simple temperature model is for deterministic app/contract scenarios only.
+
+Every manually crossed one-second boundary adds one history sample, capped at
+600. Fetch retained pages with the development bearer token:
+
+```bash
+curl http://localhost:3000/api/v2/history \
+  -H 'Authorization: Bearer philcoino-dev-token'
+```
+
+Use the returned `nextCursor.bootId` and `nextCursor.afterSequence` together for
+the next page. Power-cycle changes the boot ID and clears retained history.
 
 The simulator treats `boilerTemperatureC` as the already-effective logical
 control temperature in either mode. It does not add the firmware Steam offset,
@@ -184,7 +195,7 @@ Use a temporary build directory outside the repository to avoid generated output
 
 The generated capture set includes unchanged API v1 responses plus strict API
 v2 extraction, compensation, cooldown Start/replay/conflict/Stop/terminal,
-eligibility errors, and failed terminal state. Capture validation proves only
+history, eligibility errors, and failed terminal state. Capture validation proves only
 that independent C++ serialization matches the wire schemas.
 
 Run the pure API codec/property targets and deterministic mutation campaign

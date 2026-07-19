@@ -9,6 +9,10 @@ import {
   ExtractionStateSchema,
   HeaterSettingsResponseSchema,
   HealthResponseSchema,
+  HISTORY_PAGE_SIZE,
+  HISTORY_RETENTION_SAMPLES,
+  HistoryPageSchema,
+  HistorySampleSchema,
   MachineStateSchema,
   MachineStateV2Schema,
   ProfileSetSchema,
@@ -25,6 +29,9 @@ import {
   type Fault,
   type FaultCode,
   type HealthResponse,
+  type HistoryCursor,
+  type HistoryPage,
+  type HistorySample,
   type HeaterSettingsResponse,
   type MachineState,
   type MachineStateV2,
@@ -180,6 +187,11 @@ interface CooldownRecord {
 }
 
 export class SimulatorMachine {
+  private bootCounter = 1;
+  private bootId = simulatorBootId(this.bootCounter);
+  private historySequence = 0;
+  private lastHistorySecond = 0;
+  private history: HistorySample[] = [];
   private readonly initialBrewTargetC: number;
   private readonly initialSteamTargetC: number;
   private readonly device: DeviceResponse;
@@ -269,6 +281,46 @@ export class SimulatorMachine {
       extraction: this.getExtractionState(),
       compensation: this.getCompensationState(),
       cooldown: this.getCooldownState(),
+    });
+  }
+
+  getHistoryPage(cursor?: HistoryCursor): HistoryPage | null {
+    const oldestSequence = this.history[0]?.sequence ?? null;
+    const latestSequence = this.history.at(-1)?.sequence ?? null;
+    let afterSequence = cursor?.afterSequence ?? 0;
+    let continuity: HistoryPage["continuity"] = "initial";
+
+    if (cursor !== undefined) {
+      if (cursor.bootId !== this.bootId) {
+        continuity = "reset";
+        afterSequence = (oldestSequence ?? 1) - 1;
+      } else if (latestSequence !== null && afterSequence > latestSequence) {
+        return null;
+      } else if (
+        oldestSequence !== null &&
+        afterSequence < oldestSequence - 1
+      ) {
+        continuity = "truncated";
+        afterSequence = oldestSequence - 1;
+      } else {
+        continuity = "continuous";
+      }
+    }
+
+    const samples = this.history
+      .filter((sample) => sample.sequence > afterSequence)
+      .slice(0, HISTORY_PAGE_SIZE);
+    const nextSequence = samples.at(-1)?.sequence ?? afterSequence;
+    return HistoryPageSchema.parse({
+      deviceId: this.device.deviceId,
+      bootId: this.bootId,
+      capturedAtUptimeMs: this.uptimeMs,
+      oldestSequence,
+      latestSequence,
+      nextCursor: { bootId: this.bootId, afterSequence: nextSequence },
+      hasMore: latestSequence !== null && nextSequence < latestSequence,
+      continuity,
+      samples,
     });
   }
 
@@ -756,6 +808,39 @@ export class SimulatorMachine {
         this.steamTimeoutRemainingMs = null;
       }
     }
+
+    const currentSecond = Math.floor(this.uptimeMs / 1_000);
+    if (currentSecond > this.lastHistorySecond) {
+      this.lastHistorySecond = currentSecond;
+      this.captureHistorySample();
+    }
+  }
+
+  private captureHistorySample(): void {
+    const machine = this.getState();
+    const extraction = this.getExtractionState();
+    const cooldown = this.getCooldownState();
+    this.historySequence += 1;
+    this.history.push(
+      HistorySampleSchema.parse({
+        sequence: this.historySequence,
+        uptimeMs: this.uptimeMs,
+        boilerTemperatureC: machine.boilerTemperatureC,
+        brewTargetC: machine.brewTargetC,
+        steamTargetC: machine.steamTargetC,
+        activeMode: machine.activeMode,
+        heaterEnabled: machine.heaterEnabled,
+        heaterActive: machine.heaterActive,
+        pumpActive:
+          cooldown.status === "pumping" ||
+          (cooldown.status === "idle" && extraction.pumpCommand === "running"),
+        machineStatus: machine.status,
+        faultCode: machine.fault?.code ?? null,
+      }),
+    );
+    if (this.history.length > HISTORY_RETENTION_SAMPLES) {
+      this.history.splice(0, this.history.length - HISTORY_RETENTION_SAMPLES);
+    }
   }
 
   private advanceExtraction(milliseconds: number): void {
@@ -866,6 +951,11 @@ export class SimulatorMachine {
   }
 
   private resetVolatileState(): void {
+    this.bootCounter += 1;
+    this.bootId = simulatorBootId(this.bootCounter);
+    this.historySequence = 0;
+    this.lastHistorySecond = 0;
+    this.history = [];
     this.activeMode = "brew";
     this.boilerTemperatureC = AMBIENT_TEMPERATURE_C;
     this.heaterEnabled = true;
@@ -968,4 +1058,8 @@ function moveToward(current: number, target: number, maximumDelta: number): numb
 
 function roundTemperature(value: number): number {
   return Math.round(value * 10) / 10;
+}
+
+function simulatorBootId(counter: number): string {
+  return counter.toString(16).padStart(32, "0");
 }

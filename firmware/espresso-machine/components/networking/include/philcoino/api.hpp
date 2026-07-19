@@ -9,6 +9,8 @@
 
 namespace philcoino::networking {
 
+class HistoryBuffer;
+
 inline constexpr char kApiVersion[] = "1";
 inline constexpr char kMdnsServiceType[] = "_philcoino";
 inline constexpr char kMdnsProtocol[] = "_tcp";
@@ -57,7 +59,8 @@ class FirmwareApi {
               control::ExtractionController& extraction_controller,
               control::CooldownController& cooldown_controller,
               peripherals::ProfileStorage& profile_storage,
-              ApiSynchronization& synchronization);
+              ApiSynchronization& synchronization,
+              HistoryBuffer* history = nullptr);
 
   HttpResponse handle(HttpMethod method, const std::string& path,
                       const char* authorization, const std::string& body,
@@ -76,6 +79,8 @@ class FirmwareApi {
                              std::uint64_t uptime_ms);
   HttpResponse dismiss_over_temperature(std::uint64_t uptime_ms);
   HttpResponse state_v2(std::uint64_t uptime_ms) const;
+  HttpResponse history(const std::string& query,
+                       std::uint64_t uptime_ms) const;
   HttpResponse profiles() const;
   HttpResponse replace_profiles(const std::string& body,
                                 std::uint64_t uptime_ms);
@@ -94,6 +99,7 @@ class FirmwareApi {
   control::CooldownController& cooldown_controller_;
   peripherals::ProfileStorage& profile_storage_;
   ApiSynchronization& synchronization_;
+  HistoryBuffer* history_;
 };
 
 }  // namespace philcoino::networking

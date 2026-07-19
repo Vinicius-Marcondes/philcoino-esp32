@@ -15,6 +15,8 @@ import {
   type HeaterSettingsRequest,
   type HeaterSettingsResponse,
   type HealthResponse,
+  type HistoryCursor,
+  type HistoryPage,
   type MachineState,
   type MachineStateV2,
   type ModeRequest,
@@ -112,6 +114,18 @@ export class DebugDeviceApiClient
           : { status: "inactive", phase: null },
       cooldown: this.cooldown,
     });
+  }
+
+  async getHistory(
+    _cursor?: HistoryCursor,
+    options: { signal?: AbortSignal } = {},
+  ): Promise<HistoryPage> {
+    throwIfAborted(options.signal);
+    throw new ApiClientError(
+      "not-found",
+      "The debug device does not expose retained history.",
+      { endpoint: "/api/v2/history", status: 404 },
+    );
   }
 
   async getProfiles(

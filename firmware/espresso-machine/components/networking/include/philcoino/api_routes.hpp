@@ -17,6 +17,7 @@ enum class ApiRouteId {
   kHeater,
   kDismissOverTemperature,
   kStateV2,
+  kHistory,
   kProfilesGet,
   kProfilesPut,
   kExtractionStart,
@@ -32,7 +33,7 @@ struct ApiRouteDescriptor {
   bool requires_authentication;
 };
 
-inline constexpr std::array<ApiRouteDescriptor, 14> kApiRoutes{{
+inline constexpr std::array<ApiRouteDescriptor, 15> kApiRoutes{{
     {ApiRouteId::kHealth, HttpMethod::kGet, "/healthz", false},
     {ApiRouteId::kDevice, HttpMethod::kGet, "/api/v1/device", false},
     {ApiRouteId::kStateV1, HttpMethod::kGet, "/api/v1/state", true},
@@ -43,6 +44,7 @@ inline constexpr std::array<ApiRouteDescriptor, 14> kApiRoutes{{
     {ApiRouteId::kDismissOverTemperature, HttpMethod::kPost,
      "/api/v1/faults/over-temperature/dismiss", true},
     {ApiRouteId::kStateV2, HttpMethod::kGet, "/api/v2/state", true},
+    {ApiRouteId::kHistory, HttpMethod::kGet, "/api/v2/history", true},
     {ApiRouteId::kProfilesGet, HttpMethod::kGet, "/api/v2/profiles", true},
     {ApiRouteId::kProfilesPut, HttpMethod::kPut, "/api/v2/profiles", true},
     {ApiRouteId::kExtractionStart, HttpMethod::kPost,

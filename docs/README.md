@@ -20,7 +20,7 @@ Este diretório explica o sistema Philcoino implementado, o escopo aprovado do p
 | [Development](DEVELOPMENT.md) | Pré-requisitos, workflows dos packages, controles do simulador, configuração do firmware e verificação |
 | [Segurança](SAFETY.md) | Restrições do protótipo, riscos conhecidos de software/hardware e boundary de aceitação física |
 | [Como contribuir](../CONTRIBUTING.md) | Processo de mudança, workflow do contrato, expectativas de validação e checklist de pull request |
-| [Tracker da PRD-001](TRACKER.md) | Estado supervisionado das tasks, evidências, aprovações e trabalho ainda aguardando aceitação |
+| [Tracker da PRD ativa](TRACKER.md) | Estado supervisionado das tasks, evidências, aprovações e trabalho ainda aguardando aceitação |
 | [Revisão do codebase](../CODEBASE_REVIEW_REPORT.md) | Findings atuais detalhados de BLOCKER/MAJOR/MINOR e resultados dos quality gates |
 
 ## Sources of truth
@@ -40,14 +40,14 @@ Não resolva silenciosamente um conflito de safety, hardware, security ou escopo
 - [`ARCHITECTURE.md`](ARCHITECTURE.md): architecture atual de mobile, protocolo, simulador e firmware.
 - [`architecture/repository-layout.md`](architecture/repository-layout.md): boundaries duráveis do repositório e orientações de organização.
 - [`protocol/api-v1-outline.md`](protocol/api-v1-outline.md): justificativas e exemplos da API para leitura humana; o OpenAPI continua autoritativo.
-- [`protocol/api-v2-outline.md`](protocol/api-v2-outline.md): profiles e extração reconhecida pelo firmware; v1 permanece compatível.
+- [`protocol/api-v2-outline.md`](protocol/api-v2-outline.md): workflows e histórico reconhecidos pelo firmware; v1 permanece compatível.
 - [`decisions/firmware-foundation.md`](decisions/firmware-foundation.md): decisões aprovadas de firmware, toolchain e foundation.
 
 ## Produto e entrega
 
 - [`prds/PRD-001/PRD-001.md`](prds/PRD-001/PRD-001.md): requisitos aprovados para monitoramento local e controle de temperatura.
 - [`prds/PRD-001/tasks`](prds/PRD-001/tasks): definições supervisionadas das tasks e acceptance criteria.
-- [`TRACKER.md`](TRACKER.md): estado atual de execução e evidências.
+- [`TRACKER.md`](TRACKER.md): estado atual da PRD ativa e evidências.
 
 A PRD e os arquivos de task são registros históricos/de aprovação. Se a implementação estiver à frente do tracker, não marque a aceitação como concluída sem o reviewer necessário.
 

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { MachineState } from "@philcoino/protocol";
+import type { HistoryPage, MachineState } from "@philcoino/protocol";
 
 import { ApiClientError } from "../src/networking/api-client-error";
 import { connectionStateFromError } from "../src/networking/connection-state";
@@ -40,6 +40,68 @@ describe("DeviceApiClient", () => {
 
     await expect(client.getState()).resolves.toEqual(validState);
     expect(authorization as string | null).toBe("Bearer secret-token");
+  });
+
+  test("requests and validates authenticated history cursors", async () => {
+    let requestedUrl = "";
+    let authorization: string | null = null;
+    const response: HistoryPage = {
+      bootId: "0123456789abcdef0123456789abcdef",
+      capturedAtUptimeMs: 12_000,
+      continuity: "continuous",
+      deviceId: "machine-1",
+      hasMore: false,
+      latestSequence: 12,
+      nextCursor: {
+        afterSequence: 12,
+        bootId: "0123456789abcdef0123456789abcdef",
+      },
+      oldestSequence: 1,
+      samples: [],
+    };
+    const client = new DeviceApiClient({
+      address: "192.168.1.20",
+      token: "secret-token",
+      fetch: async (url, init) => {
+        requestedUrl = url;
+        authorization = new Headers(init.headers).get("Authorization");
+        return Response.json(response);
+      },
+    });
+
+    await expect(
+      client.getHistory({
+        afterSequence: 11,
+        bootId: "0123456789abcdef0123456789abcdef",
+      }),
+    ).resolves.toEqual(response);
+    expect(requestedUrl).toBe(
+      "http://192.168.1.20/api/v2/history?bootId=0123456789abcdef0123456789abcdef&afterSequence=11",
+    );
+    expect(authorization as string | null).toBe("Bearer secret-token");
+  });
+
+  test("rejects malformed history pages as protocol errors", async () => {
+    const client = clientWithResponse(
+      Response.json({
+        bootId: "not-a-boot-id",
+        capturedAtUptimeMs: 0,
+        continuity: "initial",
+        deviceId: "machine-1",
+        hasMore: false,
+        latestSequence: null,
+        nextCursor: { afterSequence: 0, bootId: "not-a-boot-id" },
+        oldestSequence: null,
+        samples: [],
+      }),
+    );
+
+    const error = await captureError(client.getHistory());
+    expect(error).toMatchObject({
+      endpoint: "/api/v2/history",
+      kind: "protocol",
+      status: 200,
+    });
   });
 
   test("rejects malformed successful responses as protocol errors", async () => {

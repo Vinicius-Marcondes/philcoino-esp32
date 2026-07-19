@@ -166,12 +166,44 @@ explicit graph gaps. Live and Today views may downsample presentation, while
 CSV export reads every stored row. This observational data never participates
 in firmware control and contains neither bearer tokens nor network addresses.
 
+After the first fresh combined-state response on a connection or foreground
+transition, mobile starts a separate abortable history session. It reads up to
+sixty samples per authenticated `GET /api/v2/history` page without delaying
+live publication or control mutations. The first request/response midpoint
+anchors the page's firmware uptime to phone UTC for the batch. SQLite commits
+each page and its cursor atomically, identifies device rows by
+`(deviceId, bootId, sequence)`, and replaces overlapping phone-origin rows.
+HTTP 404 means older firmware and silently retains foreground-only history;
+other failures are graph-scoped warnings. Backgrounding cancels the session,
+and the next fresh foreground connection resumes from the last committed page.
+
+Firmware owns a RAM-only 600-sample history ring. One compact sixteen-byte
+sample is attempted per second after the current acknowledged control snapshot
+and fail-off pump command are available. A delayed loop records only its actual
+current sample. The writer never waits: a history-specific atomic guard skips
+capture on contention, while a network reader copies at most sixty samples
+before releasing the guard and serializing JSON. A random 128-bit boot ID and
+increasing sequence distinguish reboot, continuous, reset, and truncated
+history without persisting anything to NVS.
+
+Live graph pages use fixed consecutive thirty-second clock windows. The newest
+page follows incoming samples only while the user remains at the latest offset;
+an older inspected window remains selected when live or recovered samples are
+inserted. Today downsampling and raw CSV export retain their prior behavior.
+Boot changes, uptime/timestamp discontinuities, sequence skips, and truncated
+starts split graph segments rather than drawing or interpolating unavailable
+intervals.
+
 ## Simulator runtime
 
 `createSimulator` wires a `SimulatorMachine` to Hono. Bearer middleware protects
 the five API v1 mutations/state operations and all API v2 state, profile,
 extraction, and cooldown operations. Parsing uses protocol schemas and emits
 version-appropriate strict errors.
+
+The deterministic model also captures the same one-Hertz rolling history,
+sixty-sample pagination, overflow, boot reset, and full command/fault context.
+Simulator time remains manually advanced; it does not create background samples.
 
 The model holds persisted targets and the four-slot profile set separately from
 volatile mode, temperatures, heater permission, faults, extraction/idempotency,

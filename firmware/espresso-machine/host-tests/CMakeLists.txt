@@ -69,6 +69,7 @@ add_executable(
   ../components/networking/src/api_machine_codec.cpp
   ../components/networking/src/api_routes.cpp
   ../components/networking/src/api_workflow_codec.cpp
+  ../components/networking/src/history.cpp
   ../components/control/src/control.cpp
   ../components/peripherals/src/peripherals.cpp
 )
@@ -92,6 +93,7 @@ set(
   ../components/networking/src/api_json.cpp
   ../components/networking/src/api_machine_codec.cpp
   ../components/networking/src/api_workflow_codec.cpp
+  ../components/networking/src/history.cpp
   ../components/control/src/control.cpp
   ../components/peripherals/src/peripherals.cpp
 )

@@ -1,6 +1,6 @@
 # FWAPI-007 — Complete target/resource evidence and documentation
 
-Status: Blocked — connected-target and per-stage resource evidence pending
+Status: Done
 Review Mode: Agent
 Review Reason: Final compatibility, resource budgets, build output, documentation alignment, and review closure are evidence-based and deterministic.
 
@@ -30,14 +30,15 @@ Prove final PRD-005 compatibility within approved resource budgets and align all
 ## Acceptance Criteria
 
 - [x] All configured host, contract, sanitizer/mutation, and pinned target-build checks pass.
-- [ ] Image, static RAM, and available heap/stack evidence satisfy approved budgets or an explicit reviewed exception exists.
+- [x] Image, static RAM, and available heap/stack evidence satisfy approved budgets or an explicit reviewed exception exists.
 - [x] API v1/v2 behavior and firmware safety/authority boundaries remain unchanged.
 - [x] Architecture, development, protocol, review, PRD, and tracker documents agree on final ownership and evidence limits.
 - [x] FW-005 and unavailable physical/target-runtime checks remain visible and are not represented as complete.
 
-Blocked Reason: No connected ESP32-C3 is available for request heap and HTTP
-stack high-water measurements, and per-extraction target snapshots were not
-preserved. See `../evidence/IMPLEMENTATION.md`.
+Human Acceptance: On 2026-07-18, the owner accepted the documented final static
+resource evidence and the explicit exception for unavailable connected-target
+heap/stack measurements and missed per-stage snapshots. Those unavailable
+measurements remain evidence limitations and are not physical-safety evidence.
 
 ## Verification Strategy
 
