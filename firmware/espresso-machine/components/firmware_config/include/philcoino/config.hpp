@@ -49,7 +49,7 @@ inline constexpr std::int32_t kOledWidth = 128;
 inline constexpr std::int32_t kOledHeight = 32;
 
 inline constexpr std::int32_t kBoilerThermocoupleClockGpio = 4;
-inline constexpr std::int32_t kBoilerThermocoupleDataGpio = 6;
+inline constexpr std::int32_t kBoilerThermocoupleDataGpio = 5;
 inline constexpr std::int32_t kBoilerThermocoupleChipSelectGpio = 7;
 
 inline constexpr std::int32_t kSsrGpio = 20;
