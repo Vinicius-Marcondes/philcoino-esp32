@@ -34,7 +34,7 @@ Date: 2026-07-18
 | OpenAPI | Syntax, paths, security, and local references valid |
 | Protocol | Typecheck pass; 123 tests / 247 expectations pass |
 | Simulator | Typecheck pass; 65 tests / 410 expectations pass |
-| Mobile | Typecheck and lint pass; 132 tests / 861 expectations pass |
+| Mobile | Typecheck and lint pass; 133 tests / 863 expectations pass |
 | Native firmware host | CTest 6/6 pass |
 | ASan/UBSan firmware host | CTest 6/6 pass |
 | Independent firmware captures | 30/30 validate |
@@ -43,8 +43,11 @@ Mobile/simulator integration explicitly covers paginated recovery, durable
 resume after a failed later page, reboot reset, and gap-free two-, five-, and
 ten-minute recovery. Native SQLite page commits use exclusive transactions and
 idempotently replace a retried device sequence even if its phone-time anchor
-changes. Simulator and firmware tests cover overflow/truncation, strict
-malformed/duplicate/partial/future cursors, and boot reset.
+changes. History cancellation checks use the React Native-compatible
+`AbortSignal.aborted` property and do not require the optional browser
+`throwIfAborted()` method. Simulator and firmware tests cover
+overflow/truncation, strict malformed/duplicate/partial/future cursors, and
+boot reset.
 
 ## Resource and safety boundary
 

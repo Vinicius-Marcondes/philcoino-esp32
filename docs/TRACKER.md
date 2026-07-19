@@ -38,7 +38,7 @@ PRD: `docs/prds/PRD-007/PRD-007.md`
 | [HIST-001](prds/PRD-007/tasks/HIST-001.md) | Agent | Done | Protocol validation; 123 tests; typecheck | Approved PRD decisions | Pending | None | None |
 | [HIST-002](prds/PRD-007/tasks/HIST-002.md) | Agent | Done | 65 simulator tests; typecheck | Deterministic boot IDs; fixed paging | Pending | None | None |
 | [HIST-003](prds/PRD-007/tasks/HIST-003.md) | Agent | Done | Native/sanitizer 6/6; 30 captures | Zero-wait atomic history lock | Pending | Target environment unavailable | Provide target evidence in HIST-006/007 |
-| [HIST-004](prds/PRD-007/tasks/HIST-004.md) | Agent | Done | Mobile 132 tests; typecheck; lint | Midpoint anchor; exclusive idempotent page/cursor commit | Pending | None | None |
+| [HIST-004](prds/PRD-007/tasks/HIST-004.md) | Agent | Done | Mobile 133 tests; typecheck; lint | Native-safe cancellation; exclusive idempotent page/cursor commit | Pending | None | None |
 | [HIST-005](prds/PRD-007/tasks/HIST-005.md) | Agent | Done | 30 s window/gap/follow tests; localization | Rolling newest window; user-driven follow state | Pending | None | None |
 | [HIST-006](prds/PRD-007/tasks/HIST-006.md) | Agent | Done | All configured host/workspace checks pass | Host evidence is not target evidence | Pending | Target toolchain unavailable | Complete target evidence in HIST-007 |
 | [HIST-007](prds/PRD-007/tasks/HIST-007.md) | Human | Todo | Pending | Pending | Pending | None | None |
