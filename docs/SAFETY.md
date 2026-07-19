@@ -44,6 +44,9 @@ O firmware controla o temperature-control loop e não depende da conectividade d
 - executa cooldown mutuamente exclusivo em uma task de workflow de 10 ms,
   ordena inhibit/off do heater antes do Start da pump e nunca restaura cooldown
   no boot;
+- registra até 600 snapshots observacionais em RAM e os expõe em páginas de no
+  máximo 60; esse histórico não alimenta nenhuma decisão de heater, pump,
+  readiness, timeout, fault ou mutation;
 - usa uma safety lease GPTimer de 1500 ms para o comando do heater e um único
   mutex de workflow bounded, mantendo NVS, display e transmissão HTTP fora
   desse boundary;
@@ -56,6 +59,11 @@ software. Ela não comprova que `+5°C` representa a diferença física da boile
 que `+2°C` melhora a extração ou que um comando de cooldown produz fluxo ou
 resfriamento. Também não substitui medição independente, cutoff térmico ou
 revisão energizada.
+
+Da mesma forma, valores históricos de `heaterActive` e `pumpActive` descrevem
+o último comando conhecido do firmware. Backfill, SQLite, gráfico e CSV não
+provam operação física, fluxo, cooling ou desenergização, e nunca devem ser
+usados como feedback para o control loop.
 
 ## Limitações conhecidas de alto risco
 

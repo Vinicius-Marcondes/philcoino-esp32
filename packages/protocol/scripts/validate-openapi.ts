@@ -74,6 +74,7 @@ const expectedOperations = {
   "/api/v1/heater": "put",
   "/api/v1/faults/over-temperature/dismiss": "post",
   "/api/v2/state": "get",
+  "/api/v2/history": "get",
   "/api/v2/profiles": "get",
   "/api/v2/extractions/start": "post",
   "/api/v2/extractions/stop": "post",

@@ -22,6 +22,8 @@ O celular descobre e autentica uma máquina, exibe o estado em tempo real e envi
 - Restauração pelo endereço salvo e redescoberta por stable ID após mudanças de endereço.
 - Validação estrita das APIs v1/v2 em runtime e estados explícitos para offline, unauthorized, not found, timeout e protocol error.
 - Polling do dashboard a cada segundo, orientado à conclusão, enquanto a tela e o app estão ativos.
+- Histórico atual em SQLite com backfill automático de até dez minutos do
+  buffer RAM do ESP32 e Live paginado em janelas horizontais de 30 s.
 - Targets de brew/steam, active mode, permissão do heater e dismissal de over-temperature confirmados pelo firmware.
 - Controle pelo ESP32-C3, persistência dos targets em NVS, amostragem MAX6675, saída SSD1306, rede HTTP/mDNS e policy boundaries testáveis no host.
 - Simulador determinístico Bun/Hono para desenvolvimento mobile e do contrato.
@@ -110,11 +112,15 @@ Endpoints autenticados exigem `Authorization: Bearer <token>`:
 A API v2 adiciona, sem remover v1:
 
 - `GET /api/v2/state`
+- `GET /api/v2/history`
 - `GET` e `PUT /api/v2/profiles`
 - `POST /api/v2/extractions/start`
 - `POST /api/v2/extractions/stop`
+- `POST /api/v2/cooldowns/start`
+- `POST /api/v2/cooldowns/stop`
 
-`running` e `off` indicam somente o comando GPIO10, não corrente, fluxo,
+Valores históricos e atuais `running`/`off` indicam somente comandos do
+firmware, não corrente, fluxo,
 posição do switch em série ou desenergização física confirmada.
 
 O simulador também disponibiliza controles `_simulator/*`, que ficam deliberadamente fora da API v1 e nunca devem ser implementados como endpoints do firmware de produção.

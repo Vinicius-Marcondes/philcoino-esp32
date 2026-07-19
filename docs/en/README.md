@@ -22,6 +22,8 @@ The phone discovers and authenticates one machine, displays live state, and subm
 - Cached-address restore and stable-ID rediscovery after address changes.
 - Strict API v1/v2 runtime validation and explicit offline, unauthorized, not-found, timeout, and protocol-error states.
 - Completion-driven one-second dashboard polling while the screen/app is active.
+- Current-day SQLite history with automatic backfill from up to ten minutes of
+  ESP32 RAM history and horizontally paged 30-second Live windows.
 - Firmware-acknowledged brew/steam targets, active mode, heater permission, and over-temperature dismissal.
 - ESP32-C3 control, NVS target persistence, MAX6675 sampling, SSD1306 output, HTTP/mDNS networking, and host-testable policy boundaries.
 - Deterministic Bun/Hono simulator for mobile and contract development.
@@ -114,11 +116,15 @@ Authenticated endpoints require `Authorization: Bearer <token>`:
 API v2 adds without removing v1:
 
 - `GET /api/v2/state`
+- `GET /api/v2/history`
 - `GET` and `PUT /api/v2/profiles`
 - `POST /api/v2/extractions/start`
 - `POST /api/v2/extractions/stop`
+- `POST /api/v2/cooldowns/start`
+- `POST /api/v2/cooldowns/stop`
 
-`running` and `off` describe only the GPIO10 command, not current, flow, series
+Historical and current `running`/`off` values describe firmware commands, not
+current, flow, series
 switch position, or confirmed physical de-energization.
 
 The simulator also exposes `_simulator/*` controls that are deliberately outside API v1 and must never be implemented as production firmware endpoints.

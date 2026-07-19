@@ -246,7 +246,7 @@ The historical review covered the following checks:
 
 ## PRD-006 Dashboard continuity and history review
 
-Status: HUMAN REVIEW PENDING
+Status: HUMAN ACCEPTED 2026-07-18
 
 Automated tests cover lifecycle pause/resume, interrupted mutations, current-day
 retention, device scoping, graph gaps/downsampling, and complete CSV
@@ -271,3 +271,23 @@ constitute heater or pump safety evidence:
   bearer token or local network address is present; and
 - cross local midnight or use a controlled date test, then confirm prior-day
   samples are pruned and no longer exported.
+
+The owner accepted PRD-006 on 2026-07-18. This closes its dashboard/history
+product review but does not provide heater, pump, wiring, or mains-safety
+evidence.
+
+## PRD-007 Rolling history and backfill review
+
+Status: HUMAN/TARGET REVIEW PENDING
+
+Automated contract, simulator, mobile, native firmware, sanitizer, and capture
+checks cover the bounded device ring, strict history cursor pages, durable
+mobile cursor commits, reboot/truncation gaps, and stable thirty-second graph
+windows. Human iPhone acceptance must still confirm two/five/ten-minute
+minimize and force-close recovery, older-window inspection while new samples
+arrive, localized restoring/warning states, reboot/overflow gaps, and CSV
+contents. A pinned ESP32-C3 target build plus connected-target heap, stack, and
+representative request/control-loop timing evidence also remain required.
+
+History values remain command-state observations. They do not prove heater or
+pump operation, de-energization, flow, cooling, or physical safety.

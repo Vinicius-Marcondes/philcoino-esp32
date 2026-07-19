@@ -6,6 +6,7 @@
 
 #include "philcoino/api_codec.hpp"
 #include "philcoino/api_routes.hpp"
+#include "philcoino/history.hpp"
 
 namespace philcoino::networking {
 namespace {
@@ -131,7 +132,8 @@ FirmwareApi::FirmwareApi(DeviceIdentity identity, std::string bearer_token,
                          control::ExtractionController& extraction_controller,
                          control::CooldownController& cooldown_controller,
                          peripherals::ProfileStorage& profile_storage,
-                         ApiSynchronization& synchronization)
+                         ApiSynchronization& synchronization,
+                         HistoryBuffer* history)
     : identity_(std::move(identity)),
       bearer_token_(std::move(bearer_token)),
       controller_(controller),
@@ -139,7 +141,8 @@ FirmwareApi::FirmwareApi(DeviceIdentity identity, std::string bearer_token,
       extraction_controller_(extraction_controller),
       cooldown_controller_(cooldown_controller),
       profile_storage_(profile_storage),
-      synchronization_(synchronization) {}
+      synchronization_(synchronization),
+      history_(history) {}
 
 bool FirmwareApi::authorized(const char* authorization) const {
   return constant_time_bearer_matches(authorization, bearer_token_);
@@ -159,12 +162,22 @@ HttpResponse FirmwareApi::handle(HttpMethod method, const std::string& path,
                           "A valid bearer token is required.", true);
   }
 
+  const auto query_separator = path.find('?');
+  const std::string query = query_separator == std::string::npos
+                                ? std::string{}
+                                : path.substr(query_separator + 1U);
+  if (route->id != ApiRouteId::kHistory && query_separator != std::string::npos) {
+    return error_response(404, "internal_error",
+                          "The requested endpoint does not exist.");
+  }
+
   switch (route->id) {
     case ApiRouteId::kHealth: return health(uptime_ms);
     case ApiRouteId::kDevice: return device();
     case ApiRouteId::kTemperatures:
       return update_temperatures(body, uptime_ms);
     case ApiRouteId::kStateV2: return state_v2(uptime_ms);
+    case ApiRouteId::kHistory: return history(query, uptime_ms);
     case ApiRouteId::kProfilesGet: return profiles();
     case ApiRouteId::kProfilesPut: return replace_profiles(body, uptime_ms);
     case ApiRouteId::kExtractionStart:
@@ -201,6 +214,25 @@ HttpResponse FirmwareApi::health(std::uint64_t uptime_ms) const {
 
 HttpResponse FirmwareApi::device() const {
   return json_response(200, serialize_device(identity_));
+}
+
+HttpResponse FirmwareApi::history(const std::string& query,
+                                  std::uint64_t uptime_ms) const {
+  if (history_ == nullptr) {
+    return error_response(500, "internal_error",
+                          "Temperature history is unavailable.");
+  }
+  HistoryCursor cursor{};
+  if (!parse_history_cursor(query, cursor)) {
+    return error_response(400, "malformed_request",
+                          "The history cursor is malformed.");
+  }
+  HistoryPage page{};
+  if (!history_->page(cursor, uptime_ms, page)) {
+    return error_response(400, "malformed_request",
+                          "The history cursor is outside the current sequence.");
+  }
+  return json_response(200, serialize_history_page(identity_.device_id, page));
 }
 
 HttpResponse FirmwareApi::state(std::uint64_t uptime_ms) const {

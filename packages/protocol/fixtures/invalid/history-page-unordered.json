@@ -1,0 +1,14 @@
+{
+  "deviceId": "philcoino-c3-a1b2c3",
+  "bootId": "00112233445566778899aabbccddeeff",
+  "capturedAtUptimeMs": 184220,
+  "oldestSequence": 1,
+  "latestSequence": 2,
+  "nextCursor": { "bootId": "00112233445566778899aabbccddeeff", "afterSequence": 1 },
+  "hasMore": false,
+  "continuity": "initial",
+  "samples": [
+    { "sequence": 2, "uptimeMs": 184000, "boilerTemperatureC": 93, "brewTargetC": 93, "steamTargetC": 115, "activeMode": "brew", "heaterEnabled": true, "heaterActive": false, "pumpActive": false, "machineStatus": "ready", "faultCode": null },
+    { "sequence": 1, "uptimeMs": 183000, "boilerTemperatureC": 92.75, "brewTargetC": 93, "steamTargetC": 115, "activeMode": "brew", "heaterEnabled": true, "heaterActive": true, "pumpActive": false, "machineStatus": "heating", "faultCode": null }
+  ]
+}

@@ -70,6 +70,7 @@ import {
   downsampleTemperatureHistory,
   formatHistoryDurationMs,
   isTemperatureHistoryGap,
+  isLatestHistoryPageOffset,
   LIVE_HISTORY_WINDOW_MS,
   temperatureHistoryWindows,
   type TemperatureHistorySample,
@@ -180,6 +181,7 @@ export function DashboardScreen({
     freshness,
     historyRepository,
     historyExporter,
+    client,
   );
   const clearTemperatureHistory = temperatureHistory.clear;
   const [dashboardPage, setDashboardPage] =
@@ -498,6 +500,7 @@ export function DashboardScreen({
                   history={temperatureHistory.samples}
                   loading={temperatureHistory.status === "loading"}
                   onExport={() => void temperatureHistory.exportAll()}
+                  syncStatus={temperatureHistory.syncStatus}
                 />
                 {mobileProfiles !== null && machineProfiles !== null ? (
                   <ExtractionPreview
@@ -552,6 +555,7 @@ export function DashboardScreen({
                 history={temperatureHistory.samples}
                 loading={temperatureHistory.status === "loading"}
                 onExport={() => void temperatureHistory.exportAll()}
+                syncStatus={temperatureHistory.syncStatus}
               />
             ) : null}
           </>
@@ -789,12 +793,14 @@ function TemperatureCurve({
   history,
   loading,
   onExport,
+  syncStatus,
 }: {
   error: "export" | "storage" | null;
   exporting: boolean;
   history: TemperatureHistorySample[];
   loading: boolean;
   onExport: () => void;
+  syncStatus: "idle" | "restoring" | "warning";
 }) {
   const [view, setView] = useState<"live" | "today">("live");
   const displayHistory = useMemo(
@@ -885,6 +891,23 @@ function TemperatureCurve({
       {canScrollHistory ? (
         <Text selectable style={styles.historyScrollHint}>
           {translate("dashboard.historyScrollHint")}
+        </Text>
+      ) : null}
+
+      {syncStatus !== "idle" ? (
+        <Text
+          accessibilityLiveRegion="polite"
+          selectable
+          style={
+            syncStatus === "warning"
+              ? styles.historyError
+              : styles.historyScrollHint
+          }>
+          {translate(
+            syncStatus === "warning"
+              ? "dashboard.historySyncWarning"
+              : "dashboard.historySyncRestoring",
+          )}
         </Text>
       ) : null}
 
@@ -993,6 +1016,7 @@ function PaginatedLineGraph({
   const list = useRef<FlatList<TemperatureHistoryWindow>>(null);
   const followsLatest = useRef(true);
   const hasPositionedInitialWindow = useRef(false);
+  const viewedWindowStartMs = useRef<number | null>(null);
   const [viewportWidth, setViewportWidth] = useState(0);
   const windows = useMemo(() => temperatureHistoryWindows(samples), [samples]);
 
@@ -1014,7 +1038,7 @@ function PaginatedLineGraph({
           })}
           horizontal
           initialNumToRender={2}
-          keyExtractor={(_, index) => `history-window-${index}`}
+          keyExtractor={(item) => `history-window-${item.startMs}`}
           maxToRenderPerBatch={3}
           onContentSizeChange={() => {
             if (
@@ -1023,6 +1047,17 @@ function PaginatedLineGraph({
             ) {
               list.current?.scrollToEnd({ animated: false });
               hasPositionedInitialWindow.current = true;
+              viewedWindowStartMs.current = windows.at(-1)?.startMs ?? null;
+              return;
+            }
+            const viewedIndex = windows.findIndex(
+              (window) => window.startMs === viewedWindowStartMs.current,
+            );
+            if (viewedIndex >= 0) {
+              list.current?.scrollToOffset({
+                animated: false,
+                offset: viewedIndex * viewportWidth,
+              });
             }
           }}
           onScroll={(event) => {
@@ -1031,11 +1066,20 @@ function PaginatedLineGraph({
             }
             const { contentOffset, contentSize, layoutMeasurement } =
               event.nativeEvent;
-            followsLatest.current =
-              contentSize.width -
-                layoutMeasurement.width -
-                contentOffset.x <=
-              8;
+            followsLatest.current = isLatestHistoryPageOffset(
+              contentOffset.x,
+              contentSize.width,
+              layoutMeasurement.width,
+            );
+            const viewedIndex = Math.max(
+              0,
+              Math.min(
+                windows.length - 1,
+                Math.round(contentOffset.x / layoutMeasurement.width),
+              ),
+            );
+            viewedWindowStartMs.current =
+              windows[viewedIndex]?.startMs ?? null;
           }}
           pagingEnabled
           ref={list}
@@ -1043,7 +1087,7 @@ function PaginatedLineGraph({
             const windowSamples = samples.filter(
               (sample) =>
                 sample.recordedAtMs >= item.startMs &&
-                sample.recordedAtMs <= item.endMs,
+                sample.recordedAtMs < item.endMs,
             );
             return (
               <View style={{ height: "100%", width: viewportWidth }}>
@@ -1180,8 +1224,8 @@ function chartActivityBands(
   samples: TemperatureHistorySample[],
   points: ChartPoint[],
   isActive: (sample: TemperatureHistorySample) => boolean,
-): Array<{ key: number; left: number; width: number }> {
-  const bands: Array<{ key: number; left: number; width: number }> = [];
+): { key: number; left: number; width: number }[] {
+  const bands: { key: number; left: number; width: number }[] = [];
   let startIndex: number | null = null;
 
   for (let index = 0; index < samples.length; index += 1) {

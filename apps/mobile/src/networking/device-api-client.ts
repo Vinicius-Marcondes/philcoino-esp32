@@ -7,6 +7,7 @@ import {
   HeaterSettingsRequestSchema,
   HeaterSettingsResponseSchema,
   HealthResponseSchema,
+  HistoryPageSchema,
   MachineStateSchema,
   MachineStateV2Schema,
   ModeRequestSchema,
@@ -25,6 +26,8 @@ import {
   type HeaterSettingsRequest,
   type HeaterSettingsResponse,
   type HealthResponse,
+  type HistoryCursor,
+  type HistoryPage,
   type MachineState,
   type MachineStateV2,
   type ModeRequest,
@@ -124,6 +127,22 @@ export class DeviceApiClient {
     return this.request(
       "/api/v2/state",
       MachineStateV2Schema,
+      { authenticated: true, errorVersion: "v2" },
+      options,
+    );
+  }
+
+  getHistory(
+    cursor?: HistoryCursor,
+    options: RequestOptions = {},
+  ): Promise<HistoryPage> {
+    const query =
+      cursor === undefined
+        ? ""
+        : `?bootId=${encodeURIComponent(cursor.bootId)}&afterSequence=${cursor.afterSequence}`;
+    return this.request(
+      `/api/v2/history${query}`,
+      HistoryPageSchema,
       { authenticated: true, errorVersion: "v2" },
       options,
     );

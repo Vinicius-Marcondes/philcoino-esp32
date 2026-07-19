@@ -4,8 +4,10 @@ namespace philcoino::networking {
 
 const ApiRouteDescriptor* find_api_route(HttpMethod method,
                                          const std::string& path) {
+  const auto query = path.find('?');
+  const auto route_path = path.substr(0, query);
   for (const auto& route : kApiRoutes) {
-    if (route.method == method && path == route.path) {
+    if (route.method == method && route_path == route.path) {
       return &route;
     }
   }

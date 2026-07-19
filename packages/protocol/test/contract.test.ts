@@ -31,6 +31,11 @@ import {
   HeaterSettingsRequestSchema,
   HeaterSettingsResponseSchema,
   HealthResponseSchema,
+  HISTORY_PAGE_SIZE,
+  HistoryContinuitySchema,
+  HistoryCursorSchema,
+  HistoryPageSchema,
+  HistorySampleSchema,
   IdempotencyKeySchema,
   IdleCooldownStateSchema,
   IdleExtractionStateSchema,
@@ -87,6 +92,7 @@ const openApi = JSON.parse(
 
 const documentedSchemas: Record<string, ZodType> = {
   HealthResponse: HealthResponseSchema,
+  HistoryPage: HistoryPageSchema,
   DeviceResponse: DeviceResponseSchema,
   MachineState: MachineStateSchema,
   TemperatureSettingsRequest: TemperatureSettingsRequestSchema,
@@ -116,6 +122,7 @@ const documentedSchemas: Record<string, ZodType> = {
 
 const validFixtures = [
   ["valid/health.json", HealthResponseSchema],
+  ["valid/history-page.json", HistoryPageSchema],
   ["valid/device.json", DeviceResponseSchema],
   ["valid/state.json", MachineStateSchema],
   ["valid/state-fault.json", MachineStateSchema],
@@ -154,6 +161,7 @@ const validFixtures = [
 
 const invalidFixtures = [
   ["invalid/device-api-version.json", DeviceResponseSchema],
+  ["invalid/history-page-unordered.json", HistoryPageSchema],
   ["invalid/state-extra-property.json", MachineStateSchema],
   ["invalid/state-legacy-temperatures.json", MachineStateSchema],
   ["invalid/state-fault-heater-active.json", MachineStateSchema],
@@ -240,6 +248,7 @@ describe("documented OpenAPI examples", () => {
   test("examples remain aligned with valid fixtures", async () => {
     const fixturesBySchema = {
       HealthResponse: [await fixture("valid/health.json")],
+      HistoryPage: [await fixture("valid/history-page.json")],
       DeviceResponse: [await fixture("valid/device.json")],
       MachineState: [
         await fixture("valid/state.json"),
@@ -627,8 +636,56 @@ describe("API v2 thermal workflow boundaries", () => {
       "/api/v2/cooldowns/stop",
       "/api/v2/extractions/start",
       "/api/v2/extractions/stop",
+      "/api/v2/history",
       "/api/v2/profiles",
       "/api/v2/state",
     ]);
+  });
+});
+
+describe("API v2 rolling history", () => {
+  test("defines bounded strict cursor and continuity values", () => {
+    expect(HISTORY_PAGE_SIZE).toBe(60);
+    expect(HistoryContinuitySchema.options).toEqual([
+      "initial",
+      "continuous",
+      "truncated",
+      "reset",
+    ]);
+    expect(
+      HistoryCursorSchema.safeParse({
+        bootId: "00112233445566778899aabbccddeeff",
+        afterSequence: 2,
+      }).success,
+    ).toBe(true);
+    expect(
+      HistoryCursorSchema.safeParse({ afterSequence: 2 }).success,
+    ).toBe(false);
+  });
+
+  test("rejects fault and page-order inconsistencies", () => {
+    expect(
+      HistorySampleSchema.safeParse({
+        sequence: 3,
+        uptimeMs: 3_000,
+        boilerTemperatureC: 93,
+        brewTargetC: 93,
+        steamTargetC: 115,
+        activeMode: "brew",
+        heaterEnabled: true,
+        heaterActive: true,
+        pumpActive: false,
+        machineStatus: "fault",
+        faultCode: "sensor_failure",
+      }).success,
+    ).toBe(false);
+  });
+
+  test("documents the history endpoint as additive and protected", () => {
+    const operation = openApi.paths["/api/v2/history"]?.get;
+    expect(operation?.security).toEqual([{ bearerAuth: [] }]);
+    expect(operation?.responses).toHaveProperty("400");
+    expect(operation?.responses).toHaveProperty("401");
+    expect(operation?.responses).toHaveProperty("500");
   });
 });

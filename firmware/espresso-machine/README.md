@@ -10,7 +10,9 @@ ESP-IDF C++ firmware for the ESP32-C3 Super Mini. It owns sensor sampling, persi
 - `components/firmware_config`: identity, pins, target/safety constants, timeouts, and diagnostic flags.
 - `components/peripherals`: pure MAX6675, NVS target/profile, independent fail-off heater/pump command, and SSD1306 policies plus ESP-IDF adapters.
 - `components/control`: pure temperature controller, readiness, duty windows, timeouts, and fault latching.
-- `components/networking`: bounded JSON syntax, typed machine/workflow codecs, response serializers, authoritative route/access metadata, API orchestration, and ESP-IDF Wi-Fi/HTTP/mDNS adapters.
+- `components/networking`: bounded JSON syntax, typed machine/workflow codecs,
+  compact 600-sample RAM history, response serializers, authoritative
+  route/access metadata, API orchestration, and ESP-IDF Wi-Fi/HTTP/mDNS adapters.
 - `main`: fail-off startup ordering, shared-object wiring, control loop, display, mutex, and background networking.
 - `host-tests`: native C++ tests and protocol contract capture validation.
 
@@ -49,7 +51,11 @@ bun run firmware/espresso-machine/host-tests/validate_contract.ts \
   /tmp/philcoino-firmware-contract
 ```
 
-The suite covers identity/configuration, MAX6675 decoding, target/profile persistence policy, fail-off heater/pump command behavior, OLED serialization, control transitions/timeouts/faults, bearer/API parsing, and contract response captures. It does not exercise ESP-IDF scheduling, physical sensors, GPIO, SSRs, or thermal behavior.
+The suite covers identity/configuration, MAX6675 decoding, target/profile
+persistence policy, fail-off heater/pump command behavior, OLED serialization,
+control transitions/timeouts/faults, the bounded history ring and cursor codec,
+bearer/API parsing, and contract response captures. It does not exercise
+ESP-IDF scheduling, physical sensors, GPIO, SSRs, or thermal behavior.
 
 For deterministic malformed-input coverage under AddressSanitizer and
 UndefinedBehaviorSanitizer:

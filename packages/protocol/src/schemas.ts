@@ -13,6 +13,8 @@ export const COOLDOWN_STABILIZATION_MS = 5_000;
 export const COOLDOWN_MAX_DURATION_MS =
   COOLDOWN_PUMP_LIMIT_MS + COOLDOWN_STABILIZATION_MS;
 export const PROFILE_NAME_MAX_LENGTH = 12;
+export const HISTORY_PAGE_SIZE = 60;
+export const HISTORY_RETENTION_SAMPLES = 600;
 export const PROFILE_SLOT_IDS = [
   "profile-1",
   "profile-2",
@@ -523,6 +525,99 @@ export const MachineStateV2Schema = z
     }
   });
 
+export const HistoryBootIdSchema = z
+  .string()
+  .length(32)
+  .regex(/^[0-9a-f]{32}$/);
+export const HistorySequenceSchema = z.number().int().nonnegative().safe();
+export const HistoryContinuitySchema = z.enum([
+  "initial",
+  "continuous",
+  "truncated",
+  "reset",
+]);
+export const HistoryCursorSchema = z.strictObject({
+  bootId: HistoryBootIdSchema,
+  afterSequence: HistorySequenceSchema,
+});
+
+const historySampleShape = {
+  sequence: HistorySequenceSchema,
+  uptimeMs: z.number().int().nonnegative().safe(),
+  boilerTemperatureC: z.number().finite(),
+  brewTargetC: BrewTargetSchema,
+  steamTargetC: SteamTargetSchema,
+  activeMode: ModeSchema,
+  heaterEnabled: z.boolean(),
+  heaterActive: z.boolean(),
+  pumpActive: z.boolean(),
+};
+
+export const HistorySampleSchema = z.discriminatedUnion("machineStatus", [
+  z.strictObject({
+    ...historySampleShape,
+    machineStatus: z.literal("heating"),
+    faultCode: z.null(),
+  }),
+  z.strictObject({
+    ...historySampleShape,
+    machineStatus: z.literal("ready"),
+    faultCode: z.null(),
+  }),
+  z.strictObject({
+    ...historySampleShape,
+    machineStatus: z.literal("fault"),
+    heaterActive: z.literal(false),
+    faultCode: FaultCodeSchema,
+  }),
+]);
+
+export const HistoryPageSchema = z
+  .strictObject({
+    deviceId: DeviceResponseSchema.shape.deviceId,
+    bootId: HistoryBootIdSchema,
+    capturedAtUptimeMs: z.number().int().nonnegative().safe(),
+    oldestSequence: HistorySequenceSchema.nullable(),
+    latestSequence: HistorySequenceSchema.nullable(),
+    nextCursor: HistoryCursorSchema,
+    hasMore: z.boolean(),
+    continuity: HistoryContinuitySchema,
+    samples: z.array(HistorySampleSchema).max(HISTORY_PAGE_SIZE),
+  })
+  .superRefine((page, context) => {
+    if (page.nextCursor.bootId !== page.bootId) {
+      context.addIssue({
+        code: "custom",
+        path: ["nextCursor", "bootId"],
+        message: "The next cursor must use the page boot ID.",
+      });
+    }
+    if ((page.oldestSequence === null) !== (page.latestSequence === null)) {
+      context.addIssue({
+        code: "custom",
+        path: ["oldestSequence"],
+        message: "Oldest and latest sequence must both be null or both exist.",
+      });
+    }
+    for (let index = 1; index < page.samples.length; index += 1) {
+      if (page.samples[index].sequence <= page.samples[index - 1].sequence) {
+        context.addIssue({
+          code: "custom",
+          path: ["samples", index, "sequence"],
+          message: "History samples must be strictly sequence ordered.",
+        });
+      }
+    }
+    const last = page.samples.at(-1);
+    if (last !== undefined && page.nextCursor.afterSequence !== last.sequence) {
+      context.addIssue({
+        code: "custom",
+        path: ["nextCursor", "afterSequence"],
+        message: "The next cursor must acknowledge the last returned sample.",
+      });
+    }
+  });
+
 export const StartExtractionRequestSchema = z.strictObject({
   idempotencyKey: IdempotencyKeySchema,
   selection: ExtractionSelectionSchema,
@@ -626,6 +721,12 @@ export type IdleCooldownState = z.infer<typeof IdleCooldownStateSchema>;
 export type ActiveCooldownState = z.infer<typeof ActiveCooldownStateSchema>;
 export type CooldownState = z.infer<typeof CooldownStateSchema>;
 export type MachineStateV2 = z.infer<typeof MachineStateV2Schema>;
+export type HistoryBootId = z.infer<typeof HistoryBootIdSchema>;
+export type HistorySequence = z.infer<typeof HistorySequenceSchema>;
+export type HistoryContinuity = z.infer<typeof HistoryContinuitySchema>;
+export type HistoryCursor = z.infer<typeof HistoryCursorSchema>;
+export type HistorySample = z.infer<typeof HistorySampleSchema>;
+export type HistoryPage = z.infer<typeof HistoryPageSchema>;
 export type StartExtractionRequest = z.infer<
   typeof StartExtractionRequestSchema
 >;
