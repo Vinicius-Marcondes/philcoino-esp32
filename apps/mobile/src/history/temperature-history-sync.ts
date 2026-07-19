@@ -74,7 +74,7 @@ export async function synchronizeTemperatureHistory({
       );
     }
 
-    signal?.throwIfAborted();
+    throwIfHistorySyncAborted(signal);
     const samples = mapHistoryPage(
       page,
       deviceId,
@@ -122,8 +122,17 @@ async function requestHistoryPage(
     if (!(error instanceof ApiClientError) || error.kind !== "http") {
       throw error;
     }
-    signal?.throwIfAborted();
+    throwIfHistorySyncAborted(signal);
     return await client.getHistory(cursor ?? undefined, { signal });
+  }
+}
+
+function throwIfHistorySyncAborted(signal: AbortSignal | undefined): void {
+  if (signal?.aborted) {
+    throw new ApiClientError(
+      "cancelled",
+      "The temperature history request was cancelled.",
+    );
   }
 }
 

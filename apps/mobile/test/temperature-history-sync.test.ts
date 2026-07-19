@@ -116,6 +116,29 @@ describe("temperature history synchronization", () => {
     expect(requests).toBe(2);
   });
 
+  test("does not require AbortSignal.throwIfAborted on native", async () => {
+    const repository = new InMemoryTemperatureHistoryRepository();
+    const nativeStyleSignal = { aborted: false } as AbortSignal;
+
+    await expect(
+      synchronizeTemperatureHistory({
+        client: {
+          async getHistory() {
+            return page([sample(1, 1_000)], 1, false, "initial");
+          },
+        },
+        deviceId: "machine-1",
+        now: () => new Date(2026, 6, 18, 12).getTime(),
+        repository,
+        signal: nativeStyleSignal,
+      }),
+    ).resolves.toEqual({ pagesCommitted: 1, samplesCommitted: 1 });
+    expect(await repository.loadSyncCursor("machine-1")).toEqual({
+      afterSequence: 1,
+      bootId,
+    });
+  });
+
   test("marks reset and truncated starts as explicit graph gaps", () => {
     for (const continuity of ["reset", "truncated"] as const) {
       const mapped = mapHistoryPage(

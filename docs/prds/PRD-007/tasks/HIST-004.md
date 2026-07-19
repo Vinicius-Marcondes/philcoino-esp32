@@ -44,9 +44,12 @@ Backfill device history into current-day mobile storage without blocking live be
 - Recovered pages and their cursors commit in one exclusive SQLite transaction;
   retrying the same boot/sequence is idempotent even when its anchored phone
   timestamp changes.
+- Cancellation uses the native-safe `AbortSignal.aborted` property so a valid
+  history response is not misreported as a storage failure on React Native
+  runtimes without `throwIfAborted()`.
 - HTTP 404 silently retains foreground-only history; other history failures
   remain graph-scoped and do not change polling, controls, or mutations.
-- Mobile typecheck, lint, and 132 tests with 861 expectations pass, including
+- Mobile typecheck, lint, and 133 tests with 863 expectations pass, including
   partial-page failure, cursor restart, simulator pagination, and reboot reset.
 - A transient ESP32 HTTP rejection is retried once before showing its
   device-specific warning; polling and controls remain independent.
