@@ -112,11 +112,11 @@ export function liveTemperatureHistory(
   if (latest === undefined) {
     return [];
   }
-  const startMs = Math.floor(latest.recordedAtMs / windowMs) * windowMs;
+  const startMs = latest.recordedAtMs - windowMs;
   return samples.filter(
     (sample) =>
-      sample.recordedAtMs >= startMs &&
-      sample.recordedAtMs < startMs + windowMs,
+      sample.recordedAtMs > startMs &&
+      sample.recordedAtMs <= latest.recordedAtMs,
   );
 }
 
@@ -135,12 +135,9 @@ export function temperatureHistoryWindows(
     return [];
   }
 
-  const firstWindowStartMs =
-    Math.floor(first.recordedAtMs / windowMs) * windowMs;
-  const latestWindowStartMs =
-    Math.floor(last.recordedAtMs / windowMs) * windowMs;
-  const windowCount =
-    Math.floor((latestWindowStartMs - firstWindowStartMs) / windowMs) + 1;
+  const durationMs = Math.max(0, last.recordedAtMs - first.recordedAtMs);
+  const windowCount = Math.floor(durationMs / windowMs) + 1;
+  const firstWindowStartMs = last.recordedAtMs - windowCount * windowMs;
 
   return Array.from({ length: windowCount }, (_, index) => ({
     endMs: firstWindowStartMs + (index + 1) * windowMs,

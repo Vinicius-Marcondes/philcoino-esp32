@@ -5,12 +5,15 @@ import { InMemoryTemperatureHistoryRepository } from "../src/history/temperature
 import {
   mapHistoryPage,
   synchronizeTemperatureHistory,
+  temperatureHistorySyncWarning,
+  TemperatureHistoryProtocolError,
 } from "../src/history/temperature-history-sync";
 import {
   createTemperatureHistorySample,
   isTemperatureHistoryGap,
 } from "../src/history/temperature-history";
 import { DeviceApiClient } from "../src/networking/device-api-client";
+import { ApiClientError } from "../src/networking/api-client-error";
 import {
   createSimulator,
   DEFAULT_SIMULATOR_TOKEN,
@@ -89,6 +92,30 @@ describe("temperature history synchronization", () => {
     });
   });
 
+  test("retries one transient ESP32 history rejection", async () => {
+    const repository = new InMemoryTemperatureHistoryRepository();
+    let requests = 0;
+    await expect(
+      synchronizeTemperatureHistory({
+        client: {
+          async getHistory() {
+            requests += 1;
+            if (requests === 1) {
+              throw new ApiClientError("http", "temporarily busy", {
+                status: 500,
+              });
+            }
+            return page([sample(1, 1_000)], 1, false, "initial");
+          },
+        },
+        deviceId: "machine-1",
+        now: () => new Date(2026, 6, 18, 12).getTime(),
+        repository,
+      }),
+    ).resolves.toEqual({ pagesCommitted: 1, samplesCommitted: 1 });
+    expect(requests).toBe(2);
+  });
+
   test("marks reset and truncated starts as explicit graph gaps", () => {
     for (const continuity of ["reset", "truncated"] as const) {
       const mapped = mapHistoryPage(
@@ -100,6 +127,21 @@ describe("temperature history synchronization", () => {
       expect(mapped[0].startsAfterHistoryGap).toBe(true);
       expect(mapped[1].startsAfterHistoryGap).toBe(false);
     }
+  });
+
+  test("distinguishes network, device, protocol, and storage warnings", () => {
+    expect(
+      temperatureHistorySyncWarning(new ApiClientError("timeout", "timeout")),
+    ).toBe("network");
+    expect(
+      temperatureHistorySyncWarning(new ApiClientError("http", "rejected")),
+    ).toBe("device");
+    expect(
+      temperatureHistorySyncWarning(
+        new TemperatureHistoryProtocolError("wrong device"),
+      ),
+    ).toBe("protocol");
+    expect(temperatureHistorySyncWarning(new Error("sqlite"))).toBe("storage");
   });
 
   test("backfills paginated simulator history and resumes across a reboot", async () => {

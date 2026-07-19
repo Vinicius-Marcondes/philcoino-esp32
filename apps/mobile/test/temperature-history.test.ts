@@ -134,8 +134,8 @@ describe("temperature history", () => {
       pumpActive: index >= 270 && index < 290,
     }));
     const live = liveTemperatureHistory(samples);
-    expect(live[0].recordedAtMs).toBe(start + 480_000);
-    expect(live).toHaveLength(20);
+    expect(live[0].recordedAtMs).toBe(start + 470_000);
+    expect(live).toHaveLength(30);
 
     const today = downsampleTemperatureHistory(samples, 40);
     expect(today.some((entry) => entry.boilerTemperatureC === 20)).toBe(true);
@@ -169,16 +169,16 @@ describe("temperature history", () => {
     const windows = temperatureHistoryWindows(samples);
     expect(windows).toHaveLength(17);
     expect(windows.at(-1)).toEqual({
-      endMs: start + 510_000,
-      startMs: start + 480_000,
+      endMs: start + 499_000,
+      startMs: start + 469_000,
     });
 
     const latestWindow = windows.at(-1)!;
     expect(
       samples.filter(
         (entry) =>
-          entry.recordedAtMs >= latestWindow.startMs &&
-          entry.recordedAtMs < latestWindow.endMs,
+          entry.recordedAtMs > latestWindow.startMs &&
+          entry.recordedAtMs <= latestWindow.endMs,
       ),
     ).toEqual(liveTemperatureHistory(samples));
   });

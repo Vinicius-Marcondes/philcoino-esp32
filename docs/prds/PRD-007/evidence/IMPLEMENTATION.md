@@ -15,12 +15,14 @@ Date: 2026-07-18
   overflow, reboot, cursor validation, and command/status/fault context.
 - After fresh combined state, mobile starts an abortable history session without
   delaying live publication, polling, or control mutations. HTTP 404 silently
-  retains foreground-only history; other failures remain localized to the graph.
+  retains foreground-only history. A transient device rejection is retried
+  once; remaining network, device, protocol, or storage failures are identified
+  separately and remain localized to the graph.
 - The first page request/response midpoint anchors firmware uptime to phone UTC.
   Each SQLite page and cursor commit atomically. Nullable boot/sequence columns
   plus a partial unique index deduplicate device rows, and overlapping
   phone-origin rows are replaced.
-- Live uses fixed consecutive 30-second windows, opens newest, remains
+- Live uses populated rolling 30-second windows, opens newest, remains
   horizontally pageable without a visible scrollbar, follows only at the
   latest offset, and preserves an inspected older window when earlier pages are
   inserted. Today downsampling and CSV columns remain unchanged.
@@ -32,7 +34,7 @@ Date: 2026-07-18
 | OpenAPI | Syntax, paths, security, and local references valid |
 | Protocol | Typecheck pass; 123 tests / 247 expectations pass |
 | Simulator | Typecheck pass; 65 tests / 410 expectations pass |
-| Mobile | Typecheck and lint pass; 129 tests / 850 expectations pass |
+| Mobile | Typecheck and lint pass; 131 tests / 859 expectations pass |
 | Native firmware host | CTest 6/6 pass |
 | ASan/UBSan firmware host | CTest 6/6 pass |
 | Independent firmware captures | 30/30 validate |

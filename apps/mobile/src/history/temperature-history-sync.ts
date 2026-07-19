@@ -2,6 +2,20 @@ import type { HistoryCursor, HistoryPage } from "@philcoino/protocol";
 
 import type { RecoveredHistoryPage } from "./temperature-history-repository";
 import type { TemperatureHistorySample } from "./temperature-history";
+import { ApiClientError } from "../networking/api-client-error";
+
+export type TemperatureHistorySyncWarning =
+  | "device"
+  | "network"
+  | "protocol"
+  | "storage";
+
+export class TemperatureHistoryProtocolError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "TemperatureHistoryProtocolError";
+  }
+}
 
 export interface TemperatureHistoryClient {
   getHistory(
@@ -42,7 +56,7 @@ export async function synchronizeTemperatureHistory({
 }: TemperatureHistorySyncOptions): Promise<TemperatureHistorySyncResult> {
   let cursor = await repository.loadSyncCursor(deviceId);
   let requestStartedAtMs = now();
-  let page = await client.getHistory(cursor ?? undefined, { signal });
+  let page = await requestHistoryPage(client, cursor, signal);
   let responseReceivedAtMs = now();
   let anchorPhoneMs = Math.round(
     (requestStartedAtMs + responseReceivedAtMs) / 2,
@@ -55,7 +69,9 @@ export async function synchronizeTemperatureHistory({
 
   while (true) {
     if (page.deviceId !== deviceId) {
-      throw new Error("History response belongs to a different device.");
+      throw new TemperatureHistoryProtocolError(
+        "History response belongs to a different device.",
+      );
     }
 
     signal?.throwIfAborted();
@@ -82,7 +98,7 @@ export async function synchronizeTemperatureHistory({
       return { pagesCommitted, samplesCommitted };
     }
     requestStartedAtMs = now();
-    page = await client.getHistory(cursor, { signal });
+    page = await requestHistoryPage(client, cursor, signal);
     responseReceivedAtMs = now();
     if (page.bootId !== anchorBootId) {
       anchorBootId = page.bootId;
@@ -93,6 +109,43 @@ export async function synchronizeTemperatureHistory({
       latestSequenceAtStart = page.latestSequence;
     }
   }
+}
+
+async function requestHistoryPage(
+  client: TemperatureHistoryClient,
+  cursor: HistoryCursor | null,
+  signal?: AbortSignal,
+): Promise<HistoryPage> {
+  try {
+    return await client.getHistory(cursor ?? undefined, { signal });
+  } catch (error) {
+    if (!(error instanceof ApiClientError) || error.kind !== "http") {
+      throw error;
+    }
+    signal?.throwIfAborted();
+    return await client.getHistory(cursor ?? undefined, { signal });
+  }
+}
+
+export function temperatureHistorySyncWarning(
+  error: unknown,
+): TemperatureHistorySyncWarning {
+  if (error instanceof TemperatureHistoryProtocolError) {
+    return "protocol";
+  }
+  if (error instanceof ApiClientError) {
+    if (error.kind === "protocol") {
+      return "protocol";
+    }
+    if (
+      error.kind === "offline" ||
+      error.kind === "timeout"
+    ) {
+      return "network";
+    }
+    return "device";
+  }
+  return "storage";
 }
 
 export function mapHistoryPage(
