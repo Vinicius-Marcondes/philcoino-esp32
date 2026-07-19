@@ -34,16 +34,17 @@ Render recovered history in horizontally scrollable thirty-second Live windows w
 
 ## Completion Evidence
 
-- Live uses stable consecutive thirty-second clock boundaries and opens at the
-  newest window.
-- Stable window keys plus remembered offsets preserve an older inspected page
+- Live uses populated rolling thirty-second windows and opens at the newest
+  window, avoiding an empty-looking page at each clock boundary.
+- Stable page-distance keys plus user-driven offset tracking preserve an older inspected page
   when backfill inserts earlier pages; only a latest-following user scrolls to
   a newly created latest page.
 - Horizontal paging and the hidden scrollbar remain enabled for multiple pages.
 - Gap detection now considers explicit truncation/reset starts, boot changes,
   sequence skips, uptime discontinuity, timestamp discontinuity, and device ID.
 - Added localized English and Brazilian Portuguese restoring/warning copy;
-  Today downsampling and the existing CSV schema are unchanged.
+  warnings now distinguish connection, device rejection, protocol validation,
+  and phone storage failures. Today downsampling and CSV remain unchanged.
 
 ## Verification Strategy
 

@@ -8,6 +8,8 @@ import type { TemperatureHistoryRepository } from "@/src/history/temperature-his
 import {
   synchronizeTemperatureHistory,
   type TemperatureHistoryClient,
+  temperatureHistorySyncWarning,
+  type TemperatureHistorySyncWarning,
 } from "@/src/history/temperature-history-sync";
 import {
   appendTodaySample,
@@ -28,6 +30,7 @@ export interface TemperatureHistoryState {
   samples: TemperatureHistorySample[];
   status: TemperatureHistoryStatus;
   syncStatus: TemperatureHistorySyncStatus;
+  syncWarning: TemperatureHistorySyncWarning | null;
 }
 
 export function useTemperatureHistory(
@@ -47,6 +50,8 @@ export function useTemperatureHistory(
     useState<TemperatureHistoryStatus>("loading");
   const [syncStatus, setSyncStatus] =
     useState<TemperatureHistorySyncStatus>("idle");
+  const [syncWarning, setSyncWarning] =
+    useState<TemperatureHistorySyncWarning | null>(null);
   const generation = useRef(0);
   const lastRecordedRevision = useRef(0);
   const operationQueue = useRef<Promise<void>>(Promise.resolve());
@@ -98,6 +103,7 @@ export function useTemperatureHistory(
     const controller = new AbortController();
     const currentGeneration = generation.current;
     setSyncStatus("restoring");
+    setSyncWarning(null);
     const synchronize = async () => {
       await operationQueue.current;
       await synchronizeTemperatureHistory({
@@ -134,6 +140,7 @@ export function useTemperatureHistory(
         !controller.signal.aborted
       ) {
         setSyncStatus("idle");
+        setSyncWarning(null);
       }
     };
     void synchronize().catch((caught: unknown) => {
@@ -148,9 +155,11 @@ export function useTemperatureHistory(
         (caught.kind === "not-found" || caught.kind === "cancelled")
       ) {
         setSyncStatus("idle");
+        setSyncWarning(null);
         return;
       }
       setSyncStatus("warning");
+      setSyncWarning(temperatureHistorySyncWarning(caught));
     });
 
     return () => controller.abort();
@@ -245,5 +254,6 @@ export function useTemperatureHistory(
     samples,
     status,
     syncStatus,
+    syncWarning,
   };
 }

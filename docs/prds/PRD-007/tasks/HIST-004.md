@@ -43,8 +43,10 @@ Backfill device history into current-day mobile storage without blocking live be
   and current-local-day pruning unchanged.
 - HTTP 404 silently retains foreground-only history; other history failures
   remain graph-scoped and do not change polling, controls, or mutations.
-- Mobile typecheck, lint, and 129 tests with 850 expectations pass, including
+- Mobile typecheck, lint, and 131 tests with 859 expectations pass, including
   partial-page failure, cursor restart, simulator pagination, and reboot reset.
+- A transient ESP32 HTTP rejection is retried once before showing its
+  device-specific warning; polling and controls remain independent.
 
 ## Verification Strategy
 
