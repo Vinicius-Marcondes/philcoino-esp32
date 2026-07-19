@@ -30,10 +30,14 @@ Firmware is not a Bun workspace. Do not inspect or commit generated `build`, `ma
 ## Continuous integration
 
 GitHub Actions runs `.github/workflows/ci.yml` for every pull request targeting
-`main`, every push to `main`, and manual dispatches. The workflow deliberately
-has no path filters so protocol changes always exercise every consumer. It uses
-read-only repository contents permission and cancels superseded runs for the
-same pull request or branch.
+`main`, every push to `main`, and manual dispatches. All three stable jobs run
+for every workflow invocation. The ESP-IDF job performs its target build when
+firmware, protocol, or its CI workflow changes; unrelated changes keep the
+required check present and report the target build as not applicable. Manual
+dispatches always run the target build, and an unavailable comparison revision
+falls back to the safe full build. The workflow uses read-only repository
+contents permission and cancels superseded runs for the same pull request or
+branch.
 
 The three stable status checks are:
 
@@ -42,8 +46,9 @@ The three stable status checks are:
   mobile typecheck/tests/lint;
 - `Firmware host`: sanitizer-enabled C++17 host build, all CTest targets, and
   independent validation of generated firmware contract captures;
-- `Firmware ESP-IDF`: compile/link of the complete ESP32-C3 project with
-  ESP-IDF 6.0.2.
+- `Firmware ESP-IDF`: conditional compile/link of the complete ESP32-C3 project
+  with ESP-IDF 6.0.2 for firmware-, protocol-, or CI-relevant changes, with a
+  successful not-applicable result for unrelated changes.
 
 The active `main` ruleset requires all three checks and requires the pull
 request branch to be up to date before merging. Dependency installation is

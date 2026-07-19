@@ -106,8 +106,49 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Detect ESP-IDF build relevance
+        id: esp-idf-relevance
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          should_build=false
+
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            echo "Manual dispatch always runs the pinned ESP-IDF build."
+            should_build=true
+          elif [[ -z "$BASE_SHA" || "$BASE_SHA" =~ ^0+$ ]]; then
+            echo "No trustworthy base revision is available; running the safe full build."
+            should_build=true
+          elif ! git cat-file -e "${BASE_SHA}^{commit}" || ! git cat-file -e "${HEAD_SHA}^{commit}"; then
+            echo "The comparison revisions are unavailable; running the safe full build."
+            should_build=true
+          elif ! git diff --no-renames --name-only "$BASE_SHA" "$HEAD_SHA" > "$RUNNER_TEMP/esp-idf-changed-paths"; then
+            echo "The changed paths could not be determined; running the safe full build."
+            should_build=true
+          else
+            while IFS= read -r changed_path; do
+              case "$changed_path" in
+                firmware/espresso-machine/*|packages/protocol/*|.github/workflows/ci.yml)
+                  echo "ESP-IDF-relevant change: $changed_path"
+                  should_build=true
+                  break
+                  ;;
+              esac
+            done < "$RUNNER_TEMP/esp-idf-changed-paths"
+          fi
+
+          echo "should_build=$should_build" >> "$GITHUB_OUTPUT"
+
+      - name: Skip unrelated ESP-IDF build
+        if: steps.esp-idf-relevance.outputs.should_build != 'true'
+        run: echo "No firmware, protocol, or ESP-IDF CI inputs changed; target build is not applicable."
 
       - name: Build ESP32-C3 firmware
+        if: steps.esp-idf-relevance.outputs.should_build == 'true'
         uses: espressif/esp-idf-ci-action@v1
         with:
           esp_idf_version: v6.0.2
