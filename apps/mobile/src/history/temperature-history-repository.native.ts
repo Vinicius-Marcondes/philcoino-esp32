@@ -84,12 +84,12 @@ class SQLiteTemperatureHistoryRepository
 
   async clearDevice(deviceId: string): Promise<void> {
     const database = await this.database();
-    await database.withTransactionAsync(async () => {
-      await database.runAsync(
+    await database.withExclusiveTransactionAsync(async (transaction) => {
+      await transaction.runAsync(
         "DELETE FROM temperature_history WHERE device_id = ?",
         deviceId,
       );
-      await database.runAsync(
+      await transaction.runAsync(
         "DELETE FROM temperature_history_sync WHERE device_id = ?",
         deviceId,
       );
@@ -180,11 +180,11 @@ class SQLiteTemperatureHistoryRepository
     page: RecoveredHistoryPage,
   ): Promise<void> {
     const database = await this.database();
-    await database.withTransactionAsync(async () => {
+    await database.withExclusiveTransactionAsync(async (transaction) => {
       const first = page.samples[0];
       const last = page.samples.at(-1);
       if (first !== undefined && last !== undefined) {
-        await database.runAsync(
+        await transaction.runAsync(
           `DELETE FROM temperature_history
            WHERE device_id = ?
              AND source_sequence IS NULL
@@ -201,29 +201,14 @@ class SQLiteTemperatureHistoryRepository
       }
 
       for (const sample of page.samples) {
-        await database.runAsync(
-          `INSERT INTO temperature_history (
+        await transaction.runAsync(
+          `INSERT OR REPLACE INTO temperature_history (
             device_id, recorded_at_ms, uptime_ms,
             boiler_temperature_c, brew_target_c, steam_target_c,
             active_mode, active_target_c, heater_enabled, heater_active,
             pump_active, machine_status, fault_code,
             source_boot_id, source_sequence, starts_after_history_gap
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-          ON CONFLICT(device_id, recorded_at_ms) DO UPDATE SET
-            uptime_ms = excluded.uptime_ms,
-            boiler_temperature_c = excluded.boiler_temperature_c,
-            brew_target_c = excluded.brew_target_c,
-            steam_target_c = excluded.steam_target_c,
-            active_mode = excluded.active_mode,
-            active_target_c = excluded.active_target_c,
-            heater_enabled = excluded.heater_enabled,
-            heater_active = excluded.heater_active,
-            pump_active = excluded.pump_active,
-            machine_status = excluded.machine_status,
-            fault_code = excluded.fault_code,
-            source_boot_id = excluded.source_boot_id,
-            source_sequence = excluded.source_sequence,
-            starts_after_history_gap = excluded.starts_after_history_gap`,
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           sample.deviceId,
           sample.recordedAtMs,
           sample.uptimeMs,
@@ -243,7 +228,7 @@ class SQLiteTemperatureHistoryRepository
         );
       }
 
-      await database.runAsync(
+      await transaction.runAsync(
         `INSERT INTO temperature_history_sync (device_id, boot_id, after_sequence)
          VALUES (?, ?, ?)
          ON CONFLICT(device_id) DO UPDATE SET
