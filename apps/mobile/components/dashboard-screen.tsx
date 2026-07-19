@@ -15,6 +15,8 @@ import {
   ActivityIndicator,
   Alert,
   FlatList,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -501,6 +503,7 @@ export function DashboardScreen({
                   loading={temperatureHistory.status === "loading"}
                   onExport={() => void temperatureHistory.exportAll()}
                   syncStatus={temperatureHistory.syncStatus}
+                  syncWarning={temperatureHistory.syncWarning}
                 />
                 {mobileProfiles !== null && machineProfiles !== null ? (
                   <ExtractionPreview
@@ -556,6 +559,7 @@ export function DashboardScreen({
                 loading={temperatureHistory.status === "loading"}
                 onExport={() => void temperatureHistory.exportAll()}
                 syncStatus={temperatureHistory.syncStatus}
+                syncWarning={temperatureHistory.syncWarning}
               />
             ) : null}
           </>
@@ -794,6 +798,7 @@ function TemperatureCurve({
   loading,
   onExport,
   syncStatus,
+  syncWarning,
 }: {
   error: "export" | "storage" | null;
   exporting: boolean;
@@ -801,6 +806,7 @@ function TemperatureCurve({
   loading: boolean;
   onExport: () => void;
   syncStatus: "idle" | "restoring" | "warning";
+  syncWarning: "device" | "network" | "protocol" | "storage" | null;
 }) {
   const [view, setView] = useState<"live" | "today">("live");
   const displayHistory = useMemo(
@@ -905,7 +911,13 @@ function TemperatureCurve({
           }>
           {translate(
             syncStatus === "warning"
-              ? "dashboard.historySyncWarning"
+              ? syncWarning === "protocol"
+                ? "dashboard.historySyncProtocolWarning"
+                : syncWarning === "network"
+                  ? "dashboard.historySyncNetworkWarning"
+                  : syncWarning === "device"
+                    ? "dashboard.historySyncDeviceWarning"
+                    : "dashboard.historySyncStorageWarning"
               : "dashboard.historySyncRestoring",
           )}
         </Text>
@@ -1016,9 +1028,31 @@ function PaginatedLineGraph({
   const list = useRef<FlatList<TemperatureHistoryWindow>>(null);
   const followsLatest = useRef(true);
   const hasPositionedInitialWindow = useRef(false);
-  const viewedWindowStartMs = useRef<number | null>(null);
+  const userDragging = useRef(false);
+  const viewedPageDistanceFromLatest = useRef(0);
   const [viewportWidth, setViewportWidth] = useState(0);
   const windows = useMemo(() => temperatureHistoryWindows(samples), [samples]);
+  const updateViewedOffset = (
+    event: NativeSyntheticEvent<NativeScrollEvent>,
+  ) => {
+    if (!hasPositionedInitialWindow.current) {
+      return;
+    }
+    const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
+    followsLatest.current = isLatestHistoryPageOffset(
+      contentOffset.x,
+      contentSize.width,
+      layoutMeasurement.width,
+    );
+    const viewedIndex = Math.max(
+      0,
+      Math.min(
+        windows.length - 1,
+        Math.round(contentOffset.x / layoutMeasurement.width),
+      ),
+    );
+    viewedPageDistanceFromLatest.current = windows.length - 1 - viewedIndex;
+  };
 
   return (
     <View
@@ -1038,7 +1072,9 @@ function PaginatedLineGraph({
           })}
           horizontal
           initialNumToRender={2}
-          keyExtractor={(item) => `history-window-${item.startMs}`}
+          keyExtractor={(_, index) =>
+            `history-window-${windows.length - 1 - index}`
+          }
           maxToRenderPerBatch={3}
           onContentSizeChange={() => {
             if (
@@ -1047,47 +1083,40 @@ function PaginatedLineGraph({
             ) {
               list.current?.scrollToEnd({ animated: false });
               hasPositionedInitialWindow.current = true;
-              viewedWindowStartMs.current = windows.at(-1)?.startMs ?? null;
+              viewedPageDistanceFromLatest.current = 0;
               return;
             }
-            const viewedIndex = windows.findIndex(
-              (window) => window.startMs === viewedWindowStartMs.current,
-            );
-            if (viewedIndex >= 0) {
-              list.current?.scrollToOffset({
-                animated: false,
-                offset: viewedIndex * viewportWidth,
-              });
-            }
-          }}
-          onScroll={(event) => {
-            if (!hasPositionedInitialWindow.current) {
-              return;
-            }
-            const { contentOffset, contentSize, layoutMeasurement } =
-              event.nativeEvent;
-            followsLatest.current = isLatestHistoryPageOffset(
-              contentOffset.x,
-              contentSize.width,
-              layoutMeasurement.width,
-            );
             const viewedIndex = Math.max(
               0,
-              Math.min(
-                windows.length - 1,
-                Math.round(contentOffset.x / layoutMeasurement.width),
-              ),
+              windows.length -
+                1 -
+                viewedPageDistanceFromLatest.current,
             );
-            viewedWindowStartMs.current =
-              windows[viewedIndex]?.startMs ?? null;
+            list.current?.scrollToOffset({
+              animated: false,
+              offset: viewedIndex * viewportWidth,
+            });
+          }}
+          onMomentumScrollEnd={updateViewedOffset}
+          onScroll={(event) => {
+            if (userDragging.current) {
+              updateViewedOffset(event);
+            }
+          }}
+          onScrollBeginDrag={() => {
+            userDragging.current = true;
+          }}
+          onScrollEndDrag={(event) => {
+            updateViewedOffset(event);
+            userDragging.current = false;
           }}
           pagingEnabled
           ref={list}
           renderItem={({ item }) => {
             const windowSamples = samples.filter(
               (sample) =>
-                sample.recordedAtMs >= item.startMs &&
-                sample.recordedAtMs < item.endMs,
+                sample.recordedAtMs > item.startMs &&
+                sample.recordedAtMs <= item.endMs,
             );
             return (
               <View style={{ height: "100%", width: viewportWidth }}>

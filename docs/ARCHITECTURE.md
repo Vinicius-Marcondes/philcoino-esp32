@@ -186,10 +186,10 @@ before releasing the guard and serializing JSON. A random 128-bit boot ID and
 increasing sequence distinguish reboot, continuous, reset, and truncated
 history without persisting anything to NVS.
 
-Live graph pages use fixed consecutive thirty-second clock windows. The newest
+Live graph pages use consecutive rolling thirty-second windows. The newest
 page follows incoming samples only while the user remains at the latest offset;
-an older inspected window remains selected when live or recovered samples are
-inserted. Today downsampling and raw CSV export retain their prior behavior.
+an older inspected page distance remains selected when live or recovered
+samples are inserted. Today downsampling and raw CSV export retain their prior behavior.
 Boot changes, uptime/timestamp discontinuities, sequence skips, and truncated
 starts split graph segments rather than drawing or interpolating unavailable
 intervals.
