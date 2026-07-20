@@ -225,7 +225,10 @@ export function ExtractionPreview({
             }
           />
         </View>
-        <Text selectable style={styles.commandStatus}>
+        <Text
+          accessibilityHint={translate("extractionPreview.pumpBoundary")}
+          selectable
+          style={styles.commandStatus}>
           {translate("extractionPreview.pumpCommand", {
             command: translate(
               extractionStatus.pumpCommand === "running"
@@ -233,9 +236,6 @@ export function ExtractionPreview({
                 : "extractionPreview.commandOff",
             ),
           })}
-        </Text>
-        <Text selectable style={styles.commandBoundary}>
-          {translate("extractionPreview.pumpBoundary")}
         </Text>
         {customStartBlocked ? (
           <Text accessibilityLiveRegion="polite" selectable style={styles.blockedText}>
@@ -933,7 +933,6 @@ const styles = StyleSheet.create({
     fontWeight: "900",
   },
   commandStatus: { color: "#6F2F28", fontSize: 13, fontWeight: "800" },
-  commandBoundary: { color: "#5B4037", fontSize: 13, lineHeight: 19 },
   blockedText: { color: "#9E2E24", fontSize: 14, fontWeight: "700", lineHeight: 20 },
   actionRow: { flexDirection: "row", flexWrap: "wrap", gap: 9 },
   actionButton: {

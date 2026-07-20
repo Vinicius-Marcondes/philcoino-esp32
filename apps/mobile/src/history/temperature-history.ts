@@ -8,8 +8,9 @@ import type {
 
 export const LIVE_HISTORY_WINDOW_MS = 30 * 1_000;
 export const HISTORY_GAP_THRESHOLD_MS = 2_500;
-export const TODAY_GRAPH_TARGET_POINTS = 360;
-export const WARM_GRAPH_MINIMUM_C = 70;
+const GRAPH_TICK_COUNT = 5;
+const GRAPH_MINIMUM_RANGE_C = 10;
+const GRAPH_PADDING_C = 2;
 
 export interface TemperatureHistorySample {
   activeMode: Mode;
@@ -40,9 +41,10 @@ export interface TemperatureHistoryWindow {
   startMs: number;
 }
 
-export interface TemperatureGraphBounds {
+export interface TemperatureGraphScale {
   maximumValue: number;
   minimumValue: number;
+  ticks: number[];
 }
 
 export function createTemperatureHistorySample(
@@ -175,38 +177,68 @@ export function isLatestTemperatureHistoryWindow(
   );
 }
 
-export function temperatureHistoryGraphBounds(
+export function temperatureHistoryGraphScale(
   samples: TemperatureHistorySample[],
-  view: "live" | "today",
-): TemperatureGraphBounds {
+): TemperatureGraphScale {
   if (samples.length === 0) {
-    return { maximumValue: 1, minimumValue: 0 };
+    return {
+      maximumValue: 10,
+      minimumValue: 0,
+      ticks: [0, 2.5, 5, 7.5, 10],
+    };
   }
 
   const values = samples.flatMap((sample) => [
     sample.boilerTemperatureC,
     sample.activeTargetC,
   ]);
-  const highestValue = Math.max(...values);
-  const latestBoilerTemperatureC = samples.at(-1)!.boilerTemperatureC;
-  const minimumValue =
-    view === "live" && latestBoilerTemperatureC >= WARM_GRAPH_MINIMUM_C
-      ? WARM_GRAPH_MINIMUM_C
-      : roundDownToFive(Math.min(...values) - 2);
-  const maximumValue = Math.max(
-    minimumValue + 10,
-    roundUpToFive(highestValue + 2),
+  const paddedMinimum = Math.min(...values) - GRAPH_PADDING_C;
+  const paddedMaximum = Math.max(...values) + GRAPH_PADDING_C;
+  const requiredRange = Math.max(
+    GRAPH_MINIMUM_RANGE_C,
+    paddedMaximum - paddedMinimum,
+  );
+  const tickStep = niceGraphTickStep(
+    requiredRange / (GRAPH_TICK_COUNT - 1),
+  );
+  const axisRange = tickStep * (GRAPH_TICK_COUNT - 1);
+  let minimumValue = Math.floor(paddedMinimum / tickStep) * tickStep;
+  let maximumValue = minimumValue + axisRange;
+
+  if (maximumValue < paddedMaximum) {
+    maximumValue = Math.ceil(paddedMaximum / tickStep) * tickStep;
+    minimumValue = maximumValue - axisRange;
+  }
+
+  minimumValue = normalizeGraphValue(minimumValue);
+  maximumValue = normalizeGraphValue(maximumValue);
+  const ticks = Array.from({ length: GRAPH_TICK_COUNT }, (_, index) =>
+    normalizeGraphValue(minimumValue + tickStep * index),
   );
 
-  return { maximumValue, minimumValue };
+  return { maximumValue, minimumValue, ticks };
 }
 
-function roundDownToFive(value: number): number {
-  return Math.floor(value / 5) * 5;
+export function temperatureGraphValueTopPercent(
+  value: number,
+  minimumValue: number,
+  maximumValue: number,
+): number {
+  const range = Math.max(1, maximumValue - minimumValue);
+  return Math.max(0, Math.min(100, ((maximumValue - value) / range) * 100));
 }
 
-function roundUpToFive(value: number): number {
-  return Math.ceil(value / 5) * 5;
+function niceGraphTickStep(requiredStep: number): number {
+  const magnitude = 10 ** Math.floor(Math.log10(requiredStep));
+  const normalizedStep = requiredStep / magnitude;
+  const multiplier = [1, 2, 2.5, 5, 10].find(
+    (candidate) => candidate >= normalizedStep,
+  )!;
+  return multiplier * magnitude;
+}
+
+function normalizeGraphValue(value: number): number {
+  return Number(value.toFixed(6));
 }
 
 export function isLatestHistoryPageOffset(
@@ -238,56 +270,6 @@ export function isTemperatureHistoryGap(
       next.sourceSequence !== null &&
       next.sourceSequence !== previous.sourceSequence + 1)
   );
-}
-
-export function downsampleTemperatureHistory(
-  samples: TemperatureHistorySample[],
-  targetPoints = TODAY_GRAPH_TARGET_POINTS,
-): TemperatureHistorySample[] {
-  if (samples.length <= targetPoints || targetPoints < 4) {
-    return samples;
-  }
-
-  const critical = new Set<number>([0, samples.length - 1]);
-  let minimumIndex = 0;
-  let maximumIndex = 0;
-
-  for (let index = 1; index < samples.length; index += 1) {
-    const previous = samples[index - 1];
-    const sample = samples[index];
-    if (sample.boilerTemperatureC < samples[minimumIndex].boilerTemperatureC) {
-      minimumIndex = index;
-    }
-    if (sample.boilerTemperatureC > samples[maximumIndex].boilerTemperatureC) {
-      maximumIndex = index;
-    }
-    if (
-      isTemperatureHistoryGap(previous, sample) ||
-      previous.heaterActive !== sample.heaterActive ||
-      previous.pumpActive !== sample.pumpActive ||
-      previous.activeMode !== sample.activeMode ||
-      previous.machineStatus !== sample.machineStatus ||
-      previous.faultCode !== sample.faultCode
-    ) {
-      critical.add(index - 1);
-      critical.add(index);
-    }
-  }
-
-  critical.add(minimumIndex);
-  critical.add(maximumIndex);
-
-  const desiredCount = Math.max(targetPoints, critical.size);
-  if (critical.size < desiredCount) {
-    const step = (samples.length - 1) / Math.max(1, desiredCount - 1);
-    for (let slot = 0; slot < desiredCount; slot += 1) {
-      critical.add(Math.round(slot * step));
-    }
-  }
-
-  return [...critical]
-    .sort((left, right) => left - right)
-    .map((index) => samples[index]);
 }
 
 export function formatHistoryDurationMs(durationMs: number): string {

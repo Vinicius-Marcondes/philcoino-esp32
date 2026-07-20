@@ -172,6 +172,10 @@ describe("extraction design preview model", () => {
     expect(source).toContain("function QuickProfilePicker");
     expect(source).toContain("accessibilityState={{ disabled: active, expanded }}");
     expect(source).toContain('translate("extractionPreview.pumpBoundary")');
+    expect(source).toContain(
+      'accessibilityHint={translate("extractionPreview.pumpBoundary")}',
+    );
+    expect(source).not.toContain("styles.commandBoundary");
     expect(source).toContain('translate("extractionPreview.pumpCommand", {');
     expect(source).toContain("extractionPresentationTitle(extractionStatus.title)");
     const profileSync = source.indexOf('view === "profiles" ? <ProfileSyncCard');
@@ -222,11 +226,15 @@ describe("extraction design preview model", () => {
     const heaterToggle = source.indexOf("<HeaterToggleBar", machineControls);
     const uptime = source.indexOf('translate("dashboard.machineUptime")', heaterToggle);
     const steamTimer = source.indexOf('translate("dashboard.steamTimer")', uptime);
-    const savedMachine = source.indexOf('translate("dashboard.savedMachine")', steamTimer);
+    const historyExport = source.indexOf("<TemperatureHistoryExportCard", steamTimer);
+    const savedMachine = source.indexOf('translate("dashboard.savedMachine")', historyExport);
     expect(heaterToggle).toBeGreaterThan(machineControls);
     expect(uptime).toBeGreaterThan(heaterToggle);
     expect(steamTimer).toBeGreaterThan(uptime);
-    expect(savedMachine).toBeGreaterThan(steamTimer);
+    expect(historyExport).toBeGreaterThan(steamTimer);
+    expect(savedMachine).toBeGreaterThan(historyExport);
+    expect(source).not.toContain("function CurveTab");
+    expect(source).not.toContain("downsampleTemperatureHistory");
 
     const controlsSource = await Bun.file(
       new URL("../components/machine-controls.tsx", import.meta.url),

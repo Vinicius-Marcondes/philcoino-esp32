@@ -70,15 +70,16 @@ import {
   type TemperatureHistoryExporter,
 } from "@/src/history/temperature-history-export";
 import {
-  downsampleTemperatureHistory,
   formatHistoryDurationMs,
   isLatestTemperatureHistoryWindow,
   isTemperatureHistoryGap,
   isLatestHistoryPageOffset,
   LIVE_HISTORY_WINDOW_MS,
-  temperatureHistoryGraphBounds,
+  temperatureGraphValueTopPercent,
+  temperatureHistoryGraphScale,
   temperatureHistoryWindowSamples,
   temperatureHistoryWindows,
+  type TemperatureGraphScale,
   type TemperatureHistorySample,
   type TemperatureHistoryWindow,
 } from "@/src/history/temperature-history";
@@ -502,10 +503,8 @@ export function DashboardScreen({
                 </View>
                 <TemperatureCurve
                   error={temperatureHistory.error}
-                  exporting={temperatureHistory.exporting}
                   history={temperatureHistory.samples}
                   loading={temperatureHistory.status === "loading"}
-                  onExport={() => void temperatureHistory.exportAll()}
                   syncStatus={temperatureHistory.syncStatus}
                   syncWarning={temperatureHistory.syncWarning}
                 />
@@ -558,10 +557,8 @@ export function DashboardScreen({
             {connection.status !== "online" || snapshot === null ? (
               <TemperatureCurve
                 error={temperatureHistory.error}
-                exporting={temperatureHistory.exporting}
                 history={temperatureHistory.samples}
                 loading={temperatureHistory.status === "loading"}
-                onExport={() => void temperatureHistory.exportAll()}
                 syncStatus={temperatureHistory.syncStatus}
                 syncWarning={temperatureHistory.syncWarning}
               />
@@ -672,6 +669,13 @@ export function DashboardScreen({
                 </Text>
               </View>
             )}
+
+            <TemperatureHistoryExportCard
+              error={temperatureHistory.exportError}
+              exporting={temperatureHistory.exporting}
+              hasHistory={temperatureHistory.samples.length > 0}
+              onExport={() => void temperatureHistory.exportAll()}
+            />
 
             <View style={styles.contextCard}>
               <Text selectable style={styles.contextTitle}>
@@ -795,36 +799,80 @@ function DashboardTab({
   );
 }
 
-function TemperatureCurve({
+function TemperatureHistoryExportCard({
   error,
   exporting,
-  history,
-  loading,
+  hasHistory,
   onExport,
-  syncStatus,
-  syncWarning,
 }: {
   error: "export" | "storage" | null;
   exporting: boolean;
+  hasHistory: boolean;
+  onExport: () => void;
+}) {
+  const disabled = exporting || !hasHistory;
+
+  return (
+    <View style={styles.historyExportCard}>
+      <Text selectable style={styles.cardLabel}>
+        {translate("dashboard.historyExportTitle")}
+      </Text>
+      <Text selectable style={styles.contextTitle}>
+        {translate("dashboard.historyExport")}
+      </Text>
+      <Text selectable style={styles.contextText}>
+        {translate("dashboard.historyExportDetail")}
+      </Text>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityState={{ disabled }}
+        disabled={disabled}
+        onPress={onExport}
+        style={({ pressed }) => [
+          styles.exportButton,
+          disabled && styles.disabled,
+          pressed && styles.pressed,
+        ]}>
+        <Text style={styles.exportButtonText}>
+          {exporting
+            ? translate("dashboard.historyExporting")
+            : translate("dashboard.historyExport")}
+        </Text>
+      </Pressable>
+      {error !== null ? (
+        <Text accessibilityLiveRegion="polite" selectable style={styles.historyError}>
+          {translate(
+            error === "storage"
+              ? "dashboard.historyExportStorageError"
+              : "dashboard.historyExportError",
+          )}
+        </Text>
+      ) : null}
+    </View>
+  );
+}
+
+function TemperatureCurve({
+  error,
+  history,
+  loading,
+  syncStatus,
+  syncWarning,
+}: {
+  error: "storage" | null;
   history: TemperatureHistorySample[];
   loading: boolean;
-  onExport: () => void;
   syncStatus: "idle" | "restoring" | "warning";
   syncWarning: "device" | "network" | "protocol" | "storage" | null;
 }) {
-  const [view, setView] = useState<"live" | "today">("live");
   const [livePage, setLivePage] = useState<{
     isLatest: boolean;
     window: TemperatureHistoryWindow;
   } | null>(null);
   const [jumpToLatestRequest, setJumpToLatestRequest] = useState(0);
-  const displayHistory = useMemo(
-    () => (view === "live" ? history : downsampleTemperatureHistory(history)),
-    [history, view],
-  );
   const liveWindows = useMemo(
-    () => temperatureHistoryWindows(displayHistory),
-    [displayHistory],
+    () => temperatureHistoryWindows(history),
+    [history],
   );
   const latestLiveWindow = liveWindows.at(-1) ?? null;
   const visibleLiveWindow =
@@ -839,50 +887,30 @@ function TemperatureCurve({
   const visibleLiveSamples =
     visibleLiveWindow === null
       ? []
-      : temperatureHistoryWindowSamples(displayHistory, visibleLiveWindow);
-  const graphSamples = view === "live" ? visibleLiveSamples : displayHistory;
-  const { maximumValue, minimumValue } = temperatureHistoryGraphBounds(
-    graphSamples,
-    view,
-  );
-  const first = displayHistory[0];
-  const last = displayHistory.at(-1);
+      : temperatureHistoryWindowSamples(history, visibleLiveWindow);
+  const graphScale = temperatureHistoryGraphScale(visibleLiveSamples);
+  const first = history[0];
+  const last = history.at(-1);
   const duration =
     first === undefined || last === undefined
       ? translate("viewModel.collecting")
-      : formatHistoryDurationMs(
-          view === "live"
-            ? LIVE_HISTORY_WINDOW_MS
-            : last.recordedAtMs - first.recordedAtMs,
-        );
+      : formatHistoryDurationMs(LIVE_HISTORY_WINDOW_MS);
   const mode = history.at(-1)?.activeMode;
-  const canScrollHistory =
-    view === "live" &&
-    first !== undefined &&
-    last !== undefined &&
-    last.recordedAtMs - first.recordedAtMs > LIVE_HISTORY_WINDOW_MS;
   const latestLivePage = isLatestTemperatureHistoryWindow(
     liveWindows,
     visibleLiveWindow,
   );
-  const pageStatus =
-    view === "live" && visibleLiveWindow !== null
-      ? translate(
-          latestLivePage
-            ? "dashboard.historyPageLatest"
-            : "dashboard.historyPageEarlier",
-          {
-            end: formatHistoryPageTime(visibleLiveWindow.endMs),
-            start: formatHistoryPageTime(visibleLiveWindow.startMs),
-          },
-        )
-      : null;
-  const selectView = (nextView: "live" | "today") => {
-    setView(nextView);
-    if (nextView === "live") {
-      setJumpToLatestRequest((current) => current + 1);
-    }
-  };
+  const pageStatus = visibleLiveWindow === null
+    ? null
+    : translate(
+        latestLivePage
+          ? "dashboard.historyPageLatest"
+          : "dashboard.historyPageEarlier",
+        {
+          end: formatHistoryPageTime(visibleLiveWindow.endMs),
+          start: formatHistoryPageTime(visibleLiveWindow.startMs),
+        },
+      );
 
   return (
     <View style={styles.curveCard}>
@@ -902,49 +930,12 @@ function TemperatureCurve({
         </View>
       </View>
 
-      <View style={styles.curveActions}>
-        <View accessibilityRole="tablist" style={styles.curveTabs}>
-          <CurveTab
-            active={view === "live"}
-            label={translate("dashboard.historyLive")}
-            onPress={() => selectView("live")}
-          />
-          <CurveTab
-            active={view === "today"}
-            label={translate("dashboard.historyToday")}
-            onPress={() => selectView("today")}
-          />
-        </View>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityState={{ disabled: exporting || history.length === 0 }}
-          disabled={exporting || history.length === 0}
-          onPress={onExport}
-          style={({ pressed }) => [
-            styles.exportButton,
-            (exporting || history.length === 0) && styles.disabled,
-            pressed && styles.pressed,
-          ]}>
-          <Text style={styles.exportButtonText}>
-            {exporting
-              ? translate("dashboard.historyExporting")
-              : translate("dashboard.historyExport")}
-          </Text>
-        </Pressable>
-      </View>
-
       <View style={styles.curveLegend}>
         <LegendItem color="#8B3A2B" label={translate("dashboard.boiler")} />
         <LegendItem color="#D39A42" label={translate("dashboard.target")} />
         <LegendItem color="#F29A52" label={translate("dashboard.heater")} />
         <LegendItem color="#3D7B80" label={translate("dashboard.pump")} />
       </View>
-
-      {canScrollHistory ? (
-        <Text selectable style={styles.historyScrollHint}>
-          {translate("dashboard.historyScrollHint")}
-        </Text>
-      ) : null}
 
       {pageStatus !== null ? (
         <View style={styles.historyPageStatus}>
@@ -996,40 +987,20 @@ function TemperatureCurve({
 
       {error !== null ? (
         <Text accessibilityLiveRegion="polite" selectable style={styles.historyError}>
-          {translate(
-            error === "storage"
-              ? "dashboard.historyStorageError"
-              : "dashboard.historyExportError",
-          )}
+          {translate("dashboard.historyStorageError")}
         </Text>
       ) : null}
 
       <View style={styles.curvePlot}>
-        <View style={styles.curveGridLineTop} />
-        <View style={styles.curveGridLineMiddle} />
-        <View style={styles.curveGridLineBottom} />
-        <View style={styles.curveYAxis}>
-          <Text selectable style={styles.curveAxisText}>
-            {maximumValue}°
-          </Text>
-          <Text selectable style={styles.curveAxisText}>
-            {minimumValue}°
-          </Text>
-        </View>
-        {displayHistory.length > 0 ? (
-          view === "live" ? (
+        {history.length > 0 ? (
+          <>
+            <TemperatureGraphGrid scale={graphScale} />
             <PaginatedLineGraph
               jumpToLatestRequest={jumpToLatestRequest}
               onPageChange={setLivePage}
-              samples={displayHistory}
+              samples={history}
             />
-          ) : (
-            <LineGraph
-              maximumValue={maximumValue}
-              minimumValue={minimumValue}
-              samples={displayHistory}
-            />
-          )
+          </>
         ) : (
           <View style={styles.historyEmpty}>
             {loading ? <ActivityIndicator size="small" /> : null}
@@ -1047,30 +1018,34 @@ function TemperatureCurve({
   );
 }
 
-function CurveTab({
-  active,
-  label,
-  onPress,
-}: {
-  active: boolean;
-  label: string;
-  onPress: () => void;
-}) {
+function TemperatureGraphGrid({ scale }: { scale: TemperatureGraphScale }) {
   return (
-    <Pressable
-      accessibilityRole="tab"
-      accessibilityState={{ selected: active }}
-      onPress={onPress}
-      style={({ pressed }) => [
-        styles.curveTab,
-        active && styles.curveTabActive,
-        pressed && styles.pressed,
-      ]}>
-      <Text style={[styles.curveTabText, active && styles.curveTabTextActive]}>
-        {label}
-      </Text>
-    </Pressable>
+    <View pointerEvents="none" style={styles.curveGrid}>
+      {scale.ticks.map((tick) => (
+        <View
+          key={tick}
+          style={[
+            styles.curveGridTick,
+            {
+              top: `${temperatureGraphValueTopPercent(
+                tick,
+                scale.minimumValue,
+                scale.maximumValue,
+              )}%`,
+            },
+          ]}>
+          <Text selectable style={styles.curveAxisText}>
+            {formatGraphTick(tick)}°
+          </Text>
+          <View style={styles.curveGridLine} />
+        </View>
+      ))}
+    </View>
   );
+}
+
+function formatGraphTick(value: number): string {
+  return Number.isInteger(value) ? value.toFixed(0) : value.toFixed(1);
 }
 
 function formatHistoryPageTime(timestampMs: number): string {
@@ -1228,13 +1203,13 @@ function PaginatedLineGraph({
           ref={list}
           renderItem={({ item }) => {
             const windowSamples = temperatureHistoryWindowSamples(samples, item);
-            const bounds = temperatureHistoryGraphBounds(windowSamples, "live");
+            const scale = temperatureHistoryGraphScale(windowSamples);
             return (
               <View style={{ height: "100%", width: viewportWidth }}>
                 <LineGraph
                   endMs={item.endMs}
-                  maximumValue={bounds.maximumValue}
-                  minimumValue={bounds.minimumValue}
+                  maximumValue={scale.maximumValue}
+                  minimumValue={scale.minimumValue}
                   paginated
                   samples={windowSamples}
                   startMs={item.startMs}
@@ -1270,7 +1245,7 @@ function LineGraph({
 }) {
   const [plotSize, setPlotSize] = useState({ height: 0, width: 0 });
   const linePlotSize = {
-    height: Math.max(0, plotSize.height - 30),
+    height: plotSize.height,
     width: plotSize.width,
   };
   const readyToDraw = linePlotSize.width > 0 && linePlotSize.height > 0;
@@ -1447,13 +1422,12 @@ function samplePoint(
     endMs <= startMs
       ? plotSize.width / 2
       : ((recordedAtMs - startMs) / (endMs - startMs)) * plotSize.width;
-  const topPercent = curvePointTop(value, minimumValue, maximumValue);
+  const topPercent = temperatureGraphValueTopPercent(
+    value,
+    minimumValue,
+    maximumValue,
+  );
   return { x, y: (topPercent / 100) * plotSize.height };
-}
-
-function curvePointTop(value: number, minimumValue: number, maximumValue: number) {
-  const range = Math.max(1, maximumValue - minimumValue);
-  return Math.max(0, Math.min(100, ((maximumValue - value) / range) * 100));
 }
 
 function MachineStatus({
@@ -1894,32 +1868,9 @@ const styles = StyleSheet.create({
     fontVariant: ["tabular-nums"],
     fontWeight: "800",
   },
-  curveActions: {
-    alignItems: "center",
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 10,
-    justifyContent: "space-between",
-  },
-  curveTabs: {
-    backgroundColor: "#EFE6DA",
-    borderRadius: 12,
-    flexDirection: "row",
-    gap: 3,
-    padding: 3,
-  },
-  curveTab: {
-    borderCurve: "continuous",
-    borderRadius: 9,
-    justifyContent: "center",
-    minHeight: 36,
-    paddingHorizontal: 13,
-  },
-  curveTabActive: { backgroundColor: "#8B3A2B" },
-  curveTabText: { color: "#695A50", fontSize: 13, fontWeight: "800" },
-  curveTabTextActive: { color: "#FFFFFF" },
   exportButton: {
     alignItems: "center",
+    alignSelf: "flex-start",
     borderColor: "#8B3A2B",
     borderCurve: "continuous",
     borderRadius: 12,
@@ -1983,44 +1934,31 @@ const styles = StyleSheet.create({
     overflow: "hidden",
     position: "relative",
   },
-  curveGridLineTop: {
-    backgroundColor: "#E5D8CA",
-    height: 1,
-    left: 40,
+  curveGrid: {
+    bottom: 10,
+    left: 8,
+    position: "absolute",
+    right: 10,
+    top: 10,
+  },
+  curveGridTick: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: 6,
+    height: 14,
+    left: 0,
     position: "absolute",
     right: 0,
-    top: "18%",
-  },
-  curveGridLineMiddle: {
-    backgroundColor: "#E5D8CA",
-    height: 1,
-    left: 40,
-    position: "absolute",
-    right: 0,
-    top: "50%",
-  },
-  curveGridLineBottom: {
-    backgroundColor: "#E5D8CA",
-    bottom: "18%",
-    height: 1,
-    left: 40,
-    position: "absolute",
-    right: 0,
-  },
-  curveYAxis: {
-    bottom: 42,
-    justifyContent: "space-between",
-    left: 10,
-    position: "absolute",
-    top: 12,
-    width: 28,
+    transform: [{ translateY: -7 }],
   },
   curveAxisText: {
     color: "#7B6D63",
     fontSize: 11,
     fontVariant: ["tabular-nums"],
     fontWeight: "700",
+    width: 28,
   },
+  curveGridLine: { backgroundColor: "#E5D8CA", flex: 1, height: 1 },
   curveCanvas: {
     bottom: 10,
     left: 42,
@@ -2106,6 +2044,15 @@ const styles = StyleSheet.create({
   unavailableTitle: { color: "#2C231E", fontSize: 20, fontWeight: "800" },
   unavailableText: { color: "#695A50", fontSize: 15, lineHeight: 21 },
   contextCard: {
+    backgroundColor: "#FFFCF7",
+    borderColor: "#DDD3C7",
+    borderCurve: "continuous",
+    borderRadius: 18,
+    borderWidth: 1,
+    gap: 8,
+    padding: 17,
+  },
+  historyExportCard: {
     backgroundColor: "#FFFCF7",
     borderColor: "#DDD3C7",
     borderCurve: "continuous",
