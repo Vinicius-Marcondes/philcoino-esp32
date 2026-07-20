@@ -18,7 +18,8 @@ import {
 } from "@/src/history/temperature-history";
 import { ApiClientError } from "@/src/networking/api-client-error";
 
-export type TemperatureHistoryError = "export" | "storage";
+export type TemperatureHistoryError = "storage";
+export type TemperatureHistoryExportError = "export" | "storage";
 export type TemperatureHistoryStatus = "loading" | "ready";
 export type TemperatureHistorySyncStatus = "idle" | "restoring" | "warning";
 
@@ -26,6 +27,7 @@ export interface TemperatureHistoryState {
   clear: () => Promise<void>;
   error: TemperatureHistoryError | null;
   exportAll: () => Promise<void>;
+  exportError: TemperatureHistoryExportError | null;
   exporting: boolean;
   samples: TemperatureHistorySample[];
   status: TemperatureHistoryStatus;
@@ -44,6 +46,8 @@ export function useTemperatureHistory(
   client: TemperatureHistoryClient,
 ): TemperatureHistoryState {
   const [error, setError] = useState<TemperatureHistoryError | null>(null);
+  const [exportError, setExportError] =
+    useState<TemperatureHistoryExportError | null>(null);
   const [exporting, setExporting] = useState(false);
   const [samples, setSamples] = useState<TemperatureHistorySample[]>([]);
   const [status, setStatus] =
@@ -210,6 +214,7 @@ export function useTemperatureHistory(
     if (exporting) {
       return;
     }
+    setExportError(null);
     setExporting(true);
     let stored: TemperatureHistorySample[];
     try {
@@ -220,21 +225,20 @@ export function useTemperatureHistory(
       }
       setSamples(stored);
       if (stored.length === 0) {
-        setError(null);
         setExporting(false);
         return;
       }
     } catch {
-      setError("storage");
+      setExportError("storage");
       setExporting(false);
       return;
     }
 
     try {
       await exporter.share(stored);
-      setError(null);
+      setExportError(null);
     } catch {
-      setError("export");
+      setExportError("export");
     } finally {
       setExporting(false);
     }
@@ -250,6 +254,7 @@ export function useTemperatureHistory(
     clear,
     error,
     exportAll,
+    exportError,
     exporting,
     samples,
     status,

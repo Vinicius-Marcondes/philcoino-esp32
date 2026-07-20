@@ -162,9 +162,10 @@ row to mobile SQLite. Rows include phone UTC capture time plus acknowledged
 firmware uptime, temperature, targets, mode, heater permission/command, pump
 command, status, and fault context. The repository retains only the current
 local calendar day; background/offline periods and firmware uptime resets remain
-explicit graph gaps. Live and Today views may downsample presentation, while
-CSV export reads every stored row. This observational data never participates
-in firmware control and contains neither bearer tokens nor network addresses.
+explicit graph gaps. The Dashboard presents consecutive thirty-second Live
+pages, while Machine can export every stored row for the current day. This
+observational data never participates in firmware control and contains neither
+bearer tokens nor network addresses.
 
 After the first fresh combined-state response on a connection or foreground
 transition, mobile starts a separate abortable history session. It reads up to
@@ -189,10 +190,11 @@ history without persisting anything to NVS.
 Live graph pages use consecutive rolling thirty-second windows. The newest
 page follows incoming samples only while the user remains at the latest offset;
 an older inspected page distance remains selected when live or recovered
-samples are inserted. Today downsampling and raw CSV export retain their prior behavior.
-Boot changes, uptime/timestamp discontinuities, sequence skips, and truncated
-starts split graph segments rather than drawing or interpolating unavailable
-intervals.
+samples are inserted. Each visible page uses five adaptive Y-axis ticks derived
+from its boiler and target values, with padding and a minimum display range.
+Raw current-day CSV export remains available from Machine. Boot changes,
+uptime/timestamp discontinuities, sequence skips, and truncated starts split
+graph segments rather than drawing or interpolating unavailable intervals.
 
 ## Simulator runtime
 

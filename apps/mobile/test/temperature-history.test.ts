@@ -6,13 +6,13 @@ import { InMemoryTemperatureHistoryRepository } from "../src/history/temperature
 import { shareTemperatureHistoryCsv } from "../src/history/temperature-history-share-service";
 import {
   createTemperatureHistorySample,
-  downsampleTemperatureHistory,
   isLatestTemperatureHistoryWindow,
   isTemperatureHistoryGap,
   isLatestHistoryPageOffset,
   liveTemperatureHistory,
   localDayRange,
-  temperatureHistoryGraphBounds,
+  temperatureGraphValueTopPercent,
+  temperatureHistoryGraphScale,
   temperatureHistoryWindowSamples,
   temperatureHistoryWindows,
   type TemperatureHistorySample,
@@ -151,7 +151,7 @@ describe("temperature history", () => {
     ).toBe(true);
   });
 
-  test("keeps a detailed live window and critical today points", () => {
+  test("keeps a detailed live window", () => {
     const start = new Date(2026, 6, 18, 8).getTime();
     const samples = Array.from({ length: 500 }, (_, index) => ({
       ...sample("machine-1", start + index * 1_000, index * 1_000),
@@ -163,27 +163,6 @@ describe("temperature history", () => {
     expect(live[0].recordedAtMs).toBe(start + 470_000);
     expect(live).toHaveLength(30);
 
-    const today = downsampleTemperatureHistory(samples, 40);
-    expect(today.some((entry) => entry.boilerTemperatureC === 20)).toBe(true);
-    expect(today.some((entry) => entry.boilerTemperatureC === 140)).toBe(true);
-    expect(today.some((entry) => entry.recordedAtMs === start + 249_000)).toBe(
-      true,
-    );
-    expect(today.some((entry) => entry.recordedAtMs === start + 250_000)).toBe(
-      true,
-    );
-    expect(today.some((entry) => entry.recordedAtMs === start + 269_000)).toBe(
-      true,
-    );
-    expect(today.some((entry) => entry.recordedAtMs === start + 270_000)).toBe(
-      true,
-    );
-    expect(today.some((entry) => entry.recordedAtMs === start + 289_000)).toBe(
-      true,
-    );
-    expect(today.some((entry) => entry.recordedAtMs === start + 290_000)).toBe(
-      true,
-    );
   });
 
   test("pages history into 30-second windows ending at the latest sample", () => {
@@ -207,7 +186,7 @@ describe("temperature history", () => {
     expect(isLatestTemperatureHistoryWindow(windows, windows[0])).toBe(false);
   });
 
-  test("uses a 70C floor only for warm Live pages", () => {
+  test("uses five adaptive ticks with padding around each live page", () => {
     const start = new Date(2026, 6, 18, 8).getTime();
     const cold = [
       { ...sample("machine-1", start, 1_000), boilerTemperatureC: 27.25, activeTargetC: 94 },
@@ -217,22 +196,31 @@ describe("temperature history", () => {
       { ...sample("machine-1", start + 1_000, 3_000), boilerTemperatureC: 98, activeTargetC: 94 },
     ];
 
-    expect(temperatureHistoryGraphBounds([], "live")).toEqual({
-      maximumValue: 1,
+    const precise = [
+      { ...sample("machine-1", start, 2_000), boilerTemperatureC: 95.2, activeTargetC: 94 },
+    ];
+
+    expect(temperatureHistoryGraphScale([])).toEqual({
+      maximumValue: 10,
       minimumValue: 0,
+      ticks: [0, 2.5, 5, 7.5, 10],
     });
-    expect(temperatureHistoryGraphBounds(cold, "live")).toEqual({
+    expect(temperatureHistoryGraphScale(cold)).toEqual({
       maximumValue: 100,
-      minimumValue: 25,
+      minimumValue: 20,
+      ticks: [20, 40, 60, 80, 100],
     });
-    expect(temperatureHistoryGraphBounds(warm, "live")).toEqual({
+    expect(temperatureHistoryGraphScale(warm)).toEqual({
+      maximumValue: 105,
+      minimumValue: 85,
+      ticks: [85, 90, 95, 100, 105],
+    });
+    expect(temperatureHistoryGraphScale(precise)).toEqual({
       maximumValue: 100,
-      minimumValue: 70,
+      minimumValue: 90,
+      ticks: [90, 92.5, 95, 97.5, 100],
     });
-    expect(temperatureHistoryGraphBounds([...cold, ...warm], "today")).toEqual({
-      maximumValue: 100,
-      minimumValue: 25,
-    });
+    expect(temperatureGraphValueTopPercent(95, 90, 100)).toBe(50);
   });
 
   test("keeps a later fault separate from a stopped pump command", () => {
