@@ -660,7 +660,7 @@ The primary validation rejected or narrowed these candidate concerns:
 - Steam's temperature offset is not applied twice;
 - extraction and cooldown mutual exclusion is enforced;
 - the prior stale-OLED concern is superseded by the enabled display path;
-- MAX6675 data-out GPIO6 is used as input and is not configured as an output;
+- MAX6675 data-out GPIO5 is used as input and is not configured as an output;
 - NVS is not performed while holding the workflow mutex; FW-008 is specifically
   the missing heater inhibit across the unlocked persistence interval;
 - mode and heater-enable transitions were not categorized as deadline bypasses:

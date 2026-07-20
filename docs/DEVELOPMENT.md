@@ -233,7 +233,7 @@ idf.py build
 Configure Wi-Fi SSID, Wi-Fi password, and bearer token through `idf.py menuconfig` under `PhilcoINO`. Values belong only in generated, ignored `sdkconfig`; never put them in source, defaults, logs, screenshots, tests, or documentation.
 
 Current source permanently uses one boiler-base thermocouple on
-GPIO4/GPIO6/GPIO7 for both control modes and has OLED support enabled
+GPIO4/GPIO5/GPIO7 for both control modes and has OLED support enabled
 (`kOledEnabled = true`). Firmware validates the raw sample, reports it unchanged
 in Brew, and applies the compile-time `kSteamTemperatureOffsetC = 5` correction
 once in Steam before control, safety, API, and OLED use. Manual/main extraction
