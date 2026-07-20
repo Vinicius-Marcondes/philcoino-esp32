@@ -172,7 +172,8 @@ describe("extraction design preview model", () => {
     expect(source).toContain("function QuickProfilePicker");
     expect(source).toContain("accessibilityState={{ disabled: active, expanded }}");
     expect(source).toContain('translate("extractionPreview.pumpBoundary")');
-    expect(source).not.toContain('translate("extractionPreview.pumpCommand")');
+    expect(source).toContain('translate("extractionPreview.pumpCommand", {');
+    expect(source).toContain("extractionPresentationTitle(extractionStatus.title)");
     const profileSync = source.indexOf('view === "profiles" ? <ProfileSyncCard');
     const profileConfiguration = source.indexOf('view !== "quick" ? <View', profileSync);
     const localEditor = source.indexOf("<ProfileEditor", profileConfiguration);
