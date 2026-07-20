@@ -6,6 +6,7 @@ import type {
 } from "@philcoino/protocol";
 import {
   useCallback,
+  useEffect,
   useMemo,
   useRef,
   useState,
@@ -71,9 +72,12 @@ import {
 import {
   downsampleTemperatureHistory,
   formatHistoryDurationMs,
+  isLatestTemperatureHistoryWindow,
   isTemperatureHistoryGap,
   isLatestHistoryPageOffset,
   LIVE_HISTORY_WINDOW_MS,
+  temperatureHistoryGraphBounds,
+  temperatureHistoryWindowSamples,
   temperatureHistoryWindows,
   type TemperatureHistorySample,
   type TemperatureHistoryWindow,
@@ -82,7 +86,7 @@ import {
   temperatureHistoryRepository,
   type TemperatureHistoryRepository,
 } from "@/src/history/temperature-history-repository";
-import { translate } from "@/src/localization/i18n";
+import { currentLocale, translate } from "@/src/localization/i18n";
 import { createDebugDeviceApiClient } from "@/src/networking/debug-device-api-client";
 import { createDeviceApiClient } from "@/src/networking/expo-device-api-client";
 import { profileSetsEqual } from "@/src/profiles/profile-set";
@@ -809,18 +813,38 @@ function TemperatureCurve({
   syncWarning: "device" | "network" | "protocol" | "storage" | null;
 }) {
   const [view, setView] = useState<"live" | "today">("live");
+  const [livePage, setLivePage] = useState<{
+    isLatest: boolean;
+    window: TemperatureHistoryWindow;
+  } | null>(null);
+  const [jumpToLatestRequest, setJumpToLatestRequest] = useState(0);
   const displayHistory = useMemo(
     () => (view === "live" ? history : downsampleTemperatureHistory(history)),
     [history, view],
   );
-  const values = displayHistory.flatMap((sample) => [
-    sample.boilerTemperatureC,
-    sample.activeTargetC,
-  ]);
-  const minimumValue =
-    values.length === 0 ? 0 : Math.floor(Math.min(...values) - 1);
-  const maximumValue =
-    values.length === 0 ? 1 : Math.ceil(Math.max(...values) + 1);
+  const liveWindows = useMemo(
+    () => temperatureHistoryWindows(displayHistory),
+    [displayHistory],
+  );
+  const latestLiveWindow = liveWindows.at(-1) ?? null;
+  const visibleLiveWindow =
+    livePage !== null &&
+    liveWindows.some(
+      (window) =>
+        window.startMs === livePage.window.startMs &&
+        window.endMs === livePage.window.endMs,
+    )
+      ? livePage.window
+      : latestLiveWindow;
+  const visibleLiveSamples =
+    visibleLiveWindow === null
+      ? []
+      : temperatureHistoryWindowSamples(displayHistory, visibleLiveWindow);
+  const graphSamples = view === "live" ? visibleLiveSamples : displayHistory;
+  const { maximumValue, minimumValue } = temperatureHistoryGraphBounds(
+    graphSamples,
+    view,
+  );
   const first = displayHistory[0];
   const last = displayHistory.at(-1);
   const duration =
@@ -837,6 +861,28 @@ function TemperatureCurve({
     first !== undefined &&
     last !== undefined &&
     last.recordedAtMs - first.recordedAtMs > LIVE_HISTORY_WINDOW_MS;
+  const latestLivePage = isLatestTemperatureHistoryWindow(
+    liveWindows,
+    visibleLiveWindow,
+  );
+  const pageStatus =
+    view === "live" && visibleLiveWindow !== null
+      ? translate(
+          latestLivePage
+            ? "dashboard.historyPageLatest"
+            : "dashboard.historyPageEarlier",
+          {
+            end: formatHistoryPageTime(visibleLiveWindow.endMs),
+            start: formatHistoryPageTime(visibleLiveWindow.startMs),
+          },
+        )
+      : null;
+  const selectView = (nextView: "live" | "today") => {
+    setView(nextView);
+    if (nextView === "live") {
+      setJumpToLatestRequest((current) => current + 1);
+    }
+  };
 
   return (
     <View style={styles.curveCard}>
@@ -861,12 +907,12 @@ function TemperatureCurve({
           <CurveTab
             active={view === "live"}
             label={translate("dashboard.historyLive")}
-            onPress={() => setView("live")}
+            onPress={() => selectView("live")}
           />
           <CurveTab
             active={view === "today"}
             label={translate("dashboard.historyToday")}
-            onPress={() => setView("today")}
+            onPress={() => selectView("today")}
           />
         </View>
         <Pressable
@@ -898,6 +944,31 @@ function TemperatureCurve({
         <Text selectable style={styles.historyScrollHint}>
           {translate("dashboard.historyScrollHint")}
         </Text>
+      ) : null}
+
+      {pageStatus !== null ? (
+        <View style={styles.historyPageStatus}>
+          <Text
+            accessibilityLiveRegion="polite"
+            selectable
+            style={styles.historyPageStatusText}>
+            {pageStatus}
+          </Text>
+          {!latestLivePage ? (
+            <Pressable
+              accessibilityLabel={translate("dashboard.historyJumpToLatest")}
+              accessibilityRole="button"
+              onPress={() => setJumpToLatestRequest((current) => current + 1)}
+              style={({ pressed }) => [
+                styles.historyJumpToLatest,
+                pressed && styles.pressed,
+              ]}>
+              <Text selectable style={styles.historyJumpToLatestText}>
+                {translate("dashboard.historyJumpToLatest")}
+              </Text>
+            </Pressable>
+          ) : null}
+        </View>
       ) : null}
 
       {syncStatus !== "idle" ? (
@@ -948,8 +1019,8 @@ function TemperatureCurve({
         {displayHistory.length > 0 ? (
           view === "live" ? (
             <PaginatedLineGraph
-              maximumValue={maximumValue}
-              minimumValue={minimumValue}
+              jumpToLatestRequest={jumpToLatestRequest}
+              onPageChange={setLivePage}
               samples={displayHistory}
             />
           ) : (
@@ -1002,6 +1073,14 @@ function CurveTab({
   );
 }
 
+function formatHistoryPageTime(timestampMs: number): string {
+  return new Intl.DateTimeFormat(currentLocale(), {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  }).format(new Date(timestampMs));
+}
+
 function LegendItem({ color, label }: { color: string; label: string }) {
   return (
     <View style={styles.legendItem}>
@@ -1017,21 +1096,38 @@ interface ChartPoint {
 }
 
 function PaginatedLineGraph({
-  maximumValue,
-  minimumValue,
+  jumpToLatestRequest,
+  onPageChange,
   samples,
 }: {
-  maximumValue: number;
-  minimumValue: number;
+  jumpToLatestRequest: number;
+  onPageChange: (page: {
+    isLatest: boolean;
+    window: TemperatureHistoryWindow;
+  }) => void;
   samples: TemperatureHistorySample[];
 }) {
   const list = useRef<FlatList<TemperatureHistoryWindow>>(null);
   const followsLatest = useRef(true);
   const hasPositionedInitialWindow = useRef(false);
+  const handledJumpToLatestRequest = useRef(0);
   const userDragging = useRef(false);
   const viewedPageDistanceFromLatest = useRef(0);
   const [viewportWidth, setViewportWidth] = useState(0);
   const windows = useMemo(() => temperatureHistoryWindows(samples), [samples]);
+  const reportPage = useCallback(
+    (index: number) => {
+      const window = windows[index];
+      if (window === undefined) {
+        return;
+      }
+      onPageChange({
+        isLatest: index === windows.length - 1,
+        window,
+      });
+    },
+    [onPageChange, windows],
+  );
   const updateViewedOffset = (
     event: NativeSyntheticEvent<NativeScrollEvent>,
   ) => {
@@ -1052,7 +1148,23 @@ function PaginatedLineGraph({
       ),
     );
     viewedPageDistanceFromLatest.current = windows.length - 1 - viewedIndex;
+    reportPage(viewedIndex);
   };
+
+  useEffect(() => {
+    if (
+      jumpToLatestRequest === 0 ||
+      jumpToLatestRequest === handledJumpToLatestRequest.current ||
+      viewportWidth <= 0
+    ) {
+      return;
+    }
+    handledJumpToLatestRequest.current = jumpToLatestRequest;
+    followsLatest.current = true;
+    viewedPageDistanceFromLatest.current = 0;
+    list.current?.scrollToEnd({ animated: false });
+    reportPage(windows.length - 1);
+  }, [jumpToLatestRequest, reportPage, viewportWidth, windows.length]);
 
   return (
     <View
@@ -1084,6 +1196,7 @@ function PaginatedLineGraph({
               list.current?.scrollToEnd({ animated: false });
               hasPositionedInitialWindow.current = true;
               viewedPageDistanceFromLatest.current = 0;
+              reportPage(windows.length - 1);
               return;
             }
             const viewedIndex = Math.max(
@@ -1096,6 +1209,7 @@ function PaginatedLineGraph({
               animated: false,
               offset: viewedIndex * viewportWidth,
             });
+            reportPage(viewedIndex);
           }}
           onMomentumScrollEnd={updateViewedOffset}
           onScroll={(event) => {
@@ -1113,17 +1227,14 @@ function PaginatedLineGraph({
           pagingEnabled
           ref={list}
           renderItem={({ item }) => {
-            const windowSamples = samples.filter(
-              (sample) =>
-                sample.recordedAtMs > item.startMs &&
-                sample.recordedAtMs <= item.endMs,
-            );
+            const windowSamples = temperatureHistoryWindowSamples(samples, item);
+            const bounds = temperatureHistoryGraphBounds(windowSamples, "live");
             return (
               <View style={{ height: "100%", width: viewportWidth }}>
                 <LineGraph
                   endMs={item.endMs}
-                  maximumValue={maximumValue}
-                  minimumValue={minimumValue}
+                  maximumValue={bounds.maximumValue}
+                  minimumValue={bounds.minimumValue}
                   paginated
                   samples={windowSamples}
                   startMs={item.startMs}
@@ -1828,6 +1939,34 @@ const styles = StyleSheet.create({
     color: "#6B5B51",
     fontSize: 12,
     fontWeight: "700",
+  },
+  historyPageStatus: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: 10,
+    justifyContent: "space-between",
+  },
+  historyPageStatusText: {
+    color: "#5D5048",
+    flex: 1,
+    fontSize: 12,
+    fontVariant: ["tabular-nums"],
+    fontWeight: "800",
+  },
+  historyJumpToLatest: {
+    backgroundColor: "#EFE6DA",
+    borderColor: "#B98A76",
+    borderCurve: "continuous",
+    borderRadius: 999,
+    borderWidth: 1,
+    minHeight: 32,
+    paddingHorizontal: 10,
+    justifyContent: "center",
+  },
+  historyJumpToLatestText: {
+    color: "#7A3025",
+    fontSize: 12,
+    fontWeight: "800",
   },
   historyPager: { flex: 1 },
   curveLegend: { flexDirection: "row", flexWrap: "wrap", gap: 10 },

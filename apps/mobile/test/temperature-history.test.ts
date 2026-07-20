@@ -7,10 +7,13 @@ import { shareTemperatureHistoryCsv } from "../src/history/temperature-history-s
 import {
   createTemperatureHistorySample,
   downsampleTemperatureHistory,
+  isLatestTemperatureHistoryWindow,
   isTemperatureHistoryGap,
   isLatestHistoryPageOffset,
   liveTemperatureHistory,
   localDayRange,
+  temperatureHistoryGraphBounds,
+  temperatureHistoryWindowSamples,
   temperatureHistoryWindows,
   type TemperatureHistorySample,
 } from "../src/history/temperature-history";
@@ -197,13 +200,67 @@ describe("temperature history", () => {
     });
 
     const latestWindow = windows.at(-1)!;
-    expect(
-      samples.filter(
-        (entry) =>
-          entry.recordedAtMs > latestWindow.startMs &&
-          entry.recordedAtMs <= latestWindow.endMs,
+    expect(temperatureHistoryWindowSamples(samples, latestWindow)).toEqual(
+      liveTemperatureHistory(samples),
+    );
+    expect(isLatestTemperatureHistoryWindow(windows, latestWindow)).toBe(true);
+    expect(isLatestTemperatureHistoryWindow(windows, windows[0])).toBe(false);
+  });
+
+  test("uses a 70C floor only for warm Live pages", () => {
+    const start = new Date(2026, 6, 18, 8).getTime();
+    const cold = [
+      { ...sample("machine-1", start, 1_000), boilerTemperatureC: 27.25, activeTargetC: 94 },
+    ];
+    const warm = [
+      { ...sample("machine-1", start, 2_000), boilerTemperatureC: 90.5, activeTargetC: 94 },
+      { ...sample("machine-1", start + 1_000, 3_000), boilerTemperatureC: 98, activeTargetC: 94 },
+    ];
+
+    expect(temperatureHistoryGraphBounds([], "live")).toEqual({
+      maximumValue: 1,
+      minimumValue: 0,
+    });
+    expect(temperatureHistoryGraphBounds(cold, "live")).toEqual({
+      maximumValue: 100,
+      minimumValue: 25,
+    });
+    expect(temperatureHistoryGraphBounds(warm, "live")).toEqual({
+      maximumValue: 100,
+      minimumValue: 70,
+    });
+    expect(temperatureHistoryGraphBounds([...cold, ...warm], "today")).toEqual({
+      maximumValue: 100,
+      minimumValue: 25,
+    });
+  });
+
+  test("keeps a later fault separate from a stopped pump command", () => {
+    const start = new Date(2026, 6, 18, 8).getTime();
+    const samples: TemperatureHistorySample[] = Array.from(
+      { length: 103 },
+      (_, index) => ({
+      ...sample("machine-1", start + index * 1_000, index * 1_000),
+      faultCode: index >= 69 ? ("over_temperature" as const) : null,
+      machineStatus: index >= 69 ? ("fault" as const) : ("heating" as const),
+      pumpActive: index < 42,
+      }),
+    );
+    const windows = temperatureHistoryWindows(samples);
+    const latestWindow = windows.at(-1)!;
+    const extractionWindow = windows.find((window) =>
+      temperatureHistoryWindowSamples(samples, window).some(
+        (entry) => entry.pumpActive,
       ),
-    ).toEqual(liveTemperatureHistory(samples));
+    )!;
+
+    expect(temperatureHistoryWindowSamples(samples, latestWindow)).not.toContainEqual(
+      expect.objectContaining({ pumpActive: true }),
+    );
+    expect(temperatureHistoryWindowSamples(samples, latestWindow)).toContainEqual(
+      expect.objectContaining({ faultCode: "over_temperature", pumpActive: false }),
+    );
+    expect(isLatestTemperatureHistoryWindow(windows, extractionWindow)).toBe(false);
   });
 
   test("follows only the newest graph page offset", () => {

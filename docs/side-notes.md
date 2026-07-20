@@ -263,10 +263,11 @@ constitute heater or pump safety evidence:
   normally;
 - confirm minimized/offline intervals and an ESP32 restart appear as graph gaps
   rather than connected or interpolated lines;
-- confirm Live opens on the latest minute, horizontal paging without a visible
-  scrollbar reaches earlier current-day readings, heater/pump bands match the
-  acknowledged command intervals, and marker-free Live/Today lines remain
-  readable with larger Dynamic Type and VoiceOver;
+- confirm Live opens on the latest thirty-second window, horizontal paging
+  without a visible scrollbar reaches earlier current-day readings, the page
+  status makes Latest and Earlier windows unambiguous, heater/pump command
+  bands match acknowledged command intervals, and the adaptive Live scale
+  remains readable with larger Dynamic Type and VoiceOver;
 - export through Files and AirDrop, inspect the CSV headers/rows, and confirm no
   bearer token or local network address is present; and
 - cross local midnight or use a controlled date test, then confirm prior-day
@@ -291,3 +292,18 @@ representative request/control-loop timing evidence also remain required.
 
 History values remain command-state observations. They do not prove heater or
 pump operation, de-energization, flow, cooling, or physical safety.
+
+### 2026-07-19 graph-page presentation observation
+
+An owner-provided CSV captured a Manual extraction whose pump-command samples
+were `true` from 14:23:20.589Z through 14:24:01.801Z and `false` beginning at
+14:24:02.657Z. The over-temperature fault began later, at 14:24:29.453Z, while
+the CSV continued to record `pump_active=false`. A screenshot taken after the
+fault showed the older extraction window without identifying it as earlier
+history, which made the correctly retained teal band appear current.
+
+This is a mobile graph-presentation finding, not evidence of continued pump
+operation or a firmware history error. The mobile follow/latest indicator,
+time-range label, jump-to-latest action, and per-window warm-range scale require
+fresh native review under HIST-007. HIST-007 and all target/physical acceptance
+gates remain pending.

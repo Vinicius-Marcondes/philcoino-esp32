@@ -9,6 +9,7 @@ import type {
 export const LIVE_HISTORY_WINDOW_MS = 30 * 1_000;
 export const HISTORY_GAP_THRESHOLD_MS = 2_500;
 export const TODAY_GRAPH_TARGET_POINTS = 360;
+export const WARM_GRAPH_MINIMUM_C = 70;
 
 export interface TemperatureHistorySample {
   activeMode: Mode;
@@ -37,6 +38,11 @@ export interface LocalDayRange {
 export interface TemperatureHistoryWindow {
   endMs: number;
   startMs: number;
+}
+
+export interface TemperatureGraphBounds {
+  maximumValue: number;
+  minimumValue: number;
 }
 
 export function createTemperatureHistorySample(
@@ -143,6 +149,64 @@ export function temperatureHistoryWindows(
     endMs: firstWindowStartMs + (index + 1) * windowMs,
     startMs: firstWindowStartMs + index * windowMs,
   }));
+}
+
+export function temperatureHistoryWindowSamples(
+  samples: TemperatureHistorySample[],
+  window: TemperatureHistoryWindow,
+): TemperatureHistorySample[] {
+  return samples.filter(
+    (sample) =>
+      sample.recordedAtMs > window.startMs &&
+      sample.recordedAtMs <= window.endMs,
+  );
+}
+
+export function isLatestTemperatureHistoryWindow(
+  windows: TemperatureHistoryWindow[],
+  window: TemperatureHistoryWindow | null,
+): boolean {
+  const latest = windows.at(-1);
+  return (
+    latest !== undefined &&
+    window !== null &&
+    latest.startMs === window.startMs &&
+    latest.endMs === window.endMs
+  );
+}
+
+export function temperatureHistoryGraphBounds(
+  samples: TemperatureHistorySample[],
+  view: "live" | "today",
+): TemperatureGraphBounds {
+  if (samples.length === 0) {
+    return { maximumValue: 1, minimumValue: 0 };
+  }
+
+  const values = samples.flatMap((sample) => [
+    sample.boilerTemperatureC,
+    sample.activeTargetC,
+  ]);
+  const highestValue = Math.max(...values);
+  const latestBoilerTemperatureC = samples.at(-1)!.boilerTemperatureC;
+  const minimumValue =
+    view === "live" && latestBoilerTemperatureC >= WARM_GRAPH_MINIMUM_C
+      ? WARM_GRAPH_MINIMUM_C
+      : roundDownToFive(Math.min(...values) - 2);
+  const maximumValue = Math.max(
+    minimumValue + 10,
+    roundUpToFive(highestValue + 2),
+  );
+
+  return { maximumValue, minimumValue };
+}
+
+function roundDownToFive(value: number): number {
+  return Math.floor(value / 5) * 5;
+}
+
+function roundUpToFive(value: number): number {
+  return Math.ceil(value / 5) * 5;
 }
 
 export function isLatestHistoryPageOffset(

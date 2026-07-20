@@ -34,6 +34,7 @@ import {
   stopExtractionPreview,
   type ExtractionPreviewState,
 } from "@/src/debug/extraction-preview-model";
+import { extractionPresentation } from "@/src/dashboard/extraction-presentation";
 import { translate } from "@/src/localization/i18n";
 
 interface ExtractionPreviewProps {
@@ -66,6 +67,7 @@ export function ExtractionPreview({
   const startEnabled =
     canStartPreview(state) && workflowBlock === null && !workflowMutationPending;
   const active = state.extraction.status === "running";
+  const extractionStatus = extractionPresentation(state.extraction);
   const customStartBlocked =
     !active && state.selected.kind === "profile" && !canStartPreview(state);
   const workflowStartBlocked = !active && workflowBlock !== null;
@@ -190,11 +192,7 @@ export function ExtractionPreview({
       {view !== "profiles" ? <View style={styles.extractionCard}>
         <SectionHeading
           eyebrow={translate("extractionPreview.extractionState")}
-          title={
-            active
-              ? translate("extractionPreview.running")
-              : translate("extractionPreview.idle")
-          }
+          title={extractionPresentationTitle(extractionStatus.title)}
         />
         {view === "quick" ? (
           <QuickProfilePicker
@@ -227,6 +225,15 @@ export function ExtractionPreview({
             }
           />
         </View>
+        <Text selectable style={styles.commandStatus}>
+          {translate("extractionPreview.pumpCommand", {
+            command: translate(
+              extractionStatus.pumpCommand === "running"
+                ? "extractionPreview.commandRunning"
+                : "extractionPreview.commandOff",
+            ),
+          })}
+        </Text>
         <Text selectable style={styles.commandBoundary}>
           {translate("extractionPreview.pumpBoundary")}
         </Text>
@@ -731,6 +738,19 @@ export function phaseLabel(phase: ExtractionPhase): string {
   return translate(keys[phase]);
 }
 
+export function extractionPresentationTitle(
+  title: "completed" | "failed" | "idle" | "running" | "stopped",
+): string {
+  const keys = {
+    completed: "extractionPreview.terminalCompleted",
+    failed: "extractionPreview.terminalFailed",
+    idle: "extractionPreview.idle",
+    running: "extractionPreview.running",
+    stopped: "extractionPreview.terminalStopped",
+  } as const;
+  return translate(keys[title]);
+}
+
 export function formatPreviewTime(milliseconds: number): string {
   const totalSeconds = Math.max(0, Math.ceil(milliseconds / 1_000));
   return `0:${totalSeconds.toString().padStart(2, "0")}`;
@@ -912,6 +932,7 @@ const styles = StyleSheet.create({
     fontVariant: ["tabular-nums"],
     fontWeight: "900",
   },
+  commandStatus: { color: "#6F2F28", fontSize: 13, fontWeight: "800" },
   commandBoundary: { color: "#5B4037", fontSize: 13, lineHeight: 19 },
   blockedText: { color: "#9E2E24", fontSize: 14, fontWeight: "700", lineHeight: 20 },
   actionRow: { flexDirection: "row", flexWrap: "wrap", gap: 9 },
