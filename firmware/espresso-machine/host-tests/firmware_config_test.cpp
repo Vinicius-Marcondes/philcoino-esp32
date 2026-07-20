@@ -43,7 +43,7 @@ int main() {
   static_assert(std::is_same_v<decltype(kOledEnabled), const bool>);
   static_assert(kOledI2cAddress == 0x3C);
   static_assert(kBoilerThermocoupleChipSelectGpio == 7);
-  static_assert(kBoilerThermocoupleDataGpio == 6);
+  static_assert(kBoilerThermocoupleDataGpio == 5);
   static_assert(kBoilerThermocoupleClockGpio == 4);
   static_assert(kSsrActiveHigh);
   static_assert(kPumpGpio == 10);

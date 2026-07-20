@@ -14,7 +14,7 @@ Status: DRAFT — NOT ELECTRICALLY OR MAINS-SAFETY APPROVED
 | Boiler MAX6675 | GND | GND |
 | Boiler MAX6675 | SCK | GPIO4 |
 | Boiler MAX6675 | CS | GPIO7 |
-| Boiler MAX6675 | SO | GPIO6 |
+| Boiler MAX6675 | SO | GPIO5 |
 | Heater SSR input | Positive | GPIO20, direct active-high drive, human-approved without external pull-down |
 | Heater SSR input | Negative | GND |
 | Pump SSR input | Positive | GPIO10, active-high command; software configuration approved, physical wiring not approved |
@@ -24,9 +24,9 @@ Status: DRAFT — NOT ELECTRICALLY OR MAINS-SAFETY APPROVED
 
 ### MAX6675 interface
 
-The permanent boiler sensor uses SCK GPIO4, SO GPIO6, and active-low CS GPIO7. Firmware waits 500 ms between samples, which exceeds the MAX6675's maximum conversion time. No second MAX6675 bus or GPIO configuration remains in firmware.
+The permanent boiler sensor uses SCK GPIO4, SO GPIO5, and active-low CS GPIO7. Firmware waits 500 ms between samples, which exceeds the MAX6675's maximum conversion time. No second MAX6675 bus or GPIO configuration remains in firmware.
 
-Earlier low-voltage experiments with two modules produced unreliable readings when both thermocouples were attached to the metal boiler. The permanent design therefore retains only the boiler-base sensor and its proven GPIO4/GPIO6/GPIO7 interface. The removed second-sensor wiring must remain disconnected.
+Earlier low-voltage experiments with two modules produced unreliable readings when both thermocouples were attached to the metal boiler. The permanent design therefore retains only the boiler-base sensor on the GPIO4/GPIO5/GPIO7 interface. The removed second-sensor wiring must remain disconnected.
 
 Disabling Wi-Fi did not correct the simultaneous-reading failure, so Wi-Fi is enabled again.
 Because the router is expected to be very close to the machine, firmware now

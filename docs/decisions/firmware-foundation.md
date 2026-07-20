@@ -42,7 +42,7 @@ implement peripheral and control behavior.
 | --- | --- |
 | SSD1306 OLED | 128×32, I2C address `0x3C`, no dedicated reset configured |
 | OLED SDA / SCL | GPIO8 / GPIO9; module-provided pull-ups retained |
-| Boiler MAX6675 SCK/SO | GPIO4/GPIO6 with a 500 ms sample interval |
+| Boiler MAX6675 SCK/SO | GPIO4/GPIO5 with a 500 ms sample interval |
 | Boiler MAX6675 CS | GPIO7 with explicit CS verification |
 | SSR command | GPIO20, active high, direct 3.3 V connection |
 

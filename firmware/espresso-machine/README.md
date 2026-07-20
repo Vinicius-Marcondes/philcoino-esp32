@@ -75,7 +75,7 @@ already-installed coverage-guided engine. No fuzzing dependency is required.
 
 Current source has:
 
-- one boiler-base MAX6675 is read on SCK/SO/CS GPIO4/GPIO6/GPIO7 and controls both brew and steam modes;
+- one boiler-base MAX6675 is read on SCK/SO/CS GPIO4/GPIO5/GPIO7 and controls both brew and steam modes;
 - `kOledEnabled = true`: SSD1306 initialization/render failure stops control startup;
 - `kPumpGpio = 10` and `kPumpActiveHigh = true`: startup commands GPIO10 low, while the firmware-owned extraction controller commands it for acknowledged Manual and profile phases;
 - `kWifiEnabled = true`.
