@@ -13,7 +13,8 @@ export const COOLDOWN_STABILIZATION_MS = 5_000;
 export const COOLDOWN_MAX_DURATION_MS =
   COOLDOWN_PUMP_LIMIT_MS + COOLDOWN_STABILIZATION_MS;
 export const PROFILE_NAME_MAX_LENGTH = 12;
-export const HISTORY_PAGE_SIZE = 60;
+export const HISTORY_PAGE_SIZE = 8;
+export const HISTORY_COMPATIBILITY_PAGE_SIZE = 60;
 export const HISTORY_RETENTION_SAMPLES = 600;
 export const PROFILE_SLOT_IDS = [
   "profile-1",
@@ -443,14 +444,18 @@ export const CooldownStateSchema = z.union([
   ActiveCooldownStateSchema,
 ]);
 
-export const MachineStateV2Schema = z
-  .strictObject({
-    machine: MachineStateSchema,
-    extraction: ExtractionStateSchema,
-    compensation: CompensationStateSchema,
-    cooldown: CooldownStateSchema,
-  })
-  .superRefine((state, context) => {
+const machineStateV2Shape = {
+  machine: MachineStateSchema,
+  extraction: ExtractionStateSchema,
+  compensation: CompensationStateSchema,
+  cooldown: CooldownStateSchema,
+};
+const MachineStateV2BaseSchema = z.strictObject(machineStateV2Shape);
+
+function refineMachineStateV2(
+  state: z.infer<typeof MachineStateV2BaseSchema>,
+  context: z.RefinementCtx,
+): void {
     if (
       state.extraction.status === "running" &&
       state.machine.activeMode !== "brew"
@@ -523,7 +528,10 @@ export const MachineStateV2Schema = z
           "A failed extraction acknowledgement requires the machine fault state that keeps further output commands suppressed.",
       });
     }
-  });
+}
+
+export const MachineStateV2Schema =
+  MachineStateV2BaseSchema.superRefine(refineMachineStateV2);
 
 export const HistoryBootIdSchema = z
   .string()
@@ -551,7 +559,98 @@ const historySampleShape = {
   heaterEnabled: z.boolean(),
   heaterActive: z.boolean(),
   pumpActive: z.boolean(),
+  predictiveTemperature: z
+    .strictObject({
+      temperatureRawC: z.number().finite(),
+      temperatureFilteredC: z.number().finite(),
+      activeTargetC: z.number().finite(),
+      temperatureSlopeCPerS: z.number().finite(),
+      temperatureAccelerationCPerS2: z.number().finite(),
+      baselineHeaterDuty: z.number().finite().min(0).max(1),
+      heaterCommandDuty: z.number().finite().min(0).max(1),
+      commandedHeaterDuty1s: z.number().finite().min(0).max(1),
+      heat5s: z.number().finite().min(0).max(5),
+      heat15s: z.number().finite().min(0).max(15),
+      heat30s: z.number().finite().min(0).max(30),
+      pump5s: z.number().finite().min(0).max(5),
+      pump15s: z.number().finite().min(0).max(15),
+      predictedTemperature5sC: z.number().finite().nullable(),
+      predictedTemperature10sC: z.number().finite().nullable(),
+      predictedTemperature20sC: z.number().finite().nullable(),
+      predictedPeakC: z.number().finite().nullable(),
+      hypotheticalCorrectionDuty: z.number().finite().min(0).max(1).nullable(),
+      hypotheticalHeaterDuty: z.number().finite().min(0).max(1).nullable(),
+      operatingMode: z.enum([
+        "warmup",
+        "idle_stable",
+        "brewing",
+        "post_brew_recovery",
+        "fault",
+      ]),
+      runMode: z.enum(["disabled", "passive"]),
+      usable: z.boolean(),
+      fallbackReason: z.enum([
+        "none",
+        "model_invalid",
+        "history_immature",
+        "sensor_invalid",
+        "timing_invalid",
+        "slope_implausible",
+        "input_out_of_bounds",
+        "prediction_non_finite",
+        "prediction_implausible",
+        "controller_fault",
+      ]),
+      modelVersion: z.number().int().nonnegative().safe(),
+      featureSchemaVersion: z.number().int().nonnegative().safe(),
+      trainingDataHash: z.number().int().nonnegative().max(0xffff_ffff),
+    })
+    .superRefine((prediction, context) => {
+      const values = [
+        prediction.predictedTemperature5sC,
+        prediction.predictedTemperature10sC,
+        prediction.predictedTemperature20sC,
+        prediction.predictedPeakC,
+        prediction.hypotheticalCorrectionDuty,
+        prediction.hypotheticalHeaterDuty,
+      ];
+      if (prediction.usable !== (prediction.fallbackReason === "none")) {
+        context.addIssue({
+          code: "custom",
+          path: ["usable"],
+          message: "Usable prediction diagnostics must use the none fallback reason.",
+        });
+      }
+      if (values.some((value) => (prediction.usable ? value === null : value !== null))) {
+        context.addIssue({
+          code: "custom",
+          path: ["predictedPeakC"],
+          message: "Prediction and correction values must be present only when usable.",
+        });
+      }
+      if (
+        prediction.hypotheticalHeaterDuty !== null &&
+        prediction.hypotheticalHeaterDuty > prediction.baselineHeaterDuty
+      ) {
+        context.addIssue({
+          code: "custom",
+          path: ["hypotheticalHeaterDuty"],
+          message: "Passive prediction may only reduce the baseline heater duty.",
+        });
+      }
+    })
+    .optional(),
 };
+
+export const PredictiveTemperatureDiagnosticsSchema =
+  historySampleShape.predictiveTemperature.unwrap();
+
+export const MachineStateWithPredictionV2Schema = z
+  .strictObject({
+    ...machineStateV2Shape,
+    predictiveTemperature: PredictiveTemperatureDiagnosticsSchema.nullable(),
+  })
+  .superRefine(refineMachineStateV2);
 
 export const HistorySampleSchema = z.discriminatedUnion("machineStatus", [
   z.strictObject({
@@ -582,7 +681,9 @@ export const HistoryPageSchema = z
     nextCursor: HistoryCursorSchema,
     hasMore: z.boolean(),
     continuity: HistoryContinuitySchema,
-    samples: z.array(HistorySampleSchema).max(HISTORY_PAGE_SIZE),
+    samples: z
+      .array(HistorySampleSchema)
+      .max(HISTORY_COMPATIBILITY_PAGE_SIZE),
   })
   .superRefine((page, context) => {
     if (page.nextCursor.bootId !== page.bootId) {
@@ -721,10 +822,16 @@ export type IdleCooldownState = z.infer<typeof IdleCooldownStateSchema>;
 export type ActiveCooldownState = z.infer<typeof ActiveCooldownStateSchema>;
 export type CooldownState = z.infer<typeof CooldownStateSchema>;
 export type MachineStateV2 = z.infer<typeof MachineStateV2Schema>;
+export type MachineStateWithPredictionV2 = z.infer<
+  typeof MachineStateWithPredictionV2Schema
+>;
 export type HistoryBootId = z.infer<typeof HistoryBootIdSchema>;
 export type HistorySequence = z.infer<typeof HistorySequenceSchema>;
 export type HistoryContinuity = z.infer<typeof HistoryContinuitySchema>;
 export type HistoryCursor = z.infer<typeof HistoryCursorSchema>;
+export type PredictiveTemperatureDiagnostics = z.infer<
+  typeof PredictiveTemperatureDiagnosticsSchema
+>;
 export type HistorySample = z.infer<typeof HistorySampleSchema>;
 export type HistoryPage = z.infer<typeof HistoryPageSchema>;
 export type StartExtractionRequest = z.infer<

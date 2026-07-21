@@ -16,8 +16,14 @@ v2 adds no raw-temperature or offset field.
 
 - `GET /api/v2/state` returns one acknowledged
   machine/extraction/compensation/cooldown snapshot.
-- `GET /api/v2/history` returns up to sixty ascending RAM-retained samples with
-  boot/sequence continuity metadata.
+- `GET /api/v2/state?include=prediction` returns the same snapshot plus required
+  nullable `predictiveTemperature` diagnostics. Firmware `0.3.2` populates the
+  object; the deterministic simulator returns `null`. Omitting the query keeps
+  the original strict response shape unchanged.
+- `GET /api/v2/history` returns up to eight ascending RAM-retained samples with
+  boot/sequence continuity metadata and optional passive prediction diagnostics.
+  Consumers accept up to sixty samples to preserve compatibility with older
+  firmware page sizes.
 - `GET /api/v2/profiles` returns all four ordered custom slots.
 - `PUT /api/v2/profiles` atomically persists and acknowledges the complete set
   only while extraction and cooldown are idle.
@@ -43,8 +49,9 @@ strict contract. No cursor begins at the oldest retained sample. A matching
 cursor is `continuous`, an evicted cursor is `truncated`, and a different boot
 ID is `reset`; `initial` identifies the no-cursor start. Each page includes the
 current boot ID, capture uptime, available sequence bounds, next durable cursor,
-`hasMore`, and complete graph command/status/fault context. Existing API v1 and
-v2 response bodies are unchanged.
+`hasMore`, and complete graph command/status/fault context. New firmware adds a
+strict `predictiveTemperature` object to each sample; the property remains
+optional so older firmware pages continue to parse.
 
 ## Authority and timing
 
@@ -91,6 +98,14 @@ samples or cursors to NVS. Missing samples are not synthesized. History reads
 copy a bounded page under their own guard and serialize after release; history
 never supplies input to temperature, heater, pump, readiness, timeout, fault,
 or mutation decisions.
+
+Predictive fields report filtered temperature, slope/acceleration, recent
+heater/pump command activity, 5/10/20-second linear predictions, peak, and a
+hypothetical correction. They are passive diagnostics only. Heater and pump
+values remain command-derived and are not physical feedback. The mobile app
+requests them with its live one-second state poll, persists the object as
+nullable data, and appends its fields to CSV exports. Retained history is used
+to recover detected gaps, not to populate ordinary uninterrupted live rows.
 
 ## Command-state boundary
 

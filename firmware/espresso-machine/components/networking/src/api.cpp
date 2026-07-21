@@ -29,6 +29,7 @@ using codec::serialize_extraction;
 using codec::serialize_health;
 using codec::serialize_heater_enabled;
 using codec::serialize_mode;
+using codec::serialize_prediction;
 using codec::serialize_profiles;
 using codec::serialize_state;
 using codec::serialize_targets;
@@ -166,7 +167,9 @@ HttpResponse FirmwareApi::handle(HttpMethod method, const std::string& path,
   const std::string query = query_separator == std::string::npos
                                 ? std::string{}
                                 : path.substr(query_separator + 1U);
-  if (route->id != ApiRouteId::kHistory && query_separator != std::string::npos) {
+  if (route->id != ApiRouteId::kHistory &&
+      route->id != ApiRouteId::kStateV2 &&
+      query_separator != std::string::npos) {
     return error_response(404, "internal_error",
                           "The requested endpoint does not exist.");
   }
@@ -176,7 +179,7 @@ HttpResponse FirmwareApi::handle(HttpMethod method, const std::string& path,
     case ApiRouteId::kDevice: return device();
     case ApiRouteId::kTemperatures:
       return update_temperatures(body, uptime_ms);
-    case ApiRouteId::kStateV2: return state_v2(uptime_ms);
+    case ApiRouteId::kStateV2: return state_v2(query, uptime_ms);
     case ApiRouteId::kHistory: return history(query, uptime_ms);
     case ApiRouteId::kProfilesGet: return profiles();
     case ApiRouteId::kProfilesPut: return replace_profiles(body, uptime_ms);
@@ -358,7 +361,13 @@ HttpResponse FirmwareApi::dismiss_over_temperature(std::uint64_t uptime_ms) {
   return state(uptime_ms);
 }
 
-HttpResponse FirmwareApi::state_v2(std::uint64_t uptime_ms) const {
+HttpResponse FirmwareApi::state_v2(const std::string& query,
+                                   std::uint64_t uptime_ms) const {
+  const bool include_prediction = query == "include=prediction";
+  if (!query.empty() && !include_prediction) {
+    return error_response(400, "malformed_request",
+                          "The state query is malformed.");
+  }
   control::ControlSnapshot machine{};
   control::ExtractionSnapshot extraction{};
   control::CooldownSnapshot cooldown{};
@@ -391,13 +400,18 @@ HttpResponse FirmwareApi::state_v2(std::uint64_t uptime_ms) const {
     compensation = serialize_compensation(
         controller_.extraction_compensation_active(), extraction);
   }
-  return json_response(200, std::string("{\"machine\":") +
-                                serialize_state(machine, uptime_ms) +
-                                ",\"extraction\":" +
-                                serialize_extraction(extraction) +
-                                ",\"compensation\":" + compensation +
-                                ",\"cooldown\":" +
-                                serialize_cooldown(cooldown) + '}');
+  std::string response = std::string("{\"machine\":") +
+                         serialize_state(machine, uptime_ms) +
+                         ",\"extraction\":" +
+                         serialize_extraction(extraction) +
+                         ",\"compensation\":" + compensation +
+                         ",\"cooldown\":" + serialize_cooldown(cooldown);
+  if (include_prediction) {
+    response += ",\"predictiveTemperature\":" +
+                serialize_prediction(machine);
+  }
+  response += '}';
+  return json_response(200, std::move(response));
 }
 
 HttpResponse FirmwareApi::profiles() const {

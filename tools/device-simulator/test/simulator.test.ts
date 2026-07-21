@@ -9,6 +9,7 @@ import {
   HealthResponseSchema,
   HistoryPageSchema,
   MachineStateSchema,
+  MachineStateWithPredictionV2Schema,
   MachineStateV2Schema,
   ModeResponseSchema,
   ProfileSetSchema,
@@ -87,6 +88,42 @@ describe("bearer authentication", () => {
   });
 });
 
+describe("API v2 live prediction diagnostics", () => {
+  it("preserves the queryless state shape and supports the opt-in shape", async () => {
+    let response = await simulator.app.request("/api/v2/state", {
+      headers: authorization,
+    });
+    const queryless = await response.json();
+    expect(MachineStateV2Schema.parse(queryless)).toBeDefined();
+    expect(queryless).not.toHaveProperty("predictiveTemperature");
+
+    response = await simulator.app.request(
+      "/api/v2/state?include=prediction",
+      { headers: authorization },
+    );
+    expect(
+      MachineStateWithPredictionV2Schema.parse(await response.json())
+        .predictiveTemperature,
+    ).toBeNull();
+  });
+
+  it("rejects unknown and duplicate state query parameters", async () => {
+    for (const query of [
+      "?include=unknown",
+      "?unknown=prediction",
+      "?include=prediction&include=prediction",
+    ]) {
+      const response = await simulator.app.request(`/api/v2/state${query}`, {
+        headers: authorization,
+      });
+      expect(response.status).toBe(400);
+      expect(
+        ApiV2ErrorResponseSchema.parse(await response.json()).error.code,
+      ).toBe("malformed_request");
+    }
+  });
+});
+
 describe("API v2 history", () => {
   it("captures one-Hertz full-context samples and paginates", async () => {
     simulator.machine.advance(65_000);
@@ -96,22 +133,27 @@ describe("API v2 history", () => {
     expect(response.status).toBe(200);
     const first = HistoryPageSchema.parse(await response.json());
     expect(first.continuity).toBe("initial");
-    expect(first.samples).toHaveLength(60);
+    expect(first.samples).toHaveLength(8);
     expect(first.samples[0].uptimeMs).toBe(1_000);
     expect(first.hasMore).toBe(true);
 
-    const query = new URLSearchParams({
-      bootId: first.nextCursor.bootId,
-      afterSequence: String(first.nextCursor.afterSequence),
-    });
-    response = await simulator.app.request(`/api/v2/history?${query}`, {
-      headers: authorization,
-    });
-    const second = HistoryPageSchema.parse(await response.json());
-    expect(second.continuity).toBe("continuous");
-    expect(second.samples).toHaveLength(5);
-    expect(second.samples[0].sequence).toBe(61);
-    expect(second.hasMore).toBe(false);
+    let page = first;
+    const samples = [...first.samples];
+    while (page.hasMore) {
+      const query = new URLSearchParams({
+        bootId: page.nextCursor.bootId,
+        afterSequence: String(page.nextCursor.afterSequence),
+      });
+      response = await simulator.app.request(`/api/v2/history?${query}`, {
+        headers: authorization,
+      });
+      page = HistoryPageSchema.parse(await response.json());
+      expect(page.continuity).toBe("continuous");
+      samples.push(...page.samples);
+    }
+    expect(samples).toHaveLength(65);
+    expect(samples.at(-1)?.sequence).toBe(65);
+    expect(page.samples).toHaveLength(1);
   });
 
   it("reports truncation and boot reset", async () => {

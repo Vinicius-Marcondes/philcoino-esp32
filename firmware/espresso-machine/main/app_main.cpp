@@ -472,7 +472,7 @@ extern "C" void app_main() {
             uptime_ms());
       }
     }
-    snapshot = controller.update(reading, uptime_ms());
+    snapshot = controller.update(reading, pump.command(), uptime_ms());
     const auto extraction_snapshot = extraction_controller.snapshot(uptime_ms());
     const auto cooldown_snapshot = cooldown_controller.snapshot(uptime_ms());
     const bool compensation_active =

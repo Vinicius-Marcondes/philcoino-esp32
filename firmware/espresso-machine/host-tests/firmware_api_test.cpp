@@ -443,6 +443,28 @@ void test_api_v2_profiles_and_extraction_contract() {
   assert(response.status == 200);
   assert(response.body.find("\"machine\":") != std::string::npos);
   assert(response.body.find("\"status\":\"idle\"") != std::string::npos);
+  assert(response.body.find("\"predictiveTemperature\":") ==
+         std::string::npos);
+
+  response = harness.request(HttpMethod::kGet,
+                             "/api/v2/state?include=prediction",
+                             authorization);
+  assert(response.status == 200);
+  assert(response.body.find("\"predictiveTemperature\":{") !=
+         std::string::npos);
+  assert(response.body.find("\"runMode\":\"passive\"") !=
+         std::string::npos);
+  assert(response.body.find("\"fallbackReason\":\"history_immature\"") !=
+         std::string::npos);
+  expect_error(harness.request(HttpMethod::kGet,
+                               "/api/v2/state?include=unknown",
+                               authorization),
+               400, "malformed_request");
+  expect_error(harness.request(
+                   HttpMethod::kGet,
+                   "/api/v2/state?include=prediction&include=prediction",
+                   authorization),
+               400, "malformed_request");
 
   response = harness.request(HttpMethod::kPut, "/api/v2/profiles",
                              authorization, profiles);
@@ -888,6 +910,12 @@ void capture_contract_payloads(const std::filesystem::path& directory) {
   write_capture(directory, "state-v2.json",
                 harness.request(HttpMethod::kGet, "/api/v2/state",
                                 authorization).body);
+  write_capture(directory, "state-prediction-v2.json",
+                harness
+                    .request(HttpMethod::kGet,
+                             "/api/v2/state?include=prediction",
+                             authorization)
+                    .body);
   harness.history.record(184000, harness.controller.snapshot(184000),
                          harness.pump.command());
   write_capture(directory, "history-v2.json",
@@ -1077,11 +1105,18 @@ void test_bounded_history_contract() {
   auto response = harness.request(HttpMethod::kGet, "/api/v2/history",
                                   authorization, "", 605000);
   assert(response.status == 200);
+  assert(response.body.size() <= kMaximumSerializedHistoryPageBytes);
   assert(response.body.find("\"continuity\":\"initial\"") !=
          std::string::npos);
   assert(response.body.find("\"oldestSequence\":6") != std::string::npos);
   assert(response.body.find("\"sequence\":6") != std::string::npos);
   assert(response.body.find("\"hasMore\":true") != std::string::npos);
+  assert(response.body.find("\"predictiveTemperature\":{") !=
+         std::string::npos);
+  assert(response.body.find("\"runMode\":\"passive\"") !=
+         std::string::npos);
+  assert(response.body.find("\"fallbackReason\":\"history_immature\"") !=
+         std::string::npos);
 
   response = harness.request(
       HttpMethod::kGet,
@@ -1110,6 +1145,37 @@ void test_bounded_history_contract() {
                400, "malformed_request");
 }
 
+void test_history_capture_deadline_does_not_accumulate_jitter() {
+  ApiHarness harness;
+  HistoryBuffer history("00112233445566778899aabbccddeeff");
+  const auto snapshot = harness.controller.snapshot(1000U);
+
+  assert(history.record(1067U, snapshot, PumpCommand::kOff));
+  assert(!history.record(1999U, snapshot, PumpCommand::kOff));
+  assert(history.record(2000U, snapshot, PumpCommand::kOff));
+  assert(!history.record(2999U, snapshot, PumpCommand::kOff));
+  assert(history.record(3000U, snapshot, PumpCommand::kOff));
+}
+
+void test_usable_prediction_history_page_stays_within_transport_budget() {
+  ApiHarness harness;
+  for (std::uint32_t now_ms = 1500U; now_ms <= 42000U; now_ms += 500U) {
+    const float temperature_c =
+        88.0F + static_cast<float>(now_ms - 1500U) / 20000.0F;
+    const auto snapshot = harness.controller.update(
+        ok(temperature_c), harness.pump.command(), now_ms);
+    harness.history.record(now_ms, snapshot, harness.pump.command());
+  }
+
+  const auto response = harness.request(
+      HttpMethod::kGet,
+      "/api/v2/history?bootId=00112233445566778899aabbccddeeff&afterSequence=31",
+      "Bearer test-secret", "", 42000U);
+  assert(response.status == 200);
+  assert(response.body.find("\"usable\":true") != std::string::npos);
+  assert(response.body.size() <= kMaximumSerializedHistoryPageBytes);
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -1124,6 +1190,8 @@ int main(int argc, char** argv) {
   test_workflow_mode_coordination_is_authoritative();
   test_api_v2_cooldown_and_compensation_contract();
   test_bounded_history_contract();
+  test_history_capture_deadline_does_not_accumulate_jitter();
+  test_usable_prediction_history_page_stays_within_transport_budget();
   if (argc == 2) {
     capture_contract_payloads(argv[1]);
   }

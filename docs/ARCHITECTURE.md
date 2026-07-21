@@ -199,39 +199,50 @@ transport outcome retains it for replay.
 Each validated foreground poll also appends a device-scoped temperature-history
 row to mobile SQLite. Rows include phone UTC capture time plus acknowledged
 firmware uptime, temperature, targets, mode, heater permission/command, pump
-command, status, and fault context. The repository retains only the current
+command, status, fault context, and nullable passive prediction diagnostics.
+The poll uses `GET /api/v2/state?include=prediction`; a one-time HTTP 404
+capability fallback keeps older firmware usable through queryless API v2 state.
+The repository retains only the current
 local calendar day; background/offline periods and firmware uptime resets remain
 explicit graph gaps. The Dashboard presents consecutive thirty-second Live
 pages, while Machine can export every stored row for the current day. This
 observational data never participates in firmware control and contains neither
 bearer tokens nor network addresses.
 
-After the first fresh combined-state response on a connection or foreground
-transition, mobile starts a separate abortable history session. It reads up to
-sixty samples per authenticated `GET /api/v2/history` page without delaying
-live publication or control mutations. The first request/response midpoint
-anchors the page's firmware uptime to phone UTC for the batch. SQLite commits
+Mobile compares each new row with the latest stored timestamp, firmware uptime,
+boot/sequence provenance, and explicit gap marker. Only a detected discontinuity
+starts a separate abortable history recovery session; uninterrupted foreground
+polling never requests retained history. Recovery reads up to eight samples per
+authenticated `GET /api/v2/history` page and yields between pages so live
+polling and control traffic can interleave with backfill. Its
+parser accepts legacy sixty-sample pages while new firmware and the simulator
+emit no more than eight. The first
+request/response midpoint anchors the page's firmware uptime to phone UTC for
+the batch. SQLite commits
 each page and its cursor atomically, identifies device rows by
 `(deviceId, bootId, sequence)`, and replaces overlapping phone-origin rows.
 HTTP 404 means older firmware and silently retains foreground-only history;
-other failures are graph-scoped warnings. Backgrounding cancels the session,
-and the next fresh foreground connection resumes from the last committed page.
+other failures are graph-scoped warnings. Backgrounding cancels recovery, and
+the first new foreground row re-triggers it when the stored discontinuity is
+still present. CSV export waits for an already-running recovery but does not
+force an otherwise unnecessary full synchronization.
 
-Firmware owns a RAM-only 600-sample history ring. One compact sixteen-byte
-sample is attempted per second after the current acknowledged control snapshot
+Firmware owns a RAM-only 600-sample history ring. One fixed-size sample of at
+most 64 bytes is attempted per second after the current acknowledged control snapshot
 and fail-off pump command are available. A delayed loop records only its actual
 current sample. The writer never waits: a history-specific atomic guard skips
-capture on contention, while a network reader copies at most sixty samples
+capture on contention, while a network reader copies at most eight samples
 before releasing the guard and serializing JSON. A random 128-bit boot ID and
 increasing sequence distinguish reboot, continuous, reset, and truncated
 history without persisting anything to NVS.
 
-Live graph pages use consecutive rolling thirty-second windows. The newest
+Live graph pages use stable clock-aligned thirty-second windows. The newest
 page follows incoming samples only while the user remains at the latest offset;
-an older inspected page distance remains selected when live or recovered
+an older inspected window keeps its timestamp identity when live or recovered
 samples are inserted. Each visible page uses five adaptive Y-axis ticks derived
 from its boiler and target values, with padding and a minimum display range.
-Raw current-day CSV export remains available from Machine. Boot changes,
+Raw current-day CSV export remains available from Machine and appends passive
+prediction columns; older firmware and phone-originated rows leave them empty. Boot changes,
 uptime/timestamp discontinuities, sequence skips, and truncated starts split
 graph segments rather than drawing or interpolating unavailable intervals.
 
@@ -243,7 +254,7 @@ extraction, and cooldown operations. Parsing uses protocol schemas and emits
 version-appropriate strict errors.
 
 The deterministic model also captures the same one-Hertz rolling history,
-sixty-sample pagination, overflow, boot reset, and full command/fault context.
+eight-sample pagination, overflow, boot reset, and full command/fault context.
 Simulator time remains manually advanced; it does not create background samples.
 
 The model holds persisted targets and the four-slot profile set separately from
@@ -324,7 +335,18 @@ correction.
 4. requires ±1°C stability for three seconds before `ready`;
 5. tracks active-temperature heating demand toward a ten-minute timeout;
 6. computes SSR duty and recovery inside a ten-second window;
-7. returns the same active effective value to API and OLED consumers.
+7. calculates filtered temperature, slope, recent command activity, and fixed
+   linear 5/10/20-second predictions after thirty seconds of valid history;
+8. records the prediction and hypothetical duty reduction without applying it;
+9. returns the same active effective value to API and OLED consumers.
+
+The primary heater controller remains the existing nonlinear duty curve; it is
+not a PID. The prediction monitor runs in passive mode only. Its fixed-size
+history belongs to control policy and is distinct from the observational API
+history. Invalid configuration, checksum, timing, sensor state, bounds, slope,
+or prediction disables diagnostics with a specific fallback reason. No
+prediction value participates in the SSR command, readiness, timeout, or fault
+path in this release.
 
 Mode and target changes reset readiness, steam timing, demand tracking, recovery state, and the heater window. Targets are saved before becoming controller state. Steam timeout starts on first readiness and returns to brew after five minutes.
 

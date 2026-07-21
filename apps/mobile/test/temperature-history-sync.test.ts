@@ -20,8 +20,52 @@ import {
 } from "../../../tools/device-simulator/src/app.ts";
 
 const bootId = "0123456789abcdef0123456789abcdef";
+const predictiveTemperature: NonNullable<
+  HistoryPage["samples"][number]["predictiveTemperature"]
+> = {
+  activeTargetC: 93,
+  baselineHeaterDuty: 0.4,
+  commandedHeaterDuty1s: 0.5,
+  fallbackReason: "none",
+  featureSchemaVersion: 1,
+  heat15s: 5,
+  heat30s: 12,
+  heat5s: 2,
+  heaterCommandDuty: 1,
+  hypotheticalCorrectionDuty: 0.1,
+  hypotheticalHeaterDuty: 0.3,
+  modelVersion: 1,
+  operatingMode: "brewing",
+  predictedPeakC: 94,
+  predictedTemperature10sC: 93.8,
+  predictedTemperature20sC: 94,
+  predictedTemperature5sC: 93.5,
+  pump15s: 3,
+  pump5s: 2,
+  runMode: "passive",
+  temperatureAccelerationCPerS2: 0.01,
+  temperatureFilteredC: 92.5,
+  temperatureRawC: 92.75,
+  temperatureSlopeCPerS: 0.1,
+  trainingDataHash: 1347571540,
+  usable: true,
+};
 
 describe("temperature history synchronization", () => {
+  test("preserves passive prediction diagnostics while anchoring a page", () => {
+    const enriched = {
+      ...sample(1, 1_000),
+      predictiveTemperature,
+    };
+    const [mapped] = mapHistoryPage(
+      page([enriched], 1, false, "initial"),
+      "machine-1",
+      10_000,
+      1_000,
+    );
+    expect(mapped?.predictiveTemperature).toEqual(predictiveTemperature);
+  });
+
   test("anchors all pages to the first request midpoint and commits cursors durably", async () => {
     const repository = new InMemoryTemperatureHistoryRepository();
     const today = new Date(2026, 6, 18, 12).getTime();
@@ -33,6 +77,7 @@ describe("temperature history synchronization", () => {
     ];
     let pageIndex = 0;
     let commits = 0;
+    let pageYields = 0;
     const times = [today - 50, today + 50];
 
     await expect(
@@ -49,11 +94,16 @@ describe("temperature history synchronization", () => {
           commits += 1;
         },
         repository,
+        yieldBetweenPages: () => {
+          pageYields += 1;
+          return Promise.resolve();
+        },
       }),
     ).resolves.toEqual({ pagesCommitted: 2, samplesCommitted: 3 });
 
     expect(requests).toEqual([undefined, { afterSequence: 2, bootId }]);
     expect(commits).toBe(2);
+    expect(pageYields).toBe(1);
     expect(await repository.loadSyncCursor("machine-1")).toEqual({
       afterSequence: 3,
       bootId,
@@ -199,7 +249,7 @@ describe("temperature history synchronization", () => {
         now: () => firstAnchor,
         repository,
       }),
-    ).resolves.toEqual({ pagesCommitted: 3, samplesCommitted: 125 });
+    ).resolves.toEqual({ pagesCommitted: 16, samplesCommitted: 125 });
 
     await simulator.app.request("/_simulator/power-cycle", { method: "POST" });
     await simulator.app.request("/_simulator/advance", {

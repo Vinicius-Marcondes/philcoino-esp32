@@ -78,7 +78,8 @@ class FirmwareApi {
   HttpResponse update_heater(const std::string& body,
                              std::uint64_t uptime_ms);
   HttpResponse dismiss_over_temperature(std::uint64_t uptime_ms);
-  HttpResponse state_v2(std::uint64_t uptime_ms) const;
+  HttpResponse state_v2(const std::string& query,
+                        std::uint64_t uptime_ms) const;
   HttpResponse history(const std::string& query,
                        std::uint64_t uptime_ms) const;
   HttpResponse profiles() const;

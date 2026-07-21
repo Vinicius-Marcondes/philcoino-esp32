@@ -20,6 +20,8 @@ std::string serialize_health(std::uint64_t uptime_ms);
 std::string serialize_device(const DeviceIdentity& identity);
 std::string serialize_state(const control::ControlSnapshot& snapshot,
                             std::uint64_t uptime_ms);
+std::string serialize_prediction(
+    const control::ControlSnapshot& snapshot);
 std::string serialize_targets(peripherals::TemperatureTargets targets);
 std::string serialize_mode(control::ControlMode mode);
 std::string serialize_heater_enabled(bool enabled);

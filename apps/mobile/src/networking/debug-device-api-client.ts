@@ -3,6 +3,7 @@ import {
   CooldownStateSchema,
   ExtractionStateSchema,
   HeaterSettingsRequestSchema,
+  MachineStateWithPredictionV2Schema,
   MachineStateV2Schema,
   ModeRequestSchema,
   ProfileSetSchema,
@@ -18,6 +19,7 @@ import {
   type HistoryCursor,
   type HistoryPage,
   type MachineState,
+  type MachineStateWithPredictionV2,
   type MachineStateV2,
   type ModeRequest,
   type ModeResponse,
@@ -113,6 +115,16 @@ export class DebugDeviceApiClient
           ? { status: "active", phase: this.extraction.phase }
           : { status: "inactive", phase: null },
       cooldown: this.cooldown,
+    });
+  }
+
+  async getLiveStateV2(
+    options: { signal?: AbortSignal } = {},
+  ): Promise<MachineStateWithPredictionV2> {
+    const state = await this.getStateV2(options);
+    return MachineStateWithPredictionV2Schema.parse({
+      ...state,
+      predictiveTemperature: null,
     });
   }
 
