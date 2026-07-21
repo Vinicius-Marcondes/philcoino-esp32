@@ -99,6 +99,31 @@ extraction Profiles, and Machine configuration. While a mock extraction is
 active, a persistent bar above the navigation links back to its Start/Stop and
 phase controls.
 
+The mobile UI auto-rotates when the OS permits it. Portrait uses bottom
+navigation; landscape phones use the transparent three-dot rail and responsive
+columns. Tap a dot or swipe vertically anywhere to move among Dashboard,
+Profiles, and Machine. Taller pages scroll until the matching boundary before
+the page gesture takes over, and horizontal graph paging remains independent.
+Confirm that page content fades and slides in the navigation direction while
+the rail remains fixed. Rotate through both landscape directions and confirm
+that the rail is compact on the plain edge and notch-inset on the cutout edge.
+The Machine page contains an opt-in Keep screen awake preference for
+mounted-screen review. Verify that it releases on backgrounding; this display
+behavior is not part of the firmware control or safety loop.
+
+On a connected production Dashboard, verify that equal-height status, cooldown,
+and extraction cards form the top landscape row, with temperature and a
+two-thirds-width graph directly beneath. Opening the quick-profile chooser must
+overlay the lower content without resizing that row, with Manual spanning the
+first row and the four slots in a 2-by-2 grid below. Selecting an unavailable
+custom profile should keep the card height stable and show an action beneath
+the selector that opens Profiles; cooldown and steam actions should open
+Machine. Compact landscape should omit the pump-command line and let Start or
+Stop fill the adjacent column; portrait should retain the full status copy.
+Profiles should show the editor on the left and the 2-by-2 profile selection
+above sync on the right without clipping. Its compact duration steppers should
+render as unified rounded controls.
+
 ### Simulator-backed app
 
 Start the API simulator in one terminal:

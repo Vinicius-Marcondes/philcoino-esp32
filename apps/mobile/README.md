@@ -25,6 +25,8 @@ Key code boundaries:
 - `src/pairing`: inspection, authentication, persistence, and address recovery;
 - `src/networking`: strict API client, cancellation/timeouts, and error mapping;
 - `src/storage`: strict one-device record and Expo SecureStore adapter;
+  strict app-local display preferences are stored separately and never cleared
+  when a machine is forgotten;
 - `src/profiles`: seeded four-slot profile set and canonical comparison;
 - `src/dashboard`: polling, acknowledged mutations, and pure view models;
 - `test`: Bun tests for the above boundaries.

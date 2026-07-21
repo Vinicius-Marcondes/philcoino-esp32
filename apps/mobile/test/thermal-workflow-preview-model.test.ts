@@ -173,6 +173,12 @@ describe("thermal workflow design preview model", () => {
     expect(componentSource).toContain("export function ThermalWorkflowStatus");
     expect(componentSource).toContain("snapshot.cooldown.status");
     expect(componentSource).toContain("accessibilityState={{ disabled }}");
+    expect(componentSource).toContain(
+      "fillHeight && styles.cooldownCardFill",
+    );
+    expect(dashboardSource).toContain(
+      "fillHeight && styles.machineStateCardFill",
+    );
     const productionStart = componentSource.indexOf(
       "export function ThermalWorkflowStatus",
     );

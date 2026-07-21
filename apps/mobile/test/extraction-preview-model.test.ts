@@ -170,6 +170,11 @@ describe("extraction design preview model", () => {
     expect(source).toContain('accessibilityRole="radio"');
     expect(source).toContain('accessibilityRole="button"');
     expect(source).toContain("function QuickProfilePicker");
+    expect(source).toContain("compact && styles.profilePickerMenuCompact");
+    expect(source).toContain('position: "absolute"');
+    expect(source).toContain('flexBasis: "50%"');
+    expect(source).toContain("fullRow={compact}");
+    expect(source).toContain('flexBasis: "100%"');
     expect(source).toContain("accessibilityState={{ disabled: active, expanded }}");
     expect(source).toContain('translate("extractionPreview.pumpBoundary")');
     expect(source).toContain(
@@ -177,13 +182,55 @@ describe("extraction design preview model", () => {
     );
     expect(source).not.toContain("styles.commandBoundary");
     expect(source).toContain('translate("extractionPreview.pumpCommand", {');
+    expect(source).toContain("function CompactBlockStatus");
+    expect(source).toContain('"extractionPreview.exportProfilesCompact"');
+    expect(source).toContain("<CompactBlockStatus {...compactQuickAction} />");
+    expect(source).toContain("styles.compactSelectorColumn");
+    expect(source).toContain('{!compact || view !== "quick" ? (');
+    expect(source).not.toContain("styles.compactStatusRow");
+    expect(source).not.toContain("styles.compactCommandStatus");
+    expect(source).toContain("hitSlop={10}");
+    expect(source).toContain("actionButtonCompact: {");
+    expect(source).toContain('borderCurve: "continuous"');
+    const portraitStepperStyle = source.slice(
+      source.indexOf("stepperRow: {"),
+      source.indexOf("stepperRowCompact: {"),
+    );
+    expect(portraitStepperStyle).toContain('flexWrap: "nowrap"');
+    const portraitStepperLabelStyle = source.slice(
+      source.indexOf("stepperLabel: {"),
+      source.indexOf("stepperLabelCompact: {"),
+    );
+    expect(portraitStepperLabelStyle).toContain("flexShrink: 1");
+    expect(portraitStepperLabelStyle).toContain("minWidth: 0");
     expect(source).toContain("extractionPresentationTitle(extractionStatus.title)");
-    const profileSync = source.indexOf('view === "profiles" ? <ProfileSyncCard');
-    const profileConfiguration = source.indexOf('view !== "quick" ? <View', profileSync);
-    const localEditor = source.indexOf("<ProfileEditor", profileConfiguration);
-    expect(profileSync).toBeGreaterThan(-1);
-    expect(profileConfiguration).toBeGreaterThan(profileSync);
-    expect(localEditor).toBeGreaterThan(profileConfiguration);
+    const profileWorkspace = source.indexOf("styles.profileWorkspaceRow");
+    const localEditor = source.indexOf("<ProfileEditor", profileWorkspace);
+    const profileSidebar = source.indexOf("styles.profileSidebar", localEditor);
+    const profileConfiguration = source.indexOf(
+      "<ProfileSelectionCard",
+      profileSidebar,
+    );
+    const profileSync = source.indexOf(
+      "<ProfileSyncCard",
+      profileConfiguration,
+    );
+    expect(profileWorkspace).toBeGreaterThan(-1);
+    expect(localEditor).toBeGreaterThan(profileWorkspace);
+    expect(profileSidebar).toBeGreaterThan(localEditor);
+    expect(profileConfiguration).toBeGreaterThan(profileSidebar);
+    expect(profileSync).toBeGreaterThan(profileConfiguration);
+    expect(source).toContain("styles.profileEditorLandscapePanel");
+    expect(source).toContain("styles.profileEditorStepperList");
+    expect(source).toContain("profileEditorStepperList: { gap: 10 }");
+    expect(source).toContain("compact && styles.roundButtonCompact");
+    expect(source).toContain("stepperActionsCompact: {");
+    expect(source).toContain("stepperRowCompact: {");
+    expect(source).toContain("padding: 10");
+    expect(source).toContain(
+      "stepperValueCompact: { flex: 1, fontSize: 14, minWidth: 0 }",
+    );
+    expect(source).toContain('width: "auto"');
     expect(source).not.toContain("DeviceApiClient");
     expect(source).not.toContain("fetch(");
   });
@@ -193,7 +240,7 @@ describe("extraction design preview model", () => {
       new URL("../components/dashboard-screen.tsx", import.meta.url),
     ).text();
 
-    expect(source).toContain('type DashboardPage = "dashboard" | "profiles" | "machine"');
+    expect(source).toContain("type DashboardPage,");
     expect(source).toContain('view="quick"');
     expect(source).toContain('view="profiles"');
     expect(source).toContain('accessibilityRole="tablist"');
@@ -207,8 +254,26 @@ describe("extraction design preview model", () => {
     expect(source).toContain("paddingBottom: 24");
     expect(source).not.toContain("contentWithNavigation");
     expect(source).toContain("navigationVerticalPadding");
-    expect(source).toContain("paddingBottom: navigationVerticalPadding");
-    expect(source).toContain("paddingTop: navigationVerticalPadding");
+    expect(source).toContain(": navigationVerticalPadding");
+    expect(source).toContain("landscape && styles.navigationRail");
+    expect(source).toContain("landscape && styles.navigationRailTabs");
+    expect(source).toContain("navigationSwipeResponder.panHandlers");
+    expect(source).toContain("onMoveShouldSetPanResponderCapture");
+    expect(source).toContain("shouldNavigateDashboardPageSwipe({");
+    expect(source).toContain("<Animated.View");
+    expect(source).toContain("FadeInDown.duration(180)");
+    expect(source).toContain("FadeInUp.duration(180)");
+    expect(source).toContain("exiting={FadeOut.duration(90)}");
+    expect(source).toContain("styles.navigationDotActive");
+    expect(source).toContain(
+      "dashboardPageTransition: { flex: 1, minWidth: 0 }",
+    );
+    expect(source).toContain("dashboardScroll: { flex: 1, minWidth: 0 }");
+    expect(source).toContain('width: "100%"');
+    expect(source).toContain(
+      '<Fragment key="dashboard-landscape-layout">',
+    );
+    expect(source).toContain('<Fragment key="dashboard-portrait-layout">');
     expect(source).toContain("minHeight: 44");
 
     const machineStatus = source.indexOf("<MachineStatus");
@@ -221,6 +286,9 @@ describe("extraction design preview model", () => {
     expect(temperatureCurve).toBeGreaterThan(boilerTemperature);
     expect(extraction).toBeGreaterThan(temperatureCurve);
     expect(cooldown).toBeGreaterThan(extraction);
+    expect(source).toContain("<MachineStatus\n                          compact\n                          disabled=");
+    expect(source).toContain("faultMutation={faultMutation}\n                          fillHeight");
+    expect(source).toContain("<ThermalWorkflowStatus\n                          compact\n                          fillHeight");
 
     const machineControls = source.indexOf("<MachineControls");
     const heaterToggle = source.indexOf("<HeaterToggleBar", machineControls);

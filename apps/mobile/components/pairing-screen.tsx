@@ -8,8 +8,10 @@ import {
   StyleSheet,
   Text,
   TextInput,
+  useWindowDimensions,
   View,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { DashboardScreen } from "@/components/dashboard-screen";
 import type {
@@ -20,6 +22,7 @@ import { findDiscoveredDevice } from "@/src/discovery/device-discovery";
 import { nativeDeviceDiscovery } from "@/src/discovery/native-device-discovery";
 import { isDebugDeviceModeEnabled } from "@/src/debug-device-mode";
 import { translate } from "@/src/localization/i18n";
+import { mobileLayoutMode } from "@/src/layout/responsive-layout";
 import { ApiClientError } from "@/src/networking/api-client-error";
 import { createDeviceApiClient } from "@/src/networking/expo-device-api-client";
 import {
@@ -94,6 +97,9 @@ function PairingFlowScreen({
   const [busy, setBusy] = useState(true);
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   const [scanning, setScanning] = useState(false);
+  const windowSize = useWindowDimensions();
+  const safeAreaInsets = useSafeAreaInsets();
+  const landscape = mobileLayoutMode(windowSize) === "landscape";
   const stopScan = useRef<(() => void) | null>(null);
   const scanTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const activeOperation = useRef<AbortController | null>(null);
@@ -344,17 +350,47 @@ function PairingFlowScreen({
         style={styles.screen}
         contentContainerStyle={[
           styles.content,
-          { paddingBottom: CONTENT_BOTTOM_PADDING + keyboardHeight },
+          landscape && styles.contentLandscape,
+          {
+            paddingBottom:
+              CONTENT_BOTTOM_PADDING + keyboardHeight + safeAreaInsets.bottom,
+            paddingLeft: Math.max(20, safeAreaInsets.left + 12),
+            paddingRight: Math.max(20, safeAreaInsets.right + 12),
+          },
         ]}>
         <View style={styles.pageHeader}>
           <Text selectable style={styles.pageTitle}>{translate("pairing.title")}</Text>
         </View>
-        <View style={styles.intro}>
-          <Text selectable style={styles.eyebrow}>{translate("pairing.eyebrow")}</Text>
-          <Text selectable style={styles.lead}>
-            {translate("pairing.lead")}
-          </Text>
-        </View>
+        <View
+          style={[
+            styles.pairingLayout,
+            landscape && styles.pairingLayoutLandscape,
+          ]}>
+          <View
+            style={[
+              styles.pairingIntroColumn,
+              landscape && styles.pairingIntroColumnLandscape,
+            ]}>
+            <View style={styles.intro}>
+              <Text selectable style={styles.eyebrow}>{translate("pairing.eyebrow")}</Text>
+              <Text selectable style={styles.lead}>
+                {translate("pairing.lead")}
+              </Text>
+            </View>
+
+            {message.length > 0 ? (
+              <View accessibilityLiveRegion="polite" style={styles.notice}>
+                {busy ? <ActivityIndicator accessibilityLabel={translate("pairing.working")} size="small" /> : null}
+                <Text selectable style={styles.noticeText}>{message}</Text>
+              </View>
+            ) : null}
+          </View>
+
+          <View
+            style={[
+              styles.pairingActionColumn,
+              landscape && styles.pairingActionColumnLandscape,
+            ]}>
 
         {selected !== null ? (
           <View style={styles.card}>
@@ -463,13 +499,8 @@ function PairingFlowScreen({
             </View>
           </>
         )}
-
-        {message.length > 0 ? (
-          <View accessibilityLiveRegion="polite" style={styles.notice}>
-            {busy ? <ActivityIndicator accessibilityLabel={translate("pairing.working")} size="small" /> : null}
-            <Text selectable style={styles.noticeText}>{message}</Text>
           </View>
-        ) : null}
+        </View>
       </ScrollView>
     </>
   );
@@ -577,6 +608,19 @@ const styles = StyleSheet.create({
     paddingBottom: CONTENT_BOTTOM_PADDING,
     paddingTop: 72,
   },
+  contentLandscape: { paddingTop: 16 },
+  pairingLayout: { gap: 18 },
+  pairingLayoutLandscape: {
+    alignItems: "flex-start",
+    flexDirection: "row",
+  },
+  pairingIntroColumn: { gap: 18 },
+  pairingIntroColumnLandscape: {
+    flex: 0.8,
+    minWidth: 220,
+  },
+  pairingActionColumn: { gap: 18 },
+  pairingActionColumnLandscape: { flex: 1.2, minWidth: 320 },
   pageHeader: { alignItems: "center", minHeight: 34 },
   pageTitle: { color: "#241B17", fontSize: 22, fontWeight: "800" },
   intro: { gap: 7, paddingHorizontal: 2, paddingTop: 8 },

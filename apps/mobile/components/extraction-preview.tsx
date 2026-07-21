@@ -38,8 +38,11 @@ import { extractionPresentation } from "@/src/dashboard/extraction-presentation"
 import { translate } from "@/src/localization/i18n";
 
 interface ExtractionPreviewProps {
+  compact?: boolean;
   debugPreview?: boolean;
   initialState?: ExtractionPreviewState;
+  onOpenMachine?: () => void;
+  onOpenProfiles?: () => void;
   onStateChange?: Dispatch<SetStateAction<ExtractionPreviewState>>;
   state?: ExtractionPreviewState;
   view?: "all" | "profiles" | "quick";
@@ -48,8 +51,11 @@ interface ExtractionPreviewProps {
 }
 
 export function ExtractionPreview({
+  compact = false,
   debugPreview = true,
   initialState,
+  onOpenMachine,
+  onOpenProfiles,
   onStateChange,
   state: controlledState,
   view = "all",
@@ -72,6 +78,41 @@ export function ExtractionPreview({
     !active && state.selected.kind === "profile" && !canStartPreview(state);
   const workflowStartBlocked = !active && workflowBlock !== null;
   const activeProfile = selectedProfile(state);
+  const compactQuickAction = workflowStartBlocked
+    ? {
+        accessibilityHint: translate(
+          workflowBlock === "steam"
+            ? "extractionPreview.steamStartBlocked"
+            : "extractionPreview.cooldownStartBlocked",
+        ),
+        label: translate(
+          workflowBlock === "steam"
+            ? "extractionPreview.steamModeCompact"
+            : "extractionPreview.cooldownActiveCompact",
+        ),
+        onPress: onOpenMachine,
+      }
+    : customStartBlocked
+      ? {
+          accessibilityHint: translate(
+            activeProfile === null
+              ? "extractionPreview.emptyStartBlocked"
+              : "extractionPreview.startBlocked",
+          ),
+          label: translate(
+            activeProfile === null
+              ? "extractionPreview.completeProfileCompact"
+              : "extractionPreview.exportProfilesCompact",
+          ),
+          onPress: onOpenProfiles,
+        }
+      : {
+          accessibilityHint: translate(
+            "extractionPreview.openProfilesCompactHint",
+          ),
+          label: translate("extractionPreview.exportProfilesCompact"),
+          onPress: onOpenProfiles,
+        };
   const selectedProfileId =
     state.selected.kind === "profile" ? state.selected.profileId : null;
   const selectedProfileLabel =
@@ -86,8 +127,18 @@ export function ExtractionPreview({
   }, [active]);
 
   return (
-    <View style={styles.section}>
-      {debugPreview ? <View accessibilityLiveRegion="assertive" style={styles.previewBanner}>
+    <View
+      style={[
+        styles.section,
+        compact && view === "profiles" && styles.sectionLandscape,
+        compact && view === "quick" && styles.sectionCompactQuick,
+      ]}>
+      {debugPreview ? <View
+        accessibilityLiveRegion="assertive"
+        style={[
+          styles.previewBanner,
+          compact && view === "profiles" && styles.previewBannerLandscape,
+        ]}>
         <Text selectable style={styles.previewEyebrow}>
           {translate("extractionPreview.eyebrow")}
         </Text>
@@ -99,69 +150,79 @@ export function ExtractionPreview({
         </Text>
       </View> : null}
 
-      {view === "profiles" ? <ProfileSyncCard
-        active={active}
-        onExport={() => setState(exportProfilesPreview)}
-        state={state}
-        synchronized={synchronized}
-        workflowBlock={workflowBlock}
-        workflowMutationPending={workflowMutationPending}
-      /> : null}
-
-      {view !== "quick" ? <View style={styles.card}>
-        <SectionHeading
-          eyebrow={translate(
-            view === "profiles"
-              ? "extractionPreview.profileConfiguration"
-              : "extractionPreview.profiles",
-          )}
-          title={translate(
-            view === "profiles"
-              ? "extractionPreview.chooseProfileToEdit"
-              : "extractionPreview.title",
-          )}
-        />
-        <View accessibilityRole="radiogroup" style={styles.profileGrid}>
-          {view !== "profiles" ? (
-            <ProfileButton
-              detail={translate("extractionPreview.manualDetail")}
+      {view === "profiles" && compact ? (
+        <View style={styles.profileWorkspaceRow}>
+          {selectedProfileId !== null ? (
+            <ProfileEditor
+              compact
+              debugPreview={debugPreview}
               disabled={active}
-              label={translate("extractionPreview.manual")}
-              onPress={() =>
+              key={selectedProfileId}
+              onClear={() =>
                 setState((current) =>
-                  selectPreview(current, { kind: "manual" }),
+                  saveMobileProfile(current, selectedProfileId, null),
                 )
               }
-              selected={state.selected.kind === "manual"}
+              onSave={(profile) =>
+                setState((current) =>
+                  saveMobileProfile(current, selectedProfileId, profile),
+                )
+              }
+              profile={activeProfile}
+              profileId={selectedProfileId}
             />
           ) : null}
-          {state.mobileProfiles.profiles.map((slot) => (
-            <ProfileButton
-              detail={slot.id}
-              disabled={active}
-              key={slot.id}
-              label={
-                slot.profile?.name ?? translate("extractionPreview.emptySlot")
+          <View style={styles.profileSidebar}>
+            <ProfileSelectionCard
+              active={active}
+              compact
+              onSelect={(selection) =>
+                setState((current) => selectPreview(current, selection))
               }
-              onPress={() =>
-                setState((current) =>
-                  selectPreview(current, {
-                    kind: "profile",
-                    profileId: slot.id,
-                  }),
-                )
-              }
-              selected={
-                state.selected.kind === "profile" &&
-                state.selected.profileId === slot.id
-              }
+              state={state}
+              view={view}
             />
-          ))}
+            <ProfileSyncCard
+              active={active}
+              compact
+              onExport={() => setState(exportProfilesPreview)}
+              state={state}
+              synchronized={synchronized}
+              workflowBlock={workflowBlock}
+              workflowMutationPending={workflowMutationPending}
+            />
+          </View>
         </View>
-      </View> : null}
+      ) : (
+        <>
+          {view === "profiles" ? (
+            <ProfileSyncCard
+              active={active}
+              compact={compact}
+              onExport={() => setState(exportProfilesPreview)}
+              state={state}
+              synchronized={synchronized}
+              workflowBlock={workflowBlock}
+              workflowMutationPending={workflowMutationPending}
+            />
+          ) : null}
+          {view !== "quick" ? (
+            <ProfileSelectionCard
+              active={active}
+              compact={compact}
+              onSelect={(selection) =>
+                setState((current) => selectPreview(current, selection))
+              }
+              state={state}
+              view={view}
+            />
+          ) : null}
+        </>
+      )}
 
       {view !== "quick" && view !== "profiles" ? <ProfileSyncCard
         active={active}
+        compact={compact}
         onExport={() => setState(exportProfilesPreview)}
         state={state}
         synchronized={synchronized}
@@ -169,8 +230,11 @@ export function ExtractionPreview({
         workflowMutationPending={workflowMutationPending}
       /> : null}
 
-      {view !== "quick" && selectedProfileId !== null ? (
+      {view !== "quick" &&
+      selectedProfileId !== null &&
+      !(view === "profiles" && compact) ? (
         <ProfileEditor
+          compact={compact}
           debugPreview={debugPreview}
           disabled={active}
           key={selectedProfileId}
@@ -189,83 +253,121 @@ export function ExtractionPreview({
         />
       ) : null}
 
-      {view !== "profiles" ? <View style={styles.extractionCard}>
-        <SectionHeading
-          eyebrow={translate("extractionPreview.extractionState")}
+      {view !== "profiles" ? <View style={[styles.extractionCard, compact && styles.extractionCardCompact]}>
+      <SectionHeading
+        compact={compact}
+        eyebrow={translate("extractionPreview.extractionState")}
           title={extractionPresentationTitle(extractionStatus.title)}
         />
         {view === "quick" ? (
-          <QuickProfilePicker
-            active={active}
-            expanded={profilePickerOpen}
-            onExpandedChange={setProfilePickerOpen}
-            onSelect={(selection) => {
-              setState((current) => selectPreview(current, selection));
-              setProfilePickerOpen(false);
-            }}
-            selectedLabel={selectedProfileLabel}
-            state={state}
-          />
+          <View style={compact && styles.quickControlRow}>
+            <View style={compact && styles.compactSelectorColumn}>
+              <QuickProfilePicker
+                active={active}
+                compact={compact}
+                expanded={profilePickerOpen}
+                onExpandedChange={setProfilePickerOpen}
+                onSelect={(selection) => {
+                  setState((current) => selectPreview(current, selection));
+                  setProfilePickerOpen(false);
+                }}
+                selectedLabel={selectedProfileLabel}
+                state={state}
+              />
+              {compact ? (
+                <CompactBlockStatus {...compactQuickAction} />
+              ) : null}
+            </View>
+            {compact ? (
+              <View style={styles.compactAction}>
+                {active ? (
+                  <ActionButton
+                    compact
+                    destructive
+                    grow
+                    label={translate("extractionPreview.stop")}
+                    onPress={() => setState(stopExtractionPreview)}
+                  />
+                ) : (
+                  <ActionButton
+                    compact
+                    disabled={!startEnabled}
+                    grow
+                    label={translate("extractionPreview.start")}
+                    onPress={() => setState(startExtractionPreview)}
+                  />
+                )}
+              </View>
+            ) : null}
+          </View>
         ) : null}
-        <View style={styles.metricGrid}>
-          <PreviewMetric
-            label={translate("extractionPreview.phase")}
-            value={phaseLabel(state.extraction.phase)}
-          />
-          <PreviewMetric
-            label={translate("extractionPreview.elapsed")}
-            value={formatPreviewTime(state.extraction.elapsedMs)}
-          />
-          <PreviewMetric
-            label={translate("extractionPreview.remaining")}
-            value={
-              state.extraction.remainingMs === null
-                ? "—"
-                : formatPreviewTime(state.extraction.remainingMs)
-            }
-          />
-        </View>
-        <Text
-          accessibilityHint={translate("extractionPreview.pumpBoundary")}
-          selectable
-          style={styles.commandStatus}>
-          {translate("extractionPreview.pumpCommand", {
-            command: translate(
-              extractionStatus.pumpCommand === "running"
-                ? "extractionPreview.commandRunning"
-                : "extractionPreview.commandOff",
-            ),
-          })}
-        </Text>
-        {customStartBlocked ? (
-          <Text accessibilityLiveRegion="polite" selectable style={styles.blockedText}>
-            {activeProfile === null
-              ? translate("extractionPreview.emptyStartBlocked")
-              : translate("extractionPreview.startBlocked")}
-          </Text>
+        {!compact || view !== "quick" ? (
+          <View style={styles.metricGrid}>
+            <PreviewMetric
+              label={translate("extractionPreview.phase")}
+              value={phaseLabel(state.extraction.phase)}
+            />
+            <PreviewMetric
+              label={translate("extractionPreview.elapsed")}
+              value={formatPreviewTime(state.extraction.elapsedMs)}
+            />
+            <PreviewMetric
+              label={translate("extractionPreview.remaining")}
+              value={
+                state.extraction.remainingMs === null
+                  ? "—"
+                  : formatPreviewTime(state.extraction.remainingMs)
+              }
+            />
+          </View>
         ) : null}
-        {workflowStartBlocked ? (
-          <Text accessibilityLiveRegion="polite" selectable style={styles.blockedText}>
-            {translate(
-              workflowBlock === "steam"
-                ? "extractionPreview.steamStartBlocked"
-                : "extractionPreview.cooldownStartBlocked",
-            )}
-          </Text>
+        {!compact || view !== "quick" ? (
+          <>
+            <Text
+              accessibilityHint={translate("extractionPreview.pumpBoundary")}
+              selectable
+              style={styles.commandStatus}>
+              {translate("extractionPreview.pumpCommand", {
+                command: translate(
+                  extractionStatus.pumpCommand === "running"
+                    ? "extractionPreview.commandRunning"
+                    : "extractionPreview.commandOff",
+                ),
+              })}
+            </Text>
+            {customStartBlocked ? (
+              <Text accessibilityLiveRegion="polite" selectable style={styles.blockedText}>
+                {activeProfile === null
+                  ? translate("extractionPreview.emptyStartBlocked")
+                  : translate("extractionPreview.startBlocked")}
+              </Text>
+            ) : null}
+            {workflowStartBlocked ? (
+              <Text accessibilityLiveRegion="polite" selectable style={styles.blockedText}>
+                {translate(
+                  workflowBlock === "steam"
+                    ? "extractionPreview.steamStartBlocked"
+                    : "extractionPreview.cooldownStartBlocked",
+                )}
+              </Text>
+            ) : null}
+          </>
         ) : null}
-        <View style={styles.actionRow}>
-          <ActionButton
-            disabled={!startEnabled}
-            label={translate("extractionPreview.start")}
-            onPress={() => setState(startExtractionPreview)}
-          />
-          <ActionButton
-            destructive
-            disabled={!active}
-            label={translate("extractionPreview.stop")}
-            onPress={() => setState(stopExtractionPreview)}
-          />
-        </View>
+        {!compact || view !== "quick" ? (
+          <View style={styles.actionRow}>
+            <ActionButton
+              disabled={!startEnabled}
+              label={translate("extractionPreview.start")}
+              onPress={() => setState(startExtractionPreview)}
+            />
+            <ActionButton
+              destructive
+              disabled={!active}
+              label={translate("extractionPreview.stop")}
+              onPress={() => setState(stopExtractionPreview)}
+            />
+          </View>
+        ) : null}
         {active && debugPreview && interactivePreview ? (
           <ActionButton
             label={translate("extractionPreview.advance")}
@@ -286,6 +388,7 @@ export function ExtractionPreview({
 
 function ProfileSyncCard({
   active,
+  compact,
   onExport,
   state,
   synchronized,
@@ -293,6 +396,7 @@ function ProfileSyncCard({
   workflowMutationPending,
 }: {
   active: boolean;
+  compact: boolean;
   onExport: () => void;
   state: ExtractionPreviewState;
   synchronized: boolean;
@@ -300,8 +404,9 @@ function ProfileSyncCard({
   workflowMutationPending: boolean;
 }) {
   return (
-    <View style={styles.card}>
+    <View style={[styles.card, compact && styles.landscapePanel]}>
       <SectionHeading
+        compact={compact}
         eyebrow={translate("extractionPreview.sync")}
         title={
           synchronized
@@ -309,10 +414,18 @@ function ProfileSyncCard({
             : translate("extractionPreview.different")
         }
       />
-      <Text selectable style={styles.helpText}>
-        {translate("extractionPreview.syncHelp")}
+      <Text
+        numberOfLines={compact ? 1 : undefined}
+        selectable
+        style={[styles.helpText, compact && styles.helpTextCompact]}>
+        {translate(
+          compact
+            ? "extractionPreview.syncHelpCompact"
+            : "extractionPreview.syncHelp",
+        )}
       </Text>
       <ActionButton
+        compact={compact}
         disabled={
           active ||
           synchronized ||
@@ -338,8 +451,73 @@ function ProfileSyncCard({
   );
 }
 
+function ProfileSelectionCard({
+  active,
+  compact,
+  onSelect,
+  state,
+  view,
+}: {
+  active: boolean;
+  compact: boolean;
+  onSelect: (selection: ExtractionPreviewState["selected"]) => void;
+  state: ExtractionPreviewState;
+  view: "all" | "profiles";
+}) {
+  return (
+    <View style={[styles.card, compact && styles.landscapePanel]}>
+      <SectionHeading
+        compact={compact}
+        eyebrow={translate(
+          view === "profiles"
+            ? "extractionPreview.profileConfiguration"
+            : "extractionPreview.profiles",
+        )}
+        title={translate(
+          view === "profiles"
+            ? "extractionPreview.chooseProfileToEdit"
+            : "extractionPreview.title",
+        )}
+      />
+      <View
+        accessibilityRole="radiogroup"
+        style={[styles.profileGrid, compact && styles.profileGridCompact]}>
+        {view !== "profiles" ? (
+          <ProfileButton
+            compact={compact}
+            detail={translate("extractionPreview.manualDetail")}
+            disabled={active}
+            label={translate("extractionPreview.manual")}
+            onPress={() => onSelect({ kind: "manual" })}
+            selected={state.selected.kind === "manual"}
+          />
+        ) : null}
+        {state.mobileProfiles.profiles.map((slot) => (
+          <ProfileButton
+            compact={compact}
+            detail={slot.id}
+            disabled={active}
+            key={slot.id}
+            label={
+              slot.profile?.name ?? translate("extractionPreview.emptySlot")
+            }
+            onPress={() =>
+              onSelect({ kind: "profile", profileId: slot.id })
+            }
+            selected={
+              state.selected.kind === "profile" &&
+              state.selected.profileId === slot.id
+            }
+          />
+        ))}
+      </View>
+    </View>
+  );
+}
+
 function QuickProfilePicker({
   active,
+  compact,
   expanded,
   onExpandedChange,
   onSelect,
@@ -347,6 +525,7 @@ function QuickProfilePicker({
   state,
 }: {
   active: boolean;
+  compact: boolean;
   expanded: boolean;
   onExpandedChange: (expanded: boolean) => void;
   onSelect: (selection: ExtractionPreviewState["selected"]) => void;
@@ -354,7 +533,7 @@ function QuickProfilePicker({
   state: ExtractionPreviewState;
 }) {
   return (
-    <View style={styles.profilePicker}>
+    <View style={[styles.profilePicker, compact && styles.profilePickerCompact]}>
       <Pressable
         accessibilityLabel={translate("extractionPreview.selectProfile", {
           name: selectedLabel,
@@ -370,9 +549,18 @@ function QuickProfilePicker({
         ]}>
         <View style={styles.profilePickerCopy}>
           <Text selectable style={styles.profilePickerLabel}>
-            {translate("extractionPreview.profiles")}
+            {translate(
+              compact
+                ? "extractionPreview.profileCompact"
+                : "extractionPreview.profiles",
+            )}
           </Text>
-          <Text selectable style={styles.profilePickerValue}>
+          <Text
+            adjustsFontSizeToFit
+            minimumFontScale={0.72}
+            numberOfLines={1}
+            selectable
+            style={styles.profilePickerValue}>
             {selectedLabel}
           </Text>
         </View>
@@ -380,15 +568,23 @@ function QuickProfilePicker({
       </Pressable>
 
       {expanded ? (
-        <View accessibilityRole="radiogroup" style={styles.profilePickerMenu}>
+        <View
+          accessibilityRole="radiogroup"
+          style={[
+            styles.profilePickerMenu,
+            compact && styles.profilePickerMenuCompact,
+          ]}>
           <CompactProfileOption
+            compact={compact}
             detail={translate("extractionPreview.manualDetail")}
+            fullRow={compact}
             label={translate("extractionPreview.manual")}
             onPress={() => onSelect({ kind: "manual" })}
             selected={state.selected.kind === "manual"}
           />
           {state.mobileProfiles.profiles.map((slot) => (
             <CompactProfileOption
+              compact={compact}
               detail={slot.id}
               key={slot.id}
               label={
@@ -410,12 +606,16 @@ function QuickProfilePicker({
 }
 
 function CompactProfileOption({
+  compact,
   detail,
+  fullRow = false,
   label,
   onPress,
   selected,
 }: {
+  compact: boolean;
   detail: string;
+  fullRow?: boolean;
   label: string;
   onPress: () => void;
   selected: boolean;
@@ -430,27 +630,45 @@ function CompactProfileOption({
       onPress={onPress}
       style={({ pressed }) => [
         styles.profilePickerOption,
+        compact && styles.profilePickerOptionCompact,
+        fullRow && styles.profilePickerOptionFullRow,
         selected && styles.profilePickerOptionSelected,
         pressed && styles.pressed,
       ]}>
       <View style={styles.profilePickerCopy}>
         <Text
+          numberOfLines={compact ? 1 : undefined}
           style={[
             styles.profilePickerOptionName,
+            compact && styles.profilePickerOptionNameCompact,
             selected && styles.profilePickerOptionNameSelected,
           ]}>
           {label}
         </Text>
-        <Text style={styles.profilePickerOptionDetail}>
+        <Text
+          numberOfLines={compact ? 1 : undefined}
+          style={[
+            styles.profilePickerOptionDetail,
+            compact && styles.profilePickerOptionDetailCompact,
+          ]}>
           {selected ? translate("extractionPreview.selected") : detail}
         </Text>
       </View>
-      {selected ? <Text style={styles.profilePickerCheck}>✓</Text> : null}
+      {selected ? (
+        <Text
+          style={[
+            styles.profilePickerCheck,
+            compact && styles.profilePickerCheckCompact,
+          ]}>
+          ✓
+        </Text>
+      ) : null}
     </Pressable>
   );
 }
 
 function ProfileEditor({
+  compact,
   debugPreview,
   disabled,
   onClear,
@@ -458,6 +676,7 @@ function ProfileEditor({
   profile,
   profileId,
 }: {
+  compact: boolean;
   debugPreview: boolean;
   disabled: boolean;
   onClear: () => void;
@@ -479,64 +698,89 @@ function ProfileEditor({
   useEffect(() => setSaved(false), [draft]);
 
   return (
-    <View style={styles.card}>
-      <SectionHeading
-        eyebrow={translate("extractionPreview.editor")}
-        title={profile?.name ?? translate("extractionPreview.emptySlot")}
-      />
-      <Text selectable style={styles.slotId}>{profileId}</Text>
-      <Text selectable style={styles.helpText}>
-        {translate("extractionPreview.editorHelp")}
-      </Text>
-      <Text selectable style={styles.inputLabel}>
-        {translate("extractionPreview.profileName")}
-      </Text>
-      <TextInput
-        accessibilityLabel={translate("extractionPreview.profileName")}
-        autoCapitalize="words"
-        editable={!disabled}
-        maxLength={13}
-        onChangeText={(name) => setDraft((current) => ({ ...current, name }))}
-        placeholder={translate("extractionPreview.namePlaceholder")}
-        style={styles.nameInput}
-        value={draft.name}
-      />
-      <DurationStepper
-        disabled={disabled}
-        label={translate("extractionPreview.preInfusion")}
-        onChange={(preInfusionSeconds) =>
-          setDraft((current) => ({ ...current, preInfusionSeconds }))
-        }
-        value={draft.preInfusionSeconds}
-      />
-      <DurationStepper
-        disabled={disabled}
-        label={translate("extractionPreview.soak")}
-        onChange={(soakSeconds) =>
-          setDraft((current) => ({ ...current, soakSeconds }))
-        }
-        value={draft.soakSeconds}
-      />
-      <DurationStepper
-        disabled={disabled}
-        label={translate("extractionPreview.mainExtraction")}
-        minimum={1}
-        onChange={(mainExtractionSeconds) =>
-          setDraft((current) => ({ ...current, mainExtractionSeconds }))
-        }
-        value={draft.mainExtractionSeconds}
-      />
-      <Text selectable style={styles.durationTotal}>
-        {translate("extractionPreview.durationRange")} · {profileDurationSeconds(draft)}s
-      </Text>
-      {!parsed.success ? (
-        <Text accessibilityLiveRegion="polite" selectable style={styles.validationText}>
-          {translate("extractionPreview.invalidProfile")}
+    <View
+      style={[
+        styles.card,
+        compact && styles.profileEditorLandscapePanel,
+      ]}>
+      <View style={compact && styles.profileEditorHeadingColumn}>
+        <SectionHeading
+          compact={compact}
+          eyebrow={translate("extractionPreview.editor")}
+          title={profile?.name ?? translate("extractionPreview.emptySlot")}
+        />
+        {!compact ? (
+          <>
+            <Text selectable style={styles.slotId}>{profileId}</Text>
+            <Text selectable style={styles.helpText}>
+              {translate("extractionPreview.editorHelp")}
+            </Text>
+          </>
+        ) : (
+          <Text selectable style={styles.durationTotal}>
+            {translate("extractionPreview.durationRange")} · {profileDurationSeconds(draft)}s
+          </Text>
+        )}
+      </View>
+      <View style={compact && styles.profileEditorNameColumn}>
+        <Text selectable style={styles.inputLabel}>
+          {translate("extractionPreview.profileName")}
+        </Text>
+        <TextInput
+          accessibilityLabel={translate("extractionPreview.profileName")}
+          autoCapitalize="words"
+          editable={!disabled}
+          maxLength={13}
+          onChangeText={(name) => setDraft((current) => ({ ...current, name }))}
+          placeholder={translate("extractionPreview.namePlaceholder")}
+          style={[styles.nameInput, compact && styles.nameInputCompact]}
+          value={draft.name}
+        />
+      </View>
+      <View
+        style={[
+          styles.profileEditorStepperList,
+          compact && styles.profileEditorStepperGrid,
+        ]}>
+        <DurationStepper
+          compact={compact}
+          disabled={disabled}
+          label={translate("extractionPreview.preInfusion")}
+          onChange={(preInfusionSeconds) =>
+            setDraft((current) => ({ ...current, preInfusionSeconds }))
+          }
+          value={draft.preInfusionSeconds}
+        />
+        <DurationStepper
+          compact={compact}
+          disabled={disabled}
+          label={translate("extractionPreview.soak")}
+          onChange={(soakSeconds) =>
+            setDraft((current) => ({ ...current, soakSeconds }))
+          }
+          value={draft.soakSeconds}
+        />
+        <DurationStepper
+          compact={compact}
+          disabled={disabled}
+          label={translate("extractionPreview.mainExtraction")}
+          minimum={1}
+          onChange={(mainExtractionSeconds) =>
+            setDraft((current) => ({ ...current, mainExtractionSeconds }))
+          }
+          value={draft.mainExtractionSeconds}
+        />
+      </View>
+      {!compact ? (
+        <Text selectable style={styles.durationTotal}>
+          {translate("extractionPreview.durationRange")} · {profileDurationSeconds(draft)}s
         </Text>
       ) : null}
-      <View style={styles.actionRow}>
+      <View style={[styles.actionRow, compact && styles.profileEditorActions]}>
         <ActionButton
+          compact={compact}
           disabled={disabled || !parsed.success}
+          grow={compact}
           label={translate("extractionPreview.saveLocal")}
           onPress={() => {
             if (parsed.success) {
@@ -546,26 +790,39 @@ function ProfileEditor({
           }}
         />
         <ActionButton
+          compact={compact}
           disabled={disabled || profile === null}
+          grow={compact}
           label={translate("extractionPreview.clearSlot")}
           onPress={onClear}
           secondary
         />
       </View>
+      {!parsed.success ? (
+        <View style={compact && styles.profileEditorFeedback}>
+          <Text accessibilityLiveRegion="polite" selectable style={styles.validationText}>
+            {translate("extractionPreview.invalidProfile")}
+          </Text>
+        </View>
+      ) : null}
       {saved && debugPreview ? (
-        <Notice text={translate("extractionPreview.localSaved")} />
+        <View style={compact && styles.profileEditorFeedback}>
+          <Notice text={translate("extractionPreview.localSaved")} />
+        </View>
       ) : null}
     </View>
   );
 }
 
 function DurationStepper({
+  compact,
   disabled,
   label,
   minimum = 0,
   onChange,
   value,
 }: {
+  compact: boolean;
   disabled: boolean;
   label: string;
   minimum?: number;
@@ -573,20 +830,32 @@ function DurationStepper({
   value: number;
 }) {
   return (
-    <View style={styles.stepperRow}>
-      <Text selectable style={styles.stepperLabel}>{label}</Text>
-      <View style={styles.stepperActions}>
+    <View style={[styles.stepperRow, compact && styles.stepperRowCompact]}>
+      <Text
+        numberOfLines={compact ? 1 : undefined}
+        selectable
+        style={[styles.stepperLabel, compact && styles.stepperLabelCompact]}>
+        {label}
+      </Text>
+      <View style={[styles.stepperActions, compact && styles.stepperActionsCompact]}>
         <RoundButton
           accessibilityLabel={translate("extractionPreview.decreaseSeconds", { label })}
+          compact={compact}
           disabled={disabled || value <= minimum}
           label="−"
           onPress={() => onChange(Math.max(minimum, value - 1))}
         />
-        <Text selectable style={styles.stepperValue}>
+        <Text
+          selectable
+          style={[
+            styles.stepperValue,
+            compact && styles.stepperValueCompact,
+          ]}>
           {translate("extractionPreview.seconds", { value })}
         </Text>
         <RoundButton
           accessibilityLabel={translate("extractionPreview.increaseSeconds", { label })}
+          compact={compact}
           disabled={disabled || value >= EXTRACTION_MAX_DURATION_SECONDS}
           label="+"
           onPress={() =>
@@ -599,12 +868,14 @@ function DurationStepper({
 }
 
 function ProfileButton({
+  compact,
   detail,
   disabled,
   label,
   onPress,
   selected,
 }: {
+  compact: boolean;
   detail: string;
   disabled: boolean;
   label: string;
@@ -620,11 +891,20 @@ function ProfileButton({
       onPress={onPress}
       style={({ pressed }) => [
         styles.profileButton,
+        compact && styles.profileButtonCompact,
         selected && styles.profileButtonSelected,
         disabled && styles.disabled,
         pressed && !disabled && styles.pressed,
       ]}>
-      <Text style={[styles.profileName, selected && styles.profileNameSelected]}>
+      <Text
+        adjustsFontSizeToFit
+        minimumFontScale={0.8}
+        numberOfLines={1}
+        style={[
+          styles.profileName,
+          compact && styles.profileNameCompact,
+          selected && styles.profileNameSelected,
+        ]}>
         {label}
       </Text>
       <Text style={[styles.profileDetail, selected && styles.profileDetailSelected]}>
@@ -634,11 +914,19 @@ function ProfileButton({
   );
 }
 
-function SectionHeading({ eyebrow, title }: { eyebrow: string; title: string }) {
+function SectionHeading({
+  compact = false,
+  eyebrow,
+  title,
+}: {
+  compact?: boolean;
+  eyebrow: string;
+  title: string;
+}) {
   return (
-    <View style={styles.heading}>
-      <Text selectable style={styles.eyebrow}>{eyebrow}</Text>
-      <Text selectable style={styles.title}>{title}</Text>
+    <View style={[styles.heading, compact && styles.headingCompact]}>
+      <Text selectable style={[styles.eyebrow, compact && styles.eyebrowCompact]}>{eyebrow}</Text>
+      <Text selectable style={[styles.title, compact && styles.titleCompact]}>{title}</Text>
     </View>
   );
 }
@@ -653,14 +941,18 @@ function PreviewMetric({ label, value }: { label: string; value: string }) {
 }
 
 function ActionButton({
+  compact = false,
   destructive = false,
   disabled = false,
+  grow = false,
   label,
   onPress,
   secondary = false,
 }: {
+  compact?: boolean;
   destructive?: boolean;
   disabled?: boolean;
+  grow?: boolean;
   label: string;
   onPress: () => void;
   secondary?: boolean;
@@ -673,6 +965,8 @@ function ActionButton({
       onPress={onPress}
       style={({ pressed }) => [
         styles.actionButton,
+        compact && styles.actionButtonCompact,
+        grow && styles.actionButtonGrow,
         secondary && styles.secondaryButton,
         destructive && styles.stopButton,
         disabled && styles.disabled,
@@ -691,11 +985,13 @@ function ActionButton({
 
 function RoundButton({
   accessibilityLabel,
+  compact = false,
   disabled,
   label,
   onPress,
 }: {
   accessibilityLabel: string;
+  compact?: boolean;
   disabled: boolean;
   label: string;
   onPress: () => void;
@@ -709,10 +1005,17 @@ function RoundButton({
       onPress={onPress}
       style={({ pressed }) => [
         styles.roundButton,
+        compact && styles.roundButtonCompact,
         disabled && styles.disabled,
         pressed && !disabled && styles.pressed,
       ]}>
-      <Text style={styles.roundButtonText}>{label}</Text>
+      <Text
+        style={[
+          styles.roundButtonText,
+          compact && styles.roundButtonTextCompact,
+        ]}>
+        {label}
+      </Text>
     </Pressable>
   );
 }
@@ -724,6 +1027,54 @@ function Notice({ text, warning = false }: { text: string; warning?: boolean }) 
       style={[styles.notice, warning && styles.noticeWarning]}>
       <Text selectable style={styles.noticeText}>{text}</Text>
     </View>
+  );
+}
+
+function CompactBlockStatus({
+  accessibilityHint,
+  label,
+  onPress,
+}: {
+  accessibilityHint: string;
+  label: string;
+  onPress?: () => void;
+}) {
+  if (onPress === undefined) {
+    return (
+      <View
+        accessibilityHint={accessibilityHint}
+        accessibilityLabel={label}
+        accessibilityLiveRegion="polite"
+        accessible
+        style={styles.compactBlockStatus}>
+        <Text numberOfLines={1} style={styles.compactBlockLabel}>
+          {label}
+        </Text>
+      </View>
+    );
+  }
+
+  return (
+    <Pressable
+      accessibilityHint={accessibilityHint}
+      accessibilityLabel={label}
+      accessibilityLiveRegion="polite"
+      accessibilityRole="button"
+      hitSlop={10}
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.compactBlockStatus,
+        pressed && styles.pressed,
+      ]}>
+      <Text
+        adjustsFontSizeToFit
+        minimumFontScale={0.8}
+        numberOfLines={1}
+        style={styles.compactBlockLabel}>
+        {label}
+      </Text>
+      <Text style={styles.compactBlockChevron}>›</Text>
+    </Pressable>
   );
 }
 
@@ -758,6 +1109,44 @@ export function formatPreviewTime(milliseconds: number): string {
 
 const styles = StyleSheet.create({
   section: { gap: 12 },
+  sectionLandscape: { gap: 12 },
+  sectionCompactQuick: { flex: 1, minWidth: 0 },
+  profileWorkspaceRow: {
+    alignItems: "stretch",
+    flexDirection: "row",
+    gap: 12,
+  },
+  profileSidebar: { flex: 1, gap: 12, minWidth: 0 },
+  landscapePanel: {
+    borderRadius: 18,
+    flexBasis: 0,
+    flexGrow: 1,
+    gap: 8,
+    minWidth: 0,
+    padding: 12,
+  },
+  profileEditorLandscapePanel: {
+    borderRadius: 18,
+    flex: 1,
+    gap: 8,
+    minWidth: 0,
+    padding: 12,
+  },
+  profileEditorHeadingColumn: { gap: 4, minWidth: 0 },
+  profileEditorNameColumn: { gap: 5, minWidth: 0 },
+  profileEditorStepperList: { gap: 10 },
+  profileEditorStepperGrid: {
+    flexDirection: "row",
+    gap: 6,
+    minWidth: 0,
+  },
+  profileEditorActions: {
+    flexDirection: "row",
+    flexWrap: "nowrap",
+    gap: 6,
+    minWidth: 0,
+  },
+  profileEditorFeedback: { width: "100%" },
   previewBanner: {
     backgroundColor: "#2F2722",
     borderColor: "#5D4B40",
@@ -767,6 +1156,7 @@ const styles = StyleSheet.create({
     gap: 6,
     padding: 18,
   },
+  previewBannerLandscape: { width: "100%" },
   previewEyebrow: {
     color: "#F2B66D",
     fontSize: 11,
@@ -793,16 +1183,33 @@ const styles = StyleSheet.create({
     gap: 14,
     padding: 18,
   },
+  extractionCardCompact: { gap: 6, padding: 10 },
   heading: { gap: 4 },
+  headingCompact: { gap: 2 },
   eyebrow: {
     color: "#8B3A2B",
     fontSize: 11,
     fontWeight: "900",
     letterSpacing: 1.2,
   },
+  eyebrowCompact: { fontSize: 9, letterSpacing: 0.9 },
   title: { color: "#241B17", fontSize: 21, fontWeight: "800" },
+  titleCompact: { fontSize: 18, lineHeight: 20 },
   profileGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
+  profileGridCompact: { gap: 8 },
   profilePicker: { gap: 8 },
+  profilePickerCompact: {
+    minWidth: 0,
+    position: "relative",
+    zIndex: 20,
+  },
+  compactSelectorColumn: { flex: 1.2, gap: 6, minWidth: 0, zIndex: 20 },
+  quickControlRow: {
+    alignItems: "stretch",
+    flexDirection: "row",
+    gap: 8,
+  },
+  compactAction: { alignSelf: "stretch", flex: 1, minWidth: 0 },
   profilePickerButton: {
     alignItems: "center",
     backgroundColor: "#FFF9F3",
@@ -817,7 +1224,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 10,
   },
-  profilePickerCopy: { flex: 1, gap: 2 },
+  profilePickerCopy: { flex: 1, gap: 2, minWidth: 0 },
   profilePickerLabel: {
     color: "#8B3A2B",
     fontSize: 10,
@@ -834,6 +1241,16 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     overflow: "hidden",
   },
+  profilePickerMenuCompact: {
+    boxShadow: "0 8px 24px rgba(61, 42, 32, 0.2)",
+    flexDirection: "row",
+    flexWrap: "wrap",
+    left: 0,
+    position: "absolute",
+    top: 66,
+    width: "170%",
+    zIndex: 30,
+  },
   profilePickerOption: {
     alignItems: "center",
     borderBottomColor: "#E2D3C5",
@@ -844,11 +1261,26 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 9,
   },
+  profilePickerOptionCompact: {
+    borderRightColor: "#E2D3C5",
+    borderRightWidth: 1,
+    flexBasis: "50%",
+    minHeight: 48,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  profilePickerOptionFullRow: {
+    borderRightWidth: 0,
+    flexBasis: "100%",
+  },
   profilePickerOptionSelected: { backgroundColor: "#F1DED3" },
   profilePickerOptionName: { color: "#332A25", fontSize: 15, fontWeight: "800" },
+  profilePickerOptionNameCompact: { fontSize: 13 },
   profilePickerOptionNameSelected: { color: "#7D3024" },
   profilePickerOptionDetail: { color: "#76675D", fontSize: 11, fontWeight: "700" },
+  profilePickerOptionDetailCompact: { fontSize: 9 },
   profilePickerCheck: { color: "#8B3A2B", fontSize: 18, fontWeight: "900" },
+  profilePickerCheckCompact: { fontSize: 15 },
   profileButton: {
     backgroundColor: "#F5EEE5",
     borderColor: "#D8C9BA",
@@ -861,12 +1293,20 @@ const styles = StyleSheet.create({
     minHeight: 78,
     padding: 14,
   },
+  profileButtonCompact: {
+    flexBasis: "47%",
+    gap: 2,
+    minHeight: 48,
+    padding: 7,
+  },
   profileButtonSelected: { backgroundColor: "#8B3A2B", borderColor: "#8B3A2B" },
   profileName: { color: "#332A25", fontSize: 17, fontWeight: "800" },
+  profileNameCompact: { fontSize: 14 },
   profileNameSelected: { color: "#FFFFFF" },
   profileDetail: { color: "#76675D", fontSize: 11, fontWeight: "700" },
   profileDetailSelected: { color: "#F3D9D2" },
   helpText: { color: "#695A50", fontSize: 14, lineHeight: 20 },
+  helpTextCompact: { fontSize: 12, lineHeight: 16 },
   slotId: { color: "#8B3A2B", fontSize: 12, fontWeight: "800" },
   inputLabel: { color: "#332A25", fontSize: 14, fontWeight: "800" },
   nameInput: {
@@ -880,19 +1320,51 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 10,
   },
+  nameInputCompact: { fontSize: 15, minHeight: 44, paddingVertical: 7 },
   stepperRow: {
     alignItems: "center",
     backgroundColor: "#F5EEE5",
     borderCurve: "continuous",
     borderRadius: 16,
     flexDirection: "row",
-    flexWrap: "wrap",
+    flexWrap: "nowrap",
     gap: 12,
     justifyContent: "space-between",
     padding: 12,
   },
-  stepperLabel: { color: "#332A25", flexGrow: 1, fontSize: 15, fontWeight: "800" },
-  stepperActions: { alignItems: "center", flexDirection: "row", gap: 9 },
+  stepperRowCompact: {
+    alignItems: "stretch",
+    flex: 1,
+    flexDirection: "column",
+    flexWrap: "nowrap",
+    gap: 6,
+    minWidth: 0,
+    padding: 10,
+  },
+  stepperLabel: {
+    color: "#332A25",
+    flexGrow: 1,
+    flexShrink: 1,
+    fontSize: 15,
+    fontWeight: "800",
+    minWidth: 0,
+  },
+  stepperLabelCompact: { flexGrow: 0, flexShrink: 1, fontSize: 12 },
+  stepperActions: {
+    alignItems: "center",
+    flexDirection: "row",
+    flexShrink: 0,
+    gap: 9,
+  },
+  stepperActionsCompact: {
+    backgroundColor: "#FFF9F3",
+    borderColor: "#D8C9BA",
+    borderCurve: "continuous",
+    borderRadius: 12,
+    borderWidth: 1,
+    gap: 0,
+    overflow: "hidden",
+  },
   stepperValue: {
     color: "#241B17",
     fontSize: 18,
@@ -901,6 +1373,7 @@ const styles = StyleSheet.create({
     minWidth: 50,
     textAlign: "center",
   },
+  stepperValueCompact: { flex: 1, fontSize: 14, minWidth: 0 },
   roundButton: {
     alignItems: "center",
     backgroundColor: "#FFFFFF",
@@ -911,7 +1384,18 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     width: 42,
   },
+  roundButtonCompact: {
+    backgroundColor: "transparent",
+    borderColor: "transparent",
+    borderRadius: 0,
+    borderWidth: 0,
+    flex: 1,
+    height: 44,
+    minWidth: 0,
+    width: "auto",
+  },
   roundButtonText: { color: "#8B3A2B", fontSize: 25, fontWeight: "700" },
+  roundButtonTextCompact: { fontSize: 21 },
   durationTotal: { color: "#695A50", fontSize: 13, fontVariant: ["tabular-nums"] },
   validationText: { color: "#9E2E24", fontSize: 14, fontWeight: "700", lineHeight: 20 },
   metricGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
@@ -933,20 +1417,52 @@ const styles = StyleSheet.create({
     fontWeight: "900",
   },
   commandStatus: { color: "#6F2F28", fontSize: 13, fontWeight: "800" },
+  compactBlockStatus: {
+    alignSelf: "stretch",
+    alignItems: "center",
+    backgroundColor: "#F5E8C9",
+    borderColor: "#D4B86F",
+    borderCurve: "continuous",
+    borderRadius: 14,
+    borderWidth: 1,
+    flexDirection: "row",
+    flexShrink: 1,
+    gap: 3,
+    justifyContent: "center",
+    minHeight: 30,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  compactBlockLabel: {
+    color: "#7A3A25",
+    flexShrink: 1,
+    fontSize: 11,
+    fontWeight: "900",
+  },
+  compactBlockChevron: { color: "#7A3A25", fontSize: 14, fontWeight: "900" },
   blockedText: { color: "#9E2E24", fontSize: 14, fontWeight: "700", lineHeight: 20 },
   actionRow: { flexDirection: "row", flexWrap: "wrap", gap: 9 },
   actionButton: {
     alignItems: "center",
+    alignSelf: "stretch",
     backgroundColor: "#8B3A2B",
     borderColor: "#8B3A2B",
     borderRadius: 999,
     borderWidth: 1,
-    flexGrow: 1,
+    flexShrink: 1,
     justifyContent: "center",
     minHeight: 48,
     minWidth: 130,
     paddingHorizontal: 16,
   },
+  actionButtonCompact: {
+    borderCurve: "continuous",
+    borderRadius: 16,
+    minHeight: 44,
+    minWidth: 0,
+    paddingHorizontal: 8,
+  },
+  actionButtonGrow: { flexGrow: 1 },
   stopButton: { backgroundColor: "#47211B", borderColor: "#47211B" },
   secondaryButton: { backgroundColor: "transparent" },
   actionButtonText: { color: "#FFFFFF", fontSize: 15, fontWeight: "800" },

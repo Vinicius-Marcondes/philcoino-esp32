@@ -5,6 +5,7 @@ import type {
   MachineStateV2,
 } from "@philcoino/protocol";
 import {
+  Fragment,
   useCallback,
   useEffect,
   useMemo,
@@ -16,11 +17,14 @@ import {
   ActivityIndicator,
   Alert,
   FlatList,
+  type LayoutChangeEvent,
   type NativeScrollEvent,
   type NativeSyntheticEvent,
+  PanResponder,
   Pressable,
   ScrollView,
   StyleSheet,
+  Switch,
   Text,
   useWindowDimensions,
   View,
@@ -40,7 +44,10 @@ import {
   ThermalWorkflowStatus,
 } from "@/components/thermal-workflow-preview";
 import { useMachineDashboard } from "@/hooks/use-machine-dashboard";
+import { useDisplayPreferences } from "@/hooks/use-display-preferences";
+import { useLandscapeDirection } from "@/hooks/use-landscape-direction";
 import { useTemperatureHistory } from "@/hooks/use-temperature-history";
+import { PairedKeepAwake } from "@/components/paired-keep-awake";
 import {
   boilerTargetC,
   boilerTemperatureC,
@@ -88,17 +95,34 @@ import {
   type TemperatureHistoryRepository,
 } from "@/src/history/temperature-history-repository";
 import { currentLocale, translate } from "@/src/localization/i18n";
+import { mobileLayoutMode } from "@/src/layout/responsive-layout";
+import {
+  dashboardPageAfterVerticalSwipe,
+  dashboardPageTransitionDirection,
+  shouldNavigateDashboardPageSwipe,
+  type DashboardPage,
+  type DashboardPageTransitionDirection,
+} from "@/src/layout/dashboard-page-navigation";
+import { navigationRailLeadingInset } from "@/src/layout/navigation-rail-inset";
 import { createDebugDeviceApiClient } from "@/src/networking/debug-device-api-client";
 import { createDeviceApiClient } from "@/src/networking/expo-device-api-client";
 import { profileSetsEqual } from "@/src/profiles/profile-set";
 import type { SelectedDevice } from "@/src/storage/selected-device-repository";
 import { mobileProfileRepository } from "@/src/storage/secure-mobile-profile-repository";
+import {
+  displayPreferencesRepository as defaultDisplayPreferencesRepository,
+} from "@/src/storage/local-display-preferences-repository";
+import type { DisplayPreferencesRepository } from "@/src/storage/display-preferences-repository";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-
-type DashboardPage = "dashboard" | "profiles" | "machine";
+import Animated, {
+  FadeInDown,
+  FadeInUp,
+  FadeOut,
+} from "react-native-reanimated";
 
 interface DashboardScreenProps {
   deviceName: string;
+  displayPreferencesRepository?: DisplayPreferencesRepository;
   historyExporter?: TemperatureHistoryExporter;
   historyRepository?: TemperatureHistoryRepository;
   initialNote: string;
@@ -108,6 +132,7 @@ interface DashboardScreenProps {
 
 export function DashboardScreen({
   deviceName,
+  displayPreferencesRepository = defaultDisplayPreferencesRepository,
   historyExporter = temperatureHistoryExporter,
   historyRepository = temperatureHistoryRepository,
   initialNote,
@@ -166,8 +191,15 @@ export function DashboardScreen({
       ? debugMobileProfileRepository
       : mobileProfileRepository,
   );
-  const { width } = useWindowDimensions();
+  const windowSize = useWindowDimensions();
+  const { width } = windowSize;
+  const landscape = mobileLayoutMode(windowSize) === "landscape";
   const safeAreaInsets = useSafeAreaInsets();
+  const landscapeDirection = useLandscapeDirection();
+  const navigationRailInset = navigationRailLeadingInset(
+    landscapeDirection,
+    safeAreaInsets.left,
+  );
   const navigationVerticalPadding = Math.max(
     4,
     (safeAreaInsets.bottom + 4) / 2,
@@ -179,7 +211,10 @@ export function DashboardScreen({
         label: translate("dashboard.refreshing"),
       }
     : connectionCopy(connection);
-  const metricWidth = width >= 700 ? "48.5%" : "100%";
+  const metricWidth = landscape ? "100%" : width >= 700 ? "48.5%" : "100%";
+  const displayPreferences = useDisplayPreferences(
+    displayPreferencesRepository,
+  );
   const temperatureHistory = useTemperatureHistory(
     selectedDevice.deviceId,
     snapshot,
@@ -194,6 +229,10 @@ export function DashboardScreen({
   const [dashboardPage, setDashboardPage] =
     useState<DashboardPage>("dashboard");
   const dashboardScrollView = useRef<ScrollView>(null);
+  const dashboardContentHeight = useRef(0);
+  const dashboardViewportHeight = useRef(0);
+  const dashboardTransitionDirection =
+    useRef<DashboardPageTransitionDirection>("forward");
   const pageScrollOffsets = useRef<Record<DashboardPage, number>>({
     dashboard: 0,
     machine: 0,
@@ -370,43 +409,102 @@ export function DashboardScreen({
         offset: pageScrollOffsets.current[page],
         page,
       };
+      dashboardTransitionDirection.current = dashboardPageTransitionDirection(
+        dashboardPage,
+        page,
+      );
       setDashboardPage(page);
     },
     [dashboardPage],
   );
+  const navigationSwipeResponder = useMemo(
+    () =>
+      PanResponder.create({
+        onMoveShouldSetPanResponderCapture: (_, gesture) => {
+          const page = dashboardPageAfterVerticalSwipe(
+            dashboardPage,
+            gesture.dy,
+          );
+          return (
+            page !== dashboardPage &&
+            shouldNavigateDashboardPageSwipe({
+              contentHeight: dashboardContentHeight.current,
+              deltaX: gesture.dx,
+              deltaY: gesture.dy,
+              offsetY: pageScrollOffsets.current[dashboardPage],
+              viewportHeight: dashboardViewportHeight.current,
+            })
+          );
+        },
+        onPanResponderRelease: (_, gesture) => {
+          const page = dashboardPageAfterVerticalSwipe(
+            dashboardPage,
+            gesture.dy,
+          );
+          if (page !== dashboardPage) {
+            openDashboardPage(page);
+          }
+        },
+      }),
+    [dashboardPage, openDashboardPage],
+  );
 
   return (
-    <View style={styles.screen}>
-      <ScrollView
-        contentInsetAdjustmentBehavior="never"
-        contentContainerStyle={styles.content}
+    <View
+      {...(landscape ? navigationSwipeResponder.panHandlers : {})}
+      style={[styles.screen, landscape && styles.screenLandscape]}>
+      <PairedKeepAwake
+        enabled={displayPreferences.preferences.keepScreenAwake}
+      />
+      <Animated.View
+        entering={
+          dashboardTransitionDirection.current === "forward"
+            ? FadeInDown.duration(180)
+            : FadeInUp.duration(180)
+        }
+        exiting={FadeOut.duration(90)}
         key={dashboardPage}
-        onContentSizeChange={() => {
-          const pending = pendingScrollRestore.current;
-          if (pending === null || pending.page !== dashboardPage) {
-            return;
-          }
-          dashboardScrollView.current?.scrollTo({
-            animated: false,
-            y: pending.offset,
-          });
-          pendingScrollRestore.current = null;
-        }}
-        onScroll={(event) => {
-          if (pendingScrollRestore.current?.page === dashboardPage) {
-            return;
-          }
-          pageScrollOffsets.current[dashboardPage] = Math.max(
-            0,
-            event.nativeEvent.contentOffset.y,
-          );
-        }}
-        ref={dashboardScrollView}
-        scrollEventThrottle={16}>
-        <View style={styles.pageHeader}>
+        style={styles.dashboardPageTransition}>
+        <ScrollView
+          contentInsetAdjustmentBehavior="never"
+          contentContainerStyle={[
+            styles.content,
+            landscape && styles.contentLandscape,
+            {
+              paddingRight: Math.max(20, safeAreaInsets.right + 12),
+            },
+          ]}
+          onContentSizeChange={(_, contentHeight) => {
+            dashboardContentHeight.current = contentHeight;
+            const pending = pendingScrollRestore.current;
+            if (pending === null || pending.page !== dashboardPage) {
+              return;
+            }
+            dashboardScrollView.current?.scrollTo({
+              animated: false,
+              y: pending.offset,
+            });
+            pendingScrollRestore.current = null;
+          }}
+          onLayout={(event: LayoutChangeEvent) => {
+            dashboardViewportHeight.current = event.nativeEvent.layout.height;
+          }}
+          onScroll={(event) => {
+            if (pendingScrollRestore.current?.page === dashboardPage) {
+              return;
+            }
+            pageScrollOffsets.current[dashboardPage] = Math.max(
+              0,
+              event.nativeEvent.contentOffset.y,
+            );
+          }}
+          ref={dashboardScrollView}
+          style={styles.dashboardScroll}
+          scrollEventThrottle={16}>
+        <View style={[styles.pageHeader, landscape && styles.pageHeaderLandscape]}>
           <Text selectable style={styles.pageTitle}>{deviceName}</Text>
         </View>
-        <View style={styles.intro}>
+        <View style={[styles.intro, landscape && styles.introLandscape]}>
           <View style={styles.introHeading}>
             <Text selectable style={styles.eyebrow}>
               {translate(
@@ -435,14 +533,16 @@ export function DashboardScreen({
               ) : null}
             </View>
           </View>
-          <Text selectable style={styles.lead}>
-            {translate(
-              `dashboard.navigation.${dashboardPage}.lead`,
-            )}
-          </Text>
+          {!landscape ? (
+            <Text selectable style={styles.lead}>
+              {translate(
+                `dashboard.navigation.${dashboardPage}.lead`,
+              )}
+            </Text>
+          ) : null}
         </View>
 
-        {refreshing ? (
+        {refreshing && !landscape ? (
           <View accessibilityLiveRegion="polite" style={styles.refreshingCard}>
             <ActivityIndicator size="small" />
             <View style={styles.refreshingCopy}>
@@ -486,63 +586,166 @@ export function DashboardScreen({
 
             {connection.status === "online" && snapshot !== null ? (
               <>
-                <MachineStatus
-                  disabled={freshness !== "live"}
-                  faultMutation={faultMutation}
-                  onDismissOverTemperature={dismissOverTemperature}
-                  snapshot={snapshot}
-                />
-                <View style={styles.metricGrid}>
-                  <TemperatureCard
-                    compensation={compensation}
-                    mode={snapshot.activeMode}
-                    targetC={boilerTargetC(snapshot)}
-                    temperatureC={boilerTemperatureC(snapshot)}
-                    width="100%"
-                  />
-                </View>
-                <TemperatureCurve
-                  error={temperatureHistory.error}
-                  history={temperatureHistory.samples}
-                  loading={temperatureHistory.status === "loading"}
-                  syncStatus={temperatureHistory.syncStatus}
-                  syncWarning={temperatureHistory.syncWarning}
-                />
-                {mobileProfiles !== null && machineProfiles !== null ? (
-                  <ExtractionPreview
-                    debugPreview={debugDeviceMode}
-                    onStateChange={applyExtractionUiState}
-                    state={extractionUiState}
-                    view="quick"
-                    workflowBlock={
-                      cooldownActive
-                        ? "cooldown"
-                        : snapshot.activeMode === "steam"
-                          ? "steam"
-                          : null
-                    }
-                    workflowMutationPending={
-                      freshness !== "live" ||
-                      cooldownStartMutation.status === "pending" ||
-                      cooldownStopMutation.status === "pending"
-                    }
-                  />
+                {landscape && !debugDeviceMode && thermalSnapshot !== null ? (
+                  <Fragment key="dashboard-landscape-layout">
+                    <View style={styles.dashboardLandscapeControlRow}>
+                      <View style={styles.dashboardLandscapeControl}>
+                        <MachineStatus
+                          compact
+                          disabled={freshness !== "live"}
+                          faultMutation={faultMutation}
+                          fillHeight
+                          onDismissOverTemperature={dismissOverTemperature}
+                          snapshot={snapshot}
+                        />
+                      </View>
+                      <View style={styles.dashboardLandscapeControl}>
+                        <ThermalWorkflowStatus
+                          compact
+                          fillHeight
+                          mutationPending={mutationPending}
+                          onOpenMachine={() => openDashboardPage("machine")}
+                          onStartCooldown={startCooldown}
+                          onStopCooldown={stopCooldown}
+                          snapshot={thermalSnapshot}
+                        />
+                      </View>
+                      <View style={styles.dashboardLandscapeControl}>
+                        {mobileProfiles !== null && machineProfiles !== null ? (
+                          <ExtractionPreview
+                            compact
+                            debugPreview={false}
+                            onOpenMachine={() => openDashboardPage("machine")}
+                            onOpenProfiles={() => openDashboardPage("profiles")}
+                            onStateChange={applyExtractionUiState}
+                            state={extractionUiState}
+                            view="quick"
+                            workflowBlock={
+                              cooldownActive
+                                ? "cooldown"
+                                : snapshot.activeMode === "steam"
+                                  ? "steam"
+                                  : null
+                            }
+                            workflowMutationPending={
+                              freshness !== "live" ||
+                              cooldownStartMutation.status === "pending" ||
+                              cooldownStopMutation.status === "pending"
+                            }
+                          />
+                        ) : (
+                          <ProfileLoadingCard error={profileStorageError} />
+                        )}
+                      </View>
+                    </View>
+                    <View style={styles.dashboardLandscapeDataRow}>
+                      <View style={styles.dashboardLandscapeTemperature}>
+                        <TemperatureCard
+                          compact
+                          compensation={compensation}
+                          mode={snapshot.activeMode}
+                          targetC={boilerTargetC(snapshot)}
+                          temperatureC={boilerTemperatureC(snapshot)}
+                          width="100%"
+                        />
+                      </View>
+                      <View style={styles.dashboardLandscapeGraph}>
+                        <TemperatureCurve
+                          compact
+                          error={temperatureHistory.error}
+                          history={temperatureHistory.samples}
+                          loading={temperatureHistory.status === "loading"}
+                          syncStatus={temperatureHistory.syncStatus}
+                          syncWarning={temperatureHistory.syncWarning}
+                        />
+                      </View>
+                    </View>
+                  </Fragment>
                 ) : (
-                  <ProfileLoadingCard error={profileStorageError} />
+                  <Fragment key="dashboard-portrait-layout">
+                    <View
+                      style={[
+                        styles.dashboardPrimary,
+                        landscape && styles.dashboardPrimaryLandscape,
+                      ]}>
+                      <View
+                        style={[
+                          styles.dashboardLiveColumn,
+                          landscape && styles.dashboardLiveColumnLandscape,
+                        ]}>
+                        <MachineStatus
+                          compact={landscape}
+                          disabled={freshness !== "live"}
+                          faultMutation={faultMutation}
+                          onDismissOverTemperature={dismissOverTemperature}
+                          snapshot={snapshot}
+                        />
+                        <View style={styles.metricGrid}>
+                          <TemperatureCard
+                            compact={landscape}
+                            compensation={compensation}
+                            mode={snapshot.activeMode}
+                            targetC={boilerTargetC(snapshot)}
+                            temperatureC={boilerTemperatureC(snapshot)}
+                            width="100%"
+                          />
+                        </View>
+                      </View>
+                      <View
+                        style={[
+                          styles.dashboardActivityColumn,
+                          landscape && styles.dashboardActivityColumnLandscape,
+                        ]}>
+                        <TemperatureCurve
+                          compact={landscape}
+                          error={temperatureHistory.error}
+                          history={temperatureHistory.samples}
+                          loading={temperatureHistory.status === "loading"}
+                          syncStatus={temperatureHistory.syncStatus}
+                          syncWarning={temperatureHistory.syncWarning}
+                        />
+                        {mobileProfiles !== null && machineProfiles !== null ? (
+                          <ExtractionPreview
+                            compact={landscape}
+                            debugPreview={debugDeviceMode}
+                            onOpenMachine={() => openDashboardPage("machine")}
+                            onOpenProfiles={() => openDashboardPage("profiles")}
+                            onStateChange={applyExtractionUiState}
+                            state={extractionUiState}
+                            view="quick"
+                            workflowBlock={
+                              cooldownActive
+                                ? "cooldown"
+                                : snapshot.activeMode === "steam"
+                                  ? "steam"
+                                  : null
+                            }
+                            workflowMutationPending={
+                              freshness !== "live" ||
+                              cooldownStartMutation.status === "pending" ||
+                              cooldownStopMutation.status === "pending"
+                            }
+                          />
+                        ) : (
+                          <ProfileLoadingCard error={profileStorageError} />
+                        )}
+                      </View>
+                    </View>
+                    {debugDeviceMode ? (
+                      <ThermalWorkflowPreview
+                        onOpenMachine={() => openDashboardPage("machine")}
+                      />
+                    ) : thermalSnapshot !== null ? (
+                      <ThermalWorkflowStatus
+                        mutationPending={mutationPending}
+                        onOpenMachine={() => openDashboardPage("machine")}
+                        onStartCooldown={startCooldown}
+                        onStopCooldown={stopCooldown}
+                        snapshot={thermalSnapshot}
+                      />
+                    ) : null}
+                  </Fragment>
                 )}
-                {debugDeviceMode ? (
-                  <ThermalWorkflowPreview
-                    onOpenMachine={() => openDashboardPage("machine")}
-                  />
-                ) : thermalSnapshot !== null ? (
-                  <ThermalWorkflowStatus
-                    mutationPending={mutationPending}
-                    onOpenMachine={() => openDashboardPage("machine")}
-                    onStartCooldown={startCooldown}
-                    onStopCooldown={stopCooldown}
-                    snapshot={thermalSnapshot}
-                  />
-                ) : null}
               </>
             ) : (
               <View style={styles.unavailableCard}>
@@ -556,6 +759,7 @@ export function DashboardScreen({
             )}
             {connection.status !== "online" || snapshot === null ? (
               <TemperatureCurve
+                compact={landscape}
                 error={temperatureHistory.error}
                 history={temperatureHistory.samples}
                 loading={temperatureHistory.status === "loading"}
@@ -585,6 +789,7 @@ export function DashboardScreen({
             />
             {mobileProfiles !== null && machineProfiles !== null ? (
               <ExtractionPreview
+                compact={landscape}
                 debugPreview={debugDeviceMode}
                 onStateChange={applyExtractionUiState}
                 state={extractionUiState}
@@ -618,101 +823,137 @@ export function DashboardScreen({
               state={heaterMutation}
             />
 
-            {connection.status === "online" && snapshot !== null ? (
-              <>
-                <MachineControls
-                  disabled={freshness !== "live"}
-                  faultMutation={faultMutation}
-                  heaterMutation={heaterMutation}
-                  modeMutation={modeMutation}
-                  onSetMode={setMode}
-                  onUpdateTemperatureSettings={updateTemperatureSettings}
-                  snapshot={snapshot}
-                  steamWorkflowBlocked={
-                    extraction?.status === "running" ||
-                    extractionStartMutation.status === "pending" ||
-                    cooldownActive ||
-                    cooldownStartMutation.status === "pending"
-                  }
-                  temperatureMutation={temperatureMutation}
-                />
-                <HeaterToggleBar
-                  disabled={mutationPending}
-                  mutation={heaterMutation}
-                  onSetHeaterEnabled={setHeaterEnabled}
-                  snapshot={snapshot}
-                />
-                <View style={styles.metricGrid}>
-                  <ContextMetric
-                    label={translate("dashboard.machineUptime")}
-                    value={formatUptime(snapshot.uptimeMs)}
-                    detail={translate("dashboard.uptimeDetail")}
-                    width={metricWidth}
-                  />
-                  <ContextMetric
-                    label={translate("dashboard.steamTimer")}
-                    value={formatSteamCountdown(
-                      snapshot.steamTimeoutRemainingMs,
-                    )}
-                    detail={steamCountdownContext(snapshot)}
-                    width={metricWidth}
-                  />
-                </View>
-              </>
-            ) : (
-              <View style={styles.unavailableCard}>
-                <Text selectable style={styles.unavailableTitle}>
-                  {translate("dashboard.unavailableTitle")}
-                </Text>
-                <Text selectable style={styles.unavailableText}>
-                  {translate("dashboard.unavailableText")}
-                </Text>
+            <View
+              style={[
+                styles.machineLayout,
+                landscape && styles.machineLayoutLandscape,
+              ]}>
+              <View style={styles.machineLayoutColumn}>
+                {connection.status === "online" && snapshot !== null ? (
+                  <>
+                    <MachineControls
+                      compact={landscape}
+                      disabled={freshness !== "live"}
+                      faultMutation={faultMutation}
+                      heaterMutation={heaterMutation}
+                      modeMutation={modeMutation}
+                      onSetMode={setMode}
+                      onUpdateTemperatureSettings={updateTemperatureSettings}
+                      snapshot={snapshot}
+                      steamWorkflowBlocked={
+                        extraction?.status === "running" ||
+                        extractionStartMutation.status === "pending" ||
+                        cooldownActive ||
+                        cooldownStartMutation.status === "pending"
+                      }
+                      temperatureMutation={temperatureMutation}
+                    />
+                    <HeaterToggleBar
+                      disabled={mutationPending}
+                      mutation={heaterMutation}
+                      onSetHeaterEnabled={setHeaterEnabled}
+                      snapshot={snapshot}
+                    />
+                  </>
+                ) : (
+                  <View style={styles.unavailableCard}>
+                    <Text selectable style={styles.unavailableTitle}>
+                      {translate("dashboard.unavailableTitle")}
+                    </Text>
+                    <Text selectable style={styles.unavailableText}>
+                      {translate("dashboard.unavailableText")}
+                    </Text>
+                  </View>
+                )}
               </View>
-            )}
 
-            <TemperatureHistoryExportCard
-              error={temperatureHistory.exportError}
-              exporting={temperatureHistory.exporting}
-              hasHistory={temperatureHistory.samples.length > 0}
-              onExport={() => void temperatureHistory.exportAll()}
-            />
+              <View style={styles.machineLayoutColumn}>
+                {connection.status === "online" && snapshot !== null ? (
+                  <View style={styles.metricGrid}>
+                    <ContextMetric
+                      label={translate("dashboard.machineUptime")}
+                      value={formatUptime(snapshot.uptimeMs)}
+                      detail={translate("dashboard.uptimeDetail")}
+                      width={metricWidth}
+                    />
+                    <ContextMetric
+                      label={translate("dashboard.steamTimer")}
+                      value={formatSteamCountdown(
+                        snapshot.steamTimeoutRemainingMs,
+                      )}
+                      detail={steamCountdownContext(snapshot)}
+                      width={metricWidth}
+                    />
+                  </View>
+                ) : null}
 
-            <View style={styles.contextCard}>
-              <Text selectable style={styles.contextTitle}>
-                {translate("dashboard.savedMachine")}
-              </Text>
-              <Text selectable style={styles.contextText}>{initialNote}</Text>
-              <Text selectable style={styles.deviceId}>
-                {selectedDevice.deviceId}
-              </Text>
-              <Text selectable style={styles.address}>
-                {selectedDevice.lastSuccessfulAddress}
-              </Text>
-              <Pressable
-                accessibilityRole="button"
-                onPress={forgetMachine}
-                style={({ pressed }) => [
-                  styles.forgetButton,
-                  pressed && styles.pressed,
-                ]}>
-                <Text style={styles.forgetButtonText}>
-                  {translate("dashboard.forgetMachine")}
-                </Text>
-              </Pressable>
+                <TemperatureHistoryExportCard
+                  error={temperatureHistory.exportError}
+                  exporting={temperatureHistory.exporting}
+                  hasHistory={temperatureHistory.samples.length > 0}
+                  onExport={() => void temperatureHistory.exportAll()}
+                />
+
+                <DisplayPreferencesCard
+                  error={displayPreferences.error}
+                  keepScreenAwake={
+                    displayPreferences.preferences.keepScreenAwake
+                  }
+                  loading={displayPreferences.loading}
+                  onKeepScreenAwakeChange={(enabled) => {
+                    void displayPreferences.setKeepScreenAwake(enabled);
+                  }}
+                />
+
+                <View style={styles.contextCard}>
+                  <Text selectable style={styles.contextTitle}>
+                    {translate("dashboard.savedMachine")}
+                  </Text>
+                  <Text selectable style={styles.contextText}>{initialNote}</Text>
+                  <Text selectable style={styles.deviceId}>
+                    {selectedDevice.deviceId}
+                  </Text>
+                  <Text selectable style={styles.address}>
+                    {selectedDevice.lastSuccessfulAddress}
+                  </Text>
+                  <Pressable
+                    accessibilityRole="button"
+                    onPress={forgetMachine}
+                    style={({ pressed }) => [
+                      styles.forgetButton,
+                      pressed && styles.pressed,
+                    ]}>
+                    <Text style={styles.forgetButtonText}>
+                      {translate("dashboard.forgetMachine")}
+                    </Text>
+                  </Pressable>
+                </View>
+              </View>
             </View>
           </>
         ) : null}
-      </ScrollView>
+        </ScrollView>
+      </Animated.View>
 
       <View
         style={[
           styles.bottomNavigation,
+          landscape && styles.navigationRail,
           {
-            paddingBottom: navigationVerticalPadding,
-            paddingTop: navigationVerticalPadding,
+            paddingBottom: landscape
+              ? Math.max(12, safeAreaInsets.bottom + 8)
+              : navigationVerticalPadding,
+            paddingLeft: landscape
+              ? navigationRailInset
+              : 12,
+            paddingRight: landscape ? 4 : 12,
+            paddingTop: landscape
+              ? Math.max(8, safeAreaInsets.top + 4)
+              : navigationVerticalPadding,
+            width: landscape ? navigationRailInset + 36 : undefined,
           },
         ]}>
-          {extraction?.status === "running" ? (
+          {extraction?.status === "running" && !landscape ? (
             <Pressable
               accessibilityRole="button"
               onPress={() => openDashboardPage("dashboard")}
@@ -730,19 +971,29 @@ export function DashboardScreen({
               </Text>
             </Pressable>
           ) : null}
-          <View accessibilityRole="tablist" style={styles.bottomNavigationRow}>
+          <View
+            accessibilityHint={translate("dashboard.navigation.swipePages")}
+            accessibilityRole="tablist"
+            style={[
+              styles.bottomNavigationRow,
+              landscape && styles.navigationRailTabs,
+            ]}>
             <DashboardTab
               active={dashboardPage === "dashboard"}
+              landscape={landscape}
               label={translate("dashboard.navigation.dashboard.tab")}
               onPress={() => openDashboardPage("dashboard")}
+              workflowActive={extraction?.status === "running"}
             />
             <DashboardTab
               active={dashboardPage === "profiles"}
+              landscape={landscape}
               label={translate("dashboard.navigation.profiles.tab")}
               onPress={() => openDashboardPage("profiles")}
             />
             <DashboardTab
               active={dashboardPage === "machine"}
+              landscape={landscape}
               label={translate("dashboard.navigation.machine.tab")}
               onPress={() => openDashboardPage("machine")}
             />
@@ -771,30 +1022,46 @@ function ProfileLoadingCard({ error }: { error: string | null }) {
 
 function DashboardTab({
   active,
+  landscape,
   label,
   onPress,
+  workflowActive = false,
 }: {
   active: boolean;
+  landscape: boolean;
   label: string;
   onPress: () => void;
+  workflowActive?: boolean;
 }) {
   return (
     <Pressable
+      accessibilityLabel={label}
       accessibilityRole="tab"
       accessibilityState={{ selected: active }}
       onPress={onPress}
       style={({ pressed }) => [
         styles.bottomNavigationTab,
-        active && styles.bottomNavigationTabActive,
+        landscape && styles.navigationRailTab,
+        active && !landscape && styles.bottomNavigationTabActive,
         pressed && styles.pressed,
       ]}>
-      <Text
-        style={[
-          styles.bottomNavigationLabel,
-          active && styles.bottomNavigationLabelActive,
-        ]}>
-        {label}
-      </Text>
+      {landscape ? (
+        <View
+          style={[
+            styles.navigationDot,
+            active && styles.navigationDotActive,
+            workflowActive && styles.navigationDotWorkflow,
+          ]}
+        />
+      ) : (
+        <Text
+          style={[
+            styles.bottomNavigationLabel,
+            active && styles.bottomNavigationLabelActive,
+          ]}>
+          {label}
+        </Text>
+      )}
     </Pressable>
   );
 }
@@ -852,13 +1119,60 @@ function TemperatureHistoryExportCard({
   );
 }
 
+function DisplayPreferencesCard({
+  error,
+  keepScreenAwake,
+  loading,
+  onKeepScreenAwakeChange,
+}: {
+  error: "load" | "save" | null;
+  keepScreenAwake: boolean;
+  loading: boolean;
+  onKeepScreenAwakeChange: (enabled: boolean) => void;
+}) {
+  return (
+    <View style={styles.contextCard}>
+      <Text selectable style={styles.cardLabel}>
+        {translate("dashboard.displayPreferences")}
+      </Text>
+      <View style={styles.displayPreferenceRow}>
+        <View style={styles.displayPreferenceCopy}>
+          <Text selectable style={styles.contextTitle}>
+            {translate("dashboard.keepScreenAwake")}
+          </Text>
+          <Text selectable style={styles.contextText}>
+            {translate("dashboard.keepScreenAwakeDetail")}
+          </Text>
+        </View>
+        <Switch
+          accessibilityLabel={translate("dashboard.keepScreenAwake")}
+          disabled={loading}
+          onValueChange={onKeepScreenAwakeChange}
+          value={keepScreenAwake}
+        />
+      </View>
+      {error !== null ? (
+        <Text accessibilityLiveRegion="polite" selectable style={styles.historyError}>
+          {translate(
+            error === "load"
+              ? "dashboard.displayPreferencesLoadError"
+              : "dashboard.displayPreferencesSaveError",
+          )}
+        </Text>
+      ) : null}
+    </View>
+  );
+}
+
 function TemperatureCurve({
+  compact,
   error,
   history,
   loading,
   syncStatus,
   syncWarning,
 }: {
+  compact: boolean;
   error: "storage" | null;
   history: TemperatureHistorySample[];
   loading: boolean;
@@ -903,9 +1217,13 @@ function TemperatureCurve({
   const pageStatus = visibleLiveWindow === null
     ? null
     : translate(
-        latestLivePage
-          ? "dashboard.historyPageLatest"
-          : "dashboard.historyPageEarlier",
+        compact
+          ? latestLivePage
+            ? "dashboard.historyPageLatestCompact"
+            : "dashboard.historyPageEarlierCompact"
+          : latestLivePage
+            ? "dashboard.historyPageLatest"
+            : "dashboard.historyPageEarlier",
         {
           end: formatHistoryPageTime(visibleLiveWindow.endMs),
           start: formatHistoryPageTime(visibleLiveWindow.startMs),
@@ -913,15 +1231,17 @@ function TemperatureCurve({
       );
 
   return (
-    <View style={styles.curveCard}>
+    <View style={[styles.curveCard, compact && styles.curveCardCompact]}>
       <View style={styles.curveHeading}>
         <View style={styles.curveTitleGroup}>
           <Text selectable style={styles.cardLabel}>{translate("dashboard.temperatureCurve")}</Text>
-          <Text selectable style={styles.curveTitle}>
-            {mode === undefined
-              ? translate("dashboard.historyTitle")
-              : translate("dashboard.controlTrend", { mode: modeLabel(mode) })}
-          </Text>
+          {!compact ? (
+            <Text selectable style={styles.curveTitle}>
+              {mode === undefined
+                ? translate("dashboard.historyTitle")
+                : translate("dashboard.controlTrend", { mode: modeLabel(mode) })}
+            </Text>
+          ) : null}
         </View>
         <View style={styles.curveWindowPill}>
           <Text selectable style={styles.curveWindowText}>
@@ -930,12 +1250,14 @@ function TemperatureCurve({
         </View>
       </View>
 
-      <View style={styles.curveLegend}>
-        <LegendItem color="#8B3A2B" label={translate("dashboard.boiler")} />
-        <LegendItem color="#D39A42" label={translate("dashboard.target")} />
-        <LegendItem color="#F29A52" label={translate("dashboard.heater")} />
-        <LegendItem color="#3D7B80" label={translate("dashboard.pump")} />
-      </View>
+      {!compact ? (
+        <View style={styles.curveLegend}>
+          <LegendItem color="#8B3A2B" label={translate("dashboard.boiler")} />
+          <LegendItem color="#D39A42" label={translate("dashboard.target")} />
+          <LegendItem color="#F29A52" label={translate("dashboard.heater")} />
+          <LegendItem color="#3D7B80" label={translate("dashboard.pump")} />
+        </View>
+      ) : null}
 
       {pageStatus !== null ? (
         <View style={styles.historyPageStatus}>
@@ -991,7 +1313,7 @@ function TemperatureCurve({
         </Text>
       ) : null}
 
-      <View style={styles.curvePlot}>
+      <View style={[styles.curvePlot, compact && styles.curvePlotCompact]}>
         {history.length > 0 ? (
           <>
             <TemperatureGraphGrid scale={graphScale} />
@@ -1431,17 +1753,21 @@ function samplePoint(
 }
 
 function MachineStatus({
+  compact,
   disabled,
   faultMutation,
+  fillHeight = false,
   onDismissOverTemperature,
   snapshot,
 }: {
+  compact: boolean;
   disabled: boolean;
   faultMutation: DashboardMutationState;
+  fillHeight?: boolean;
   onDismissOverTemperature: () => void;
   snapshot: MachineState;
 }) {
-  const useAndroidStatusLayout = process.env.EXPO_OS === "android";
+  const useAndroidStatusLayout = compact || process.env.EXPO_OS === "android";
   const canDismissOverTemperature =
     snapshot.status === "fault" &&
     snapshot.fault.code === "over_temperature" &&
@@ -1464,7 +1790,12 @@ function MachineStatus({
 
   return (
     <>
-      <View style={styles.machineStateCard}>
+      <View
+        style={[
+          styles.machineStateCard,
+          compact && styles.machineStateCardCompact,
+          fillHeight && styles.machineStateCardFill,
+        ]}>
         <Text selectable style={styles.cardLabel}>{translate("dashboard.machineStatus")}</Text>
         <View
           style={[
@@ -1477,12 +1808,13 @@ function MachineStatus({
               useAndroidStatusLayout && styles.machineStatePrimaryAndroid,
             ]}>
             <Text
-              adjustsFontSizeToFit={useAndroidStatusLayout}
-              minimumFontScale={0.8}
-              numberOfLines={useAndroidStatusLayout ? 1 : undefined}
+              adjustsFontSizeToFit={compact || useAndroidStatusLayout}
+              minimumFontScale={0.65}
+              numberOfLines={compact || useAndroidStatusLayout ? 1 : undefined}
               selectable
               style={[
                 styles.machineStateValue,
+                compact && styles.machineStateValueCompact,
                 snapshot.status === "fault" && styles.faultText,
               ]}>
               {machineActivityLabel(snapshot)}
@@ -1581,12 +1913,14 @@ function HeaterStatusPill({ heaterActive }: { heaterActive: boolean }) {
 }
 
 function TemperatureCard({
+  compact,
   compensation,
   mode,
   targetC,
   temperatureC,
   width,
 }: {
+  compact: boolean;
   compensation: CompensationState | null;
   mode: MachineState["activeMode"];
   targetC: number;
@@ -1594,7 +1928,13 @@ function TemperatureCard({
   width: "100%" | "48.5%";
 }) {
   return (
-    <View style={[styles.temperatureCard, { width }, styles.activeCard]}>
+    <View
+      style={[
+        styles.temperatureCard,
+        { width },
+        styles.activeCard,
+        compact && styles.temperatureCardCompact,
+      ]}>
       <View style={styles.temperatureHeading}>
         <Text selectable style={styles.temperatureLabel}>{translate("dashboard.boiler")}</Text>
         <View style={styles.temperaturePills}>
@@ -1606,7 +1946,12 @@ function TemperatureCard({
           )}
         </View>
       </View>
-      <Text selectable style={styles.temperatureValue}>
+      <Text
+        selectable
+        style={[
+          styles.temperatureValue,
+          compact && styles.temperatureValueCompact,
+        ]}>
         {formatTemperature(temperatureC)}
       </Text>
       <Text selectable style={styles.temperatureTarget}>
@@ -1694,6 +2039,9 @@ function HeaterToggleBar({
 
 const styles = StyleSheet.create({
   screen: { backgroundColor: "#F4F0E8", flex: 1 },
+  screenLandscape: { flexDirection: "row-reverse" },
+  dashboardPageTransition: { flex: 1, minWidth: 0 },
+  dashboardScroll: { flex: 1, minWidth: 0 },
   content: {
     backgroundColor: "#F4F0E8",
     flexGrow: 1,
@@ -1701,6 +2049,13 @@ const styles = StyleSheet.create({
     padding: 20,
     paddingBottom: 24,
     paddingTop: 72,
+  },
+  contentLandscape: {
+    gap: 12,
+    paddingBottom: 16,
+    paddingLeft: 16,
+    paddingTop: 12,
+    width: "100%",
   },
   bottomNavigation: {
     backgroundColor: "#FFFCF7",
@@ -1710,6 +2065,33 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
   },
   bottomNavigationRow: { flexDirection: "row", gap: 8 },
+  navigationRail: {
+    backgroundColor: "transparent",
+    borderRightWidth: 0,
+    borderTopWidth: 0,
+    justifyContent: "center",
+    paddingHorizontal: 0,
+  },
+  navigationRailTabs: {
+    alignItems: "center",
+    flexDirection: "column",
+    gap: 4,
+    justifyContent: "center",
+  },
+  navigationRailTab: {
+    flex: 0,
+    minHeight: 44,
+    paddingHorizontal: 0,
+    width: 32,
+  },
+  navigationDot: {
+    backgroundColor: "rgba(139, 58, 43, 0.28)",
+    borderRadius: 999,
+    height: 7,
+    width: 7,
+  },
+  navigationDotActive: { backgroundColor: "#8B3A2B", height: 11, width: 11 },
+  navigationDotWorkflow: { borderColor: "#F29A52", borderWidth: 2 },
   bottomNavigationTab: {
     alignItems: "center",
     borderCurve: "continuous",
@@ -1752,8 +2134,10 @@ const styles = StyleSheet.create({
     fontWeight: "900",
   },
   pageHeader: { alignItems: "center", minHeight: 34 },
+  pageHeaderLandscape: { display: "none" },
   pageTitle: { color: "#241B17", fontSize: 22, fontWeight: "800" },
   intro: { gap: 7, paddingHorizontal: 2, paddingTop: 8 },
+  introLandscape: { paddingTop: 0 },
   introHeading: {
     alignItems: "center",
     flexDirection: "row",
@@ -1799,6 +2183,8 @@ const styles = StyleSheet.create({
     gap: 12,
     padding: 20,
   },
+  machineStateCardCompact: { gap: 8, padding: 14 },
+  machineStateCardFill: { flexGrow: 1, justifyContent: "space-between" },
   cardLabel: { color: "#CDBFB5", fontSize: 11, fontWeight: "800", letterSpacing: 1.3 },
   machineStateRow: { alignItems: "flex-end", flexDirection: "row", gap: 14, justifyContent: "space-between" },
   machineStateRowAndroid: { alignItems: "stretch", flexDirection: "column", gap: 8 },
@@ -1806,6 +2192,7 @@ const styles = StyleSheet.create({
   machineStatePrimaryAndroid: { flex: undefined },
   machineStateFooterAndroid: { alignItems: "center", flexDirection: "row", gap: 12, justifyContent: "space-between" },
   machineStateValue: { color: "#FFF9F1", fontSize: 34, fontWeight: "800", letterSpacing: -0.7 },
+  machineStateValueCompact: { flexShrink: 1, fontSize: 28 },
   machineStateDetail: { color: "#D9CBC1", fontSize: 16, fontWeight: "600" },
   faultText: { color: "#FFB5A5" },
   heaterPill: { alignItems: "center", backgroundColor: "#3C312C", borderRadius: 999, flexDirection: "row", gap: 7, paddingHorizontal: 11, paddingVertical: 8 },
@@ -1848,6 +2235,7 @@ const styles = StyleSheet.create({
     gap: 14,
     padding: 18,
   },
+  curveCardCompact: { flex: 1, gap: 8, minWidth: 0, padding: 10 },
   curveHeading: {
     alignItems: "flex-start",
     flexDirection: "row",
@@ -1934,6 +2322,7 @@ const styles = StyleSheet.create({
     overflow: "hidden",
     position: "relative",
   },
+  curvePlotCompact: { height: 90 },
   curveGrid: {
     bottom: 10,
     left: 8,
@@ -2006,6 +2395,35 @@ const styles = StyleSheet.create({
     position: "absolute",
   },
   metricGrid: { flexDirection: "row", flexWrap: "wrap", gap: 12 },
+  dashboardPrimary: { gap: 12 },
+  dashboardPrimaryLandscape: {
+    alignItems: "stretch",
+    flexDirection: "row",
+  },
+  dashboardLiveColumn: { gap: 12 },
+  dashboardLiveColumnLandscape: { flex: 0.82, minWidth: 0 },
+  dashboardActivityColumn: { gap: 12 },
+  dashboardActivityColumnLandscape: {
+    alignItems: "stretch",
+    flex: 1.65,
+    flexDirection: "row",
+    minWidth: 0,
+  },
+  dashboardLandscapeControlRow: {
+    alignItems: "stretch",
+    flexDirection: "row",
+    gap: 10,
+    zIndex: 10,
+  },
+  dashboardLandscapeControl: { flex: 1, minWidth: 2 },
+  dashboardLandscapeDataRow: {
+    alignItems: "stretch",
+    flexDirection: "row",
+    gap: 10,
+    zIndex: 0,
+  },
+  dashboardLandscapeTemperature: { flex: 1, minWidth: 0 },
+  dashboardLandscapeGraph: { flex: 2, minWidth: 0 },
   temperatureCard: {
     backgroundColor: "#FFFCF7",
     borderColor: "#DDD3C7",
@@ -2015,12 +2433,14 @@ const styles = StyleSheet.create({
     gap: 8,
     padding: 18,
   },
+  temperatureCardCompact: { gap: 14, paddingBottom: 10, paddingTop: 10 },
   activeCard: { borderColor: "#A14B37", borderWidth: 2, padding: 17 },
   temperatureHeading: { alignItems: "flex-start", flexDirection: "row", flexWrap: "wrap", gap: 10, justifyContent: "space-between" },
   temperatureLabel: { color: "#4A3E37", fontSize: 17, fontWeight: "800" },
   temperaturePills: { alignItems: "center", flexDirection: "row", flexWrap: "wrap", gap: 6, justifyContent: "flex-end" },
   activePill: { backgroundColor: "#8B3A2B", borderRadius: 999, color: "#FFFFFF", fontSize: 10, fontWeight: "900", letterSpacing: 0.7, overflow: "hidden", paddingHorizontal: 9, paddingVertical: 5 },
   temperatureValue: { color: "#241B17", fontSize: 46, fontVariant: ["tabular-nums"], fontWeight: "800", letterSpacing: -1.5 },
+  temperatureValueCompact: { fontSize: 36 },
   temperatureTarget: { color: "#6B5B51", fontSize: 15, fontVariant: ["tabular-nums"], fontWeight: "600" },
   contextMetric: {
     backgroundColor: "#EAE2D7",
@@ -2052,6 +2472,19 @@ const styles = StyleSheet.create({
     gap: 8,
     padding: 17,
   },
+  displayPreferenceRow: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: 14,
+    justifyContent: "space-between",
+  },
+  displayPreferenceCopy: { flex: 1, gap: 4 },
+  machineLayout: { gap: 12 },
+  machineLayoutLandscape: {
+    alignItems: "flex-start",
+    flexDirection: "row",
+  },
+  machineLayoutColumn: { flex: 1, gap: 12, minWidth: 230 },
   historyExportCard: {
     backgroundColor: "#FFFCF7",
     borderColor: "#DDD3C7",

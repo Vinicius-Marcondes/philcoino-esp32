@@ -82,6 +82,34 @@ cooldown paths through an in-memory client. The presentation is divided into
 Dashboard, Profiles, and Machine pages with bottom navigation; active workflow
 state remains reachable through a persistent navigation bar.
 
+The native app supports portrait and both landscape directions. Portrait keeps
+bottom navigation, while landscape uses a safe-area-aware three-dot gesture
+rail and wider Pairing, Dashboard, Profiles, and Machine layouts. The rail
+accepts taps, while vertically dominant swipes across the landscape screen
+change pages. Taller content keeps scrolling until it reaches the matching
+boundary, and horizontal graph gestures remain independent. Page content uses
+a short direction-aware Reanimated fade-and-slide transition while the rail
+stays fixed. Screen-orientation events keep the rail close to the plain edge and
+retain the leading safe-area inset when the notch is beside it. Window-size
+changes affect presentation only: polling and mutation sessions remain owned by
+the mounted dashboard lifecycle. An app-level display preference can keep paired
+foreground screens awake; it defaults off and releases when the app backgrounds
+or the paired screen unmounts.
+
+The production landscape Dashboard uses a three-column top row with
+equal-height machine status, cooldown, and extraction cards. Its second row
+gives boiler temperature one third of the width and the paged graph the
+remaining two thirds. The compact quick-profile chooser overlays the lower
+content instead of changing the control-row height; Manual spans its first row
+and the four profile slots form a 2-by-2 grid beneath it. Compact landscape
+omits the pump-command line and keeps a contextual Profiles or Machine action
+beneath the selector while Start or Stop fills the adjacent column, avoiding
+state-dependent card height changes. Portrait retains the full pump status and
+blocker detail. Landscape Profiles gives the local editor the left half of the
+workspace, then stacks the 2-by-2 profile chooser above sync in the right half.
+Its compact duration steppers group minus, value, and plus in one rounded
+control.
+
 ### Discovery and pairing flow
 
 ```text
@@ -326,6 +354,7 @@ The ESP-IDF adapter owns the 512-byte authorization-header limit, 1,024-byte req
 | Selected device ID/address/token | Mobile SecureStore | Yes | Not applicable |
 | Brew/steam targets | Firmware NVS | Yes | Yes |
 | Mobile extraction profiles | Mobile SecureStore | Yes | Not applicable |
+| Keep-screen-awake preference | Mobile local key-value storage | Yes | App-level; independent of the selected machine |
 | Firmware extraction profiles | Firmware NVS | Not applicable | Yes |
 | Pump GPIO10 command | Firmware RAM/GPIO | Reflected while connected | No; boots `off` |
 | Extraction/cooldown identity, phase, deadlines, outcome | Firmware RAM | Reflected while connected | No; both boot idle and cooldown history is cleared |
