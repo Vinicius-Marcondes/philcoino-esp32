@@ -20,6 +20,7 @@ import {
 import { translate } from "@/src/localization/i18n";
 
 interface MachineControlsProps {
+  compact?: boolean;
   disabled?: boolean;
   faultMutation: DashboardMutationState;
   heaterMutation: DashboardMutationState;
@@ -34,6 +35,7 @@ interface MachineControlsProps {
 }
 
 export function MachineControls({
+  compact = false,
   disabled = false,
   faultMutation,
   heaterMutation,
@@ -79,8 +81,8 @@ export function MachineControls({
   };
 
   return (
-    <View style={styles.controlsSection}>
-      <View style={styles.controlCard}>
+    <View style={[styles.controlsSection, compact && styles.controlsSectionLandscape]}>
+      <View style={[styles.controlCard, compact && styles.controlCardLandscape]}>
         <Text selectable style={styles.eyebrow}>
           {translate("controls.activeMode")}
         </Text>
@@ -111,7 +113,7 @@ export function MachineControls({
         ) : null}
       </View>
 
-      <View style={styles.controlCard}>
+      <View style={[styles.controlCard, compact && styles.controlCardLandscape]}>
         <View style={styles.sectionHeading}>
           <View style={styles.headingCopy}>
             <Text selectable style={styles.eyebrow}>
@@ -412,6 +414,12 @@ function feedbackTitle(status: DashboardMutationState["status"]): string {
 
 const styles = StyleSheet.create({
   controlsSection: { gap: 12 },
+  controlsSectionLandscape: {
+    alignItems: "flex-start",
+    flexDirection: "row",
+    flexWrap: "wrap",
+  },
+  controlCardLandscape: { flexBasis: 220, flexGrow: 1 },
   controlCard: {
     backgroundColor: "#FFFCF7",
     borderColor: "#DDD3C7",
@@ -495,11 +503,12 @@ const styles = StyleSheet.create({
   actionRow: { flexDirection: "row", flexWrap: "wrap", gap: 9 },
   actionButton: {
     alignItems: "center",
+    alignSelf: "stretch",
     backgroundColor: "#8B3A2B",
     borderColor: "#8B3A2B",
     borderRadius: 999,
     borderWidth: 1,
-    flexGrow: 1,
+    flexShrink: 1,
     justifyContent: "center",
     minHeight: 46,
     paddingHorizontal: 16,

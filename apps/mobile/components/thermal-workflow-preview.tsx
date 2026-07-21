@@ -36,6 +36,8 @@ interface ThermalWorkflowPreviewProps {
 }
 
 interface ThermalWorkflowStatusProps {
+  compact?: boolean;
+  fillHeight?: boolean;
   mutationPending: boolean;
   onOpenMachine: () => void;
   onStartCooldown: () => void;
@@ -44,6 +46,8 @@ interface ThermalWorkflowStatusProps {
 }
 
 export function ThermalWorkflowStatus({
+  compact = false,
+  fillHeight = false,
   mutationPending,
   onOpenMachine,
   onStartCooldown,
@@ -66,7 +70,7 @@ export function ThermalWorkflowStatus({
   };
 
   return (
-    <View style={styles.section}>
+    <View style={[styles.section, compact && styles.sectionCompact]}>
       {snapshot.machine.activeMode === "steam" && !cooldownActive ? (
         <SteamBlockedCard onOpenMachine={onOpenMachine} />
       ) : null}
@@ -84,6 +88,8 @@ export function ThermalWorkflowStatus({
       ) : (
         <CooldownCard
           actionDisabled={startBlocked}
+          compact={compact}
+          fillHeight={fillHeight}
           onOpenConfirmation={() => setConfirmingCooldown(true)}
           onStop={onStopCooldown}
           snapshot={snapshot}
@@ -153,6 +159,8 @@ export function ThermalWorkflowPreview({
 
 function CooldownCard({
   actionDisabled = false,
+  compact = false,
+  fillHeight = false,
   onFinish,
   onOpenConfirmation,
   onShowCutoff,
@@ -162,6 +170,8 @@ function CooldownCard({
   stopDisabled = false,
 }: {
   actionDisabled?: boolean;
+  compact?: boolean;
+  fillHeight?: boolean;
   onFinish?: () => void;
   onOpenConfirmation: () => void;
   onShowCutoff?: () => void;
@@ -173,20 +183,30 @@ function CooldownCard({
   const cooldown = snapshot.cooldown;
   if (cooldown.status === "idle") {
     return (
-      <View style={styles.cooldownActionCard}>
+      <View
+        style={[
+          styles.cooldownActionCard,
+          compact && styles.cooldownActionCardCompact,
+          fillHeight && styles.cooldownCardFill,
+        ]}>
         {cooldown.outcome !== null ? (
           <OutcomeSummary cooldown={cooldown} />
         ) : null}
         <Text selectable style={styles.cooldownEyebrow}>
           {translate("thermalPreview.cooldownLabel")}
         </Text>
-        <Text selectable style={styles.actionTitle}>
+        <Text
+          selectable
+          style={[styles.actionTitle, compact && styles.actionTitleCompact]}>
           {translate("thermalPreview.cooldownActionTitle")}
         </Text>
-        <Text selectable style={styles.actionDetail}>
-          {translate("thermalPreview.cooldownActionDetail")}
-        </Text>
+        {!compact ? (
+          <Text selectable style={styles.actionDetail}>
+            {translate("thermalPreview.cooldownActionDetail")}
+          </Text>
+        ) : null}
         <PrimaryButton
+          compact={compact}
           disabled={actionDisabled}
           label={translate("thermalPreview.cooldownButton")}
           onPress={onOpenConfirmation}
@@ -196,7 +216,13 @@ function CooldownCard({
   }
 
   return (
-    <View accessibilityLiveRegion="polite" style={styles.activeCooldownCard}>
+    <View
+      accessibilityLiveRegion="polite"
+      style={[
+        styles.activeCooldownCard,
+        compact && styles.activeCooldownCardCompact,
+        fillHeight && styles.cooldownCardFill,
+      ]}>
       <StatusHeader
         dark
         label={translate("thermalPreview.cooldownLabel")}
@@ -206,7 +232,9 @@ function CooldownCard({
             : "thermalPreview.stabilizing",
         )}
       />
-      <Text selectable style={styles.activeTitle}>
+      <Text
+        selectable
+        style={[styles.activeTitle, compact && styles.activeTitleCompact]}>
         {translate(
           cooldown.status === "pumping"
             ? "thermalPreview.pumpingTitle"
@@ -218,18 +246,21 @@ function CooldownCard({
           {outcomeLabel(cooldown.outcome)}
         </Text>
       ) : null}
-      <View style={styles.metricGrid}>
+      <View style={[styles.metricGrid, compact && styles.metricGridCompact]}>
         <Metric
+          compact={compact}
           dark
           label={translate("thermalPreview.elapsed")}
           value={formatThermalPreviewTime(cooldown.elapsedMs)}
         />
         <Metric
+          compact={compact}
           dark
           label={translate("thermalPreview.remaining")}
           value={formatThermalPreviewTime(cooldown.remainingMs)}
         />
         <Metric
+          compact={compact}
           dark
           label={translate("thermalPreview.pumpCommand")}
           value={translate(
@@ -239,17 +270,21 @@ function CooldownCard({
           )}
         />
         <Metric
+          compact={compact}
           dark
           label={translate("thermalPreview.heaterControl")}
           value={translate("thermalPreview.heaterInhibited")}
         />
       </View>
-      <Text selectable style={styles.commandBoundaryDark}>
-        {translate("thermalPreview.commandBoundary")}
-      </Text>
+      {!compact ? (
+        <Text selectable style={styles.commandBoundaryDark}>
+          {translate("thermalPreview.commandBoundary")}
+        </Text>
+      ) : null}
       {cooldown.status === "pumping" ? (
         <>
           <PrimaryButton
+            compact={compact}
             destructive
             disabled={stopDisabled}
             label={translate("thermalPreview.stop")}
@@ -509,20 +544,33 @@ function StatusHeader({
 }
 
 function Metric({
+  compact = false,
   dark = false,
   label,
   value,
 }: {
+  compact?: boolean;
   dark?: boolean;
   label: string;
   value: string;
 }) {
   return (
-    <View style={[styles.metric, dark && styles.metricDark]}>
+    <View
+      style={[
+        styles.metric,
+        compact && styles.metricCompact,
+        dark && styles.metricDark,
+      ]}>
       <Text selectable style={[styles.metricLabel, dark && styles.metricLabelDark]}>
         {label}
       </Text>
-      <Text selectable style={[styles.metricValue, dark && styles.metricValueDark]}>
+      <Text
+        selectable
+        style={[
+          styles.metricValue,
+          compact && styles.metricValueCompact,
+          dark && styles.metricValueDark,
+        ]}>
         {value}
       </Text>
     </View>
@@ -539,11 +587,13 @@ function WarningRow({ text }: { text: string }) {
 }
 
 function PrimaryButton({
+  compact = false,
   destructive = false,
   disabled = false,
   label,
   onPress,
 }: {
+  compact?: boolean;
   destructive?: boolean;
   disabled?: boolean;
   label: string;
@@ -558,6 +608,7 @@ function PrimaryButton({
       style={({ pressed }) => [
         styles.primaryButton,
         destructive && styles.stopButton,
+        compact && styles.primaryButtonCompact,
         disabled && styles.disabledButton,
         pressed && styles.pressed,
       ]}>
@@ -591,6 +642,7 @@ function outcomeLabel(outcome: CooldownOutcome): string {
 
 const styles = StyleSheet.create({
   section: { gap: 12 },
+  sectionCompact: { flex: 1, gap: 6, minWidth: 0 },
   previewBanner: {
     backgroundColor: "#2F2722",
     borderColor: "#5D4B40",
@@ -628,23 +680,34 @@ const styles = StyleSheet.create({
     gap: 10,
     padding: 20,
   },
+  cooldownActionCardCompact: { borderRadius: 18, gap: 6, padding: 10 },
+  cooldownCardFill: { flexGrow: 1, justifyContent: "space-between" },
   actionEyebrow: { color: "#8B3A2B", fontSize: 11, fontWeight: "900", letterSpacing: 1.1 },
   cooldownEyebrow: { color: "#F2B66D", fontSize: 11, fontWeight: "900", letterSpacing: 1.1 },
   actionTitle: { color: "#FFFFFF", fontSize: 25, fontWeight: "900" },
+  actionTitleCompact: { fontSize: 17, lineHeight: 19 },
   actionDetail: { color: "#F6DED8", fontSize: 15, lineHeight: 22 },
   primaryButton: {
     alignItems: "center",
+    alignSelf: "stretch",
     backgroundColor: "#F7E6D4",
     borderColor: "#F7E6D4",
     borderCurve: "continuous",
     borderRadius: 16,
     borderWidth: 1,
-    flexGrow: 1,
+    flexShrink: 1,
     justifyContent: "center",
     minHeight: 52,
     minWidth: 150,
     paddingHorizontal: 18,
     paddingVertical: 12,
+  },
+  primaryButtonCompact: {
+    borderRadius: 14,
+    minHeight: 44,
+    minWidth: 0,
+    paddingHorizontal: 8,
+    paddingVertical: 7,
   },
   primaryButtonText: { color: "#5E2118", fontSize: 16, fontWeight: "900", textAlign: "center" },
   stopButton: { backgroundColor: "#C63F32", borderColor: "#FF9A8F", minHeight: 60 },
@@ -659,26 +722,32 @@ const styles = StyleSheet.create({
     gap: 14,
     padding: 20,
   },
+  activeCooldownCardCompact: { borderRadius: 18, gap: 7, padding: 10 },
   activeTitle: { color: "#FFF9F1", fontSize: 25, fontWeight: "900" },
+  activeTitleCompact: { fontSize: 17, lineHeight: 19 },
   activeOutcome: { color: "#F2B66D", fontSize: 15, fontWeight: "800" },
   metricGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
+  metricGridCompact: { gap: 6 },
   metric: { backgroundColor: "#F5EEE5", borderCurve: "continuous", borderRadius: 14, flexBasis: 130, flexGrow: 1, gap: 4, padding: 12 },
+  metricCompact: { flexBasis: 68, gap: 2, padding: 6 },
   metricDark: { backgroundColor: "#3C312C" },
   metricLabel: { color: "#76675D", fontSize: 11, fontWeight: "800" },
   metricLabelDark: { color: "#CDBFB5" },
   metricValue: { color: "#241B17", fontSize: 18, fontVariant: ["tabular-nums"], fontWeight: "900" },
+  metricValueCompact: { fontSize: 14 },
   metricValueDark: { color: "#FFFFFF" },
   commandBoundary: { color: "#5B4037", fontSize: 13, lineHeight: 19 },
   commandBoundaryDark: { color: "#D9CBC1", fontSize: 13, lineHeight: 19 },
   secondaryActions: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   secondaryButton: {
     alignItems: "center",
+    alignSelf: "stretch",
     backgroundColor: "transparent",
     borderColor: "#BDAA9D",
     borderCurve: "continuous",
     borderRadius: 16,
     borderWidth: 1,
-    flexGrow: 1,
+    flexShrink: 1,
     justifyContent: "center",
     minHeight: 48,
     minWidth: 130,
