@@ -155,7 +155,9 @@ export function DashboardScreen({
     ],
   );
   const {
+    cancelProfileImport,
     connection,
+    confirmProfileImport,
     compensation,
     cooldown,
     cooldownStartMutation,
@@ -169,11 +171,17 @@ export function DashboardScreen({
     exportProfiles,
     freshness,
     heaterMutation,
+    importProfiles,
+    machineProfileError,
     modeMutation,
     machineProfiles,
     mobileProfiles,
     profileMutation,
     profileStorageError,
+    profileImportState,
+    profileWritePending,
+    profilesSynchronized,
+    retryMachineProfiles,
     saveMobileProfiles,
     setHeaterEnabled,
     setMode,
@@ -251,7 +259,8 @@ export function DashboardScreen({
   const extractionUiState: ExtractionPreviewState = useMemo(
     () => ({
       extraction: extraction ?? idlePreviewState.extraction,
-      machineProfiles: machineProfiles ?? idlePreviewState.machineProfiles,
+      machineProfiles:
+        machineProfiles ?? mobileProfiles ?? idlePreviewState.machineProfiles,
       mobileProfiles: mobileProfiles ?? idlePreviewState.mobileProfiles,
       notice: null,
       selected: selectedExtraction,
@@ -772,8 +781,24 @@ export function DashboardScreen({
 
         {dashboardPage === "profiles" ? (
           <>
-            {profileStorageError !== null ? (
+            {profileStorageError !== null && mobileProfiles === null ? (
               <ProfileLoadingCard error={profileStorageError} />
+            ) : null}
+            {machineProfiles === null ? (
+              <ProfileLoadingCard
+                error={machineProfileError}
+                onRetry={
+                  machineProfileError === null
+                    ? undefined
+                    : retryMachineProfiles
+                }
+              />
+            ) : null}
+            {machineProfiles !== null && machineProfileError !== null ? (
+              <ProfileLoadingCard
+                error={machineProfileError}
+                onRetry={retryMachineProfiles}
+              />
             ) : null}
             <MutationFeedback
               onDismiss={
@@ -787,11 +812,20 @@ export function DashboardScreen({
                   : profileMutation
               }
             />
-            {mobileProfiles !== null && machineProfiles !== null ? (
+            {mobileProfiles !== null ? (
               <ExtractionPreview
                 compact={landscape}
                 debugPreview={debugDeviceMode}
+                onCancelProfileImport={cancelProfileImport}
+                onConfirmProfileImport={confirmProfileImport}
+                onImportProfiles={importProfiles}
                 onStateChange={applyExtractionUiState}
+                profileActionsDisabled={
+                  freshness !== "live" || profileMutation.status === "pending"
+                }
+                profileImportState={profileImportState}
+                profileWritePending={profileWritePending}
+                profilesSynchronized={profilesSynchronized}
                 state={extractionUiState}
                 view="profiles"
                 workflowBlock={cooldownActive ? "cooldown" : null}
@@ -802,7 +836,9 @@ export function DashboardScreen({
                 }
               />
             ) : (
-              <ProfileLoadingCard error={profileStorageError} />
+              <ProfileLoadingCard
+                error={profileStorageError}
+              />
             )}
           </>
         ) : null}
@@ -1003,7 +1039,13 @@ export function DashboardScreen({
   );
 }
 
-function ProfileLoadingCard({ error }: { error: string | null }) {
+function ProfileLoadingCard({
+  error,
+  onRetry,
+}: {
+  error: string | null;
+  onRetry?: () => void;
+}) {
   return (
     <View
       accessibilityLiveRegion={error === null ? "polite" : "assertive"}
@@ -1016,6 +1058,19 @@ function ProfileLoadingCard({ error }: { error: string | null }) {
       <Text selectable style={styles.unavailableText}>
         {error ?? translate("extractionPreview.loadingProfilesDetail")}
       </Text>
+      {error !== null && onRetry !== undefined ? (
+        <Pressable
+          accessibilityRole="button"
+          onPress={onRetry}
+          style={({ pressed }) => [
+            styles.profileRetryButton,
+            pressed && styles.pressed,
+          ]}>
+          <Text style={styles.profileRetryButtonText}>
+            {translate("extractionPreview.retryMachineProfiles")}
+          </Text>
+        </Pressable>
+      ) : null}
     </View>
   );
 }
@@ -2463,6 +2518,21 @@ const styles = StyleSheet.create({
   },
   unavailableTitle: { color: "#2C231E", fontSize: 20, fontWeight: "800" },
   unavailableText: { color: "#695A50", fontSize: 15, lineHeight: 21 },
+  profileRetryButton: {
+    alignItems: "center",
+    alignSelf: "flex-start",
+    borderColor: "#8B3A2B",
+    borderRadius: 999,
+    borderWidth: 1,
+    justifyContent: "center",
+    minHeight: 44,
+    paddingHorizontal: 16,
+  },
+  profileRetryButtonText: {
+    color: "#8B3A2B",
+    fontSize: 14,
+    fontWeight: "800",
+  },
   contextCard: {
     backgroundColor: "#FFFCF7",
     borderColor: "#DDD3C7",

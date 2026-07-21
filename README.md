@@ -27,8 +27,9 @@ O celular descobre e autentica uma máquina, exibe o estado em tempo real e envi
 - Targets de brew/steam, active mode, permissão do heater e dismissal de over-temperature confirmados pelo firmware.
 - Controle pelo ESP32-C3, persistência dos targets em NVS, amostragem MAX6675, saída SSD1306, rede HTTP/mDNS e policy boundaries testáveis no host.
 - Simulador determinístico Bun/Hono para desenvolvimento mobile e do contrato.
-- Profiles locais Manual + quatro slots, export completo e extração reconhecida
-  pelo firmware com pre-infusion, soak, main, Stop e cutoff Manual de 60 s.
+- Profiles locais Manual + quatro slots, importação revisada do ESP32, export
+  completo e extração reconhecida pelo firmware com pre-infusion, soak, main,
+  Stop e cutoff Manual de 60 s.
 
 O produto ainda é um protótipo. A aceitação da PRD-001 e a validação física estão incompletas; consulte o [tracker](docs/TRACKER.md) e os [findings conhecidos](CODEBASE_REVIEW_REPORT.md).
 

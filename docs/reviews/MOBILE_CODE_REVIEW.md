@@ -114,7 +114,13 @@ to the impostor and reports an identity mismatch.
 
 **Severity:** MAJOR  
 **Category:** Reliability / recovery  
-**Status:** Validated
+**Status:** Resolved 2026-07-21 under PRD-010
+
+**Resolution evidence:** Local and machine profile loading now have independent
+state. The focused profile synchronization session deduplicates requests,
+cancels stale reads, retries on reconnect/focus, and exposes an explicit retry.
+Tests inject an initial remote failure and verify recovery without remounting
+while the successfully loaded local set remains available.
 
 **Evidence:**
 
@@ -142,7 +148,13 @@ recovers and that local-storage failure does not erase valid machine profiles.
 
 **Severity:** MAJOR  
 **Category:** Concurrency / persistence consistency  
-**Status:** Validated
+**Status:** Resolved 2026-07-21 under PRD-010
+
+**Resolution evidence:** All local editor and import writes now pass through one
+serialized profile session with monotonic revisions. Pending writes disable
+conflicting editor/import controls, and deferred-write tests prove that only the
+latest requested set becomes visible and persisted. Import save failure tests
+also prove that the prior complete local set remains active and retryable.
 
 **Evidence:**
 
