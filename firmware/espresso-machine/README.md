@@ -9,7 +9,8 @@ ESP-IDF C++ firmware for the ESP32-C3 Super Mini. It owns sensor sampling, persi
 
 - `components/firmware_config`: identity, pins, target/safety constants, timeouts, and diagnostic flags.
 - `components/peripherals`: pure MAX6675, NVS target/profile, independent fail-off heater/pump command, and SSD1306 policies plus ESP-IDF adapters.
-- `components/control`: pure temperature controller, readiness, duty windows, timeouts, and fault latching.
+- `components/control`: pure temperature controller, readiness, duty windows,
+  timeouts, fault latching, and passive fixed-coefficient temperature prediction.
 - `components/networking`: bounded JSON syntax, typed machine/workflow codecs,
   compact 600-sample RAM history, response serializers, authoritative
   route/access metadata, API orchestration, and ESP-IDF Wi-Fi/HTTP/mDNS adapters.
@@ -53,9 +54,17 @@ bun run firmware/espresso-machine/host-tests/validate_contract.ts \
 
 The suite covers identity/configuration, MAX6675 decoding, target/profile
 persistence policy, fail-off heater/pump command behavior, OLED serialization,
-control transitions/timeouts/faults, the bounded history ring and cursor codec,
+control transitions/timeouts/faults, filtering/slope/command histories, passive
+prediction and output-trace equivalence, the bounded history ring and cursor codec,
 bearer/API parsing, and contract response captures. It does not exercise
 ESP-IDF scheduling, physical sensors, GPIO, SSRs, or thermal behavior.
+
+Firmware `0.3.2` emits at most eight enriched history samples per response,
+keeps the serialized body within an 8 KiB host-tested transport budget, and
+supports opt-in live diagnostics at
+`GET /api/v2/state?include=prediction`. Queryless API v2 state is unchanged,
+and clients continue to accept legacy firmware pages containing up to sixty
+samples.
 
 For deterministic malformed-input coverage under AddressSanitizer and
 UndefinedBehaviorSanitizer:

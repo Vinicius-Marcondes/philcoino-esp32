@@ -81,6 +81,84 @@ std::string serialize_state(const control::ControlSnapshot& snapshot,
   return output.str();
 }
 
+std::string serialize_prediction(const control::ControlSnapshot& snapshot) {
+  const auto& prediction = snapshot.prediction;
+  const auto& features = prediction.features;
+  std::ostringstream output;
+  output.imbue(std::locale::classic());
+  output << std::setprecision(6) << "{\"temperatureRawC\":"
+         << json_temperature(prediction.temperature_raw_c)
+         << ",\"temperatureFilteredC\":"
+         << json_temperature(features.temperature_filtered_c)
+         << ",\"activeTargetC\":"
+         << json_temperature(features.target_temperature_c)
+         << ",\"temperatureSlopeCPerS\":"
+         << json_temperature(features.temperature_slope_c_per_s)
+         << ",\"temperatureAccelerationCPerS2\":"
+         << json_temperature(features.temperature_acceleration_c_per_s2)
+         << ",\"baselineHeaterDuty\":"
+         << json_temperature(features.baseline_heater_duty)
+         << ",\"heaterCommandDuty\":"
+         << (snapshot.heater_enabled ? 1 : 0)
+         << ",\"commandedHeaterDuty1s\":"
+         << json_temperature(prediction.commanded_heater_duty_1s)
+         << ",\"heat5s\":" << json_temperature(features.heat_5s)
+         << ",\"heat15s\":" << json_temperature(features.heat_15s)
+         << ",\"heat30s\":" << json_temperature(features.heat_30s)
+         << ",\"pump5s\":" << json_temperature(features.pump_5s)
+         << ",\"pump15s\":" << json_temperature(features.pump_15s)
+         << ",\"predictedTemperature5sC\":";
+  if (prediction.usable) {
+    output << prediction.predicted_temperature_5s_c;
+  } else {
+    output << "null";
+  }
+  output << ",\"predictedTemperature10sC\":";
+  if (prediction.usable) {
+    output << prediction.predicted_temperature_10s_c;
+  } else {
+    output << "null";
+  }
+  output << ",\"predictedTemperature20sC\":";
+  if (prediction.usable) {
+    output << prediction.predicted_temperature_20s_c;
+  } else {
+    output << "null";
+  }
+  output << ",\"predictedPeakC\":";
+  if (prediction.usable) {
+    output << prediction.predicted_peak_c;
+  } else {
+    output << "null";
+  }
+  output << ",\"hypotheticalCorrectionDuty\":";
+  if (prediction.usable) {
+    output << prediction.hypothetical_correction_duty;
+  } else {
+    output << "null";
+  }
+  output << ",\"hypotheticalHeaterDuty\":";
+  if (prediction.usable) {
+    output << prediction.hypothetical_heater_duty;
+  } else {
+    output << "null";
+  }
+  output << ",\"operatingMode\":\""
+         << control::prediction_operating_mode_name(features.operating_mode)
+         << "\",\"runMode\":\""
+         << control::prediction_run_mode_name(prediction.run_mode)
+         << "\",\"usable\":" << (prediction.usable ? "true" : "false")
+         << ",\"fallbackReason\":\""
+         << control::prediction_fallback_reason_name(
+                prediction.fallback_reason)
+         << "\",\"modelVersion\":" << prediction.model_version
+         << ",\"featureSchemaVersion\":"
+         << prediction.feature_schema_version
+         << ",\"trainingDataHash\":" << prediction.training_data_hash
+         << '}';
+  return output.str();
+}
+
 std::string serialize_targets(peripherals::TemperatureTargets targets) {
   std::ostringstream output;
   output << "{\"brewTargetC\":" << targets.brew_c

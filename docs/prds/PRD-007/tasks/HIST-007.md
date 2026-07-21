@@ -35,6 +35,18 @@ Complete the Human/native acceptance gates for PRD-007.
 
 - Human iPhone exercise and supervised low-voltage/connected-target diagnostics under repository safety rules.
 
+## Returned findings and partial evidence
+
+- The owner confirmed complete bounded `0.3.1` history responses, one stable
+  boot ID across repeated 50-request stress runs, and gap-free one-minute
+  close/reopen recovery on a stable 5 V supply.
+- A later live export exposed empty prediction columns because queryless state
+  did not carry those diagnostics, and incoming samples reset an older viewed
+  graph page. Firmware/mobile `0.3.2` now uses opt-in live diagnostics,
+  gap-triggered history recovery, and stable timestamp page identity.
+- The acceptance criteria remain open until the owner repeats the native app
+  and connected-target checks on `0.3.2`.
+
 ## Dependencies
 
 - HIST-006 complete.

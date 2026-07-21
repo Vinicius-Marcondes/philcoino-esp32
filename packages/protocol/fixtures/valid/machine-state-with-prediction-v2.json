@@ -1,0 +1,62 @@
+{
+  "machine": {
+    "status": "ready",
+    "activeMode": "brew",
+    "boilerTemperatureC": 93,
+    "brewTargetC": 93,
+    "steamTargetC": 115,
+    "heaterEnabled": true,
+    "heaterActive": false,
+    "fault": null,
+    "steamTimeoutRemainingMs": null,
+    "uptimeMs": 184220
+  },
+  "extraction": {
+    "status": "idle",
+    "extractionId": null,
+    "selection": null,
+    "phase": "idle",
+    "elapsedMs": 0,
+    "remainingMs": null,
+    "pumpCommand": "off"
+  },
+  "compensation": { "status": "inactive", "phase": null },
+  "cooldown": {
+    "status": "idle",
+    "cooldownId": null,
+    "brewTargetC": null,
+    "elapsedMs": 0,
+    "remainingMs": null,
+    "pumpCommand": "off",
+    "heaterInhibited": false,
+    "outcome": null
+  },
+  "predictiveTemperature": {
+    "temperatureRawC": 93,
+    "temperatureFilteredC": 92.75,
+    "activeTargetC": 93,
+    "temperatureSlopeCPerS": 0.05,
+    "temperatureAccelerationCPerS2": 0,
+    "baselineHeaterDuty": 0.05,
+    "heaterCommandDuty": 0,
+    "commandedHeaterDuty1s": 0.5,
+    "heat5s": 1,
+    "heat15s": 4,
+    "heat30s": 10,
+    "pump5s": 0,
+    "pump15s": 0,
+    "predictedTemperature5sC": 93.25,
+    "predictedTemperature10sC": 93.5,
+    "predictedTemperature20sC": 94,
+    "predictedPeakC": 94,
+    "hypotheticalCorrectionDuty": 0.05,
+    "hypotheticalHeaterDuty": 0,
+    "operatingMode": "idle_stable",
+    "runMode": "passive",
+    "usable": true,
+    "fallbackReason": "none",
+    "modelVersion": 1,
+    "featureSchemaVersion": 1,
+    "trainingDataHash": 1347571540
+  }
+}

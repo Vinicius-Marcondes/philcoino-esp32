@@ -186,6 +186,7 @@ export function DashboardScreen({
     profileStorageError,
     profileImportState,
     profileWritePending,
+    predictiveTemperature,
     profilesSynchronized,
     retryMachineProfiles,
     saveMobileProfiles,
@@ -233,6 +234,7 @@ export function DashboardScreen({
     selectedDevice.deviceId,
     snapshot,
     extraction,
+    predictiveTemperature,
     snapshotRevision,
     freshness,
     historyRepository,
@@ -2023,8 +2025,10 @@ function PaginatedLineGraph({
   const handledJumpToLatestRequest = useRef(0);
   const userDragging = useRef(false);
   const viewedPageDistanceFromLatest = useRef(0);
+  const viewedWindowStartMs = useRef<number | null>(null);
   const [viewportWidth, setViewportWidth] = useState(0);
   const windows = useMemo(() => temperatureHistoryWindows(samples), [samples]);
+  const latestWindowStartMs = windows.at(-1)?.startMs ?? null;
   const reportPage = useCallback(
     (index: number) => {
       const window = windows[index];
@@ -2058,6 +2062,7 @@ function PaginatedLineGraph({
       ),
     );
     viewedPageDistanceFromLatest.current = windows.length - 1 - viewedIndex;
+    viewedWindowStartMs.current = windows[viewedIndex]?.startMs ?? null;
     reportPage(viewedIndex);
   };
 
@@ -2072,9 +2077,16 @@ function PaginatedLineGraph({
     handledJumpToLatestRequest.current = jumpToLatestRequest;
     followsLatest.current = true;
     viewedPageDistanceFromLatest.current = 0;
+    viewedWindowStartMs.current = latestWindowStartMs;
     list.current?.scrollToEnd({ animated: false });
     reportPage(windows.length - 1);
-  }, [jumpToLatestRequest, reportPage, viewportWidth, windows.length]);
+  }, [
+    jumpToLatestRequest,
+    latestWindowStartMs,
+    reportPage,
+    viewportWidth,
+    windows.length,
+  ]);
 
   return (
     <View
@@ -2094,9 +2106,7 @@ function PaginatedLineGraph({
           })}
           horizontal
           initialNumToRender={2}
-          keyExtractor={(_, index) =>
-            `history-window-${windows.length - 1 - index}`
-          }
+          keyExtractor={(window) => `history-window-${window.startMs}`}
           maxToRenderPerBatch={3}
           onContentSizeChange={() => {
             if (
@@ -2106,15 +2116,22 @@ function PaginatedLineGraph({
               list.current?.scrollToEnd({ animated: false });
               hasPositionedInitialWindow.current = true;
               viewedPageDistanceFromLatest.current = 0;
+              viewedWindowStartMs.current = windows.at(-1)?.startMs ?? null;
               reportPage(windows.length - 1);
               return;
             }
-            const viewedIndex = Math.max(
-              0,
-              windows.length -
-                1 -
-                viewedPageDistanceFromLatest.current,
+            const preservedIndex = windows.findIndex(
+              (window) => window.startMs === viewedWindowStartMs.current,
             );
+            const viewedIndex =
+              preservedIndex >= 0
+                ? preservedIndex
+                : Math.max(
+                    0,
+                    windows.length -
+                      1 -
+                      viewedPageDistanceFromLatest.current,
+                  );
             list.current?.scrollToOffset({
               animated: false,
               offset: viewedIndex * viewportWidth,

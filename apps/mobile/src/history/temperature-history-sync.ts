@@ -39,6 +39,7 @@ export interface TemperatureHistorySyncOptions {
   onPageCommitted?: () => void | Promise<void>;
   repository: TemperatureHistorySyncRepository;
   signal?: AbortSignal;
+  yieldBetweenPages?: () => Promise<void>;
 }
 
 export interface TemperatureHistorySyncResult {
@@ -53,6 +54,7 @@ export async function synchronizeTemperatureHistory({
   onPageCommitted,
   repository,
   signal,
+  yieldBetweenPages = yieldToLivePolling,
 }: TemperatureHistorySyncOptions): Promise<TemperatureHistorySyncResult> {
   let cursor = await repository.loadSyncCursor(deviceId);
   let requestStartedAtMs = now();
@@ -97,6 +99,8 @@ export async function synchronizeTemperatureHistory({
     ) {
       return { pagesCommitted, samplesCommitted };
     }
+    await yieldBetweenPages();
+    throwIfHistorySyncAborted(signal);
     requestStartedAtMs = now();
     page = await requestHistoryPage(client, cursor, signal);
     responseReceivedAtMs = now();
@@ -109,6 +113,10 @@ export async function synchronizeTemperatureHistory({
       latestSequenceAtStart = page.latestSequence;
     }
   }
+}
+
+function yieldToLivePolling(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
 async function requestHistoryPage(
@@ -175,6 +183,7 @@ export function mapHistoryPage(
     heaterEnabled: sample.heaterEnabled,
     machineStatus: sample.machineStatus,
     pumpActive: sample.pumpActive,
+    predictiveTemperature: sample.predictiveTemperature ?? null,
     recordedAtMs: anchorPhoneMs - (anchorUptimeMs - sample.uptimeMs),
     sourceBootId: page.bootId,
     sourceSequence: sample.sequence,

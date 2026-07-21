@@ -45,6 +45,7 @@ add_executable(
   control_test
   control_test.cpp
   ../components/control/src/control.cpp
+  ../components/control/src/prediction.cpp
   ../components/peripherals/src/peripherals.cpp
 )
 
@@ -61,6 +62,23 @@ target_compile_options(control_test PRIVATE -Wall -Wextra -Werror)
 add_test(NAME control_test COMMAND control_test)
 
 add_executable(
+  prediction_test
+  prediction_test.cpp
+  ../components/control/src/prediction.cpp
+)
+
+target_include_directories(
+  prediction_test
+  PRIVATE
+    ../components/control/include
+    ../components/firmware_config/include
+)
+target_compile_features(prediction_test PRIVATE cxx_std_17)
+target_compile_options(prediction_test PRIVATE -Wall -Wextra -Werror)
+
+add_test(NAME prediction_test COMMAND prediction_test)
+
+add_executable(
   firmware_api_test
   firmware_api_test.cpp
   ../components/networking/src/api.cpp
@@ -71,6 +89,7 @@ add_executable(
   ../components/networking/src/api_workflow_codec.cpp
   ../components/networking/src/history.cpp
   ../components/control/src/control.cpp
+  ../components/control/src/prediction.cpp
   ../components/peripherals/src/peripherals.cpp
 )
 
@@ -95,6 +114,7 @@ set(
   ../components/networking/src/api_workflow_codec.cpp
   ../components/networking/src/history.cpp
   ../components/control/src/control.cpp
+  ../components/control/src/prediction.cpp
   ../components/peripherals/src/peripherals.cpp
 )
 
