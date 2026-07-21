@@ -185,6 +185,13 @@ describe("extraction design preview model", () => {
     expect(source).toContain("function CompactBlockStatus");
     expect(source).toContain('"extractionPreview.exportProfilesCompact"');
     expect(source).toContain("<CompactBlockStatus {...compactQuickAction} />");
+    expect(source).toContain('translate("extractionPreview.importProfiles")');
+    expect(source).toContain('translate("extractionPreview.confirmImport")');
+    expect(source).toContain("profileImportChanges(");
+    expect(source).toContain("importState.changes.map((change)");
+    expect(source).toContain("<ProfileImportValue");
+    expect(source).toContain("profileWritePending || profileReviewOpen");
+    expect(source).toContain('key={profileEditorKey}');
     expect(source).toContain("styles.compactSelectorColumn");
     expect(source).toContain('{!compact || view !== "quick" ? (');
     expect(source).not.toContain("styles.compactStatusRow");

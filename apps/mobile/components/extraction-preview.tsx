@@ -36,14 +36,27 @@ import {
 } from "@/src/debug/extraction-preview-model";
 import { extractionPresentation } from "@/src/dashboard/extraction-presentation";
 import { translate } from "@/src/localization/i18n";
+import {
+  idleProfileImportState,
+  profileImportChanges,
+  type ProfileImportState,
+} from "@/src/profiles/profile-import";
+import { cloneProfileSet } from "@/src/profiles/profile-set";
 
 interface ExtractionPreviewProps {
   compact?: boolean;
   debugPreview?: boolean;
   initialState?: ExtractionPreviewState;
+  onCancelProfileImport?: () => void;
+  onConfirmProfileImport?: () => void;
+  onImportProfiles?: () => void;
   onOpenMachine?: () => void;
   onOpenProfiles?: () => void;
   onStateChange?: Dispatch<SetStateAction<ExtractionPreviewState>>;
+  profileActionsDisabled?: boolean;
+  profileImportState?: ProfileImportState;
+  profilesSynchronized?: boolean;
+  profileWritePending?: boolean;
   state?: ExtractionPreviewState;
   view?: "all" | "profiles" | "quick";
   workflowBlock?: "cooldown" | "steam" | null;
@@ -54,9 +67,16 @@ export function ExtractionPreview({
   compact = false,
   debugPreview = true,
   initialState,
+  onCancelProfileImport,
+  onConfirmProfileImport,
+  onImportProfiles,
   onOpenMachine,
   onOpenProfiles,
   onStateChange,
+  profileActionsDisabled = false,
+  profileImportState: controlledProfileImportState,
+  profilesSynchronized: controlledProfilesSynchronized,
+  profileWritePending = false,
   state: controlledState,
   view = "all",
   workflowBlock = null,
@@ -66,16 +86,24 @@ export function ExtractionPreview({
     () => initialState ?? createExtractionPreviewState(),
   );
   const [profilePickerOpen, setProfilePickerOpen] = useState(false);
+  const [localProfileImportState, setLocalProfileImportState] =
+    useState<ProfileImportState>(idleProfileImportState);
   const state = controlledState ?? localState;
   const setState = onStateChange ?? setLocalState;
   const interactivePreview = controlledState === undefined;
-  const synchronized = profilesAreSynchronized(state);
+  const profileImportState =
+    controlledProfileImportState ?? localProfileImportState;
+  const synchronized =
+    controlledProfilesSynchronized ?? profilesAreSynchronized(state);
+  const selectionCanStart =
+    canStartPreview(state) &&
+    (state.selected.kind === "manual" || synchronized);
   const startEnabled =
-    canStartPreview(state) && workflowBlock === null && !workflowMutationPending;
+    selectionCanStart && workflowBlock === null && !workflowMutationPending;
   const active = state.extraction.status === "running";
   const extractionStatus = extractionPresentation(state.extraction);
   const customStartBlocked =
-    !active && state.selected.kind === "profile" && !canStartPreview(state);
+    !active && state.selected.kind === "profile" && !selectionCanStart;
   const workflowStartBlocked = !active && workflowBlock !== null;
   const activeProfile = selectedProfile(state);
   const compactQuickAction = workflowStartBlocked
@@ -119,6 +147,53 @@ export function ExtractionPreview({
     state.selected.kind === "manual"
       ? translate("extractionPreview.manual")
       : activeProfile?.name ?? translate("extractionPreview.emptySlot");
+  const profileEditorKey = `${selectedProfileId}:${JSON.stringify(activeProfile)}`;
+  const profileReviewOpen =
+    profileImportState.status === "reviewing" ||
+    (profileImportState.status === "rejected" &&
+      profileImportState.changes.length > 0);
+  const requestProfileImport = () => {
+    if (onImportProfiles !== undefined) {
+      onImportProfiles();
+      return;
+    }
+    const changes = profileImportChanges(
+      state.mobileProfiles,
+      state.machineProfiles,
+    );
+    setLocalProfileImportState(
+      changes.length === 0
+        ? {
+            changes: [],
+            outcome: "already-matches",
+            status: "acknowledged",
+          }
+        : { changes, outcome: null, status: "reviewing" },
+    );
+  };
+  const confirmProfileImport = () => {
+    if (onConfirmProfileImport !== undefined) {
+      onConfirmProfileImport();
+      return;
+    }
+    setState((current) => ({
+      ...current,
+      mobileProfiles: cloneProfileSet(current.machineProfiles),
+      notice: null,
+    }));
+    setLocalProfileImportState({
+      changes: [],
+      outcome: "imported",
+      status: "acknowledged",
+    });
+  };
+  const cancelProfileImport = () => {
+    if (onCancelProfileImport !== undefined) {
+      onCancelProfileImport();
+      return;
+    }
+    setLocalProfileImportState(idleProfileImportState);
+  };
 
   useEffect(() => {
     if (active) {
@@ -156,8 +231,8 @@ export function ExtractionPreview({
             <ProfileEditor
               compact
               debugPreview={debugPreview}
-              disabled={active}
-              key={selectedProfileId}
+              disabled={active || profileWritePending || profileReviewOpen}
+              key={profileEditorKey}
               onClear={() =>
                 setState((current) =>
                   saveMobileProfile(current, selectedProfileId, null),
@@ -185,7 +260,13 @@ export function ExtractionPreview({
             <ProfileSyncCard
               active={active}
               compact
+              importState={profileImportState}
+              onCancelImport={cancelProfileImport}
+              onConfirmImport={confirmProfileImport}
               onExport={() => setState(exportProfilesPreview)}
+              onImport={requestProfileImport}
+              profileActionsDisabled={profileActionsDisabled}
+              profileWritePending={profileWritePending}
               state={state}
               synchronized={synchronized}
               workflowBlock={workflowBlock}
@@ -199,7 +280,13 @@ export function ExtractionPreview({
             <ProfileSyncCard
               active={active}
               compact={compact}
+              importState={profileImportState}
+              onCancelImport={cancelProfileImport}
+              onConfirmImport={confirmProfileImport}
               onExport={() => setState(exportProfilesPreview)}
+              onImport={requestProfileImport}
+              profileActionsDisabled={profileActionsDisabled}
+              profileWritePending={profileWritePending}
               state={state}
               synchronized={synchronized}
               workflowBlock={workflowBlock}
@@ -223,7 +310,13 @@ export function ExtractionPreview({
       {view !== "quick" && view !== "profiles" ? <ProfileSyncCard
         active={active}
         compact={compact}
+        importState={profileImportState}
+        onCancelImport={cancelProfileImport}
+        onConfirmImport={confirmProfileImport}
         onExport={() => setState(exportProfilesPreview)}
+        onImport={requestProfileImport}
+        profileActionsDisabled={profileActionsDisabled}
+        profileWritePending={profileWritePending}
         state={state}
         synchronized={synchronized}
         workflowBlock={workflowBlock}
@@ -236,8 +329,8 @@ export function ExtractionPreview({
         <ProfileEditor
           compact={compact}
           debugPreview={debugPreview}
-          disabled={active}
-          key={selectedProfileId}
+          disabled={active || profileWritePending || profileReviewOpen}
+          key={profileEditorKey}
           onClear={() =>
             setState((current) =>
               saveMobileProfile(current, selectedProfileId, null),
@@ -389,7 +482,13 @@ export function ExtractionPreview({
 function ProfileSyncCard({
   active,
   compact,
+  importState,
+  onCancelImport,
+  onConfirmImport,
   onExport,
+  onImport,
+  profileActionsDisabled,
+  profileWritePending,
   state,
   synchronized,
   workflowBlock,
@@ -397,7 +496,13 @@ function ProfileSyncCard({
 }: {
   active: boolean;
   compact: boolean;
+  importState: ProfileImportState;
+  onCancelImport: () => void;
+  onConfirmImport: () => void;
   onExport: () => void;
+  onImport: () => void;
+  profileActionsDisabled: boolean;
+  profileWritePending: boolean;
   state: ExtractionPreviewState;
   synchronized: boolean;
   workflowBlock: "cooldown" | "steam" | null;
@@ -430,11 +535,111 @@ function ProfileSyncCard({
           active ||
           synchronized ||
           workflowBlock === "cooldown" ||
-          workflowMutationPending
+          workflowMutationPending ||
+          profileActionsDisabled ||
+          profileWritePending ||
+          importState.status === "loading" ||
+          importState.status === "reviewing" ||
+          importState.status === "saving"
         }
         label={translate("extractionPreview.export")}
         onPress={onExport}
       />
+      <ActionButton
+        compact={compact}
+        disabled={
+          active ||
+          workflowMutationPending ||
+          profileActionsDisabled ||
+          profileWritePending ||
+          importState.status === "loading" ||
+          importState.status === "reviewing" ||
+          importState.status === "saving"
+        }
+        label={
+          importState.status === "loading"
+            ? translate("extractionPreview.importingProfiles")
+            : translate("extractionPreview.importProfiles")
+        }
+        onPress={onImport}
+        secondary
+      />
+      {importState.changes.length > 0 &&
+      (importState.status === "reviewing" ||
+        importState.status === "saving" ||
+        importState.status === "rejected") ? (
+        <View
+          accessibilityLiveRegion="polite"
+          style={styles.importReview}>
+          <Text selectable style={styles.importReviewTitle}>
+            {translate("extractionPreview.importReviewTitle")}
+          </Text>
+          <Text selectable style={styles.helpText}>
+            {translate("extractionPreview.importReviewHelp")}
+          </Text>
+          {importState.changes.map((change) => (
+            <View key={change.id} style={styles.importChange}>
+              <Text selectable style={styles.slotId}>{change.id}</Text>
+              <ProfileImportValue
+                label={translate("extractionPreview.localProfileValue")}
+                profile={change.localProfile}
+              />
+              <Text style={styles.importArrow}>↓</Text>
+              <ProfileImportValue
+                label={translate("extractionPreview.machineProfileValue")}
+                profile={change.machineProfile}
+              />
+            </View>
+          ))}
+          {importState.outcome === "save-failed" ? (
+            <Notice
+              text={translate("extractionPreview.importSaveFailed")}
+              warning
+            />
+          ) : null}
+          <View style={styles.actionRow}>
+            <ActionButton
+              compact={compact}
+              disabled={importState.status === "saving"}
+              label={
+                importState.status === "saving"
+                  ? translate("extractionPreview.importSaving")
+                  : translate("extractionPreview.confirmImport")
+              }
+              onPress={onConfirmImport}
+            />
+            <ActionButton
+              compact={compact}
+              disabled={importState.status === "saving"}
+              label={translate("extractionPreview.cancelImport")}
+              onPress={onCancelImport}
+              secondary
+            />
+          </View>
+        </View>
+      ) : null}
+      {importState.status === "acknowledged" ? (
+        <Notice
+          text={translate(
+            importState.outcome === "already-matches"
+              ? "extractionPreview.importAlreadyMatches"
+              : "extractionPreview.importedProfiles",
+          )}
+        />
+      ) : null}
+      {importState.status === "rejected" &&
+      importState.changes.length === 0 ? (
+        <Notice
+          text={translate(
+            importState.outcome === "stale-review"
+              ? "extractionPreview.importReviewStale"
+              : importState.outcome === "local-unavailable"
+                ? "extractionPreview.importLocalUnavailable"
+                : "extractionPreview.importReadFailed",
+          )}
+          warning
+        />
+      ) : null}
       {state.notice === "exported" ? (
         <Notice text={translate("extractionPreview.exported")} />
       ) : null}
@@ -446,6 +651,32 @@ function ProfileSyncCard({
           text={translate("extractionPreview.cooldownExportBlocked")}
           warning
         />
+      ) : null}
+    </View>
+  );
+}
+
+function ProfileImportValue({
+  label,
+  profile,
+}: {
+  label: string;
+  profile: ExtractionProfile | null;
+}) {
+  return (
+    <View style={styles.importValue}>
+      <Text selectable style={styles.importValueLabel}>{label}</Text>
+      <Text selectable style={styles.importValueName}>
+        {profile?.name ?? translate("extractionPreview.emptySlot")}
+      </Text>
+      {profile !== null ? (
+        <Text selectable style={styles.importValueTiming}>
+          {translate("extractionPreview.profileTiming", {
+            main: profile.mainExtractionSeconds,
+            pre: profile.preInfusionSeconds,
+            soak: profile.soakSeconds,
+          })}
+        </Text>
       ) : null}
     </View>
   );
@@ -1307,6 +1538,32 @@ const styles = StyleSheet.create({
   profileDetailSelected: { color: "#F3D9D2" },
   helpText: { color: "#695A50", fontSize: 14, lineHeight: 20 },
   helpTextCompact: { fontSize: 12, lineHeight: 16 },
+  importReview: {
+    backgroundColor: "#F5EEE5",
+    borderCurve: "continuous",
+    borderRadius: 16,
+    gap: 10,
+    padding: 12,
+  },
+  importReviewTitle: { color: "#332A25", fontSize: 16, fontWeight: "900" },
+  importChange: {
+    backgroundColor: "#FFFCF7",
+    borderColor: "#D8C9BA",
+    borderRadius: 14,
+    borderWidth: 1,
+    gap: 5,
+    padding: 10,
+  },
+  importArrow: { color: "#8B3A2B", fontSize: 18, fontWeight: "900" },
+  importValue: { gap: 2 },
+  importValueLabel: {
+    color: "#76675D",
+    fontSize: 10,
+    fontWeight: "900",
+    letterSpacing: 0.8,
+  },
+  importValueName: { color: "#241B17", fontSize: 14, fontWeight: "800" },
+  importValueTiming: { color: "#695A50", fontSize: 11 },
   slotId: { color: "#8B3A2B", fontSize: 12, fontWeight: "800" },
   inputLabel: { color: "#332A25", fontSize: 14, fontWeight: "800" },
   nameInput: {

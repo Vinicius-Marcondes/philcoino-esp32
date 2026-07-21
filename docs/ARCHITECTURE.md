@@ -178,12 +178,23 @@ This prevents an older poll from overwriting an acknowledgement and prevents a t
 
 The mobile four-slot profile set is stored independently from the selected
 device record through a strict SecureStore-backed repository and seeded only on
-first use. Local edits publish only after storage succeeds. Canonical ordered-set
-comparison drives synchronization status; custom Start remains blocked until an
-acknowledged whole-set export matches the local set. A Start retry after an
-unacknowledged transport outcome reuses its client-generated key. Cooldown uses
-the same rule; a definitive firmware rejection clears the key so the next user
-request is fresh, while an unknown transport outcome retains it for replay.
+first use. A focused profile synchronization session loads local and machine
+sets independently, deduplicates and cancels remote reads, retries them on
+focus/reconnection or explicit request, and serializes every local write under
+monotonic revisions. Local edits and imports publish only after storage
+succeeds; an older completion cannot replace a newer requested set.
+
+Canonical ordered-set comparison drives synchronization status. Whole-set
+export remains an acknowledged ESP32 mutation. Import performs a fresh
+authenticated profile read, presents only changed slots for review, then
+replaces the complete app-wide local set after explicit confirmation without
+mutating firmware. Active extraction, stale connectivity, or conflicting
+profile work blocks import; cooldown does not block this phone-only write.
+Custom Start remains blocked until a current acknowledged machine set matches
+the local set. A Start retry after an unacknowledged transport outcome reuses
+its client-generated key. Cooldown uses the same rule; a definitive firmware
+rejection clears the key so the next user request is fresh, while an unknown
+transport outcome retains it for replay.
 
 Each validated foreground poll also appends a device-scoped temperature-history
 row to mobile SQLite. Rows include phone UTC capture time plus acknowledged

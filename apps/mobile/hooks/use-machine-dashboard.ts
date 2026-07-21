@@ -33,6 +33,11 @@ import {
 } from "@/src/networking/connection-state";
 import { translate } from "@/src/localization/i18n";
 import { profileSetsEqual } from "@/src/profiles/profile-set";
+import {
+  idleProfileImportState,
+  type ProfileImportState,
+} from "@/src/profiles/profile-import";
+import { ProfileSynchronizationSession } from "@/src/profiles/profile-synchronization-session";
 import type { MobileProfileRepository } from "@/src/storage/mobile-profile-repository";
 
 export interface MachineDashboardState {
@@ -50,12 +55,19 @@ export interface MachineDashboardState {
   freshness: DashboardFreshness;
   heaterMutation: DashboardMutationState;
   modeMutation: DashboardMutationState;
+  machineProfileError: string | null;
   machineProfiles: ProfileSet | null;
   mobileProfiles: ProfileSet | null;
+  profileImportState: ProfileImportState;
   profileMutation: DashboardMutationState;
   profileStorageError: string | null;
+  profileWritePending: boolean;
   profilesSynchronized: boolean;
+  cancelProfileImport: () => void;
+  confirmProfileImport: () => void;
   exportProfiles: () => void;
+  importProfiles: () => void;
+  retryMachineProfiles: () => void;
   saveMobileProfiles: (profiles: ProfileSet) => Promise<boolean>;
   startExtraction: (selection: ExtractionSelection) => void;
   startCooldown: () => void;
@@ -88,6 +100,9 @@ export function useMachineDashboard(
     useState<DashboardMutationState>(idleMutationState);
   const [modeMutation, setModeMutation] =
     useState<DashboardMutationState>(idleMutationState);
+  const [machineProfileError, setMachineProfileError] = useState<string | null>(
+    null,
+  );
   const [snapshot, setSnapshot] = useState<MachineState | null>(null);
   const [snapshotRevision, setSnapshotRevision] = useState(0);
   const [extraction, setExtraction] = useState<ExtractionState | null>(null);
@@ -99,25 +114,38 @@ export function useMachineDashboard(
   const [mobileProfiles, setMobileProfiles] = useState<ProfileSet | null>(null);
   const [profileMutation, setProfileMutation] =
     useState<DashboardMutationState>(idleMutationState);
+  const [profileImportState, setProfileImportState] =
+    useState<ProfileImportState>(idleProfileImportState);
   const [profileStorageError, setProfileStorageError] = useState<string | null>(
     null,
   );
+  const [profileWritePending, setProfileWritePending] = useState(false);
   const [temperatureMutation, setTemperatureMutation] =
     useState<DashboardMutationState>(idleMutationState);
   const mutationSession = useRef<DashboardMutationSession | null>(null);
+  const profileSession = useRef<ProfileSynchronizationSession | null>(null);
 
   useFocusEffect(
     useCallback(() => {
-      let active = true;
       let lifecycle: DashboardAppLifecycle | null = null;
-      const profileController = new AbortController();
+      let profiles: ProfileSynchronizationSession | null = null;
+      let previousConnectionStatus: ConnectionState["status"] = "connecting";
       const polling = new DashboardPollingSession({
         client,
         onDeviceRestart: () => mutationSession.current?.handleDeviceRestart(),
         onConnectionChange: (nextConnection) => {
+          const reconnected =
+            nextConnection.status === "online" &&
+            previousConnectionStatus !== "online";
+          previousConnectionStatus = nextConnection.status;
           setConnection(nextConnection);
           if (nextConnection.status === "online") {
             lifecycle?.handleFreshSnapshot();
+            if (reconnected) {
+              void profiles?.refreshMachineProfiles();
+            }
+          } else {
+            profiles?.handleConnectionLost();
           }
         },
         onSnapshotChange: (nextSnapshot) => {
@@ -157,6 +185,7 @@ export function useMachineDashboard(
           setCompensation(null);
           setCooldown(null);
           setConnection(nextConnection);
+          profiles?.handleConnectionLost();
         },
         onExtractionAcknowledged: setExtraction,
         onHeaterAcknowledged: (settings) => {
@@ -216,7 +245,10 @@ export function useMachineDashboard(
           }
         },
         onOverTemperatureDismissed: setSnapshot,
-        onProfilesAcknowledged: setMachineProfiles,
+        onProfilesAcknowledged: (profiles) => {
+          setMachineProfiles(profiles);
+          setMachineProfileError(null);
+        },
         onTemperatureSettingsAcknowledged: (settings) => {
           setSnapshot((current) =>
             current === null ? null : { ...current, ...settings },
@@ -230,28 +262,36 @@ export function useMachineDashboard(
         polling,
       });
       mutationSession.current = mutations;
-
-      void Promise.all([
-        profileRepository.load(),
-        client.getProfiles({ signal: profileController.signal }),
-      ])
-        .then(([localProfiles, persistedProfiles]) => {
-          if (!active) {
-            return;
-          }
-          setMobileProfiles(localProfiles);
-          setMachineProfiles(persistedProfiles);
-          setProfileStorageError(null);
-        })
-        .catch(() => {
-          if (!active || profileController.signal.aborted) {
-            return;
-          }
-          setProfileStorageError(translate("extractionPreview.profileLoadError"));
-        });
+      profiles = new ProfileSynchronizationSession({
+        client,
+        onImportStateChange: setProfileImportState,
+        onLocalErrorChange: (failed) =>
+          setProfileStorageError(
+            failed
+              ? translate("extractionPreview.localProfileLoadError")
+              : null,
+          ),
+        onMachineErrorChange: (failed) =>
+          setMachineProfileError(
+            failed
+              ? translate("extractionPreview.machineProfileLoadError")
+              : null,
+          ),
+        onMachineProfilesChange: setMachineProfiles,
+        onMobileProfilesChange: setMobileProfiles,
+        onWritePendingChange: setProfileWritePending,
+        repository: profileRepository,
+      });
+      profileSession.current = profiles;
+      profiles.start();
 
       const synchronizePolling = (appState: typeof AppState.currentState) => {
         lifecycle?.synchronize(appState);
+        if (appState === "active") {
+          profiles?.resume();
+        } else {
+          profiles?.pause();
+        }
       };
 
       synchronizePolling(AppState.currentState);
@@ -261,9 +301,11 @@ export function useMachineDashboard(
       );
 
       return () => {
-        active = false;
-        profileController.abort();
         subscription.remove();
+        profiles?.stop();
+        if (profileSession.current === profiles) {
+          profileSession.current = null;
+        }
         lifecycle?.stop();
         lifecycle = null;
         if (mutationSession.current === mutations) {
@@ -297,18 +339,13 @@ export function useMachineDashboard(
   );
 
   const saveMobileProfiles = useCallback(
-    async (profiles: ProfileSet) => {
-      try {
-        await profileRepository.save(profiles);
-        setMobileProfiles(profiles);
-        setProfileStorageError(null);
-        return true;
-      } catch {
-        setProfileStorageError(translate("extractionPreview.profileSaveError"));
-        return false;
-      }
+    (profiles: ProfileSet) => {
+      return (
+        profileSession.current?.saveLocalProfiles(profiles) ??
+        Promise.resolve(false)
+      );
     },
-    [profileRepository],
+    [],
   );
 
   const exportProfiles = useCallback(() => {
@@ -317,17 +354,34 @@ export function useMachineDashboard(
     }
   }, [mobileProfiles]);
 
+  const importProfiles = useCallback(() => {
+    void profileSession.current?.requestImport();
+  }, []);
+
+  const confirmProfileImport = useCallback(() => {
+    void profileSession.current?.confirmImport();
+  }, []);
+
+  const cancelProfileImport = useCallback(() => {
+    profileSession.current?.cancelImport();
+  }, []);
+
+  const retryMachineProfiles = useCallback(() => {
+    void profileSession.current?.refreshMachineProfiles();
+  }, []);
+
   const startExtraction = useCallback(
     (selection: ExtractionSelection) => {
       if (
         selection.kind === "profile" &&
-        !profileSetsEqual(mobileProfiles, machineProfiles)
+        (machineProfileError !== null ||
+          !profileSetsEqual(mobileProfiles, machineProfiles))
       ) {
         return;
       }
       mutationSession.current?.startExtraction(selection);
     },
-    [machineProfiles, mobileProfiles],
+    [machineProfileError, machineProfiles, mobileProfiles],
   );
 
   const stopExtraction = useCallback(() => {
@@ -356,13 +410,22 @@ export function useMachineDashboard(
     extractionStopMutation,
     freshness,
     heaterMutation,
+    machineProfileError,
     modeMutation,
     machineProfiles,
     mobileProfiles,
+    profileImportState,
     profileMutation,
     profileStorageError,
-    profilesSynchronized: profileSetsEqual(mobileProfiles, machineProfiles),
+    profileWritePending,
+    profilesSynchronized:
+      machineProfileError === null &&
+      profileSetsEqual(mobileProfiles, machineProfiles),
+    cancelProfileImport,
+    confirmProfileImport,
     exportProfiles,
+    importProfiles,
+    retryMachineProfiles,
     saveMobileProfiles,
     startExtraction,
     startCooldown,
