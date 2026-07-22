@@ -219,6 +219,23 @@ Change the wire contract in this order:
 
 The OpenAPI file is JSON-compatible YAML, so the project validator parses it without adding a YAML dependency.
 
+## Offline thermal modeling
+
+The Python 3.12+ tool in `tools/thermal-modeling` consumes exported CSV files and
+produces analysis, predictor, plant-model, simulation, and candidate firmware
+artifacts. It never edits or flashes firmware. Create an isolated environment,
+install the declared project dependencies, and run its tests:
+
+```bash
+python3.12 -m venv tools/thermal-modeling/.venv
+tools/thermal-modeling/.venv/bin/python -m pip install -e './tools/thermal-modeling[test]'
+tools/thermal-modeling/.venv/bin/pytest tools/thermal-modeling/tests
+```
+
+Dependency installation requires explicit owner approval under the repository
+working agreements. See `tools/thermal-modeling/README.md` for every CLI command,
+artifact path, promotion rule, and the synthetic-example boundary.
+
 ## Firmware workflows
 
 ### Host tests

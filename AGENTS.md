@@ -1,6 +1,6 @@
 # Expo HAS CHANGED
 
-Always use dev-mind whenever documentation is needed and it can help, if you cannot find the info you need, use exact versioned docs at https://docs.expo.dev/versions/v54.0.0/ before writing any code.
+Always use the exact versioned docs at https://docs.expo.dev/versions/v54.0.0/ before writing any code.
 
 ## 1. Overview
 
@@ -62,3 +62,23 @@ Philcoino is a local-only espresso-machine monitoring and temperature-control sy
 - Run every configured check relevant to changed areas. Type-check TypeScript packages with their package `typecheck` scripts; run Bun tests for affected workspaces; validate OpenAPI for contract changes; use the independent host CMake suite and, when available, the pinned ESP-IDF target build for firmware changes. Never present simulator tests as heater-safety validation.
 - Report changed behavior, affected areas, contract/API compatibility, safety impact, verification evidence, assumptions, checks not run, deferred human acceptance, and remaining blockers.
 - Before every Git operation, reread `docs/GIT_RULES.md`. Stage only intended files, never push `master`, and create pull requests only through the GitHub Connector or `gh`.
+
+# PhilcoINO Repository Instructions
+
+## Predictive temperature control
+
+For tasks related to boiler temperature prediction, thermal inertia,
+PID tuning, heater control, or overshoot reduction, read:
+
+- `docs/specifications/predictive-temperature-firmware.md`
+- `docs/specifications/thermal-modeling-desktop.md`
+
+The firmware specification is authoritative for ESP32 behavior.
+The desktop specification is authoritative for training, simulation,
+validation, and model export.
+
+Safety rules and independent over-temperature protection must not be weakened.
+
+Do not implement a specification when the task requests analysis or planning only.
+Clearly distinguish requirements already supported by the repository from
+requirements that require new code.
