@@ -176,8 +176,22 @@ curl http://localhost:3000/api/v2/history \
   -H 'Authorization: Bearer philcoino-dev-token'
 ```
 
+The mobile live poll uses the opt-in state shape:
+
+```bash
+curl 'http://localhost:3000/api/v2/state?include=prediction' \
+  -H 'Authorization: Bearer philcoino-dev-token'
+```
+
+The simulator returns `predictiveTemperature: null` because it does not model
+the firmware predictor. Queryless `/api/v2/state` remains unchanged.
+
 Use the returned `nextCursor.bootId` and `nextCursor.afterSequence` together for
-the next page. Power-cycle changes the boot ID and clears retained history.
+the next page. Current pages contain at most eight samples; consumers accept
+legacy sixty-sample pages. Power-cycle changes the boot ID and clears retained
+history. Firmware pages may also contain the
+optional `predictiveTemperature` object; the simulator deliberately omits it
+because it does not reproduce the ESP32 filter, command history, or predictor.
 
 The simulator treats `boilerTemperatureC` as the already-effective logical
 control temperature in either mode. It does not add the firmware Steam offset,
@@ -223,8 +237,9 @@ bun run firmware/espresso-machine/host-tests/validate_contract.ts \
 
 Use a temporary build directory outside the repository to avoid generated output in the worktree.
 
-The generated capture set includes unchanged API v1 responses plus strict API
-v2 extraction, compensation, cooldown Start/replay/conflict/Stop/terminal,
+The generated capture set includes unchanged API v1 and queryless API v2 state
+responses, opt-in live prediction state, plus strict API v2 extraction,
+compensation, cooldown Start/replay/conflict/Stop/terminal,
 history, eligibility errors, and failed terminal state. Capture validation proves only
 that independent C++ serialization matches the wire schemas.
 

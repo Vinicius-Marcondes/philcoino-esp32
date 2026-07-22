@@ -183,15 +183,30 @@
         "operationId": "getMachineStateV2",
         "summary": "Read acknowledged machine, extraction, compensation, and cooldown state",
         "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          {
+            "name": "include",
+            "in": "query",
+            "required": false,
+            "description": "Request the additive live predictive-temperature diagnostics shape. Omitting the parameter preserves the original strict API v2 response.",
+            "schema": { "type": "string", "enum": ["prediction"] }
+          }
+        ],
         "responses": {
           "200": {
-            "description": "Current API v1 machine state plus firmware-acknowledged extraction, compensation, and cooldown state.",
+            "description": "Current API v1 machine state plus firmware-acknowledged extraction, compensation, and cooldown state. include=prediction adds live passive prediction diagnostics without changing the queryless response.",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/MachineStateV2" }
+                "schema": {
+                  "oneOf": [
+                    { "$ref": "#/components/schemas/MachineStateV2" },
+                    { "$ref": "#/components/schemas/MachineStateWithPredictionV2" }
+                  ]
+                }
               }
             }
           },
+          "400": { "$ref": "#/components/responses/V2BadRequest" },
           "401": { "$ref": "#/components/responses/V2Unauthorized" },
           "500": { "$ref": "#/components/responses/V2InternalError" }
         }
@@ -1392,6 +1407,89 @@
           }
         ]
       },
+      "MachineStateWithPredictionV2": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["machine", "extraction", "compensation", "cooldown", "predictiveTemperature"],
+        "properties": {
+          "machine": { "$ref": "#/components/schemas/MachineState" },
+          "extraction": { "$ref": "#/components/schemas/ExtractionState" },
+          "compensation": { "$ref": "#/components/schemas/CompensationState" },
+          "cooldown": { "$ref": "#/components/schemas/CooldownState" },
+          "predictiveTemperature": {
+            "oneOf": [
+              { "$ref": "#/components/schemas/PredictiveTemperatureDiagnostics" },
+              { "type": "null" }
+            ],
+            "description": "Live firmware diagnostics when supported. Null is reserved for deterministic simulators that intentionally do not model the predictor."
+          }
+        },
+        "description": "The opt-in API v2 live state shape returned only for include=prediction. It preserves all MachineStateV2 invariants and adds observational diagnostics that never participate in phone-side control.",
+        "examples": [
+          {
+            "machine": {
+              "status": "ready",
+              "activeMode": "brew",
+              "boilerTemperatureC": 93,
+              "brewTargetC": 93,
+              "steamTargetC": 115,
+              "heaterEnabled": true,
+              "heaterActive": false,
+              "fault": null,
+              "steamTimeoutRemainingMs": null,
+              "uptimeMs": 184220
+            },
+            "extraction": {
+              "status": "idle",
+              "extractionId": null,
+              "selection": null,
+              "phase": "idle",
+              "elapsedMs": 0,
+              "remainingMs": null,
+              "pumpCommand": "off"
+            },
+            "compensation": { "status": "inactive", "phase": null },
+            "cooldown": {
+              "status": "idle",
+              "cooldownId": null,
+              "brewTargetC": null,
+              "elapsedMs": 0,
+              "remainingMs": null,
+              "pumpCommand": "off",
+              "heaterInhibited": false,
+              "outcome": null
+            },
+            "predictiveTemperature": {
+              "temperatureRawC": 93,
+              "temperatureFilteredC": 92.75,
+              "activeTargetC": 93,
+              "temperatureSlopeCPerS": 0.05,
+              "temperatureAccelerationCPerS2": 0,
+              "baselineHeaterDuty": 0.05,
+              "heaterCommandDuty": 0,
+              "commandedHeaterDuty1s": 0.5,
+              "heat5s": 1,
+              "heat15s": 4,
+              "heat30s": 10,
+              "pump5s": 0,
+              "pump15s": 0,
+              "predictedTemperature5sC": 93.25,
+              "predictedTemperature10sC": 93.5,
+              "predictedTemperature20sC": 94,
+              "predictedPeakC": 94,
+              "hypotheticalCorrectionDuty": 0.05,
+              "hypotheticalHeaterDuty": 0,
+              "operatingMode": "idle_stable",
+              "runMode": "passive",
+              "usable": true,
+              "fallbackReason": "none",
+              "modelVersion": 1,
+              "featureSchemaVersion": 1,
+              "trainingDataHash": 1347571540
+            }
+          }
+        ]
+      },
       "HistoryBootId": {
         "type": "string",
         "minLength": 32,
@@ -1416,6 +1514,39 @@
           "afterSequence": { "$ref": "#/components/schemas/HistorySequence" }
         }
       },
+      "PredictiveTemperatureDiagnostics": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["temperatureRawC", "temperatureFilteredC", "activeTargetC", "temperatureSlopeCPerS", "temperatureAccelerationCPerS2", "baselineHeaterDuty", "heaterCommandDuty", "commandedHeaterDuty1s", "heat5s", "heat15s", "heat30s", "pump5s", "pump15s", "predictedTemperature5sC", "predictedTemperature10sC", "predictedTemperature20sC", "predictedPeakC", "hypotheticalCorrectionDuty", "hypotheticalHeaterDuty", "operatingMode", "runMode", "usable", "fallbackReason", "modelVersion", "featureSchemaVersion", "trainingDataHash"],
+        "properties": {
+          "temperatureRawC": { "type": "number", "description": "Validated thermocouple reading before the Steam offset." },
+          "temperatureFilteredC": { "type": "number", "description": "EMA-filtered active control temperature, including the existing Steam offset exactly once." },
+          "activeTargetC": { "type": "number" },
+          "temperatureSlopeCPerS": { "type": "number" },
+          "temperatureAccelerationCPerS2": { "type": "number" },
+          "baselineHeaterDuty": { "type": "number", "minimum": 0, "maximum": 1, "description": "Requested duty from the existing nonlinear controller before passive prediction." },
+          "heaterCommandDuty": { "type": "number", "minimum": 0, "maximum": 1, "description": "Current firmware GPIO command represented as zero or one; not physical heater feedback." },
+          "commandedHeaterDuty1s": { "type": "number", "minimum": 0, "maximum": 1, "description": "Commanded-on fraction of the prior second; not physical heater feedback." },
+          "heat5s": { "type": "number", "minimum": 0, "maximum": 5 },
+          "heat15s": { "type": "number", "minimum": 0, "maximum": 15 },
+          "heat30s": { "type": "number", "minimum": 0, "maximum": 30 },
+          "pump5s": { "type": "number", "minimum": 0, "maximum": 5, "description": "Pump-command seconds; not proof of flow." },
+          "pump15s": { "type": "number", "minimum": 0, "maximum": 15, "description": "Pump-command seconds; not proof of flow." },
+          "predictedTemperature5sC": { "oneOf": [{ "type": "number" }, { "type": "null" }] },
+          "predictedTemperature10sC": { "oneOf": [{ "type": "number" }, { "type": "null" }] },
+          "predictedTemperature20sC": { "oneOf": [{ "type": "number" }, { "type": "null" }] },
+          "predictedPeakC": { "oneOf": [{ "type": "number" }, { "type": "null" }] },
+          "hypotheticalCorrectionDuty": { "oneOf": [{ "type": "number", "minimum": 0, "maximum": 1 }, { "type": "null" }] },
+          "hypotheticalHeaterDuty": { "oneOf": [{ "type": "number", "minimum": 0, "maximum": 1 }, { "type": "null" }] },
+          "operatingMode": { "type": "string", "enum": ["warmup", "idle_stable", "brewing", "post_brew_recovery", "fault"] },
+          "runMode": { "type": "string", "enum": ["disabled", "passive"] },
+          "usable": { "type": "boolean" },
+          "fallbackReason": { "type": "string", "enum": ["none", "model_invalid", "history_immature", "sensor_invalid", "timing_invalid", "slope_implausible", "input_out_of_bounds", "prediction_non_finite", "prediction_implausible", "controller_fault"] },
+          "modelVersion": { "type": "integer", "minimum": 0 },
+          "featureSchemaVersion": { "type": "integer", "minimum": 0 },
+          "trainingDataHash": { "type": "integer", "minimum": 0, "maximum": 4294967295 }
+        }
+      },
       "HistorySample": {
         "type": "object",
         "additionalProperties": false,
@@ -1431,7 +1562,8 @@
           "heaterActive": { "type": "boolean" },
           "pumpActive": { "type": "boolean", "description": "Firmware pump command state only; not proof of flow or physical operation." },
           "machineStatus": { "$ref": "#/components/schemas/MachineStatus" },
-          "faultCode": { "oneOf": [{ "$ref": "#/components/schemas/FaultCode" }, { "type": "null" }] }
+          "faultCode": { "oneOf": [{ "$ref": "#/components/schemas/FaultCode" }, { "type": "null" }] },
+          "predictiveTemperature": { "$ref": "#/components/schemas/PredictiveTemperatureDiagnostics", "description": "Optional for compatibility with firmware that predates passive prediction diagnostics." }
         }
       },
       "HistoryPage": {
@@ -1447,7 +1579,7 @@
           "nextCursor": { "$ref": "#/components/schemas/HistoryCursor" },
           "hasMore": { "type": "boolean" },
           "continuity": { "$ref": "#/components/schemas/HistoryContinuity" },
-          "samples": { "type": "array", "maxItems": 60, "items": { "$ref": "#/components/schemas/HistorySample" } }
+          "samples": { "type": "array", "maxItems": 60, "description": "Current firmware emits at most 8 samples to keep enriched responses within the ESP32 transport budget. The consumer schema accepts up to 60 for compatibility with older firmware.", "items": { "$ref": "#/components/schemas/HistorySample" } }
         },
         "examples": [
           {
@@ -1471,7 +1603,35 @@
                 "heaterActive": true,
                 "pumpActive": false,
                 "machineStatus": "heating",
-                "faultCode": null
+                "faultCode": null,
+                "predictiveTemperature": {
+                  "temperatureRawC": 92.75,
+                  "temperatureFilteredC": 92.5,
+                  "activeTargetC": 93,
+                  "temperatureSlopeCPerS": 0.08,
+                  "temperatureAccelerationCPerS2": -0.01,
+                  "baselineHeaterDuty": 0.2,
+                  "heaterCommandDuty": 1,
+                  "commandedHeaterDuty1s": 0.5,
+                  "heat5s": 2.5,
+                  "heat15s": 8,
+                  "heat30s": 18,
+                  "pump5s": 0,
+                  "pump15s": 0,
+                  "predictedTemperature5sC": null,
+                  "predictedTemperature10sC": null,
+                  "predictedTemperature20sC": null,
+                  "predictedPeakC": null,
+                  "hypotheticalCorrectionDuty": null,
+                  "hypotheticalHeaterDuty": null,
+                  "operatingMode": "warmup",
+                  "runMode": "passive",
+                  "usable": false,
+                  "fallbackReason": "history_immature",
+                  "modelVersion": 1,
+                  "featureSchemaVersion": 1,
+                  "trainingDataHash": 1347571540
+                }
               },
               {
                 "sequence": 2,

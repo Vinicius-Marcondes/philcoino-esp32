@@ -31,6 +31,7 @@ import {
   HeaterSettingsRequestSchema,
   HeaterSettingsResponseSchema,
   HealthResponseSchema,
+  HISTORY_COMPATIBILITY_PAGE_SIZE,
   HISTORY_PAGE_SIZE,
   HistoryContinuitySchema,
   HistoryCursorSchema,
@@ -41,6 +42,7 @@ import {
   IdleExtractionStateSchema,
   InactiveCompensationStateSchema,
   MachineStateSchema,
+  MachineStateWithPredictionV2Schema,
   MachineStateV2Schema,
   MachineStatusSchema,
   ModeRequestSchema,
@@ -52,6 +54,7 @@ import {
   ProfileNameSchema,
   ProfileSetSchema,
   ProfileSlotIdSchema,
+  PredictiveTemperatureDiagnosticsSchema,
   PumpCommandSchema,
   PumpingCooldownStateSchema,
   RunningExtractionStateSchema,
@@ -108,6 +111,7 @@ const documentedSchemas: Record<string, ZodType> = {
   RunningExtractionState: RunningExtractionStateSchema,
   TerminalExtractionState: TerminalExtractionStateSchema,
   MachineStateV2: MachineStateV2Schema,
+  MachineStateWithPredictionV2: MachineStateWithPredictionV2Schema,
   StartExtractionRequest: StartExtractionRequestSchema,
   ApiV2ErrorResponse: ApiV2ErrorResponseSchema,
   ExtractionActiveConflictResponse: ExtractionActiveConflictResponseSchema,
@@ -157,6 +161,10 @@ const validFixtures = [
   ["valid/cooldown-sensor-unavailable-error.json", ApiV2ErrorResponseSchema],
   ["valid/cooldown-machine-faulted-error.json", ApiV2ErrorResponseSchema],
   ["valid/machine-v2-failed-cooldown.json", MachineStateV2Schema],
+  [
+    "valid/machine-state-with-prediction-v2.json",
+    MachineStateWithPredictionV2Schema,
+  ],
 ] as const;
 
 const invalidFixtures = [
@@ -276,6 +284,9 @@ describe("documented OpenAPI examples", () => {
       ],
       MachineStateV2: [
         openApi.components.schemas.MachineStateV2.examples?.[0],
+      ],
+      MachineStateWithPredictionV2: [
+        await fixture("valid/machine-state-with-prediction-v2.json"),
       ],
       StartExtractionRequest: [
         await fixture("valid/extraction-start-request.json"),
@@ -644,8 +655,53 @@ describe("API v2 thermal workflow boundaries", () => {
 });
 
 describe("API v2 rolling history", () => {
+  test("keeps queryless state strict while documenting opt-in prediction", async () => {
+    const enriched = await fixture(
+      "valid/machine-state-with-prediction-v2.json",
+    );
+    expect(MachineStateWithPredictionV2Schema.safeParse(enriched).success).toBe(
+      true,
+    );
+    expect(MachineStateV2Schema.safeParse(enriched).success).toBe(false);
+
+    const operation = openApi.paths["/api/v2/state"]?.get as {
+      parameters?: Array<{
+        in?: string;
+        name?: string;
+        required?: boolean;
+        schema?: { enum?: string[] };
+      }>;
+      responses?: Record<
+        string,
+        {
+          content?: Record<
+            string,
+            { schema?: { oneOf?: Array<{ $ref?: string }> } }
+          >;
+        }
+      >;
+    };
+    expect(operation.parameters).toContainEqual(
+      expect.objectContaining({
+        in: "query",
+        name: "include",
+        required: false,
+        schema: { enum: ["prediction"], type: "string" },
+      }),
+    );
+    expect(
+      operation.responses?.["200"]?.content?.["application/json"]?.schema
+        ?.oneOf,
+    ).toEqual([
+      { $ref: "#/components/schemas/MachineStateV2" },
+      { $ref: "#/components/schemas/MachineStateWithPredictionV2" },
+    ]);
+    expect(operation.responses?.["400"]).toBeDefined();
+  });
+
   test("defines bounded strict cursor and continuity values", () => {
-    expect(HISTORY_PAGE_SIZE).toBe(60);
+    expect(HISTORY_PAGE_SIZE).toBe(8);
+    expect(HISTORY_COMPATIBILITY_PAGE_SIZE).toBe(60);
     expect(HistoryContinuitySchema.options).toEqual([
       "initial",
       "continuous",
@@ -679,6 +735,53 @@ describe("API v2 rolling history", () => {
         faultCode: "sensor_failure",
       }).success,
     ).toBe(false);
+  });
+
+  test("keeps prediction diagnostics optional for old firmware and strict when present", async () => {
+    const page = HistoryPageSchema.parse(await fixture("valid/history-page.json"));
+    const prediction = page.samples[0]?.predictiveTemperature;
+    expect(prediction).toBeDefined();
+    if (prediction === undefined) throw new Error("Missing prediction fixture");
+    expect(page.samples[1]?.predictiveTemperature).toBeUndefined();
+    expect(
+      PredictiveTemperatureDiagnosticsSchema.safeParse({
+        ...prediction,
+        usable: true,
+      }).success,
+    ).toBe(false);
+    expect(
+      PredictiveTemperatureDiagnosticsSchema.safeParse({
+        ...prediction,
+        unexpected: true,
+      }).success,
+    ).toBe(false);
+  });
+
+  test("accepts legacy sixty-sample history pages", async () => {
+    const page = HistoryPageSchema.parse(await fixture("valid/history-page.json"));
+    const sample = page.samples[1];
+    if (sample === undefined) throw new Error("Missing legacy history sample");
+    const samples = Array.from(
+      { length: HISTORY_COMPATIBILITY_PAGE_SIZE },
+      (_, index) => ({
+        ...sample,
+        sequence: index + 1,
+        uptimeMs: (index + 1) * 1_000,
+      }),
+    );
+
+    expect(
+      HistoryPageSchema.safeParse({
+        ...page,
+        oldestSequence: 1,
+        latestSequence: HISTORY_COMPATIBILITY_PAGE_SIZE,
+        nextCursor: {
+          ...page.nextCursor,
+          afterSequence: HISTORY_COMPATIBILITY_PAGE_SIZE,
+        },
+        samples,
+      }).success,
+    ).toBe(true);
   });
 
   test("documents the history endpoint as additive and protected", () => {
