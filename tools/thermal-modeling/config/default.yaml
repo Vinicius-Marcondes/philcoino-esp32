@@ -1,0 +1,65 @@
+schema_version: 1
+sampling:
+  expected_interval_seconds: null
+  session_gap_multiplier: 5.0
+  target_tolerance_multiplier: 0.6
+  minimum_session_seconds: 35.0
+features:
+  schema_version: 1
+  filter_alpha: 0.25
+  minimum_interval_ms: 250
+  maximum_interval_ms: 1000
+  maximum_absolute_slope_c_per_s: 10.0
+predictor:
+  horizons_seconds: [5, 10, 20]
+  alpha_values: [0.01, 0.1, 1.0, 10.0]
+plant:
+  alpha_values: [0.01, 0.1, 1.0, 10.0]
+controller:
+  brew_target_min_c: 85
+  brew_target_max_c: 95
+  brew_over_temperature_c: 98
+  steam_over_temperature_c: 130
+  steam_temperature_offset_c: 5
+  extraction_duty_offset_c: 2
+  heater_window_seconds: 10.0
+  minimum_heater_pulse_seconds: 0.5
+  brew_ramp_min_c: 4.0
+  brew_ramp_max_c: 8.0
+  steam_ramp_c: 12.0
+  brew_recovery_trigger_drop_c: 1.0
+  steam_recovery_trigger_drop_c: 3.0
+  brew_recovery_ramp_c: 4.0
+  steam_recovery_ramp_c: 6.0
+  recovery_stable_slope_c_per_s: 0.05
+  recovery_timeout_seconds: 60.0
+  prediction_deadband_values: [0.1, 0.2, 0.4]
+  prediction_gain_values: [0.15, 0.25, 0.4]
+  hard_cutoff_margin_values: [0.2, 0.3, 0.5]
+  activation_band_values: [5.0, 8.0, 12.0]
+validation:
+  stable_band_c: 0.5
+  maximum_valid_temperature_c: 130.0
+  maximum_temperature_jump_c_per_s: 10.0
+  maximum_negative_bias_c: 0.5
+  minimum_groups_for_promotion: 3
+  minimum_10s_mae_improvement: 0.15
+  minimum_rising_mae_improvement: 0.20
+  minimum_overshoot_improvement: 0.30
+  maximum_recovery_time_increase: 0.20
+aliases:
+  timestamp: [recorded_at_utc, timestamp, recorded_at, time]
+  temperature: [boiler_temperature_c, measured_temperature, boiler_temperature, temperature]
+  temperature_raw: [temperature_raw_c, temperature_raw]
+  temperature_filtered: [temperature_filtered_c, temperature_filtered]
+  target: [active_target_c, prediction_active_target_c, target_temperature, target]
+  heater_active: [heater_active, heater_actual, heater_state]
+  heater_duty: [commanded_heater_duty_1s, heater_actual_duty, heater_command_duty, heater_command, baseline_heater_duty, pid_output]
+  baseline_duty: [baseline_heater_duty, pid_output]
+  pump: [pump_active, pump_state]
+  mode: [active_mode, controller_mode, machine_mode]
+  status: [machine_status, status]
+  fault: [fault_code, fault]
+  uptime_ms: [machine_uptime_ms, uptime_ms]
+  device_id: [device_id]
+

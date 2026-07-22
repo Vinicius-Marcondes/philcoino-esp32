@@ -4,12 +4,13 @@ This document describes the system implemented in the current source tree. It se
 
 ## System boundary
 
-Philcoino has four cooperating codebases:
+Philcoino has five cooperating codebases:
 
 1. an Expo/React Native app for discovery, pairing, monitoring, and user-requested changes;
 2. a language-neutral OpenAPI 3.1.1 contract with strict TypeScript schemas;
 3. a deterministic Bun/Hono device simulator for contract and UI development;
-4. independent ESP-IDF C++ firmware that owns machine state and heater/pump command boundaries.
+4. an offline Python thermal-modeling tool for CSV analysis, leakage-safe fitting, counterfactual simulation, and manually reviewed model export;
+5. independent ESP-IDF C++ firmware that owns machine state and heater/pump command boundaries.
 
 All communication is local-network HTTP. There is no cloud service, account system, remote internet API, Wi-Fi provisioning flow, or multi-device store. Firmware implements the API v2 extraction, compensation, and cooldown policies while retaining every temperature-only API v1 route.
 

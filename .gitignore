@@ -26,6 +26,7 @@ target/
 .gradle/
 .m2/
 .venv/
+.python/
 __pycache__/
 .pytest_cache/
 .ruff_cache/
@@ -70,6 +71,14 @@ yarn-error.*
 *.tsbuildinfo
 
 app-example
+
+# PhilcoINO thermal-modeling local data and generated runs
+/tools/thermal-modeling/data/raw/
+/tools/thermal-modeling/data/processed/
+/tools/thermal-modeling/models/
+/tools/thermal-modeling/reports/
+/tools/thermal-modeling/exports/
+/tools/thermal-modeling/runs/
 
 # generated native folders
 ios/

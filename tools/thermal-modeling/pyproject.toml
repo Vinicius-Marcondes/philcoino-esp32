@@ -1,0 +1,33 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "philcoino-thermal"
+version = "0.1.0"
+description = "Offline PhilcoINO thermal modeling, simulation, and firmware export"
+requires-python = ">=3.12"
+dependencies = [
+  "joblib>=1.4,<2",
+  "matplotlib>=3.9,<4",
+  "numpy>=2.0,<3",
+  "pandas>=2.2,<3",
+  "pydantic>=2.8,<3",
+  "PyYAML>=6.0,<7",
+  "scikit-learn>=1.5,<2",
+  "scipy>=1.14,<2",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=8.3,<9"]
+
+[project.scripts]
+philcoino-thermal = "philcoino_thermal.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/philcoino_thermal"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
