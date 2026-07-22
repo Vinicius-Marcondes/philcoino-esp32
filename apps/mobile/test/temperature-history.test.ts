@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import type { ExtractionState, MachineState } from "@philcoino/protocol";
+import type {
+  ExtractionState,
+  MachineState,
+  PredictiveTemperatureDiagnostics,
+} from "@philcoino/protocol";
 
 import { temperatureHistoryToCsv } from "../src/history/temperature-history-csv";
 import { InMemoryTemperatureHistoryRepository } from "../src/history/temperature-history-repository";
@@ -51,6 +55,35 @@ const pumpingExtraction: ExtractionState = {
   status: "running",
 };
 
+const prediction: PredictiveTemperatureDiagnostics = {
+  activeTargetC: 93,
+  baselineHeaterDuty: 0.4,
+  commandedHeaterDuty1s: 0.5,
+  fallbackReason: "none",
+  featureSchemaVersion: 1,
+  heat15s: 5,
+  heat30s: 12,
+  heat5s: 2,
+  heaterCommandDuty: 1,
+  hypotheticalCorrectionDuty: 0.1,
+  hypotheticalHeaterDuty: 0.3,
+  modelVersion: 1,
+  operatingMode: "brewing",
+  predictedPeakC: 94,
+  predictedTemperature10sC: 93.8,
+  predictedTemperature20sC: 94,
+  predictedTemperature5sC: 93.5,
+  pump15s: 3,
+  pump5s: 2,
+  runMode: "passive",
+  temperatureAccelerationCPerS2: 0.01,
+  temperatureFilteredC: 92.5,
+  temperatureRawC: 92.75,
+  temperatureSlopeCPerS: 0.1,
+  trainingDataHash: 1347571540,
+  usable: true,
+};
+
 describe("temperature history", () => {
   test("creates an acknowledged sample with wall-clock and firmware context", () => {
     const recordedAtMs = new Date(2026, 6, 18, 10, 30).getTime();
@@ -72,6 +105,7 @@ describe("temperature history", () => {
       heaterEnabled: true,
       machineStatus: "heating",
       pumpActive: true,
+      predictiveTemperature: null,
       recordedAtMs,
       sourceBootId: null,
       sourceSequence: null,
@@ -79,6 +113,23 @@ describe("temperature history", () => {
       steamTargetC: 115,
       uptimeMs: 184_220,
     });
+  });
+
+  test("stores live prediction diagnostics and exports their CSV fields", () => {
+    const recordedAtMs = new Date(2026, 6, 18, 10, 31).getTime();
+    const live = createTemperatureHistorySample(
+      "machine-1",
+      machine,
+      pumpingExtraction,
+      recordedAtMs,
+      prediction,
+    );
+
+    expect(live.predictiveTemperature).toEqual(prediction);
+    const csv = temperatureHistoryToCsv([live]);
+    expect(csv).toContain(
+      ",92.75,92.5,93,0.1,0.01,0.4,1,0.5,2,5,12,2,3,93.5,93.8,94,94,0.1,0.3,brewing,passive,true,none,1,1,1347571540",
+    );
   });
 
   test("keeps only the current local day and scopes rows by device", async () => {
@@ -165,25 +216,39 @@ describe("temperature history", () => {
 
   });
 
-  test("pages history into 30-second windows ending at the latest sample", () => {
+  test("pages history into stable clock-aligned 30-second windows", () => {
     const start = new Date(2026, 6, 18, 8).getTime();
     const samples = Array.from({ length: 500 }, (_, index) =>
       sample("machine-1", start + index * 1_000, index * 1_000),
     );
 
     const windows = temperatureHistoryWindows(samples);
-    expect(windows).toHaveLength(17);
+    expect(windows).toHaveLength(18);
     expect(windows.at(-1)).toEqual({
-      endMs: start + 499_000,
-      startMs: start + 469_000,
+      endMs: start + 510_000,
+      startMs: start + 480_000,
     });
 
     const latestWindow = windows.at(-1)!;
-    expect(temperatureHistoryWindowSamples(samples, latestWindow)).toEqual(
-      liveTemperatureHistory(samples),
-    );
+    expect(temperatureHistoryWindowSamples(samples, latestWindow)).toHaveLength(19);
     expect(isLatestTemperatureHistoryWindow(windows, latestWindow)).toBe(true);
     expect(isLatestTemperatureHistoryWindow(windows, windows[0])).toBe(false);
+  });
+
+  test("does not change an older page identity when live samples arrive", () => {
+    const start = new Date(2026, 6, 18, 8).getTime();
+    const initial = Array.from({ length: 100 }, (_, index) =>
+      sample("machine-1", start + index * 1_000, index * 1_000),
+    );
+    const before = temperatureHistoryWindows(initial);
+    const viewed = before[1];
+    const after = temperatureHistoryWindows([
+      ...initial,
+      sample("machine-1", start + 100_000, 100_000),
+    ]);
+
+    expect(after.slice(0, before.length)).toEqual(before);
+    expect(after).toContainEqual(viewed);
   });
 
   test("uses five adaptive ticks with padding around each live page", () => {
@@ -267,12 +332,15 @@ describe("temperature history", () => {
     ]);
     const lines = csv.trimEnd().split("\r\n");
     expect(lines[0]).toBe(
-      "recorded_at_utc,device_id,machine_uptime_ms,boiler_temperature_c,brew_target_c,steam_target_c,active_mode,active_target_c,heater_enabled,heater_active,pump_active,machine_status,fault_code",
+      "recorded_at_utc,device_id,machine_uptime_ms,boiler_temperature_c,brew_target_c,steam_target_c,active_mode,active_target_c,heater_enabled,heater_active,pump_active,machine_status,fault_code,temperature_raw_c,temperature_filtered_c,prediction_active_target_c,temperature_slope_c_per_s,temperature_acceleration_c_per_s2,baseline_heater_duty,heater_command_duty,commanded_heater_duty_1s,heat_5s,heat_15s,heat_30s,pump_5s,pump_15s,predicted_temperature_5s_c,predicted_temperature_10s_c,predicted_temperature_20s_c,predicted_peak_c,hypothetical_correction_duty,hypothetical_heater_duty,prediction_operating_mode,prediction_run_mode,prediction_usable,prediction_fallback_reason,prediction_model_version,prediction_feature_schema_version,prediction_training_data_hash",
     );
     expect(lines[1]).toContain("2026-07-18T13:00:00.000Z");
     expect(lines[1]).toContain('"\'=machine,1"');
     expect(lines[1]).toContain(",true,true,false,heating,");
-    expect(lines[1].endsWith(",sensor_failure")).toBe(true);
+    expect(lines[1]).toContain(",sensor_failure,");
+    expect(lines[1].split(",").slice(-26).every((cell) => cell === "")).toBe(
+      true,
+    );
   });
 
   test("writes, shares, and removes the temporary CSV", async () => {

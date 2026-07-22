@@ -9,6 +9,7 @@ import {
   HealthResponseSchema,
   HistoryPageSchema,
   MachineStateSchema,
+  MachineStateWithPredictionV2Schema,
   MachineStateV2Schema,
   ModeRequestSchema,
   ModeResponseSchema,
@@ -29,6 +30,7 @@ import {
   type HistoryCursor,
   type HistoryPage,
   type MachineState,
+  type MachineStateWithPredictionV2,
   type MachineStateV2,
   type ModeRequest,
   type ModeResponse,
@@ -93,6 +95,8 @@ export class DeviceApiClient {
   private readonly fetch: FetchImplementation;
   private readonly timeoutMs: number;
   private readonly token?: string;
+  private predictionStateSupport: "unknown" | "supported" | "unsupported" =
+    "unknown";
 
   constructor(options: DeviceApiClientOptions) {
     this.address = normalizeDeviceAddress(options.address);
@@ -130,6 +134,35 @@ export class DeviceApiClient {
       { authenticated: true, errorVersion: "v2" },
       options,
     );
+  }
+
+  resetLiveStateCapabilities(): void {
+    this.predictionStateSupport = "unknown";
+  }
+
+  async getLiveStateV2(
+    options: RequestOptions = {},
+  ): Promise<MachineStateWithPredictionV2> {
+    if (this.predictionStateSupport !== "unsupported") {
+      try {
+        const state = await this.request(
+          "/api/v2/state?include=prediction",
+          MachineStateWithPredictionV2Schema,
+          { authenticated: true, errorVersion: "v2" },
+          options,
+        );
+        this.predictionStateSupport = "supported";
+        return state;
+      } catch (error) {
+        if (!(error instanceof ApiClientError) || error.kind !== "not-found") {
+          throw error;
+        }
+        this.predictionStateSupport = "unsupported";
+      }
+    }
+
+    const state = await this.getStateV2(options);
+    return { ...state, predictiveTemperature: null };
   }
 
   getHistory(

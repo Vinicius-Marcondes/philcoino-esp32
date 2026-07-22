@@ -63,6 +63,7 @@ Para entender ownership e fluxos de falha em detalhes, leia [Architecture](docs/
 | [`apps/mobile`](apps/mobile) | Cliente Expo 54 / React Native, discovery, pairing, persistência segura, polling, controles e UI |
 | [`packages/protocol`](packages/protocol) | Contrato OpenAPI autoritativo, schemas Zod estritos, fixtures e contract tests |
 | [`tools/device-simulator`](tools/device-simulator) | Simulador determinístico da API em Bun/Hono e controles de desenvolvimento |
+| [`tools/thermal-modeling`](tools/thermal-modeling) | Análise offline de CSV, modelos térmicos, simulação, tuning e export versionado para revisão manual |
 | [`firmware/espresso-machine`](firmware/espresso-machine) | Firmware independente em ESP-IDF 6.0.2 e host tests nativos |
 | [`docs`](docs) | Architecture, desenvolvimento, segurança, PRD, hardware, decisões e referências |
 

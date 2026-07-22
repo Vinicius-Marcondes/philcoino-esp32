@@ -164,8 +164,12 @@ ThermocoupleReading open_boiler() {
 }
 
 struct ControllerHarness {
-  explicit ControllerHarness(TemperatureTargets targets = {})
-      : controller(targets, ssr) {
+  explicit ControllerHarness(
+      TemperatureTargets targets = {},
+      const philcoino::config::TemperaturePredictionConfig&
+          prediction_configuration =
+              philcoino::config::kTemperaturePredictionConfig)
+      : controller(targets, ssr, prediction_configuration) {
     assert(ssr.initialize());
   }
 
@@ -175,6 +179,34 @@ struct ControllerHarness {
   FailOffSsr ssr{output, safety_lease, critical_section};
   TemperatureController controller;
 };
+
+void test_passive_prediction_never_changes_heater_commands() {
+  auto disabled_configuration =
+      philcoino::config::kTemperaturePredictionConfig;
+  disabled_configuration.expected_checksum = 0U;
+  ControllerHarness passive({93, 115});
+  ControllerHarness disabled({93, 115}, disabled_configuration);
+
+  for (std::uint32_t now_ms = 0; now_ms <= 35000U; now_ms += 500U) {
+    const float temperature_c =
+        now_ms < 20000U ? 84.0F + static_cast<float>(now_ms) / 5000.0F
+                        : 92.0F;
+    const auto pump = now_ms >= 10000U && now_ms < 16000U
+                          ? PumpCommand::kRunning
+                          : PumpCommand::kOff;
+    const auto passive_snapshot =
+        passive.controller.update(reading(temperature_c), pump, now_ms);
+    const auto disabled_snapshot =
+        disabled.controller.update(reading(temperature_c), pump, now_ms);
+    assert(passive_snapshot.heater_enabled == disabled_snapshot.heater_enabled);
+    assert(passive.output.level == disabled.output.level);
+  }
+  assert(passive.output.events == disabled.output.events);
+  assert(passive.controller.snapshot(35000U).prediction.run_mode ==
+         PredictionRunMode::kPassive);
+  assert(disabled.controller.snapshot(35000U).prediction.run_mode ==
+         PredictionRunMode::kDisabled);
+}
 
 struct ExtractionHarness {
   ExtractionHarness()
@@ -1502,6 +1534,7 @@ void test_cooldown_eligibility_failures_reset_and_output_fail_off() {
 }  // namespace
 
 int main() {
+  test_passive_prediction_never_changes_heater_commands();
   test_boot_selects_brew_and_keeps_targets();
   test_ready_requires_three_continuous_seconds();
   test_steam_timeout_returns_to_brew_after_first_ready();

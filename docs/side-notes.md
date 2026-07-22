@@ -307,3 +307,51 @@ operation or a firmware history error. The mobile follow/latest indicator,
 time-range label, jump-to-latest action, and per-window warm-range scale require
 fresh native review under HIST-007. HIST-007 and all target/physical acceptance
 gates remain pending.
+
+## PRD-011 Passive predictive temperature control
+
+The first predictive-temperature firmware release is intentionally passive.
+It filters the raw boiler reading, calculates a three-second slope and
+diagnostic acceleration, integrates recent heater/pump command activity, and
+evaluates fixed linear models for 5, 10, and 20 seconds. It also records the
+duty reduction that the model would have requested.
+
+The existing nonlinear ten-second heater-duty controller remains authoritative
+and receives no prediction-derived input. Commanded heater and pump activity do
+not prove physical energy, flow, or de-energization. The checked-in prototype
+coefficients are an unvalidated slope-extrapolation seed for data collection,
+not tuned thermal parameters.
+
+A later separately approved task must implement prediction-based heater
+reduction or cutoff. That task must first replace the prototype model with
+traceable validated coefficients, define Brew/Steam applicability and accuracy
+thresholds, preserve all existing fail-off and independent over-temperature
+boundaries, and obtain supervised target/runtime and physical evidence. Passive
+logs or simulator/host tests are not authorization to enable active correction.
+
+### 2026-07-21 enriched-history transport regression
+
+The owner measured firmware `0.3.0` returning `Content-Length: 17093` for an
+enriched history page but delivering only 15,838 bytes before closing the
+connection after 4.93 seconds. The incomplete JSON also delayed live state
+polling long enough for the mobile graph to display real continuity gaps.
+
+Firmware `0.3.1` bounds new history pages to eight samples and an 8 KiB
+host-tested serialized response, logs ESP-IDF send failures without logging
+payloads or credentials, and advances one-Hertz capture against fixed uptime
+deadlines. Mobile yields between backfill pages while continuing to accept
+legacy sixty-sample responses. The owner later confirmed complete responses,
+one stable boot ID across repeated 50-request stress runs, and gap-free
+one-minute close/reopen recovery on a stable 5 V supply. Gaps seen while USB
+powered did not reproduce after the power-source change.
+
+The following live run exposed a separate mobile data-path issue: ordinary
+queryless API v2 state did not carry prediction diagnostics, so rows captured
+while the app stayed open exported empty prediction columns unless retained
+history later replaced them. Firmware `0.3.2` adds the opt-in
+`GET /api/v2/state?include=prediction` shape while preserving queryless state.
+Mobile now stores those live fields immediately, invokes retained history only
+after a detected gap, waits for an already-running recovery before export, and
+uses stable clock-aligned graph-page identities so incoming samples do not
+reset an older inspected page. Native/target confirmation of this build remains
+HIST-007 work.

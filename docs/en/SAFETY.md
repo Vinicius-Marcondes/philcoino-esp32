@@ -20,7 +20,10 @@ Philcoino is an experimental, mains-adjacent espresso-machine controller. The re
   equipment checks of the energy controls. Evidence is owner-reported and
   limited to the tested configuration.
 - Current firmware source enables the OLED (`kOledEnabled = true`), while tracker text records a temporary disabled-OLED state. Treat this as an unresolved documentation/configuration discrepancy, not an approved hardware state.
-- No Human feature or tested-configuration checks remain pending. Architecture, firmware, and security findings remain engineering work.
+- The 2026-07-16 acceptance remains limited to the configuration tested then.
+  New history/passive-prediction Human gates (HIST-007/PRD-011), including
+  firmware `0.3.2` runtime checks, remain pending; architecture, firmware, and
+  security findings remain engineering work.
 
 See the [codebase review](../../CODEBASE_REVIEW_REPORT.md), [tracker](../TRACKER.md), and [side notes](../side-notes.md) for the detailed evidence.
 
@@ -46,8 +49,11 @@ Firmware owns the temperature-control loop and does not rely on app connectivity
   orders heater inhibit/off before pump Start, and never restores cooldown at
   boot;
 - records up to 600 observational snapshots in RAM and exposes pages of at
-  most 60; history supplies no input to heater, pump, readiness, timeout,
+  most 8; history supplies no input to heater, pump, readiness, timeout,
   fault, or mutation decisions;
+- calculates filtered temperature, slope, recent command activity, and linear
+  5/10/20-second forecasts in strictly passive mode. Hypothetical correction is
+  logged but never alters the heater command in this version;
 - uses a 1500 ms GPTimer heater-command safety lease and one bounded workflow
   mutex, with NVS, display, and HTTP transmission outside that boundary;
 - starts critical hardware in a fail-off order.
