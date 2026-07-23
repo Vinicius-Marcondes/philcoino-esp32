@@ -49,6 +49,44 @@ class Max6675 {
   std::uint32_t ready_at_ms_;
 };
 
+enum class Hx711Status {
+  kOk,
+  kNotReady,
+  kTransportError,
+  kSaturated,
+};
+
+struct Hx711Reading {
+  Hx711Status status{Hx711Status::kNotReady};
+  std::int32_t raw{0};
+};
+
+class Hx711Transport {
+ public:
+  virtual ~Hx711Transport() = default;
+  virtual Hx711Reading read() = 0;
+};
+
+class Hx711 {
+ public:
+  explicit Hx711(Hx711Transport& transport);
+  Hx711Reading read();
+
+ private:
+  Hx711Transport& transport_;
+};
+
+struct ScaleCalibration {
+  std::int32_t zero_raw{0};
+  std::int32_t reference_raw{0};
+  std::int32_t reference_decigrams{0};
+};
+
+bool scale_calibration_is_valid(const ScaleCalibration& calibration);
+bool scale_raw_to_decigrams(const ScaleCalibration& calibration,
+                            std::int32_t raw,
+                            std::int32_t& decigrams);
+
 struct TemperatureTargets {
   std::int32_t brew_c{kDefaultBrewTargetC};
   std::int32_t steam_c{kDefaultSteamTargetC};
@@ -57,6 +95,30 @@ struct TemperatureTargets {
 bool targets_are_valid(const TemperatureTargets& targets);
 
 enum class BackendLoadResult { kOk, kNotFound, kError };
+
+class ScaleCalibrationBackend {
+ public:
+  virtual ~ScaleCalibrationBackend() = default;
+  virtual BackendLoadResult load(ScaleCalibration& calibration) = 0;
+  virtual bool save(const ScaleCalibration& calibration) = 0;
+};
+
+enum class ScaleCalibrationLoadResult {
+  kOk,
+  kNotCalibrated,
+  kCorrupt,
+  kError,
+};
+
+class ScaleCalibrationStorage {
+ public:
+  explicit ScaleCalibrationStorage(ScaleCalibrationBackend& backend);
+  ScaleCalibrationLoadResult load(ScaleCalibration& calibration);
+  bool save(const ScaleCalibration& calibration);
+
+ private:
+  ScaleCalibrationBackend& backend_;
+};
 
 class TargetBackend {
  public:

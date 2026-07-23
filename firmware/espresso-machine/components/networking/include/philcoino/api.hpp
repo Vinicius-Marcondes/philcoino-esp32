@@ -60,7 +60,8 @@ class FirmwareApi {
               control::CooldownController& cooldown_controller,
               peripherals::ProfileStorage& profile_storage,
               ApiSynchronization& synchronization,
-              HistoryBuffer* history = nullptr);
+              HistoryBuffer* history = nullptr,
+              control::ScaleController* scale_controller = nullptr);
 
   HttpResponse handle(HttpMethod method, const std::string& path,
                       const char* authorization, const std::string& body,
@@ -82,6 +83,12 @@ class FirmwareApi {
   HttpResponse history(const std::string& query,
                        std::uint64_t uptime_ms) const;
   HttpResponse profiles() const;
+  HttpResponse scale(std::uint64_t uptime_ms) const;
+  HttpResponse start_scale_calibration(std::uint64_t uptime_ms);
+  HttpResponse complete_scale_calibration(const std::string& body,
+                                          std::uint64_t uptime_ms);
+  HttpResponse cancel_scale_calibration(std::uint64_t uptime_ms);
+  HttpResponse acknowledge_scale_warning(std::uint64_t uptime_ms);
   HttpResponse replace_profiles(const std::string& body,
                                 std::uint64_t uptime_ms);
   HttpResponse start_extraction(const std::string& body,
@@ -100,6 +107,7 @@ class FirmwareApi {
   peripherals::ProfileStorage& profile_storage_;
   ApiSynchronization& synchronization_;
   HistoryBuffer* history_;
+  control::ScaleController* scale_controller_;
 };
 
 }  // namespace philcoino::networking

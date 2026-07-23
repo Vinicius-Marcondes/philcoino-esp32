@@ -107,6 +107,28 @@ class FakeProfileBackend final : public ProfileBackend {
   bool fail_save{false};
 };
 
+class FakeScaleCalibrationBackend final : public ScaleCalibrationBackend {
+ public:
+  BackendLoadResult load(ScaleCalibration& calibration) override {
+    calibration = saved;
+    return present ? BackendLoadResult::kOk : BackendLoadResult::kNotFound;
+  }
+  bool save(const ScaleCalibration& calibration) override {
+    if (fail_save) {
+      return false;
+    }
+    saved = calibration;
+    present = true;
+    ++save_count;
+    return true;
+  }
+
+  ScaleCalibration saved{};
+  bool present{false};
+  bool fail_save{false};
+  int save_count{0};
+};
+
 class FakeSafetyLease final : public SsrSafetyLease {
  public:
   explicit FakeSafetyLease(FakeDigitalOutput& output) : output_(output) {}
@@ -1241,6 +1263,95 @@ void test_pump_output_failures_end_extraction_off() {
   assert(!transition_failure.pump.output_state_unknown());
 }
 
+void test_scale_filter_calibration_timeout_and_saturation() {
+  FakeScaleCalibrationBackend backend;
+  ScaleCalibrationStorage storage(backend);
+  ScaleController scale({}, false, storage);
+  for (std::int32_t index = 0; index < 10; ++index) {
+    scale.update({Hx711Status::kOk, 100000 + index}, index * 10U);
+  }
+  auto snapshot = scale.snapshot(100);
+  assert(snapshot.availability == ScaleAvailability::kReady);
+  assert(snapshot.stable);
+  assert(snapshot.calibration_status == ScaleCalibrationStatus::kUncalibrated);
+  assert(scale.start_calibration(false, 100) == ScaleCalibrationResult::kOk);
+
+  for (std::int32_t index = 0; index < 10; ++index) {
+    scale.update({Hx711Status::kOk, 200000 + index}, 200U + index * 10U);
+  }
+  assert(scale.complete_calibration(1000, false, 300) ==
+         ScaleCalibrationResult::kOk);
+  assert(backend.save_count == 1);
+  snapshot = scale.snapshot(300);
+  assert(snapshot.calibration_status == ScaleCalibrationStatus::kCalibrated);
+  assert(snapshot.gross_weight_available);
+  assert(snapshot.gross_weight_decigrams >= 999 &&
+         snapshot.gross_weight_decigrams <= 1001);
+
+  scale.update({Hx711Status::kSaturated, 0}, 301);
+  assert(scale.snapshot(301).availability == ScaleAvailability::kUnavailable);
+  for (std::int32_t index = 0; index < 10; ++index) {
+    scale.update({Hx711Status::kOk, 200000}, 400U + index * 10U);
+  }
+  assert(scale.snapshot(500).availability == ScaleAvailability::kReady);
+  assert(scale.snapshot(1300).availability == ScaleAvailability::kUnavailable);
+}
+
+void test_weighted_extraction_tare_cutoff_fallback_and_acknowledgement() {
+  ExtractionHarness harness;
+  const WeightControl control{350, 20};
+  const ScaleSnapshot stable{
+      ScaleAvailability::kReady, ScaleCalibrationStatus::kCalibrated,
+      true, true, 800};
+  auto unstable = stable;
+  unstable.stable = false;
+  unstable.availability = ScaleAvailability::kUnstable;
+  assert(harness.controller.start(
+             "weighted-start-key1",
+             {ExtractionSelectionKind::kProfile, 1}, 1000, &control,
+             &unstable) == StartExtractionResult::kScaleNotStable);
+  assert(!harness.controller.active());
+  assert(!harness.output.level);
+
+  assert(harness.controller.start(
+             "weighted-start-key1",
+             {ExtractionSelectionKind::kProfile, 1}, 1000, &control,
+             &stable) == StartExtractionResult::kStarted);
+  assert(harness.output.level);
+  auto at_cutoff = stable;
+  at_cutoff.gross_weight_decigrams = 1130;
+  assert(harness.controller.update(5000, &at_cutoff) ==
+         ExtractionUpdateResult::kCompleted);
+  assert(!harness.output.level);
+  auto weight = harness.controller.weight_snapshot(at_cutoff, 5000);
+  assert(weight.terminal && weight.settled);
+  assert(weight.net_weight_decigrams == 330);
+  assert(weight.completion_reason == WeightCompletionReason::kWeightReached);
+
+  assert(harness.controller.start(
+             "weighted-fallback-1",
+             {ExtractionSelectionKind::kProfile, 1}, 10000, &control,
+             &stable) == StartExtractionResult::kStarted);
+  ScaleSnapshot unavailable{};
+  assert(harness.controller.update(11000, &unavailable) ==
+         ExtractionUpdateResult::kOk);
+  assert(harness.controller.update(45000, &unavailable) ==
+         ExtractionUpdateResult::kCompleted);
+  weight = harness.controller.weight_snapshot(unavailable, 45000);
+  assert(weight.terminal && weight.fallback && weight.warning_active);
+  assert(weight.completion_reason == WeightCompletionReason::kTimerFallback);
+  assert(harness.controller.start(
+             "weighted-blocked-01",
+             {ExtractionSelectionKind::kProfile, 1}, 50000, &control,
+             &stable) ==
+         StartExtractionResult::kScaleWarningUnacknowledged);
+  harness.controller.acknowledge_scale_warning();
+  assert(harness.controller.start(
+             "weighted-after-ack",
+             {ExtractionSelectionKind::kProfile, 1}, 50000, &control,
+             &stable) == StartExtractionResult::kStarted);
+}
+
 void test_cooldown_start_orders_outputs_and_preserves_permission() {
   CooldownHarness harness({93, 115});
   assert(harness.temperature.controller.set_mode(ControlMode::kSteam, 0));
@@ -1544,6 +1655,8 @@ int main() {
   test_profile_snapshot_export_and_empty_slot_rules();
   test_extraction_wraparound_disconnect_and_heater_fault_independence();
   test_pump_output_failures_end_extraction_off();
+  test_scale_filter_calibration_timeout_and_saturation();
+  test_weighted_extraction_tare_cutoff_fallback_and_acknowledgement();
   test_cooldown_start_orders_outputs_and_preserves_permission();
   test_shared_pump_snapshots_keep_workflow_ownership();
   test_cooldown_replay_conflict_target_snapshot_and_threshold();

@@ -20,6 +20,7 @@ using codec::parse_cooldown_start;
 using codec::parse_heater_enabled;
 using codec::parse_mode;
 using codec::parse_profiles;
+using codec::parse_scale_calibration_complete;
 using codec::parse_start;
 using codec::parse_temperatures;
 using codec::serialize_compensation;
@@ -30,6 +31,7 @@ using codec::serialize_health;
 using codec::serialize_heater_enabled;
 using codec::serialize_mode;
 using codec::serialize_profiles;
+using codec::serialize_scale;
 using codec::serialize_state;
 using codec::serialize_targets;
 
@@ -133,7 +135,8 @@ FirmwareApi::FirmwareApi(DeviceIdentity identity, std::string bearer_token,
                          control::CooldownController& cooldown_controller,
                          peripherals::ProfileStorage& profile_storage,
                          ApiSynchronization& synchronization,
-                         HistoryBuffer* history)
+                         HistoryBuffer* history,
+                         control::ScaleController* scale_controller)
     : identity_(std::move(identity)),
       bearer_token_(std::move(bearer_token)),
       controller_(controller),
@@ -142,7 +145,8 @@ FirmwareApi::FirmwareApi(DeviceIdentity identity, std::string bearer_token,
       cooldown_controller_(cooldown_controller),
       profile_storage_(profile_storage),
       synchronization_(synchronization),
-      history_(history) {}
+      history_(history),
+      scale_controller_(scale_controller) {}
 
 bool FirmwareApi::authorized(const char* authorization) const {
   return constant_time_bearer_matches(authorization, bearer_token_);
@@ -178,6 +182,15 @@ HttpResponse FirmwareApi::handle(HttpMethod method, const std::string& path,
       return update_temperatures(body, uptime_ms);
     case ApiRouteId::kStateV2: return state_v2(uptime_ms);
     case ApiRouteId::kHistory: return history(query, uptime_ms);
+    case ApiRouteId::kScaleGet: return scale(uptime_ms);
+    case ApiRouteId::kScaleCalibrationStart:
+      return start_scale_calibration(uptime_ms);
+    case ApiRouteId::kScaleCalibrationComplete:
+      return complete_scale_calibration(body, uptime_ms);
+    case ApiRouteId::kScaleCalibrationCancel:
+      return cancel_scale_calibration(uptime_ms);
+    case ApiRouteId::kScaleWarningAcknowledge:
+      return acknowledge_scale_warning(uptime_ms);
     case ApiRouteId::kProfilesGet: return profiles();
     case ApiRouteId::kProfilesPut: return replace_profiles(body, uptime_ms);
     case ApiRouteId::kExtractionStart:
@@ -370,8 +383,14 @@ HttpResponse FirmwareApi::state_v2(std::uint64_t uptime_ms) const {
                             "Temperature control synchronization failed.");
     }
     const auto now_ms = static_cast<std::uint32_t>(uptime_ms);
+    control::ScaleSnapshot scale_snapshot{};
+    const control::ScaleSnapshot* scale =
+        scale_controller_ == nullptr ? nullptr : &scale_snapshot;
+    if (scale_controller_ != nullptr) {
+      scale_snapshot = scale_controller_->snapshot(now_ms);
+    }
     if (!cooldown_controller_.active()) {
-      if (extraction_controller_.update(now_ms) ==
+      if (extraction_controller_.update(now_ms, scale) ==
           control::ExtractionUpdateResult::kOutputFailure) {
         controller_.latch_fault(control::FaultCode::kInternalError);
       }
@@ -411,6 +430,133 @@ HttpResponse FirmwareApi::profiles() const {
     current = extraction_controller_.profiles();
   }
   return json_response(200, serialize_profiles(current));
+}
+
+HttpResponse FirmwareApi::scale(std::uint64_t uptime_ms) const {
+  if (scale_controller_ == nullptr) {
+    return error_response(500, "internal_error", "Scale support is unavailable.");
+  }
+  ScopedApiLock lock(synchronization_, ApiDomain::kExtraction);
+  if (!lock.locked()) {
+    return error_response(500, "internal_error",
+                          "Scale synchronization failed.");
+  }
+  const auto now_ms = static_cast<std::uint32_t>(uptime_ms);
+  const auto current = scale_controller_->snapshot(now_ms);
+  const auto weight =
+      extraction_controller_.weight_snapshot(current, now_ms);
+  return json_response(200, serialize_scale(current, weight));
+}
+
+HttpResponse FirmwareApi::start_scale_calibration(std::uint64_t uptime_ms) {
+  if (scale_controller_ == nullptr) {
+    return error_response(500, "internal_error", "Scale support is unavailable.");
+  }
+  ScopedApiLock lock(synchronization_, ApiDomain::kExtraction);
+  if (!lock.locked()) {
+    return error_response(500, "internal_error",
+                          "Scale synchronization failed.");
+  }
+  const auto result = scale_controller_->start_calibration(
+      extraction_controller_.active() || cooldown_controller_.active(),
+      static_cast<std::uint32_t>(uptime_ms));
+  if (result != control::ScaleCalibrationResult::kOk) {
+    return error_response(
+        409,
+        result == control::ScaleCalibrationResult::kWorkflowActive
+            ? "extraction_active"
+            : result == control::ScaleCalibrationResult::kUnavailable
+                  ? "scale_unavailable"
+                  : "scale_not_stable",
+        result == control::ScaleCalibrationResult::kWorkflowActive
+            ? "Scale calibration requires all workflows to be idle."
+            : result == control::ScaleCalibrationResult::kUnavailable
+                  ? "The scale is unavailable."
+                  : "The scale must be stable before calibration.");
+  }
+  const auto current =
+      scale_controller_->snapshot(static_cast<std::uint32_t>(uptime_ms));
+  return json_response(
+      200, serialize_scale(
+               current, extraction_controller_.weight_snapshot(
+                            current, static_cast<std::uint32_t>(uptime_ms))));
+}
+
+HttpResponse FirmwareApi::complete_scale_calibration(
+    const std::string& body, std::uint64_t uptime_ms) {
+  std::int32_t reference_decigrams = 0;
+  if (!parse_scale_calibration_complete(body, reference_decigrams)) {
+    return error_response(400, "malformed_request", kMalformedMessage);
+  }
+  if (scale_controller_ == nullptr) {
+    return error_response(500, "internal_error", "Scale support is unavailable.");
+  }
+  ScopedApiLock lock(synchronization_, ApiDomain::kExtraction);
+  if (!lock.locked()) {
+    return error_response(500, "internal_error",
+                          "Scale synchronization failed.");
+  }
+  const auto result = scale_controller_->complete_calibration(
+      reference_decigrams,
+      extraction_controller_.active() || cooldown_controller_.active(),
+      static_cast<std::uint32_t>(uptime_ms));
+  if (result == control::ScaleCalibrationResult::kPersistenceFailure) {
+    return error_response(500, "persistence_failure",
+                          "Scale calibration could not be persisted.");
+  }
+  if (result != control::ScaleCalibrationResult::kOk) {
+    return error_response(
+        409,
+        result == control::ScaleCalibrationResult::kUnavailable
+            ? "scale_unavailable"
+            : result == control::ScaleCalibrationResult::kUnstable
+                  ? "scale_not_stable"
+                  : "calibration_in_progress",
+        "Scale calibration cannot be completed in its current state.");
+  }
+  const auto current =
+      scale_controller_->snapshot(static_cast<std::uint32_t>(uptime_ms));
+  return json_response(
+      200, serialize_scale(
+               current, extraction_controller_.weight_snapshot(
+                            current, static_cast<std::uint32_t>(uptime_ms))));
+}
+
+HttpResponse FirmwareApi::cancel_scale_calibration(std::uint64_t uptime_ms) {
+  if (scale_controller_ == nullptr) {
+    return error_response(500, "internal_error", "Scale support is unavailable.");
+  }
+  ScopedApiLock lock(synchronization_, ApiDomain::kExtraction);
+  if (!lock.locked()) {
+    return error_response(500, "internal_error",
+                          "Scale synchronization failed.");
+  }
+  scale_controller_->cancel_calibration();
+  const auto current =
+      scale_controller_->snapshot(static_cast<std::uint32_t>(uptime_ms));
+  return json_response(
+      200, serialize_scale(
+               current, extraction_controller_.weight_snapshot(
+                            current, static_cast<std::uint32_t>(uptime_ms))));
+}
+
+HttpResponse FirmwareApi::acknowledge_scale_warning(
+    std::uint64_t uptime_ms) {
+  if (scale_controller_ == nullptr) {
+    return error_response(500, "internal_error", "Scale support is unavailable.");
+  }
+  ScopedApiLock lock(synchronization_, ApiDomain::kExtraction);
+  if (!lock.locked()) {
+    return error_response(500, "internal_error",
+                          "Scale synchronization failed.");
+  }
+  extraction_controller_.acknowledge_scale_warning();
+  const auto current =
+      scale_controller_->snapshot(static_cast<std::uint32_t>(uptime_ms));
+  return json_response(
+      200, serialize_scale(
+               current, extraction_controller_.weight_snapshot(
+                            current, static_cast<std::uint32_t>(uptime_ms))));
 }
 
 HttpResponse FirmwareApi::replace_profiles(const std::string& body,
@@ -464,7 +610,9 @@ HttpResponse FirmwareApi::start_extraction(const std::string& body,
                                            std::uint64_t uptime_ms) {
   std::string key;
   control::ExtractionSelection selection{};
-  if (!parse_start(body, key, selection)) {
+  control::WeightControl weight_control{};
+  bool weighted = false;
+  if (!parse_start(body, key, selection, weight_control, weighted)) {
     return error_response(400, "malformed_request", kMalformedMessage);
   }
   ScopedApiLock lock(synchronization_, ApiDomain::kExtraction);
@@ -473,8 +621,18 @@ HttpResponse FirmwareApi::start_extraction(const std::string& body,
                           "Extraction control synchronization failed.");
   }
   const auto now_ms = static_cast<std::uint32_t>(uptime_ms);
+  const control::WeightControl* requested_weight =
+      weighted ? &weight_control : nullptr;
+  control::ScaleSnapshot scale_snapshot{};
+  const control::ScaleSnapshot* requested_scale = nullptr;
+  if (scale_controller_ != nullptr) {
+    scale_snapshot = scale_controller_->snapshot(now_ms);
+  }
+  if (weighted && scale_controller_ != nullptr) {
+    requested_scale = &scale_snapshot;
+  }
   const auto replay_before_update =
-      extraction_controller_.replay_status(key, selection);
+      extraction_controller_.replay_status(key, selection, requested_weight);
   if (cooldown_controller_.active()) {
     if (replay_before_update == control::ExtractionReplayStatus::kMatch) {
       return json_response(
@@ -489,11 +647,14 @@ HttpResponse FirmwareApi::start_extraction(const std::string& body,
         cooldown_controller_.snapshot(now_ms),
         "Extraction cannot start while cooldown is active.");
   }
-  if (extraction_controller_.update(now_ms) ==
+  if (extraction_controller_.update(
+          now_ms,
+          scale_controller_ == nullptr ? nullptr : &scale_snapshot) ==
       control::ExtractionUpdateResult::kOutputFailure) {
     controller_.latch_fault(control::FaultCode::kInternalError);
   }
-  switch (extraction_controller_.replay_status(key, selection)) {
+  switch (extraction_controller_.replay_status(
+      key, selection, requested_weight)) {
     case control::ExtractionReplayStatus::kMatch:
       return json_response(
           200, serialize_extraction(extraction_controller_.snapshot(now_ms)));
@@ -508,7 +669,8 @@ HttpResponse FirmwareApi::start_extraction(const std::string& body,
         409, "brew_mode_required",
         "Extraction can start only while Brew mode is acknowledged.");
   }
-  const auto result = extraction_controller_.start(key, selection, now_ms);
+  const auto result = extraction_controller_.start(
+      key, selection, now_ms, requested_weight, requested_scale);
   const auto snapshot = extraction_controller_.snapshot(now_ms);
   switch (result) {
     case control::StartExtractionResult::kStarted:
@@ -530,6 +692,19 @@ HttpResponse FirmwareApi::start_extraction(const std::string& body,
       controller_.latch_fault(control::FaultCode::kInternalError);
       return error_response(500, "internal_error",
                             "The pump command could not be started safely.");
+    case control::StartExtractionResult::kScaleNotCalibrated:
+      return error_response(409, "scale_not_calibrated",
+                            "Calibrate the scale before weighted extraction.");
+    case control::StartExtractionResult::kScaleNotStable:
+      return error_response(409, "scale_not_stable",
+                            "The scale must be stable for automatic tare.");
+    case control::StartExtractionResult::kScaleUnavailable:
+      return error_response(409, "scale_unavailable",
+                            "The scale is unavailable.");
+    case control::StartExtractionResult::kScaleWarningUnacknowledged:
+      return error_response(
+          409, "scale_warning_unacknowledged",
+          "Acknowledge the scale fallback warning before another weighted extraction.");
   }
   return error_response(500, "internal_error",
                         "The extraction command failed.");

@@ -1,13 +1,13 @@
 {
   "version": 1,
-  "compatibility": "byte-stable-existing-api-with-additive-v2-history",
+  "compatibility": "byte-stable-existing-api-with-additive-v2-history-and-scale",
   "evidence": {
     "routeAndMutationTests": "firmware_api_test",
     "directCodecTests": "api_codec_test",
     "deterministicMutationRunner": "api_codec_mutation_test",
     "responseCaptureProducer": "firmware_api_test <output-directory>",
     "responseCaptureValidator": "validate_contract.ts",
-    "deterministicResponseCaptureCount": 30
+    "deterministicResponseCaptureCount": 31
   },
   "transport": {
     "maximumAuthorizationBytes": 512,
@@ -32,7 +32,12 @@
     { "method": "POST", "path": "/api/v2/extractions/start", "access": "bearer", "body": "extractionStart" },
     { "method": "POST", "path": "/api/v2/extractions/stop", "access": "bearer" },
     { "method": "POST", "path": "/api/v2/cooldowns/start", "access": "bearer", "body": "cooldownStart" },
-    { "method": "POST", "path": "/api/v2/cooldowns/stop", "access": "bearer" }
+    { "method": "POST", "path": "/api/v2/cooldowns/stop", "access": "bearer" },
+    { "method": "GET", "path": "/api/v2/scale", "access": "bearer" },
+    { "method": "POST", "path": "/api/v2/scale/calibration/start", "access": "bearer" },
+    { "method": "POST", "path": "/api/v2/scale/calibration/complete", "access": "bearer", "body": "scaleCalibrationComplete" },
+    { "method": "POST", "path": "/api/v2/scale/calibration/cancel", "access": "bearer" },
+    { "method": "POST", "path": "/api/v2/scale/warnings/acknowledge", "access": "bearer" }
   ],
   "authenticationClasses": [
     "missing",

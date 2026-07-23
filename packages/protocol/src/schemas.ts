@@ -15,6 +15,12 @@ export const COOLDOWN_MAX_DURATION_MS =
 export const PROFILE_NAME_MAX_LENGTH = 12;
 export const HISTORY_PAGE_SIZE = 60;
 export const HISTORY_RETENTION_SAMPLES = 600;
+export const WEIGHT_TARGET_MIN_DECIGRAMS = 50;
+export const WEIGHT_TARGET_MAX_DECIGRAMS = 1_000;
+export const WEIGHT_COMPENSATION_MIN_DECIGRAMS = 0;
+export const WEIGHT_COMPENSATION_MAX_DECIGRAMS = 100;
+export const CALIBRATION_REFERENCE_MIN_DECIGRAMS = 500;
+export const CALIBRATION_REFERENCE_MAX_DECIGRAMS = 5_000;
 export const PROFILE_SLOT_IDS = [
   "profile-1",
   "profile-2",
@@ -148,6 +154,37 @@ export const ErrorResponseSchema = z.strictObject({
     message: z.string().min(1).max(160),
   }),
 });
+
+export const WeightTargetDecigramsSchema = z
+  .number()
+  .int()
+  .min(WEIGHT_TARGET_MIN_DECIGRAMS)
+  .max(WEIGHT_TARGET_MAX_DECIGRAMS);
+export const WeightCompensationDecigramsSchema = z
+  .number()
+  .int()
+  .min(WEIGHT_COMPENSATION_MIN_DECIGRAMS)
+  .max(WEIGHT_COMPENSATION_MAX_DECIGRAMS);
+export const CalibrationReferenceDecigramsSchema = z
+  .number()
+  .int()
+  .min(CALIBRATION_REFERENCE_MIN_DECIGRAMS)
+  .max(CALIBRATION_REFERENCE_MAX_DECIGRAMS);
+
+export const WeightControlSchema = z
+  .strictObject({
+    targetWeightDecigrams: WeightTargetDecigramsSchema,
+    compensationDecigrams: WeightCompensationDecigramsSchema,
+  })
+  .superRefine((control, context) => {
+    if (control.compensationDecigrams >= control.targetWeightDecigrams) {
+      context.addIssue({
+        code: "custom",
+        path: ["compensationDecigrams"],
+        message: "Compensation must be lower than the target weight.",
+      });
+    }
+  });
 
 export const ProfileSlotIdSchema = z.enum(PROFILE_SLOT_IDS);
 export const ProfileNameSchema = z
@@ -525,6 +562,60 @@ export const MachineStateV2Schema = z
     }
   });
 
+const ScaleWeightDecigramsSchema = z.number().int().min(-500).max(10_500);
+export const ScaleAvailabilitySchema = z.enum([
+  "unavailable",
+  "unstable",
+  "ready",
+]);
+export const ScaleCalibrationStatusSchema = z.enum([
+  "uncalibrated",
+  "calibrating",
+  "calibrated",
+]);
+export const ScaleCompletionReasonSchema = z.enum([
+  "weight-reached",
+  "timer-fallback",
+  "stopped",
+  "safety-cutoff",
+]);
+export const ActiveWeightExtractionSchema = z.strictObject({
+  extractionId: ExtractionIdSchema,
+  mode: z.enum(["weight", "timer-fallback"]),
+  targetWeightDecigrams: WeightTargetDecigramsSchema,
+  compensationDecigrams: WeightCompensationDecigramsSchema,
+  cutoffWeightDecigrams: z.number().int().min(1).max(WEIGHT_TARGET_MAX_DECIGRAMS),
+  netWeightDecigrams: ScaleWeightDecigramsSchema.nullable(),
+});
+export const TerminalWeightExtractionSchema = z.strictObject({
+  extractionId: ExtractionIdSchema,
+  targetWeightDecigrams: WeightTargetDecigramsSchema,
+  compensationDecigrams: WeightCompensationDecigramsSchema,
+  cutoffWeightDecigrams: z.number().int().min(1).max(WEIGHT_TARGET_MAX_DECIGRAMS),
+  finalWeightDecigrams: ScaleWeightDecigramsSchema.nullable(),
+  settled: z.boolean(),
+  completionReason: ScaleCompletionReasonSchema,
+  fallbackOccurred: z.boolean(),
+});
+export const ScaleWarningSchema = z.strictObject({
+  code: z.literal("scale_fallback"),
+  extractionId: ExtractionIdSchema,
+  acknowledged: z.literal(false),
+});
+export const ScaleStateSchema = z.strictObject({
+  availability: ScaleAvailabilitySchema,
+  calibrationStatus: ScaleCalibrationStatusSchema,
+  stable: z.boolean(),
+  grossWeightDecigrams: ScaleWeightDecigramsSchema.nullable(),
+  netWeightDecigrams: ScaleWeightDecigramsSchema.nullable(),
+  activeExtraction: ActiveWeightExtractionSchema.nullable(),
+  terminalExtraction: TerminalWeightExtractionSchema.nullable(),
+  warning: ScaleWarningSchema.nullable(),
+});
+export const CompleteScaleCalibrationRequestSchema = z.strictObject({
+  referenceWeightDecigrams: CalibrationReferenceDecigramsSchema,
+});
+
 export const HistoryBootIdSchema = z
   .string()
   .length(32)
@@ -618,10 +709,19 @@ export const HistoryPageSchema = z
     }
   });
 
-export const StartExtractionRequestSchema = z.strictObject({
+const TimedExtractionStartRequestSchema = z.strictObject({
   idempotencyKey: IdempotencyKeySchema,
   selection: ExtractionSelectionSchema,
 });
+const WeightedExtractionStartRequestSchema = z.strictObject({
+  idempotencyKey: IdempotencyKeySchema,
+  selection: ProfileExtractionSelectionSchema,
+  weightControl: WeightControlSchema,
+});
+export const StartExtractionRequestSchema = z.union([
+  TimedExtractionStartRequestSchema,
+  WeightedExtractionStartRequestSchema,
+]);
 export const StartExtractionResponseSchema = z.union([
   RunningExtractionStateSchema,
   TerminalExtractionStateSchema,
@@ -648,6 +748,11 @@ export const ApiV2ErrorCodeSchema = z.enum([
   "machine_faulted",
   "profile_not_configured",
   "idempotency_mismatch",
+  "scale_not_calibrated",
+  "scale_not_stable",
+  "scale_unavailable",
+  "scale_warning_unacknowledged",
+  "calibration_in_progress",
   "persistence_failure",
   "internal_error",
 ]);
@@ -698,6 +803,24 @@ export type HeaterSettingsResponse = z.infer<
   typeof HeaterSettingsResponseSchema
 >;
 export type ErrorResponse = z.infer<typeof ErrorResponseSchema>;
+export type WeightControl = z.infer<typeof WeightControlSchema>;
+export type ScaleAvailability = z.infer<typeof ScaleAvailabilitySchema>;
+export type ScaleCalibrationStatus = z.infer<
+  typeof ScaleCalibrationStatusSchema
+>;
+export type ScaleCompletionReason = z.infer<
+  typeof ScaleCompletionReasonSchema
+>;
+export type ActiveWeightExtraction = z.infer<
+  typeof ActiveWeightExtractionSchema
+>;
+export type TerminalWeightExtraction = z.infer<
+  typeof TerminalWeightExtractionSchema
+>;
+export type ScaleState = z.infer<typeof ScaleStateSchema>;
+export type CompleteScaleCalibrationRequest = z.infer<
+  typeof CompleteScaleCalibrationRequestSchema
+>;
 export type ProfileSlotId = z.infer<typeof ProfileSlotIdSchema>;
 export type ProfileName = z.infer<typeof ProfileNameSchema>;
 export type ExtractionProfile = z.infer<typeof ExtractionProfileSchema>;

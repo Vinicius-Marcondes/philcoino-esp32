@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "philcoino/api_json.hpp"
+#include "philcoino/config.hpp"
 
 namespace philcoino::networking::codec {
 namespace {
@@ -22,6 +23,50 @@ bool integer_seconds(const JsonValue& value, std::uint8_t& output) {
     return false;
   }
   output = static_cast<std::uint8_t>(value.number);
+  return true;
+}
+
+bool integer_in_range(const JsonValue& value, std::int32_t minimum,
+                      std::int32_t maximum, std::int32_t& output) {
+  if (value.type != JsonValue::Type::kNumber ||
+      std::floor(value.number) != value.number ||
+      value.number < static_cast<double>(minimum) ||
+      value.number > static_cast<double>(maximum)) {
+    return false;
+  }
+  output = static_cast<std::int32_t>(value.number);
+  return true;
+}
+
+bool parse_weight_control(const std::string& body,
+                          control::WeightControl& control) {
+  std::vector<JsonField> fields;
+  JsonObjectParser parser(body);
+  if (!parser.parse(fields) || fields.size() != 2U) {
+    return false;
+  }
+  bool target_seen = false;
+  bool compensation_seen = false;
+  control::WeightControl candidate{};
+  for (const auto& field : fields) {
+    if (field.key == "targetWeightDecigrams") {
+      target_seen = integer_in_range(
+          field.value, config::kScaleTargetMinimumDecigrams,
+          config::kScaleTargetMaximumDecigrams,
+          candidate.target_decigrams);
+    } else if (field.key == "compensationDecigrams") {
+      compensation_seen = integer_in_range(
+          field.value, 0, config::kScaleCompensationMaximumDecigrams,
+          candidate.compensation_decigrams);
+    } else {
+      return false;
+    }
+  }
+  if (!target_seen || !compensation_seen ||
+      !control::weight_control_is_valid(candidate)) {
+    return false;
+  }
+  control = candidate;
   return true;
 }
 
@@ -144,13 +189,25 @@ bool parse_profiles(const std::string& body,
 
 bool parse_start(const std::string& body, std::string& idempotency_key,
                  control::ExtractionSelection& selection) {
+  control::WeightControl ignored{};
+  bool weighted = false;
+  return parse_start(body, idempotency_key, selection, ignored, weighted) &&
+         !weighted;
+}
+
+bool parse_start(const std::string& body, std::string& idempotency_key,
+                 control::ExtractionSelection& selection,
+                 control::WeightControl& weight_control,
+                 bool& weighted) {
   std::vector<JsonField> fields;
   JsonObjectParser parser(body);
-  if (!parser.parse(fields) || fields.size() != 2U) {
+  if (!parser.parse(fields) ||
+      (fields.size() != 2U && fields.size() != 3U)) {
     return false;
   }
   std::string candidate_key;
   std::string selection_body;
+  std::string weight_body;
   for (const auto& field : fields) {
     if (field.key == "idempotencyKey" &&
         field.value.type == JsonValue::Type::kString) {
@@ -158,6 +215,9 @@ bool parse_start(const std::string& body, std::string& idempotency_key,
     } else if (field.key == "selection" &&
                field.value.type == JsonValue::Type::kOther) {
       selection_body = field.value.string;
+    } else if (field.key == "weightControl" &&
+               field.value.type == JsonValue::Type::kOther) {
+      weight_body = field.value.string;
     } else {
       return false;
     }
@@ -170,8 +230,12 @@ bool parse_start(const std::string& body, std::string& idempotency_key,
   if (selection_fields.size() == 1U && selection_fields[0].key == "kind" &&
       selection_fields[0].value.type == JsonValue::Type::kString &&
       selection_fields[0].value.string == "manual") {
+    if (!weight_body.empty()) {
+      return false;
+    }
     idempotency_key = candidate_key;
     selection = {control::ExtractionSelectionKind::kManual, 0};
+    weighted = false;
     return true;
   }
   if (selection_fields.size() != 2U) {
@@ -201,7 +265,26 @@ bool parse_start(const std::string& body, std::string& idempotency_key,
   }
   idempotency_key = candidate_key;
   selection = candidate_selection;
+  weighted = !weight_body.empty();
+  if (weighted && !parse_weight_control(weight_body, weight_control)) {
+    return false;
+  }
   return true;
+}
+
+bool parse_scale_calibration_complete(const std::string& body,
+                                      std::int32_t& reference_decigrams) {
+  std::vector<JsonField> fields;
+  JsonObjectParser parser(body);
+  if (!parser.parse(fields) || fields.size() != 1U ||
+      fields[0].key != "referenceWeightDecigrams") {
+    return false;
+  }
+  return integer_in_range(
+      fields[0].value,
+      config::kScaleCalibrationReferenceMinimumDecigrams,
+      config::kScaleCalibrationReferenceMaximumDecigrams,
+      reference_decigrams);
 }
 
 bool parse_cooldown_start(const std::string& body,
@@ -356,6 +439,101 @@ std::string serialize_profiles(
     output << '}';
   }
   output << "]}";
+  return output.str();
+}
+
+std::string serialize_scale(
+    const control::ScaleSnapshot& scale,
+    const control::WeightExtractionSnapshot& weight) {
+  const char* availability =
+      scale.availability == control::ScaleAvailability::kReady
+          ? "ready"
+          : scale.availability == control::ScaleAvailability::kUnstable
+                ? "unstable"
+                : "unavailable";
+  const char* calibration =
+      scale.calibration_status == control::ScaleCalibrationStatus::kCalibrated
+          ? "calibrated"
+          : scale.calibration_status ==
+                    control::ScaleCalibrationStatus::kCalibrating
+                ? "calibrating"
+                : "uncalibrated";
+  std::ostringstream output;
+  output << "{\"availability\":\"" << availability
+         << "\",\"calibrationStatus\":\"" << calibration
+         << "\",\"stable\":" << (scale.stable ? "true" : "false")
+         << ",\"grossWeightDecigrams\":";
+  if (scale.gross_weight_available) {
+    output << scale.gross_weight_decigrams;
+  } else {
+    output << "null";
+  }
+  output << ",\"netWeightDecigrams\":";
+  if (weight.net_weight_available) {
+    output << weight.net_weight_decigrams;
+  } else {
+    output << "null";
+  }
+  output << ",\"activeExtraction\":";
+  if (!weight.active) {
+    output << "null";
+  } else {
+    output << "{\"extractionId\":\"" << weight.extraction_id
+           << "\",\"mode\":\""
+           << (weight.fallback ? "timer-fallback" : "weight")
+           << "\",\"targetWeightDecigrams\":"
+           << weight.control.target_decigrams
+           << ",\"compensationDecigrams\":"
+           << weight.control.compensation_decigrams
+           << ",\"cutoffWeightDecigrams\":" << weight.cutoff_decigrams
+           << ",\"netWeightDecigrams\":";
+    if (weight.net_weight_available) {
+      output << weight.net_weight_decigrams;
+    } else {
+      output << "null";
+    }
+    output << '}';
+  }
+  output << ",\"terminalExtraction\":";
+  if (!weight.terminal) {
+    output << "null";
+  } else {
+    const char* reason =
+        weight.completion_reason ==
+                control::WeightCompletionReason::kWeightReached
+            ? "weight-reached"
+            : weight.completion_reason ==
+                      control::WeightCompletionReason::kTimerFallback
+                  ? "timer-fallback"
+                  : weight.completion_reason ==
+                            control::WeightCompletionReason::kStopped
+                        ? "stopped"
+                        : "safety-cutoff";
+    output << "{\"extractionId\":\"" << weight.extraction_id
+           << "\",\"targetWeightDecigrams\":"
+           << weight.control.target_decigrams
+           << ",\"compensationDecigrams\":"
+           << weight.control.compensation_decigrams
+           << ",\"cutoffWeightDecigrams\":" << weight.cutoff_decigrams
+           << ",\"finalWeightDecigrams\":";
+    if (weight.net_weight_available) {
+      output << weight.net_weight_decigrams;
+    } else {
+      output << "null";
+    }
+    output << ",\"settled\":" << (weight.settled ? "true" : "false")
+           << ",\"completionReason\":\"" << reason
+           << "\",\"fallbackOccurred\":"
+           << (weight.fallback ? "true" : "false") << '}';
+  }
+  output << ",\"warning\":";
+  if (weight.warning_active) {
+    output << "{\"code\":\"scale_fallback\",\"extractionId\":\""
+           << weight.extraction_id << "\",\"acknowledged\":false}";
+  } else {
+    output << "null";
+  }
+  output << '}';
   return output.str();
 }
 

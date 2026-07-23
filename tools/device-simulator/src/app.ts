@@ -1,6 +1,7 @@
 import {
   ApiV2ErrorResponseSchema,
   CooldownActiveConflictResponseSchema,
+  CompleteScaleCalibrationRequestSchema,
   ErrorResponseSchema,
   ExtractionActiveConflictResponseSchema,
   FaultCodeSchema,
@@ -93,6 +94,8 @@ export function createSimulator(
   app.use("/api/v1/faults/over-temperature/dismiss", requireBearer);
   app.use("/api/v2/state", requireBearerV2);
   app.use("/api/v2/history", requireBearerV2);
+  app.use("/api/v2/scale", requireBearerV2);
+  app.use("/api/v2/scale/*", requireBearerV2);
   app.use("/api/v2/profiles", requireBearerV2);
   app.use("/api/v2/extractions/start", requireBearerV2);
   app.use("/api/v2/extractions/stop", requireBearerV2);
@@ -209,6 +212,88 @@ export function createSimulator(
     return c.json(page);
   });
 
+  app.get("/api/v2/scale", (c) => c.json(machine.getScaleState()));
+
+  app.post("/api/v2/scale/calibration/start", (c) => {
+    const result = machine.startScaleCalibration();
+    if (result === "ok") {
+      return c.json(machine.getScaleState());
+    }
+    return contractV2Error(
+      c,
+      409,
+      result === "active"
+        ? "extraction_active"
+        : result === "unavailable"
+          ? "scale_unavailable"
+          : "scale_not_stable",
+      result === "active"
+        ? "Scale calibration requires all workflows to be idle."
+        : result === "unavailable"
+          ? "The scale is unavailable."
+          : "The scale must be stable before calibration.",
+    );
+  });
+
+  app.post("/api/v2/scale/calibration/complete", async (c) => {
+    const body = await readJson(c);
+    if (!body.ok) {
+      return contractV2Error(
+        c,
+        400,
+        "malformed_request",
+        MALFORMED_REQUEST_MESSAGE,
+      );
+    }
+    const parsed = CompleteScaleCalibrationRequestSchema.safeParse(body.value);
+    if (!parsed.success) {
+      return contractV2Error(
+        c,
+        400,
+        "malformed_request",
+        "The calibration reference weight is invalid.",
+      );
+    }
+    const result = machine.completeScaleCalibration(
+      parsed.data.referenceWeightDecigrams,
+    );
+    if (result === "ok") {
+      return c.json(machine.getScaleState());
+    }
+    if (result === "persistence") {
+      return contractV2Error(
+        c,
+        500,
+        "persistence_failure",
+        "The scale calibration could not be persisted.",
+      );
+    }
+    return contractV2Error(
+      c,
+      409,
+      result === "not-started"
+        ? "calibration_in_progress"
+        : result === "unavailable"
+          ? "scale_unavailable"
+          : "scale_not_stable",
+      result === "not-started"
+        ? "Start calibration before applying the reference load."
+        : result === "unavailable"
+          ? "The scale is unavailable."
+          : "The reference load must be stable.",
+    );
+  });
+
+  app.post("/api/v2/scale/calibration/cancel", (c) => {
+    machine.cancelScaleCalibration();
+    return c.json(machine.getScaleState());
+  });
+
+  app.post("/api/v2/scale/warnings/acknowledge", (c) => {
+    machine.acknowledgeScaleWarning();
+    return c.json(machine.getScaleState());
+  });
+
   app.get("/api/v2/profiles", (c) => c.json(machine.getProfiles()));
 
   app.put("/api/v2/profiles", async (c) => {
@@ -280,6 +365,7 @@ export function createSimulator(
     const result = machine.startExtraction(
       parsed.data.idempotencyKey,
       parsed.data.selection,
+      "weightControl" in parsed.data ? parsed.data.weightControl : null,
     );
     if (!result.ok && result.reason === "active") {
       return extractionActiveConflict(
@@ -309,6 +395,21 @@ export function createSimulator(
         409,
         "idempotency_mismatch",
         "The idempotency key was already used with a different selection.",
+      );
+    }
+    if (!result.ok && result.reason.startsWith("scale-")) {
+      const code = result.reason.replaceAll("-", "_") as ApiV2ErrorCode;
+      return contractV2Error(
+        c,
+        409,
+        code,
+        result.reason === "scale-not-calibrated"
+          ? "Calibrate the scale before weighted extraction."
+          : result.reason === "scale-not-stable"
+            ? "The scale must be stable for automatic tare."
+            : result.reason === "scale-unavailable"
+              ? "The scale is unavailable."
+              : "Acknowledge the scale fallback warning before another weighted extraction.",
       );
     }
     if (!result.ok) {
@@ -463,6 +564,15 @@ export function createSimulator(
     return c.json({ command: body.value.command, status: "armed" });
   });
 
+  app.put("/_simulator/scale", async (c) => {
+    const body = await readJson(c);
+    if (!body.ok || !isScaleControlRequest(body.value)) {
+      return contractError(c, 400, "malformed_request", MALFORMED_REQUEST_MESSAGE);
+    }
+    machine.setScaleState(body.value);
+    return c.json(machine.getScaleState());
+  });
+
   return { app, machine };
 }
 
@@ -519,6 +629,43 @@ function contractV2Error(
     error: { code, message },
   });
   return c.json(payload, status);
+}
+
+function isScaleControlRequest(
+  value: unknown,
+): value is {
+  available?: boolean;
+  stable?: boolean;
+  weightDecigrams?: number;
+} {
+  if (
+    value === null ||
+    typeof value !== "object" ||
+    Array.isArray(value)
+  ) {
+    return false;
+  }
+  const record = value as Record<string, unknown>;
+  const keys = Object.keys(record);
+  if (
+    keys.length === 0 ||
+    keys.some(
+      (key) =>
+        key !== "available" &&
+        key !== "stable" &&
+        key !== "weightDecigrams",
+    )
+  ) {
+    return false;
+  }
+  return (
+    (record.available === undefined || typeof record.available === "boolean") &&
+    (record.stable === undefined || typeof record.stable === "boolean") &&
+    (record.weightDecigrams === undefined ||
+      (Number.isInteger(record.weightDecigrams) &&
+        (record.weightDecigrams as number) >= -500 &&
+        (record.weightDecigrams as number) <= 10_500))
+  );
 }
 
 function extractionActiveConflict(

@@ -1,0 +1,10 @@
+{
+  "idempotencyKey": "start-weight-01J2ABCDEF",
+  "selection": {
+    "kind": "manual"
+  },
+  "weightControl": {
+    "targetWeightDecigrams": 350,
+    "compensationDecigrams": 60
+  }
+}

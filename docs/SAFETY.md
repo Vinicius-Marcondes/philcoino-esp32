@@ -41,6 +41,12 @@ O firmware controla o temperature-control loop e não depende da conectividade d
 - faz latch de faults e comanda a saída do SSR para off;
 - persiste apenas targets e conjuntos completos de profiles validados;
 - executa Manual e profiles em um controller monotônico dedicado, inicializa GPIO10 como `off` e não restaura `running` no boot;
+- amostra o HX711 fora do loop crítico e só inicia uma extração por peso após
+  calibração, disponibilidade, estabilidade e tara automática; falha de tara
+  mantém a pump desligada;
+- em falha da balança durante a extração, abandona o corte por peso e usa o
+  deadline monotônico original do perfil, preservando o cutoff independente de
+  60 segundos e bloqueando novo Start por peso até acknowledgement;
 - executa cooldown mutuamente exclusivo em uma task de workflow de 10 ms,
   ordena inhibit/off do heater antes do Start da pump e nunca restaura cooldown
   no boot;
@@ -81,6 +87,9 @@ A revisão atual identifica, entre outros pontos:
 - o pairing verifica um stable ID público, não uma identidade criptográfica do dispositivo;
 - credenciais bearer em HTTP plaintext não têm requisitos mínimos de força, throttling, rotação ou confidencialidade no transporte;
 - o simulador omite comportamentos críticos de timing, sensores, scheduler, persistence stall e falhas de GPIO do firmware.
+- resolução de 0,1 g, simulador, testes host e calibração com uma balança de
+  referência não comprovam precisão, repetibilidade, cup presence, montagem ou
+  comportamento elétrico do HX711/load cell no target;
 
 Não suavize nem esconda esses findings na documentação destinada ao público. Resolva e verifique cada ponto antes de considerar produção, uso sem supervisão ou outra configuração de hardware.
 

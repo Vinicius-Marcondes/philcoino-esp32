@@ -119,6 +119,11 @@ A API v2 adiciona, sem remover v1:
 - `POST /api/v2/extractions/stop`
 - `POST /api/v2/cooldowns/start`
 - `POST /api/v2/cooldowns/stop`
+- `GET /api/v2/scale`
+- `POST /api/v2/scale/calibration/start`
+- `POST /api/v2/scale/calibration/complete`
+- `POST /api/v2/scale/calibration/cancel`
+- `POST /api/v2/scale/warnings/acknowledge`
 
 Valores históricos e atuais `running`/`off` indicam somente comandos do
 firmware, não corrente, fluxo,

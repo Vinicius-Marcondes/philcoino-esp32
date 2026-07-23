@@ -56,6 +56,17 @@ inline constexpr std::int32_t kSsrGpio = 20;
 inline constexpr bool kSsrActiveHigh = true;
 inline constexpr std::int32_t kPumpGpio = 10;
 inline constexpr bool kPumpActiveHigh = true;
+inline constexpr std::int32_t kScaleDataGpio = 0;
+inline constexpr std::int32_t kScaleClockGpio = 1;
+inline constexpr std::uint32_t kScaleUnavailableTimeoutMs = 750U;
+inline constexpr std::uint32_t kScaleAutomaticTareTimeoutMs = 3U * 1000U;
+inline constexpr std::uint32_t kScaleSettlingTimeoutMs = 10U * 1000U;
+inline constexpr std::int32_t kScaleStableSpreadDecigrams = 5;
+inline constexpr std::int32_t kScaleTargetMinimumDecigrams = 50;
+inline constexpr std::int32_t kScaleTargetMaximumDecigrams = 1000;
+inline constexpr std::int32_t kScaleCompensationMaximumDecigrams = 100;
+inline constexpr std::int32_t kScaleCalibrationReferenceMinimumDecigrams = 500;
+inline constexpr std::int32_t kScaleCalibrationReferenceMaximumDecigrams = 5000;
 
 std::string stable_device_id(const std::array<std::uint8_t, 6>& station_mac);
 

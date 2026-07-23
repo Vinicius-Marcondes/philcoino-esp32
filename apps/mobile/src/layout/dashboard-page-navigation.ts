@@ -2,6 +2,7 @@ export const DASHBOARD_PAGES = [
   "dashboard",
   "profiles",
   "machine",
+  "scale",
 ] as const;
 
 export type DashboardPage = (typeof DASHBOARD_PAGES)[number];

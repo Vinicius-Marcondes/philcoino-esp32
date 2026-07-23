@@ -28,6 +28,15 @@ class EspMax6675Transport final : public Max6675Transport {
   bool initialized_{false};
 };
 
+class EspHx711Transport final : public Hx711Transport {
+ public:
+  bool initialize();
+  Hx711Reading read() override;
+
+ private:
+  bool initialized_{false};
+};
+
 class EspNvsTargetBackend final : public TargetBackend {
  public:
   bool initialize();
@@ -44,6 +53,17 @@ class EspNvsProfileBackend final : public ProfileBackend {
   bool initialize();
   BackendLoadResult load(ExtractionProfiles& profiles) override;
   bool save(const ExtractionProfiles& profiles) override;
+
+ private:
+  std::uint32_t handle_{0};
+  bool initialized_{false};
+};
+
+class EspNvsScaleCalibrationBackend final : public ScaleCalibrationBackend {
+ public:
+  bool initialize();
+  BackendLoadResult load(ScaleCalibration& calibration) override;
+  bool save(const ScaleCalibration& calibration) override;
 
  private:
   std::uint32_t handle_{0};

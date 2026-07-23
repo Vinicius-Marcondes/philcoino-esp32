@@ -191,6 +191,7 @@ struct WorkflowTaskContext {
   philcoino::peripherals::FailOffSsr* heater;
   std::atomic<bool>* fail_safe_requested;
   FreeRtosApiSynchronization* synchronization;
+  philcoino::control::ScaleController* scale;
 };
 
 philcoino::control::CooldownInput cooldown_input(
@@ -241,7 +242,8 @@ void workflow_control_task(void* argument) {
       cooldown_result = context->cooldown->update(
           cooldown_input(temperature, context->extraction->active()), now_ms);
     } else {
-      extraction_result = context->extraction->update(now_ms);
+      const auto scale = context->scale->snapshot(now_ms);
+      extraction_result = context->extraction->update(now_ms, &scale);
       context->temperature->set_extraction_phase(
           context->extraction->snapshot(now_ms).phase, now_ms);
     }
@@ -260,6 +262,27 @@ void workflow_control_task(void* argument) {
     if (cooldown_result == philcoino::control::CooldownUpdateResult::kFailed) {
       ESP_LOGE(kLogTag,
                "Cooldown output or input failed; output-off commands issued and fault latched");
+    }
+    vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(10));
+  }
+}
+
+struct ScaleTaskContext {
+  philcoino::peripherals::Hx711* hx711;
+  philcoino::control::ScaleController* scale;
+  FreeRtosApiSynchronization* synchronization;
+};
+
+void scale_sample_task(void* argument) {
+  auto* context = static_cast<ScaleTaskContext*>(argument);
+  TickType_t last_wake = xTaskGetTickCount();
+  while (true) {
+    const auto reading = context->hx711->read();
+    if (context->synchronization->lock(
+            philcoino::networking::ApiDomain::kExtraction)) {
+      context->scale->update(reading, uptime_ms());
+      context->synchronization->unlock(
+          philcoino::networking::ApiDomain::kExtraction);
     }
     vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(10));
   }
@@ -369,6 +392,32 @@ extern "C" void app_main() {
   static FreeRtosApiSynchronization synchronization(
       workflow_mutex, pump, ssr, fail_safe_requested);
 
+  static EspNvsScaleCalibrationBackend scale_calibration_backend;
+  const bool scale_storage_ready = scale_calibration_backend.initialize();
+  static ScaleCalibrationStorage scale_calibration_storage(
+      scale_calibration_backend);
+  ScaleCalibration scale_calibration{};
+  const auto scale_calibration_result =
+      scale_storage_ready
+          ? scale_calibration_storage.load(scale_calibration)
+          : ScaleCalibrationLoadResult::kError;
+  const bool scale_calibrated =
+      scale_calibration_result == ScaleCalibrationLoadResult::kOk;
+  if (scale_calibration_result == ScaleCalibrationLoadResult::kCorrupt ||
+      scale_calibration_result == ScaleCalibrationLoadResult::kError) {
+    ESP_LOGW(kLogTag,
+             "Scale calibration storage unavailable; weighted extraction remains blocked");
+  }
+  static philcoino::control::ScaleController scale_controller(
+      scale_calibration, scale_calibrated, scale_calibration_storage);
+  static EspHx711Transport hx711_transport;
+  const bool hx711_initialized = hx711_transport.initialize();
+  if (!hx711_initialized) {
+    ESP_LOGW(kLogTag,
+             "HX711 GPIO initialization failed; weighted extraction remains blocked");
+  }
+  static Hx711 hx711(hx711_transport);
+
   static EspMax6675Transport max6675_transport;
   if (!max6675_transport.initialize()) {
     ESP_LOGE(kLogTag, "MAX6675 bus initialization failed");
@@ -407,7 +456,7 @@ extern "C" void app_main() {
 
   static WorkflowTaskContext workflow_context{
       &controller, &extraction_controller, &cooldown_controller,
-      &pump, &ssr, &fail_safe_requested, &synchronization};
+      &pump, &ssr, &fail_safe_requested, &synchronization, &scale_controller};
   TaskHandle_t workflow_task = nullptr;
   if (xTaskCreate(workflow_control_task, "philcoino-workflow", 4096,
                   &workflow_context, configMAX_PRIORITIES - 2,
@@ -416,6 +465,16 @@ extern "C" void app_main() {
     pump.force_off();
     ssr.force_off();
     return;
+  }
+
+  static ScaleTaskContext scale_context{
+      &hx711, &scale_controller, &synchronization};
+  if (hx711_initialized &&
+      xTaskCreate(scale_sample_task, "philcoino-scale", 3072,
+                  &scale_context, configMAX_PRIORITIES - 3,
+                  nullptr) != pdPASS) {
+    ESP_LOGW(kLogTag,
+             "Scale sampling task creation failed; weighted extraction remains blocked");
   }
 
   const philcoino::networking::DeviceIdentity identity{
@@ -435,7 +494,7 @@ extern "C" void app_main() {
   static philcoino::networking::FirmwareApi api(
       identity, CONFIG_PHILCOINO_BEARER_TOKEN, controller, target_storage,
       extraction_controller, cooldown_controller, profile_storage,
-      synchronization, &history);
+      synchronization, &history, &scale_controller);
   static philcoino::networking::EspNetworkServer network(api, identity);
   static const NetworkStartContext network_context{
       &network,

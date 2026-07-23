@@ -185,13 +185,20 @@ model separate boiler-base and upper-boiler temperatures, or validate that the
 owner-selected physical correction is accurate.
 
 The simulator also serves authenticated API v2 state, complete profile-set
-read/replace, extraction Start/Stop, and cooldown Start/Stop. Manual time owns
+read/replace, extraction Start/Stop, cooldown Start/Stop, and the scale
+diagnostic/calibration/warning endpoints. Manual time owns
 extraction and cooldown progress; power-cycle preserves profiles but always
 returns both workflows to idle. Cooldown deterministically stops at the first
 sample at/below its target snapshot, at 45 seconds, or on Stop, followed by five
 seconds of stabilization. Failure controls and temperature injection support
 API/mobile integration only; they are not firmware scheduling, GPIO, pump-flow,
 cooling, SSR, or heater-safety evidence.
+
+`POST /_simulator/scale` controls deterministic mass, stability, drift,
+disconnection, and saturation. Weighted profile Start performs automatic tare;
+advancing mass can trigger cutoff in any profile phase, while an injected scale
+failure exercises the original-profile timer fallback. These controls validate
+the API/mobile workflow only and do not characterize a physical HX711.
 
 ## Protocol workflow
 

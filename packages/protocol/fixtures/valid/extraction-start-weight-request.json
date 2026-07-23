@@ -1,0 +1,11 @@
+{
+  "idempotencyKey": "start-weight-01J2ABCDEF",
+  "selection": {
+    "kind": "profile",
+    "profileId": "profile-1"
+  },
+  "weightControl": {
+    "targetWeightDecigrams": 350,
+    "compensationDecigrams": 60
+  }
+}

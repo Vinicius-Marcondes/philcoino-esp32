@@ -8,6 +8,7 @@ import {
   ApiV2ErrorResponseSchema,
   BREW_TARGET_MAX_C,
   BREW_TARGET_MIN_C,
+  CompleteScaleCalibrationRequestSchema,
   BrewTargetSchema,
   COOLDOWN_MAX_DURATION_MS,
   COOLDOWN_PUMP_LIMIT_MS,
@@ -55,6 +56,7 @@ import {
   PumpCommandSchema,
   PumpingCooldownStateSchema,
   RunningExtractionStateSchema,
+  ScaleStateSchema,
   TerminalExtractionStateSchema,
   STEAM_TARGET_MAX_C,
   STEAM_TARGET_MIN_C,
@@ -109,6 +111,8 @@ const documentedSchemas: Record<string, ZodType> = {
   TerminalExtractionState: TerminalExtractionStateSchema,
   MachineStateV2: MachineStateV2Schema,
   StartExtractionRequest: StartExtractionRequestSchema,
+  ScaleState: ScaleStateSchema,
+  CompleteScaleCalibrationRequest: CompleteScaleCalibrationRequestSchema,
   ApiV2ErrorResponse: ApiV2ErrorResponseSchema,
   ExtractionActiveConflictResponse: ExtractionActiveConflictResponseSchema,
   InactiveCompensationState: InactiveCompensationStateSchema,
@@ -138,6 +142,15 @@ const validFixtures = [
   ["valid/extraction-running.json", RunningExtractionStateSchema],
   ["valid/extraction-terminal-replay.json", TerminalExtractionStateSchema],
   ["valid/extraction-start-request.json", StartExtractionRequestSchema],
+  [
+    "valid/extraction-start-weight-request.json",
+    StartExtractionRequestSchema,
+  ],
+  ["valid/scale-state.json", ScaleStateSchema],
+  [
+    "valid/scale-calibration-complete-request.json",
+    CompleteScaleCalibrationRequestSchema,
+  ],
   [
     "valid/extraction-active-conflict.json",
     ExtractionActiveConflictResponseSchema,
@@ -181,6 +194,14 @@ const invalidFixtures = [
   ["invalid/profile-set-duplicate-slot.json", ProfileSetSchema],
   ["invalid/profile-set-extra-slot.json", ProfileSetSchema],
   ["invalid/extraction-start-key-short.json", StartExtractionRequestSchema],
+  [
+    "invalid/extraction-start-weight-manual.json",
+    StartExtractionRequestSchema,
+  ],
+  [
+    "invalid/extraction-start-weight-compensation.json",
+    StartExtractionRequestSchema,
+  ],
   ["invalid/extraction-running-wrong-command.json", ExtractionStateSchema],
   [
     "invalid/extraction-terminal-running-completed.json",
@@ -279,6 +300,11 @@ describe("documented OpenAPI examples", () => {
       ],
       StartExtractionRequest: [
         await fixture("valid/extraction-start-request.json"),
+        await fixture("valid/extraction-start-weight-request.json"),
+      ],
+      ScaleState: [await fixture("valid/scale-state.json")],
+      CompleteScaleCalibrationRequest: [
+        await fixture("valid/scale-calibration-complete-request.json"),
       ],
       ApiV2ErrorResponse: [
         await fixture("valid/profile-not-configured-error.json"),
@@ -627,7 +653,7 @@ describe("API v2 thermal workflow boundaries", () => {
     expect(ErrorCodeSchema.options).toContain("sensor_unavailable");
   });
 
-  test("adds only the approved API v2 cooldown paths", () => {
+  test("adds only the approved API v2 workflow and scale paths", () => {
     const v2Paths = Object.keys(openApi.paths)
       .filter((path) => path.startsWith("/api/v2/"))
       .sort();
@@ -638,6 +664,11 @@ describe("API v2 thermal workflow boundaries", () => {
       "/api/v2/extractions/stop",
       "/api/v2/history",
       "/api/v2/profiles",
+      "/api/v2/scale",
+      "/api/v2/scale/calibration/cancel",
+      "/api/v2/scale/calibration/complete",
+      "/api/v2/scale/calibration/start",
+      "/api/v2/scale/warnings/acknowledge",
       "/api/v2/state",
     ]);
   });

@@ -11,9 +11,11 @@ import type {
   OverTemperatureDismissResponse,
   ProfileSet,
   StartExtractionResponse,
+  StartExtractionRequest,
   StopExtractionResponse,
   TemperatureSettingsRequest,
   TemperatureSettingsResponse,
+  WeightControl,
 } from "@philcoino/protocol";
 
 import { ApiClientError } from "../networking/api-client-error";
@@ -76,7 +78,7 @@ export interface DashboardMutationClient {
     options?: { signal?: AbortSignal },
   ): Promise<ProfileSet>;
   startExtraction(
-    request: { idempotencyKey: string; selection: ExtractionSelection },
+    request: StartExtractionRequest,
     options?: { signal?: AbortSignal },
   ): Promise<StartExtractionResponse>;
   stopExtraction(
@@ -143,10 +145,7 @@ export class DashboardMutationSession {
   private paused = false;
   private pending = false;
   private running = false;
-  private pendingStart: {
-    idempotencyKey: string;
-    selection: ExtractionSelection;
-  } | null = null;
+  private pendingStart: StartExtractionRequest | null = null;
   private pendingCooldownStartKey: string | null = null;
 
   constructor(options: DashboardMutationSessionOptions) {
@@ -294,14 +293,22 @@ export class DashboardMutationSession {
     );
   }
 
-  startExtraction(selection: ExtractionSelection): void {
+  startExtraction(
+    selection: ExtractionSelection,
+    weightControl?: WeightControl,
+  ): void {
+    const candidate: StartExtractionRequest =
+      weightControl === undefined
+        ? { idempotencyKey: "", selection }
+        : { idempotencyKey: "", selection, weightControl };
     if (
       this.pendingStart === null ||
-      !sameExtractionSelection(this.pendingStart.selection, selection)
+      !sameExtractionRequest(this.pendingStart, candidate)
     ) {
       this.pendingStart = {
         idempotencyKey: this.startKeyFactory(),
         selection,
+        ...(weightControl === undefined ? {} : { weightControl }),
       };
     }
     const request = this.pendingStart;
@@ -313,7 +320,11 @@ export class DashboardMutationSession {
         this.onExtractionAcknowledged(response);
         return translate("mutation.extractionStarted");
       },
-      translate("mutation.extractionStartPending"),
+      translate(
+        weightControl === undefined
+          ? "mutation.extractionStartPending"
+          : "mutation.weightedExtractionStartPending",
+      ),
       (error) => {
         if (
           error instanceof ApiClientError &&
@@ -471,6 +482,17 @@ function sameExtractionSelection(
   );
 }
 
+function sameExtractionRequest(
+  left: StartExtractionRequest,
+  right: StartExtractionRequest,
+): boolean {
+  return (
+    sameExtractionSelection(left.selection, right.selection) &&
+    JSON.stringify("weightControl" in left ? left.weightControl : null) ===
+      JSON.stringify("weightControl" in right ? right.weightControl : null)
+  );
+}
+
 export function mutationOutcomeFromError(error: unknown): {
   connection: ConnectionState | null;
   state: DashboardMutationState;
@@ -522,6 +544,16 @@ function localizedRejectionMessage(
       return translate("mutation.rejections.persistenceFailure");
     case "profile_not_configured":
       return translate("mutation.rejections.profileNotConfigured");
+    case "scale_not_calibrated":
+      return translate("mutation.rejections.scaleNotCalibrated");
+    case "scale_not_stable":
+      return translate("mutation.rejections.scaleNotStable");
+    case "scale_unavailable":
+      return translate("mutation.rejections.scaleUnavailable");
+    case "scale_warning_unacknowledged":
+      return translate("mutation.rejections.scaleWarningUnacknowledged");
+    case "calibration_in_progress":
+      return translate("mutation.rejections.calibrationInProgress");
     case "sensor_unavailable":
       return translate("mutation.rejections.sensorUnavailable");
     case "temperature_out_of_range":

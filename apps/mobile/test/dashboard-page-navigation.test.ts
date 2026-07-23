@@ -29,7 +29,7 @@ describe("landscape dashboard page gestures", () => {
   test("ignores short gestures and clamps at the first and last page", () => {
     expect(dashboardPageAfterVerticalSwipe("profiles", 20)).toBe("profiles");
     expect(dashboardPageAfterVerticalSwipe("dashboard", 40)).toBe("dashboard");
-    expect(dashboardPageAfterVerticalSwipe("machine", -40)).toBe("machine");
+    expect(dashboardPageAfterVerticalSwipe("scale", -40)).toBe("scale");
   });
 
   test("recognizes vertical page swipes anywhere when content fits", () => {

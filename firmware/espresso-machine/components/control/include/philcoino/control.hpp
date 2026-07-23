@@ -153,6 +153,74 @@ struct ExtractionSelection {
   std::size_t profile_index{0};
 };
 
+struct WeightControl {
+  std::int32_t target_decigrams{0};
+  std::int32_t compensation_decigrams{0};
+};
+
+bool weight_control_is_valid(const WeightControl& control);
+
+enum class ScaleAvailability { kUnavailable, kUnstable, kReady };
+enum class ScaleCalibrationStatus {
+  kUncalibrated,
+  kCalibrating,
+  kCalibrated,
+};
+
+struct ScaleSnapshot {
+  ScaleAvailability availability{ScaleAvailability::kUnavailable};
+  ScaleCalibrationStatus calibration_status{
+      ScaleCalibrationStatus::kUncalibrated};
+  bool stable{false};
+  bool gross_weight_available{false};
+  std::int32_t gross_weight_decigrams{0};
+};
+
+enum class ScaleCalibrationResult {
+  kOk,
+  kWorkflowActive,
+  kUnavailable,
+  kUnstable,
+  kNotStarted,
+  kInvalidReference,
+  kPersistenceFailure,
+};
+
+class ScaleController {
+ public:
+  ScaleController(peripherals::ScaleCalibration calibration,
+                  bool calibrated,
+                  peripherals::ScaleCalibrationStorage& storage);
+
+  void update(peripherals::Hx711Reading reading, std::uint32_t now_ms);
+  ScaleSnapshot snapshot(std::uint32_t now_ms) const;
+  ScaleCalibrationResult start_calibration(bool workflow_active,
+                                           std::uint32_t now_ms);
+  ScaleCalibrationResult complete_calibration(
+      std::int32_t reference_decigrams,
+      bool workflow_active,
+      std::uint32_t now_ms);
+  void cancel_calibration();
+
+ private:
+  bool available(std::uint32_t now_ms) const;
+  bool stable() const;
+  std::int32_t median_raw() const;
+  std::int32_t stable_raw_spread_limit() const;
+
+  peripherals::ScaleCalibration calibration_{};
+  peripherals::ScaleCalibrationStorage& storage_;
+  std::array<std::int32_t, 10> samples_{};
+  std::size_t sample_count_{0};
+  std::size_t sample_index_{0};
+  std::uint32_t last_valid_ms_{0};
+  bool has_valid_sample_{false};
+  bool transport_failed_{false};
+  bool calibrated_{false};
+  bool calibration_in_progress_{false};
+  std::int32_t calibration_zero_raw_{0};
+};
+
 struct ExtractionSnapshot {
   ExtractionStatus status{ExtractionStatus::kIdle};
   std::string extraction_id{};
@@ -172,6 +240,10 @@ enum class StartExtractionResult {
   kProfileNotConfigured,
   kInvalidRequest,
   kOutputFailure,
+  kScaleNotCalibrated,
+  kScaleNotStable,
+  kScaleUnavailable,
+  kScaleWarningUnacknowledged,
 };
 
 enum class ExtractionReplayStatus { kNone, kMatch, kMismatch };
@@ -185,6 +257,28 @@ enum class ReplaceProfilesResult {
 
 enum class ExtractionUpdateResult { kOk, kCompleted, kOutputFailure };
 
+enum class WeightCompletionReason {
+  kNone,
+  kWeightReached,
+  kTimerFallback,
+  kStopped,
+  kSafetyCutoff,
+};
+
+struct WeightExtractionSnapshot {
+  bool active{false};
+  bool terminal{false};
+  std::string extraction_id{};
+  WeightControl control{};
+  std::int32_t cutoff_decigrams{0};
+  bool net_weight_available{false};
+  std::int32_t net_weight_decigrams{0};
+  bool fallback{false};
+  bool settled{false};
+  WeightCompletionReason completion_reason{WeightCompletionReason::kNone};
+  bool warning_active{false};
+};
+
 class ExtractionController {
  public:
   ExtractionController(peripherals::ExtractionProfiles profiles,
@@ -194,8 +288,12 @@ class ExtractionController {
   bool active() const;
   ExtractionReplayStatus replay_status(
       const std::string& idempotency_key,
-      const ExtractionSelection& selection) const;
+      const ExtractionSelection& selection,
+      const WeightControl* weight_control = nullptr) const;
   ExtractionSnapshot snapshot(std::uint32_t now_ms) const;
+  WeightExtractionSnapshot weight_snapshot(
+      const ScaleSnapshot& scale,
+      std::uint32_t now_ms) const;
 
   ReplaceProfilesResult replace_profiles(
       const peripherals::ExtractionProfiles& profiles,
@@ -204,9 +302,13 @@ class ExtractionController {
       const peripherals::ExtractionProfiles& profiles);
   StartExtractionResult start(const std::string& idempotency_key,
                               ExtractionSelection selection,
-                              std::uint32_t now_ms);
+                              std::uint32_t now_ms,
+                              const WeightControl* weight_control = nullptr,
+                              const ScaleSnapshot* scale = nullptr);
   bool stop(std::uint32_t now_ms = 0);
-  ExtractionUpdateResult update(std::uint32_t now_ms);
+  ExtractionUpdateResult update(std::uint32_t now_ms,
+                                const ScaleSnapshot* scale = nullptr);
+  void acknowledge_scale_warning();
 
  private:
   static bool valid_idempotency_key(const std::string& key);
@@ -214,8 +316,14 @@ class ExtractionController {
   std::uint32_t total_duration_ms() const;
   bool command_for_phase(ExtractionPhase phase);
   void finish(ExtractionOutcome outcome, std::uint32_t elapsed_ms);
+  void finish_weighted(ExtractionOutcome outcome,
+                       WeightCompletionReason reason,
+                       std::uint32_t elapsed_ms,
+                       const ScaleSnapshot* scale);
   static bool selections_equal(const ExtractionSelection& left,
                                const ExtractionSelection& right);
+  static bool weight_controls_equal(const WeightControl* left,
+                                    const WeightControl* right);
 
   peripherals::ExtractionProfiles profiles_{};
   peripherals::FailOffPump& pump_;
@@ -229,6 +337,22 @@ class ExtractionController {
   ExtractionPhase phase_{ExtractionPhase::kIdle};
   ExtractionOutcome outcome_{ExtractionOutcome::kNone};
   std::uint32_t terminal_elapsed_ms_{0};
+  bool weighted_{false};
+  WeightControl weight_control_{};
+  std::int32_t tare_decigrams_{0};
+  bool weight_fallback_{false};
+  bool scale_warning_active_{false};
+  bool terminal_weight_available_{false};
+  std::int32_t terminal_weight_decigrams_{0};
+  bool terminal_weight_settled_{false};
+  bool weight_record_present_{false};
+  std::string weight_record_extraction_id_{};
+  WeightControl weight_record_control_{};
+  std::int32_t weight_record_tare_decigrams_{0};
+  bool weight_record_fallback_{false};
+  std::uint32_t weight_settling_started_ms_{0};
+  WeightCompletionReason weight_completion_reason_{
+      WeightCompletionReason::kNone};
 };
 
 enum class CooldownStatus { kIdle, kPumping, kStabilizing };
