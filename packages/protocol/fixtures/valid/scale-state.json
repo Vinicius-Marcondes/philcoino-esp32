@@ -1,0 +1,10 @@
+{
+  "availability": "ready",
+  "calibrationStatus": "calibrated",
+  "stable": true,
+  "grossWeightDecigrams": 800,
+  "netWeightDecigrams": null,
+  "activeExtraction": null,
+  "terminalExtraction": null,
+  "warning": null
+}

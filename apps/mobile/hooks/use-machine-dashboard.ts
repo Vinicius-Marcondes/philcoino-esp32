@@ -7,6 +7,7 @@ import type {
   Mode,
   TemperatureSettingsRequest,
   ProfileSet,
+  WeightControl,
 } from "@philcoino/protocol";
 import { useFocusEffect } from "expo-router";
 import { useCallback, useRef, useState } from "react";
@@ -69,7 +70,10 @@ export interface MachineDashboardState {
   importProfiles: () => void;
   retryMachineProfiles: () => void;
   saveMobileProfiles: (profiles: ProfileSet) => Promise<boolean>;
-  startExtraction: (selection: ExtractionSelection) => void;
+  startExtraction: (
+    selection: ExtractionSelection,
+    weightControl?: WeightControl,
+  ) => void;
   startCooldown: () => void;
   stopCooldown: () => void;
   stopExtraction: () => void;
@@ -371,7 +375,7 @@ export function useMachineDashboard(
   }, []);
 
   const startExtraction = useCallback(
-    (selection: ExtractionSelection) => {
+    (selection: ExtractionSelection, weightControl?: WeightControl) => {
       if (
         selection.kind === "profile" &&
         (machineProfileError !== null ||
@@ -379,7 +383,7 @@ export function useMachineDashboard(
       ) {
         return;
       }
-      mutationSession.current?.startExtraction(selection);
+      mutationSession.current?.startExtraction(selection, weightControl);
     },
     [machineProfileError, machineProfiles, mobileProfiles],
   );

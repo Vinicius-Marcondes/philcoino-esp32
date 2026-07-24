@@ -10,6 +10,7 @@ import {
   TemperatureSettingsRequestSchema,
   StartExtractionRequestSchema,
   StartCooldownRequestSchema,
+  ScaleStateSchema,
   type DeviceResponse,
   type CooldownState,
   type HeaterSettingsRequest,
@@ -29,6 +30,7 @@ import {
   type StartCooldownResponse,
   type StopCooldownResponse,
   type StopExtractionResponse,
+  type ScaleState,
   type TemperatureSettingsRequest,
   type TemperatureSettingsResponse,
 } from "@philcoino/protocol";
@@ -81,6 +83,16 @@ export class DebugDeviceApiClient
   });
   private activeStartKey: string | null = null;
   private activeCooldownStartKey: string | null = null;
+  private scale: ScaleState = ScaleStateSchema.parse({
+    availability: "ready",
+    calibrationStatus: "calibrated",
+    stable: true,
+    grossWeightDecigrams: 800,
+    netWeightDecigrams: null,
+    activeExtraction: null,
+    terminalExtraction: null,
+    warning: null,
+  });
 
   async getHealth(options: { signal?: AbortSignal } = {}): Promise<HealthResponse> {
     throwIfAborted(options.signal);
@@ -244,6 +256,22 @@ export class DebugDeviceApiClient
       remainingMs: profileDurationMs,
       pumpCommand: "running",
     });
+    if ("weightControl" in parsed.data) {
+      this.scale = {
+        ...this.scale,
+        netWeightDecigrams: 0,
+        terminalExtraction: null,
+        activeExtraction: {
+          extractionId: "debug-run-1",
+          mode: "weight",
+          ...parsed.data.weightControl,
+          cutoffWeightDecigrams:
+            parsed.data.weightControl.targetWeightDecigrams -
+            parsed.data.weightControl.compensationDecigrams,
+          netWeightDecigrams: 0,
+        },
+      };
+    }
     if (this.extraction.status !== "running") {
       throw new Error("Debug Start must produce a running extraction.");
     }
@@ -255,6 +283,7 @@ export class DebugDeviceApiClient
   ): Promise<StopExtractionResponse> {
     throwIfAborted(options.signal);
     this.activeStartKey = null;
+    const activeWeight = this.scale.activeExtraction;
     this.extraction = ExtractionStateSchema.parse({
       status: "idle",
       extractionId: null,
@@ -267,7 +296,64 @@ export class DebugDeviceApiClient
     if (this.extraction.status !== "idle") {
       throw new Error("Debug Stop must produce idle extraction.");
     }
+    if (activeWeight !== null) {
+      this.scale = {
+        ...this.scale,
+        activeExtraction: null,
+        netWeightDecigrams: activeWeight.netWeightDecigrams,
+        terminalExtraction: {
+          extractionId: activeWeight.extractionId,
+          targetWeightDecigrams: activeWeight.targetWeightDecigrams,
+          compensationDecigrams: activeWeight.compensationDecigrams,
+          cutoffWeightDecigrams: activeWeight.cutoffWeightDecigrams,
+          finalWeightDecigrams: activeWeight.netWeightDecigrams,
+          settled: true,
+          completionReason: "stopped",
+          fallbackOccurred: false,
+        },
+      };
+    }
     return this.extraction;
+  }
+
+  async getScale(
+    options: { signal?: AbortSignal } = {},
+  ): Promise<ScaleState> {
+    throwIfAborted(options.signal);
+    return this.scale;
+  }
+
+  async startScaleCalibration(
+    options: { signal?: AbortSignal } = {},
+  ): Promise<ScaleState> {
+    throwIfAborted(options.signal);
+    this.scale = { ...this.scale, calibrationStatus: "calibrating" };
+    return this.scale;
+  }
+
+  async completeScaleCalibration(
+    _request: { referenceWeightDecigrams: number },
+    options: { signal?: AbortSignal } = {},
+  ): Promise<ScaleState> {
+    throwIfAborted(options.signal);
+    this.scale = { ...this.scale, calibrationStatus: "calibrated" };
+    return this.scale;
+  }
+
+  async cancelScaleCalibration(
+    options: { signal?: AbortSignal } = {},
+  ): Promise<ScaleState> {
+    throwIfAborted(options.signal);
+    this.scale = { ...this.scale, calibrationStatus: "calibrated" };
+    return this.scale;
+  }
+
+  async acknowledgeScaleWarning(
+    options: { signal?: AbortSignal } = {},
+  ): Promise<ScaleState> {
+    throwIfAborted(options.signal);
+    this.scale = { ...this.scale, warning: null };
+    return this.scale;
   }
 
   async startCooldown(

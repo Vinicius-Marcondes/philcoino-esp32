@@ -61,6 +61,19 @@ class ProfileMemoryBackend final : public ProfileBackend {
   bool fail_save{false};
 };
 
+class ScaleMemoryBackend final : public ScaleCalibrationBackend {
+ public:
+  BackendLoadResult load(ScaleCalibration& calibration) override {
+    calibration = saved;
+    return BackendLoadResult::kOk;
+  }
+  bool save(const ScaleCalibration& calibration) override {
+    saved = calibration;
+    return true;
+  }
+  ScaleCalibration saved{0, 100000, 1000};
+};
+
 class FakeApiSynchronization final : public ApiSynchronization {
  public:
   bool lock(ApiDomain) override {
@@ -127,12 +140,17 @@ struct ApiHarness {
         pump(pump_output, pump_critical_section),
         extraction(profile_backend.saved, pump),
         cooldown(controller, pump),
+        scale_storage(scale_backend),
+        scale(scale_backend.saved, true, scale_storage),
         api({"philcoino-0102AF", "PhilcoINO", "ESP32-C3 Super Mini", "0.2.0"},
             "test-secret", controller, storage, extraction, cooldown,
-            profile_storage, synchronization, &history) {
+            profile_storage, synchronization, &history, &scale) {
     assert(ssr.initialize());
     assert(pump.initialize());
     controller.update(ok(87.5F), 1000);
+    for (std::int32_t index = 0; index < 10; ++index) {
+      scale.update({Hx711Status::kOk, 80000}, 1000U + index);
+    }
   }
 
   HttpResponse request(HttpMethod method, const char* path,
@@ -156,6 +174,9 @@ struct ApiHarness {
   FailOffPump pump;
   ExtractionController extraction;
   CooldownController cooldown;
+  ScaleMemoryBackend scale_backend;
+  ScaleCalibrationStorage scale_storage;
+  ScaleController scale;
   FakeApiSynchronization synchronization;
   HistoryBuffer history{"00112233445566778899aabbccddeeff"};
   FirmwareApi api;
@@ -904,6 +925,9 @@ void capture_contract_payloads(const std::filesystem::path& directory) {
   write_capture(directory, "profiles-v2.json",
                 harness.request(HttpMethod::kGet, "/api/v2/profiles",
                                 authorization).body);
+  write_capture(directory, "scale-v2.json",
+                harness.request(HttpMethod::kGet, "/api/v2/scale",
+                                authorization).body);
   ApiHarness extraction_harness;
   write_capture(directory, "extraction-running-v2.json",
                 extraction_harness.request(
@@ -1110,6 +1134,56 @@ void test_bounded_history_contract() {
                400, "malformed_request");
 }
 
+void test_scale_api_and_weighted_start_contract() {
+  ApiHarness harness;
+  const char* authorization = "Bearer test-secret";
+  auto response =
+      harness.request(HttpMethod::kGet, "/api/v2/scale", authorization, "",
+                      1100);
+  assert(response.status == 200);
+  assert(response.body.find("\"availability\":\"ready\"") !=
+         std::string::npos);
+  assert(response.body.find("\"grossWeightDecigrams\":800") !=
+         std::string::npos);
+
+  response = harness.request(
+      HttpMethod::kPost, "/api/v2/extractions/start", authorization,
+      "{\"idempotencyKey\":\"weighted-api-start-1\",\"selection\":{\"kind\":\"profile\",\"profileId\":\"profile-2\"},\"weightControl\":{\"targetWeightDecigrams\":350,\"compensationDecigrams\":20}}",
+      1100);
+  assert(response.status == 200);
+  assert(harness.pump.command() == PumpCommand::kRunning);
+
+  for (std::int32_t index = 0; index < 10; ++index) {
+    harness.scale.update({Hx711Status::kOk, 113000}, 2000U + index);
+  }
+  response = harness.request(HttpMethod::kGet, "/api/v2/state",
+                             authorization, "", 2010);
+  assert(response.status == 200);
+  assert(harness.pump.command() == PumpCommand::kOff);
+  response =
+      harness.request(HttpMethod::kGet, "/api/v2/scale", authorization, "",
+                      2010);
+  assert(response.body.find("\"completionReason\":\"weight-reached\"") !=
+         std::string::npos);
+  assert(response.body.find("\"finalWeightDecigrams\":330") !=
+         std::string::npos);
+
+  ApiHarness calibration;
+  response = calibration.request(
+      HttpMethod::kPost, "/api/v2/scale/calibration/start", authorization,
+      "", 1100);
+  assert(response.status == 200);
+  for (std::int32_t index = 0; index < 10; ++index) {
+    calibration.scale.update({Hx711Status::kOk, 90000}, 1200U + index);
+  }
+  response = calibration.request(
+      HttpMethod::kPost, "/api/v2/scale/calibration/complete", authorization,
+      "{\"referenceWeightDecigrams\":1000}", 1300);
+  assert(response.status == 200);
+  assert(response.body.find("\"calibrationStatus\":\"calibrated\"") !=
+         std::string::npos);
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -1124,6 +1198,7 @@ int main(int argc, char** argv) {
   test_workflow_mode_coordination_is_authoritative();
   test_api_v2_cooldown_and_compensation_contract();
   test_bounded_history_contract();
+  test_scale_api_and_weighted_start_contract();
   if (argc == 2) {
     capture_contract_payloads(argv[1]);
   }

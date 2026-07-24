@@ -34,6 +34,12 @@ bool parse_profiles(const std::string& body,
                     peripherals::ExtractionProfiles& profiles);
 bool parse_start(const std::string& body, std::string& idempotency_key,
                  control::ExtractionSelection& selection);
+bool parse_start(const std::string& body, std::string& idempotency_key,
+                 control::ExtractionSelection& selection,
+                 control::WeightControl& weight_control,
+                 bool& weighted);
+bool parse_scale_calibration_complete(const std::string& body,
+                                      std::int32_t& reference_decigrams);
 bool parse_cooldown_start(const std::string& body,
                           std::string& idempotency_key);
 
@@ -44,6 +50,8 @@ std::string serialize_compensation(
     const control::ExtractionSnapshot& extraction);
 std::string serialize_profiles(
     const peripherals::ExtractionProfiles& profiles);
+std::string serialize_scale(const control::ScaleSnapshot& scale,
+                            const control::WeightExtractionSnapshot& weight);
 
 HttpResponse cooldown_conflict(const control::CooldownSnapshot& cooldown,
                                const char* message);

@@ -19,6 +19,7 @@ import {
   StartCooldownResponseSchema,
   StopCooldownResponseSchema,
   TemperatureSettingsResponseSchema,
+  ScaleStateSchema,
 } from "../../../packages/protocol/src/schemas.ts";
 
 const directory = process.argv[2];
@@ -39,6 +40,7 @@ const captures = [
   ["state-v2.json", MachineStateV2Schema],
   ["history-v2.json", HistoryPageSchema],
   ["profiles-v2.json", ProfileSetSchema],
+  ["scale-v2.json", ScaleStateSchema],
   ["extraction-running-v2.json", StartExtractionResponseSchema],
   ["extraction-conflict-v2.json", ExtractionActiveConflictResponseSchema],
   ["extraction-idle-v2.json", StopExtractionResponseSchema],

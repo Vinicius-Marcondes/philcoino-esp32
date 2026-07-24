@@ -28,6 +28,12 @@ v2 adds no raw-temperature or offset field.
   firmware-owned cooldown workflow.
 - `POST /api/v2/cooldowns/stop` idempotently requests pump off and returns the
   current stabilization/terminal acknowledgement.
+- `GET /api/v2/scale` returns calibration, availability, live weight, active
+  weighted extraction, warning, and retained terminal state.
+- `POST /api/v2/scale/calibration/start`, `/complete`, and `/cancel` implement
+  the strict two-step calibration workflow.
+- `POST /api/v2/scale/warnings/acknowledge` clears the weighted-start gate
+  after a timer fallback.
 
 All endpoints require the same bearer authentication as API v1. Unknown fields,
 invalid slot order/IDs, invalid names or durations, malformed selections, and
@@ -54,6 +60,18 @@ cutoff using wrap-safe monotonic time. A same-key retry returns the original
 active extraction without restarting it; another key conflicts. Stop is
 idempotent. Heater mode, readiness, and temperature faults do not stop the pump,
 while GPIO/synchronization failure ends extraction with an off command.
+
+A profile Start may additionally contain strict integer-decigram weight
+control. Manual plus weight control is rejected. Firmware requires calibrated,
+available, stable scale input, captures tare, and only then starts the pump; a
+failed tare leaves extraction idle. The normal weighted cutoff applies in every
+profile phase at `target - compensation`. If scale input fails after Start,
+firmware switches to the selected profile's original monotonic deadline,
+records a degraded terminal result, and blocks another weighted Start until
+acknowledgement. The independent 60-second extraction cutoff remains in force.
+Same-key retries compare the exact weight parameters and never repeat tare or
+restart an acknowledged extraction. The latest weighted terminal result is
+retained until the next weighted Start or reboot.
 
 The fixed extraction compensation is not a request value. Firmware reports it
 active only during Manual or profile main extraction while its existing heater

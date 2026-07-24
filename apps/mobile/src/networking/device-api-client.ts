@@ -18,6 +18,8 @@ import {
   StartCooldownResponseSchema,
   StartExtractionRequestSchema,
   StartExtractionResponseSchema,
+  ScaleStateSchema,
+  CompleteScaleCalibrationRequestSchema,
   StopExtractionResponseSchema,
   StopCooldownResponseSchema,
   TemperatureSettingsRequestSchema,
@@ -38,6 +40,8 @@ import {
   type StartCooldownResponse,
   type StartExtractionRequest,
   type StartExtractionResponse,
+  type ScaleState,
+  type CompleteScaleCalibrationRequest,
   type StopExtractionResponse,
   type StopCooldownResponse,
   type TemperatureSettingsRequest,
@@ -244,6 +248,66 @@ export class DeviceApiClient {
     return this.request(
       "/api/v2/cooldowns/stop",
       StopCooldownResponseSchema,
+      { authenticated: true, errorVersion: "v2", method: "POST" },
+      options,
+    );
+  }
+
+  getScale(options: RequestOptions = {}): Promise<ScaleState> {
+    return this.request(
+      "/api/v2/scale",
+      ScaleStateSchema,
+      { authenticated: true, errorVersion: "v2" },
+      options,
+    );
+  }
+
+  startScaleCalibration(options: RequestOptions = {}): Promise<ScaleState> {
+    return this.request(
+      "/api/v2/scale/calibration/start",
+      ScaleStateSchema,
+      { authenticated: true, errorVersion: "v2", method: "POST" },
+      options,
+    );
+  }
+
+  async completeScaleCalibration(
+    request: CompleteScaleCalibrationRequest,
+    options: RequestOptions = {},
+  ): Promise<ScaleState> {
+    const parsed = CompleteScaleCalibrationRequestSchema.safeParse(request);
+    if (!parsed.success) {
+      throw new ApiClientError(
+        "invalid-request",
+        "The calibration reference weight is invalid.",
+      );
+    }
+    return await this.request(
+      "/api/v2/scale/calibration/complete",
+      ScaleStateSchema,
+      {
+        authenticated: true,
+        body: parsed.data,
+        errorVersion: "v2",
+        method: "POST",
+      },
+      options,
+    );
+  }
+
+  cancelScaleCalibration(options: RequestOptions = {}): Promise<ScaleState> {
+    return this.request(
+      "/api/v2/scale/calibration/cancel",
+      ScaleStateSchema,
+      { authenticated: true, errorVersion: "v2", method: "POST" },
+      options,
+    );
+  }
+
+  acknowledgeScaleWarning(options: RequestOptions = {}): Promise<ScaleState> {
+    return this.request(
+      "/api/v2/scale/warnings/acknowledge",
+      ScaleStateSchema,
       { authenticated: true, errorVersion: "v2", method: "POST" },
       options,
     );

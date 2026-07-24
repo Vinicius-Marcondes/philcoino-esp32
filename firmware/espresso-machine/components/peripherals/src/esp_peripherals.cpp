@@ -31,6 +31,8 @@ constexpr char kNvsNamespace[] = "targets";
 constexpr char kTargetsKey[] = "values";
 constexpr char kProfileNvsNamespace[] = "profiles";
 constexpr char kProfilesKey[] = "set";
+constexpr char kScaleNvsNamespace[] = "scale";
+constexpr char kScaleCalibrationKey[] = "calibration";
 constexpr std::array<std::uint8_t, 4> kProfileBlobMagic{'P', 'F', 'P', '2'};
 constexpr std::uint8_t kProfileBlobVersion = 1;
 constexpr std::size_t kStoredProfileSize = 1U + kProfileNameCapacity + 3U;
@@ -188,6 +190,70 @@ bool EspMax6675Transport::read_frame(std::uint16_t& frame) {
   return true;
 }
 
+bool EspHx711Transport::initialize() {
+  gpio_set_level(static_cast<gpio_num_t>(config::kScaleClockGpio), 0);
+  gpio_config_t clock{};
+  clock.pin_bit_mask = 1ULL << config::kScaleClockGpio;
+  clock.mode = GPIO_MODE_OUTPUT;
+  clock.pull_up_en = GPIO_PULLUP_DISABLE;
+  clock.pull_down_en = GPIO_PULLDOWN_DISABLE;
+  clock.intr_type = GPIO_INTR_DISABLE;
+  gpio_config_t data{};
+  data.pin_bit_mask = 1ULL << config::kScaleDataGpio;
+  data.mode = GPIO_MODE_INPUT;
+  data.pull_up_en = GPIO_PULLUP_DISABLE;
+  data.pull_down_en = GPIO_PULLDOWN_DISABLE;
+  data.intr_type = GPIO_INTR_DISABLE;
+  if (gpio_config(&clock) != ESP_OK || gpio_config(&data) != ESP_OK ||
+      gpio_set_level(static_cast<gpio_num_t>(config::kScaleClockGpio), 0) !=
+          ESP_OK) {
+    return false;
+  }
+  initialized_ = true;
+  return true;
+}
+
+Hx711Reading EspHx711Transport::read() {
+  if (!initialized_) {
+    return {Hx711Status::kTransportError, 0};
+  }
+  const auto data_gpio = static_cast<gpio_num_t>(config::kScaleDataGpio);
+  const auto clock_gpio = static_cast<gpio_num_t>(config::kScaleClockGpio);
+  if (gpio_get_level(data_gpio) != 0) {
+    return {Hx711Status::kNotReady, 0};
+  }
+  std::uint32_t raw = 0;
+  for (std::uint32_t bit = 0; bit < 24U; ++bit) {
+    if (gpio_set_level(clock_gpio, 1) != ESP_OK) {
+      gpio_set_level(clock_gpio, 0);
+      return {Hx711Status::kTransportError, 0};
+    }
+    esp_rom_delay_us(1);
+    raw = (raw << 1U) |
+          static_cast<std::uint32_t>(gpio_get_level(data_gpio) != 0);
+    if (gpio_set_level(clock_gpio, 0) != ESP_OK) {
+      return {Hx711Status::kTransportError, 0};
+    }
+    esp_rom_delay_us(1);
+  }
+  // The 25th pulse selects channel A at gain 128 for the next conversion.
+  if (gpio_set_level(clock_gpio, 1) != ESP_OK) {
+    gpio_set_level(clock_gpio, 0);
+    return {Hx711Status::kTransportError, 0};
+  }
+  esp_rom_delay_us(1);
+  if (gpio_set_level(clock_gpio, 0) != ESP_OK) {
+    return {Hx711Status::kTransportError, 0};
+  }
+  if (raw == 0x800000U || raw == 0x7FFFFFU) {
+    return {Hx711Status::kSaturated, 0};
+  }
+  if ((raw & 0x800000U) != 0U) {
+    raw |= 0xFF000000U;
+  }
+  return {Hx711Status::kOk, static_cast<std::int32_t>(raw)};
+}
+
 bool EspNvsTargetBackend::initialize() {
   if (!initialize_nvs_flash()) {
     return false;
@@ -294,6 +360,51 @@ bool EspNvsProfileBackend::save(const ExtractionProfiles& profiles) {
   }
   return nvs_set_blob(handle_, kProfilesKey, stored.data(), stored.size()) ==
              ESP_OK &&
+         nvs_commit(handle_) == ESP_OK;
+}
+
+bool EspNvsScaleCalibrationBackend::initialize() {
+  if (!initialize_nvs_flash()) {
+    return false;
+  }
+  nvs_handle_t handle = 0;
+  if (nvs_open(kScaleNvsNamespace, NVS_READWRITE, &handle) != ESP_OK) {
+    return false;
+  }
+  handle_ = handle;
+  initialized_ = true;
+  return true;
+}
+
+BackendLoadResult EspNvsScaleCalibrationBackend::load(
+    ScaleCalibration& calibration) {
+  if (!initialized_) {
+    return BackendLoadResult::kError;
+  }
+  std::array<std::int32_t, 3> stored{};
+  std::size_t size = sizeof(stored);
+  const auto result =
+      nvs_get_blob(handle_, kScaleCalibrationKey, stored.data(), &size);
+  if (result == ESP_ERR_NVS_NOT_FOUND) {
+    return BackendLoadResult::kNotFound;
+  }
+  if (result != ESP_OK || size != sizeof(stored)) {
+    return BackendLoadResult::kError;
+  }
+  calibration = {stored[0], stored[1], stored[2]};
+  return BackendLoadResult::kOk;
+}
+
+bool EspNvsScaleCalibrationBackend::save(
+    const ScaleCalibration& calibration) {
+  const std::array<std::int32_t, 3> stored{
+      calibration.zero_raw,
+      calibration.reference_raw,
+      calibration.reference_decigrams,
+  };
+  return initialized_ && scale_calibration_is_valid(calibration) &&
+         nvs_set_blob(handle_, kScaleCalibrationKey, stored.data(),
+                      sizeof(stored)) == ESP_OK &&
          nvs_commit(handle_) == ESP_OK;
 }
 

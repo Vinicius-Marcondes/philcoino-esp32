@@ -232,6 +232,92 @@
         }
       }
     },
+    "/api/v2/scale": {
+      "get": {
+        "operationId": "getScaleState",
+        "summary": "Read calibration, live weight, weighted extraction, and warning state",
+        "security": [{ "bearerAuth": [] }],
+        "responses": {
+          "200": {
+            "description": "Current firmware-authoritative scale state.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ScaleState" } } }
+          },
+          "401": { "$ref": "#/components/responses/V2Unauthorized" },
+          "500": { "$ref": "#/components/responses/V2InternalError" }
+        }
+      }
+    },
+    "/api/v2/scale/calibration/start": {
+      "post": {
+        "operationId": "startScaleCalibration",
+        "summary": "Capture the stable unloaded-platform calibration point",
+        "security": [{ "bearerAuth": [] }],
+        "responses": {
+          "200": {
+            "description": "Calibration session started with its zero point captured.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ScaleState" } } }
+          },
+          "401": { "$ref": "#/components/responses/V2Unauthorized" },
+          "409": { "$ref": "#/components/responses/V2Conflict" },
+          "500": { "$ref": "#/components/responses/V2InternalError" }
+        }
+      }
+    },
+    "/api/v2/scale/calibration/complete": {
+      "post": {
+        "operationId": "completeScaleCalibration",
+        "summary": "Persist calibration from a stable reference load",
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/CompleteScaleCalibrationRequest" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Persisted calibrated scale state.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ScaleState" } } }
+          },
+          "400": { "$ref": "#/components/responses/V2BadRequest" },
+          "401": { "$ref": "#/components/responses/V2Unauthorized" },
+          "409": { "$ref": "#/components/responses/V2Conflict" },
+          "500": { "$ref": "#/components/responses/V2InternalError" }
+        }
+      }
+    },
+    "/api/v2/scale/calibration/cancel": {
+      "post": {
+        "operationId": "cancelScaleCalibration",
+        "summary": "Cancel the volatile calibration session",
+        "security": [{ "bearerAuth": [] }],
+        "responses": {
+          "200": {
+            "description": "Current scale state with no calibration session.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ScaleState" } } }
+          },
+          "401": { "$ref": "#/components/responses/V2Unauthorized" },
+          "500": { "$ref": "#/components/responses/V2InternalError" }
+        }
+      }
+    },
+    "/api/v2/scale/warnings/acknowledge": {
+      "post": {
+        "operationId": "acknowledgeScaleWarning",
+        "summary": "Acknowledge the retained weighted-extraction fallback warning",
+        "security": [{ "bearerAuth": [] }],
+        "responses": {
+          "200": {
+            "description": "Scale state after clearing the retained warning.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ScaleState" } } }
+          },
+          "401": { "$ref": "#/components/responses/V2Unauthorized" },
+          "500": { "$ref": "#/components/responses/V2InternalError" }
+        }
+      }
+    },
     "/api/v2/profiles": {
       "get": {
         "operationId": "getExtractionProfiles",
@@ -490,6 +576,14 @@
             "description": "Bearer authentication challenge."
           }
         },
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/ApiV2ErrorResponse" }
+          }
+        }
+      },
+      "V2Conflict": {
+        "description": "The scale or machine cannot apply the valid API v2 command in its current state.",
         "content": {
           "application/json": {
             "schema": { "$ref": "#/components/schemas/ApiV2ErrorResponse" }
@@ -1490,23 +1584,150 @@
           }
         ]
       },
-      "StartExtractionRequest": {
+      "WeightControl": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["idempotencyKey", "selection"],
+        "required": ["targetWeightDecigrams", "compensationDecigrams"],
         "properties": {
-          "idempotencyKey": {
-            "type": "string",
-            "minLength": 16,
-            "maxLength": 64,
-            "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$"
-          },
-          "selection": { "$ref": "#/components/schemas/ExtractionSelection" }
+          "targetWeightDecigrams": { "type": "integer", "minimum": 50, "maximum": 1000 },
+          "compensationDecigrams": { "type": "integer", "minimum": 0, "maximum": 100 }
         },
+        "description": "Tenths-of-a-gram values. Compensation must be lower than target.",
+        "examples": [
+          { "targetWeightDecigrams": 350, "compensationDecigrams": 60 }
+        ]
+      },
+      "ActiveWeightExtraction": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["extractionId", "mode", "targetWeightDecigrams", "compensationDecigrams", "cutoffWeightDecigrams", "netWeightDecigrams"],
+        "properties": {
+          "extractionId": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$" },
+          "mode": { "type": "string", "enum": ["weight", "timer-fallback"] },
+          "targetWeightDecigrams": { "type": "integer", "minimum": 50, "maximum": 1000 },
+          "compensationDecigrams": { "type": "integer", "minimum": 0, "maximum": 100 },
+          "cutoffWeightDecigrams": { "type": "integer", "minimum": 1, "maximum": 1000 },
+          "netWeightDecigrams": { "oneOf": [{ "type": "integer", "minimum": -500, "maximum": 10500 }, { "type": "null" }] }
+        },
+        "examples": [
+          {
+            "extractionId": "sim-run-1",
+            "mode": "weight",
+            "targetWeightDecigrams": 350,
+            "compensationDecigrams": 60,
+            "cutoffWeightDecigrams": 290,
+            "netWeightDecigrams": 120
+          }
+        ]
+      },
+      "TerminalWeightExtraction": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["extractionId", "targetWeightDecigrams", "compensationDecigrams", "cutoffWeightDecigrams", "finalWeightDecigrams", "settled", "completionReason", "fallbackOccurred"],
+        "properties": {
+          "extractionId": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$" },
+          "targetWeightDecigrams": { "type": "integer", "minimum": 50, "maximum": 1000 },
+          "compensationDecigrams": { "type": "integer", "minimum": 0, "maximum": 100 },
+          "cutoffWeightDecigrams": { "type": "integer", "minimum": 1, "maximum": 1000 },
+          "finalWeightDecigrams": { "oneOf": [{ "type": "integer", "minimum": -500, "maximum": 10500 }, { "type": "null" }] },
+          "settled": { "type": "boolean" },
+          "completionReason": { "type": "string", "enum": ["weight-reached", "timer-fallback", "stopped", "safety-cutoff"] },
+          "fallbackOccurred": { "type": "boolean" }
+        },
+        "examples": [
+          {
+            "extractionId": "sim-run-1",
+            "targetWeightDecigrams": 350,
+            "compensationDecigrams": 60,
+            "cutoffWeightDecigrams": 290,
+            "finalWeightDecigrams": 351,
+            "settled": true,
+            "completionReason": "weight-reached",
+            "fallbackOccurred": false
+          }
+        ]
+      },
+      "ScaleState": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["availability", "calibrationStatus", "stable", "grossWeightDecigrams", "netWeightDecigrams", "activeExtraction", "terminalExtraction", "warning"],
+        "properties": {
+          "availability": { "type": "string", "enum": ["unavailable", "unstable", "ready"] },
+          "calibrationStatus": { "type": "string", "enum": ["uncalibrated", "calibrating", "calibrated"] },
+          "stable": { "type": "boolean" },
+          "grossWeightDecigrams": { "oneOf": [{ "type": "integer", "minimum": -500, "maximum": 10500 }, { "type": "null" }] },
+          "netWeightDecigrams": { "oneOf": [{ "type": "integer", "minimum": -500, "maximum": 10500 }, { "type": "null" }] },
+          "activeExtraction": { "oneOf": [{ "$ref": "#/components/schemas/ActiveWeightExtraction" }, { "type": "null" }] },
+          "terminalExtraction": { "oneOf": [{ "$ref": "#/components/schemas/TerminalWeightExtraction" }, { "type": "null" }] },
+          "warning": {
+            "oneOf": [
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["code", "extractionId", "acknowledged"],
+                "properties": {
+                  "code": { "const": "scale_fallback" },
+                  "extractionId": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$" },
+                  "acknowledged": { "const": false }
+                }
+              },
+              { "type": "null" }
+            ]
+          }
+        },
+        "examples": [
+          {
+            "availability": "ready",
+            "calibrationStatus": "calibrated",
+            "stable": true,
+            "grossWeightDecigrams": 800,
+            "netWeightDecigrams": null,
+            "activeExtraction": null,
+            "terminalExtraction": null,
+            "warning": null
+          }
+        ]
+      },
+      "CompleteScaleCalibrationRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["referenceWeightDecigrams"],
+        "properties": {
+          "referenceWeightDecigrams": { "type": "integer", "minimum": 500, "maximum": 5000 }
+        },
+        "examples": [{ "referenceWeightDecigrams": 1000 }]
+      },
+      "StartExtractionRequest": {
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["idempotencyKey", "selection"],
+            "properties": {
+              "idempotencyKey": { "type": "string", "minLength": 16, "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$" },
+              "selection": { "$ref": "#/components/schemas/ExtractionSelection" }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["idempotencyKey", "selection", "weightControl"],
+            "properties": {
+              "idempotencyKey": { "type": "string", "minLength": 16, "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$" },
+              "selection": { "$ref": "#/components/schemas/ProfileExtractionSelection" },
+              "weightControl": { "$ref": "#/components/schemas/WeightControl" }
+            }
+          }
+        ],
         "examples": [
           {
             "idempotencyKey": "start-01J2ABCDEF1234",
             "selection": { "kind": "profile", "profileId": "profile-2" }
+          },
+          {
+            "idempotencyKey": "start-weight-01J2ABCDEF",
+            "selection": { "kind": "profile", "profileId": "profile-1" },
+            "weightControl": { "targetWeightDecigrams": 350, "compensationDecigrams": 60 }
           }
         ]
       },
@@ -1539,6 +1760,11 @@
           "machine_faulted",
           "profile_not_configured",
           "idempotency_mismatch",
+          "scale_not_calibrated",
+          "scale_not_stable",
+          "scale_unavailable",
+          "scale_warning_unacknowledged",
+          "calibration_in_progress",
           "persistence_failure",
           "internal_error"
         ]

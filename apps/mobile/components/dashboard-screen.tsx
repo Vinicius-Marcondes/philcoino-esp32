@@ -1,8 +1,11 @@
 import type {
   CompensationState,
   ExtractionSelection,
+  ExtractionState,
   MachineState,
   MachineStateV2,
+  ProfileSlotId,
+  WeightControl,
 } from "@philcoino/protocol";
 import {
   Fragment,
@@ -26,6 +29,7 @@ import {
   StyleSheet,
   Switch,
   Text,
+  TextInput,
   useWindowDimensions,
   View,
 } from "react-native";
@@ -47,6 +51,7 @@ import { useMachineDashboard } from "@/hooks/use-machine-dashboard";
 import { useDisplayPreferences } from "@/hooks/use-display-preferences";
 import { useLandscapeDirection } from "@/hooks/use-landscape-direction";
 import { useTemperatureHistory } from "@/hooks/use-temperature-history";
+import { useScale } from "@/hooks/use-scale";
 import { PairedKeepAwake } from "@/components/paired-keep-awake";
 import {
   boilerTargetC,
@@ -233,9 +238,17 @@ export function DashboardScreen({
     historyExporter,
     client,
   );
-  const clearTemperatureHistory = temperatureHistory.clear;
   const [dashboardPage, setDashboardPage] =
     useState<DashboardPage>("dashboard");
+  const scale = useScale({
+    client,
+    deviceId: selectedDevice.deviceId,
+    extraction,
+    fastPolling:
+      dashboardPage === "scale" ||
+      scaleStateIsWeighted(extractionStartMutation, extraction),
+  });
+  const clearTemperatureHistory = temperatureHistory.clear;
   const dashboardScrollView = useRef<ScrollView>(null);
   const dashboardContentHeight = useRef(0);
   const dashboardViewportHeight = useRef(0);
@@ -245,6 +258,7 @@ export function DashboardScreen({
     dashboard: 0,
     machine: 0,
     profiles: 0,
+    scale: 0,
   });
   const pendingScrollRestore = useRef<{
     offset: number;
@@ -252,6 +266,29 @@ export function DashboardScreen({
   } | null>(null);
   const [selectedExtraction, setSelectedExtraction] =
     useState<ExtractionSelection>({ kind: "manual" });
+  const [brewControlMode, setBrewControlMode] =
+    useState<"timed" | "weight">("timed");
+  const previousExtractionStatus = useRef(extraction?.status ?? "idle");
+  const selectedProfileId =
+    selectedExtraction.kind === "profile"
+      ? selectedExtraction.profileId
+      : "profile-1";
+  const [shotWeightControl, setShotWeightControl] = useState<WeightControl>({
+    targetWeightDecigrams: 350,
+    compensationDecigrams: 10,
+  });
+  useEffect(() => {
+    setShotWeightControl({ ...scale.defaults[selectedProfileId] });
+    setBrewControlMode("timed");
+  }, [scale.defaults, selectedProfileId]);
+  useEffect(() => {
+    const previous = previousExtractionStatus.current;
+    const current = extraction?.status ?? "idle";
+    if (previous === "running" && current === "idle") {
+      setBrewControlMode("timed");
+    }
+    previousExtractionStatus.current = current;
+  }, [extraction?.status]);
   const [localProfileMutation, setLocalProfileMutation] =
     useState<DashboardMutationState>(idleMutationState);
   const localProfileSaveGeneration = useRef(0);
@@ -378,7 +415,12 @@ export function DashboardScreen({
         extractionUiState.extraction.status === "idle" &&
         next.extraction.status === "running"
       ) {
-        startExtraction(next.selected);
+        startExtraction(
+          next.selected,
+          brewControlMode === "weight" && next.selected.kind === "profile"
+            ? shotWeightControl
+            : undefined,
+        );
       } else if (
         extractionUiState.extraction.status === "running" &&
         next.extraction.status === "idle"
@@ -390,7 +432,9 @@ export function DashboardScreen({
       exportProfiles,
       extractionUiState,
       freshness,
+      brewControlMode,
       saveMobileProfiles,
+      shotWeightControl,
       startExtraction,
       stopExtraction,
     ],
@@ -592,6 +636,43 @@ export function DashboardScreen({
               state={cooldownStopMutation}
               visibility="errors-only"
             />
+            {selectedExtraction.kind === "profile" ? (
+              <WeightModeCard
+                disabled={
+                  freshness !== "live" ||
+                  extraction?.status === "running" ||
+                  extractionStartMutation.status === "pending"
+                }
+                mode={brewControlMode}
+                onModeChange={setBrewControlMode}
+                onWeightChange={setShotWeightControl}
+                scale={scale.scale}
+                startPending={extractionStartMutation.status === "pending"}
+                value={shotWeightControl}
+              />
+            ) : null}
+            {scale.scale?.warning !== null && scale.scale?.warning !== undefined ? (
+              <View style={styles.scaleWarningCard}>
+                <Text selectable style={styles.unavailableTitle}>
+                  {translate("scale.fallbackTitle")}
+                </Text>
+                <Text selectable style={styles.unavailableText}>
+                  {translate("scale.fallbackDetail")}
+                </Text>
+                <Pressable
+                  accessibilityRole="button"
+                  disabled={scale.mutation !== null}
+                  onPress={() => void scale.acknowledgeWarning()}
+                  style={({ pressed }) => [
+                    styles.exportButton,
+                    pressed && styles.pressed,
+                  ]}>
+                  <Text style={styles.exportButtonText}>
+                    {translate("scale.acknowledge")}
+                  </Text>
+                </Pressable>
+              </View>
+            ) : null}
 
             {connection.status === "online" && snapshot !== null ? (
               <>
@@ -968,6 +1049,14 @@ export function DashboardScreen({
             </View>
           </>
         ) : null}
+
+        {dashboardPage === "scale" ? (
+          <ScalePage
+            profileId={selectedProfileId}
+            referenceDefaults={scale.defaults[selectedProfileId]}
+            scale={scale}
+          />
+        ) : null}
         </ScrollView>
       </Animated.View>
 
@@ -1033,10 +1122,356 @@ export function DashboardScreen({
               label={translate("dashboard.navigation.machine.tab")}
               onPress={() => openDashboardPage("machine")}
             />
+            <DashboardTab
+              active={dashboardPage === "scale"}
+              landscape={landscape}
+              label={translate("dashboard.navigation.scale.tab")}
+              onPress={() => openDashboardPage("scale")}
+            />
           </View>
         </View>
     </View>
   );
+}
+
+function scaleStateIsWeighted(
+  mutation: DashboardMutationState,
+  extraction: ExtractionState | null,
+): boolean {
+  return mutation.status === "pending" || extraction?.status === "running";
+}
+
+function WeightModeCard({
+  disabled,
+  mode,
+  onModeChange,
+  onWeightChange,
+  scale,
+  startPending,
+  value,
+}: {
+  disabled: boolean;
+  mode: "timed" | "weight";
+  onModeChange: (mode: "timed" | "weight") => void;
+  onWeightChange: (value: WeightControl) => void;
+  scale: ReturnType<typeof useScale>["scale"];
+  startPending: boolean;
+  value: WeightControl;
+}) {
+  return (
+    <View style={styles.contextCard}>
+      <Text selectable style={styles.cardLabel}>
+        {translate("scale.brewControl")}
+      </Text>
+      <View style={styles.scaleModeRow}>
+        {(["timed", "weight"] as const).map((option) => (
+          <Pressable
+            accessibilityRole="radio"
+            accessibilityState={{ checked: mode === option, disabled }}
+            disabled={disabled}
+            key={option}
+            onPress={() => onModeChange(option)}
+            style={[
+              styles.scaleModeButton,
+              mode === option && styles.scaleModeButtonActive,
+            ]}>
+            <Text style={styles.scaleModeButtonText}>
+              {translate(`scale.mode.${option}`)}
+            </Text>
+          </Pressable>
+        ))}
+      </View>
+      {mode === "weight" ? (
+        <>
+          <Text selectable style={styles.contextText}>
+            {translate("scale.placeCup")}
+          </Text>
+          <WeightControlEditor
+            disabled={disabled}
+            onChange={onWeightChange}
+            value={value}
+          />
+          <Text selectable style={styles.contextText}>
+            {translate("scale.cutoff", {
+              weight: formatDecigrams(
+                value.targetWeightDecigrams - value.compensationDecigrams,
+              ),
+            })}
+          </Text>
+          <Text
+            accessibilityLiveRegion="polite"
+            selectable
+            style={styles.scaleLiveWeight}>
+            {startPending
+              ? translate("mutation.weightedExtractionStartPending")
+              : translate("scale.liveWeight", {
+                  weight: formatNullableDecigrams(scale?.netWeightDecigrams),
+                })}
+          </Text>
+        </>
+      ) : null}
+    </View>
+  );
+}
+
+function WeightControlEditor({
+  disabled,
+  onChange,
+  value,
+}: {
+  disabled: boolean;
+  onChange: (value: WeightControl) => void;
+  value: WeightControl;
+}) {
+  return (
+    <View style={styles.scaleEditorRow}>
+      <ScaleNumberInput
+        disabled={disabled}
+        label={translate("scale.target")}
+        maximum={1000}
+        minimum={50}
+        onChange={(targetWeightDecigrams) =>
+          onChange({ ...value, targetWeightDecigrams })
+        }
+        value={value.targetWeightDecigrams}
+      />
+      <ScaleNumberInput
+        disabled={disabled}
+        label={translate("scale.compensation")}
+        maximum={Math.min(100, value.targetWeightDecigrams - 1)}
+        minimum={0}
+        onChange={(compensationDecigrams) =>
+          onChange({ ...value, compensationDecigrams })
+        }
+        value={value.compensationDecigrams}
+      />
+    </View>
+  );
+}
+
+function ScaleNumberInput({
+  disabled,
+  label,
+  maximum,
+  minimum,
+  onChange,
+  value,
+}: {
+  disabled: boolean;
+  label: string;
+  maximum: number;
+  minimum: number;
+  onChange: (value: number) => void;
+  value: number;
+}) {
+  return (
+    <View style={styles.scaleInputGroup}>
+      <Text selectable style={styles.cardLabel}>{label}</Text>
+      <TextInput
+        accessibilityLabel={label}
+        editable={!disabled}
+        inputMode="decimal"
+        onChangeText={(text) => {
+          const parsed = Number(text.replace(",", "."));
+          if (Number.isFinite(parsed)) {
+            onChange(Math.max(minimum, Math.min(maximum, Math.round(parsed * 10))));
+          }
+        }}
+        selectTextOnFocus
+        style={styles.scaleInput}
+        value={formatDecigrams(value)}
+      />
+    </View>
+  );
+}
+
+function ScalePage({
+  profileId,
+  referenceDefaults,
+  scale,
+}: {
+  profileId: ProfileSlotId;
+  referenceDefaults: WeightControl;
+  scale: ReturnType<typeof useScale>;
+}) {
+  const [reference, setReference] = useState("100.0");
+  const [defaults, setDefaults] = useState(referenceDefaults);
+  useEffect(() => setDefaults(referenceDefaults), [referenceDefaults]);
+  const state = scale.scale;
+  const busy = scale.mutation !== null;
+  return (
+    <View style={styles.machineLayout}>
+      <View style={styles.machineLayoutColumn}>
+        <View style={styles.contextCard}>
+          <Text selectable style={styles.cardLabel}>
+            {translate("scale.diagnostics")}
+          </Text>
+          <Text selectable style={styles.contextTitle}>
+            {translate("scale.status", {
+              status: state?.availability ?? "unavailable",
+            })}
+          </Text>
+          <Text selectable style={styles.contextText}>
+            {translate("scale.calibrationStatus", {
+              status: state?.calibrationStatus ?? "uncalibrated",
+            })}
+          </Text>
+          <Text selectable style={styles.scaleLiveWeight}>
+            {translate("scale.grossWeight", {
+              weight: formatNullableDecigrams(state?.grossWeightDecigrams),
+            })}
+          </Text>
+          {scale.error !== null ? (
+            <Text selectable style={styles.historyError}>{scale.error}</Text>
+          ) : null}
+        </View>
+
+        <View style={styles.contextCard}>
+          <Text selectable style={styles.cardLabel}>
+            {translate("scale.calibration")}
+          </Text>
+          <Text selectable style={styles.contextText}>
+            {state?.calibrationStatus === "calibrating"
+              ? translate("scale.placeReference")
+              : translate("scale.emptyPlatform")}
+          </Text>
+          {state?.calibrationStatus === "calibrating" ? (
+            <TextInput
+              accessibilityLabel={translate("scale.referenceWeight")}
+              editable={!busy}
+              inputMode="decimal"
+              onChangeText={setReference}
+              style={styles.scaleInput}
+              value={reference}
+            />
+          ) : null}
+          <View style={styles.scaleModeRow}>
+            {state?.calibrationStatus === "calibrating" ? (
+              <>
+                <Pressable
+                  disabled={busy}
+                  onPress={() =>
+                    void scale.completeCalibration(
+                      Math.round(Number(reference.replace(",", ".")) * 10),
+                    )
+                  }
+                  style={styles.exportButton}>
+                  <Text style={styles.exportButtonText}>
+                    {translate("scale.completeCalibration")}
+                  </Text>
+                </Pressable>
+                <Pressable
+                  disabled={busy}
+                  onPress={() => void scale.cancelCalibration()}
+                  style={styles.scaleModeButton}>
+                  <Text style={styles.scaleModeButtonText}>
+                    {translate("scale.cancel")}
+                  </Text>
+                </Pressable>
+              </>
+            ) : (
+              <Pressable
+                disabled={busy}
+                onPress={() => void scale.startCalibration()}
+                style={styles.exportButton}>
+                <Text style={styles.exportButtonText}>
+                  {translate("scale.startCalibration")}
+                </Text>
+              </Pressable>
+            )}
+          </View>
+        </View>
+
+        <View style={styles.contextCard}>
+          <Text selectable style={styles.cardLabel}>
+            {translate("scale.profileDefaults", { profile: profileId })}
+          </Text>
+          <WeightControlEditor
+            disabled={busy}
+            onChange={setDefaults}
+            value={defaults}
+          />
+          <Pressable
+            disabled={busy}
+            onPress={() => void scale.saveDefault(profileId, defaults)}
+            style={styles.exportButton}>
+            <Text style={styles.exportButtonText}>
+              {translate("scale.saveDefaults")}
+            </Text>
+          </Pressable>
+        </View>
+      </View>
+
+      <View style={styles.machineLayoutColumn}>
+        <View style={styles.contextCard}>
+          <Text selectable style={styles.cardLabel}>
+            {translate("scale.history")}
+          </Text>
+          {scale.history.slice(0, 20).map((shot) => (
+            <View key={shot.extractionId} style={styles.scaleHistoryRow}>
+              <Text selectable style={styles.contextTitle}>
+                {formatNullableDecigrams(shot.finalWeightDecigrams)} · {shot.profileId}
+              </Text>
+              <Text selectable style={styles.contextText}>
+                {new Date(shot.recordedAtMs).toLocaleString()} · {shot.outcome}
+              </Text>
+            </View>
+          ))}
+          {scale.history.length === 0 ? (
+            <Text selectable style={styles.contextText}>
+              {translate("scale.noHistory")}
+            </Text>
+          ) : null}
+          <View style={styles.scaleModeRow}>
+            <Pressable
+              disabled={scale.history.length === 0}
+              onPress={() => void scale.exportHistory()}
+              style={styles.exportButton}>
+              <Text style={styles.exportButtonText}>
+                {translate("scale.exportCsv")}
+              </Text>
+            </Pressable>
+            <Pressable
+              disabled={scale.history.length === 0}
+              onPress={() =>
+                Alert.alert(
+                  translate("scale.clearHistory"),
+                  translate("scale.clearHistoryConfirm"),
+                  [
+                    { text: translate("scale.cancel"), style: "cancel" },
+                    {
+                      text: translate("scale.clear"),
+                      style: "destructive",
+                      onPress: () => void scale.clearHistory(),
+                    },
+                  ],
+                )
+              }
+              style={styles.scaleModeButton}>
+              <Text style={styles.scaleModeButtonText}>
+                {translate("scale.clearHistory")}
+              </Text>
+            </Pressable>
+          </View>
+          {scale.historyError !== null ? (
+            <Text selectable style={styles.historyError}>
+              {scale.historyError}
+            </Text>
+          ) : null}
+        </View>
+      </View>
+    </View>
+  );
+}
+
+function formatDecigrams(value: number): string {
+  return (value / 10).toFixed(1);
+}
+
+function formatNullableDecigrams(value: number | null | undefined): string {
+  return value === null || value === undefined
+    ? "—"
+    : `${formatDecigrams(value)} g`;
 }
 
 function ProfileLoadingCard({
@@ -2541,6 +2976,57 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     gap: 8,
     padding: 17,
+  },
+  scaleWarningCard: {
+    backgroundColor: "#FFF0D8",
+    borderColor: "#C66A24",
+    borderRadius: 18,
+    borderWidth: 2,
+    gap: 8,
+    padding: 17,
+  },
+  scaleModeRow: {
+    alignItems: "center",
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  scaleModeButton: {
+    alignItems: "center",
+    borderColor: "#8B3A2B",
+    borderRadius: 999,
+    borderWidth: 1,
+    justifyContent: "center",
+    minHeight: 42,
+    paddingHorizontal: 15,
+  },
+  scaleModeButtonActive: { backgroundColor: "#8B3A2B" },
+  scaleModeButtonText: { color: "#5D2D22", fontSize: 14, fontWeight: "800" },
+  scaleEditorRow: { flexDirection: "row", flexWrap: "wrap", gap: 12 },
+  scaleInputGroup: { flex: 1, gap: 5, minWidth: 130 },
+  scaleInput: {
+    backgroundColor: "#F4F0E8",
+    borderColor: "#CDBFB2",
+    borderRadius: 12,
+    borderWidth: 1,
+    color: "#241B17",
+    fontSize: 20,
+    fontVariant: ["tabular-nums"],
+    fontWeight: "700",
+    minHeight: 46,
+    paddingHorizontal: 12,
+  },
+  scaleLiveWeight: {
+    color: "#2D7547",
+    fontSize: 20,
+    fontVariant: ["tabular-nums"],
+    fontWeight: "800",
+  },
+  scaleHistoryRow: {
+    borderBottomColor: "#E5DBD0",
+    borderBottomWidth: 1,
+    gap: 2,
+    paddingVertical: 9,
   },
   displayPreferenceRow: {
     alignItems: "center",

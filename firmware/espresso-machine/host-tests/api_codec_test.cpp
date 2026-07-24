@@ -109,6 +109,28 @@ void test_workflow_codecs() {
       "{\"idempotencyKey\":\"abcdefghijklmnop\",\"selection\":{\"kind\":\"manual\",\"extra\":true}}",
       key, selection));
 
+  WeightControl weight_control{};
+  bool weighted = false;
+  assert(parse_start(
+      "{\"idempotencyKey\":\"weighted-shot-1\",\"selection\":{\"kind\":\"profile\",\"profileId\":\"profile-2\"},\"weightControl\":{\"targetWeightDecigrams\":350,\"compensationDecigrams\":20}}",
+      key, selection, weight_control, weighted));
+  assert(weighted && selection.profile_index == 1U &&
+         weight_control.target_decigrams == 350 &&
+         weight_control.compensation_decigrams == 20);
+  assert(!parse_start(
+      "{\"idempotencyKey\":\"weighted-manual\",\"selection\":{\"kind\":\"manual\"},\"weightControl\":{\"targetWeightDecigrams\":350,\"compensationDecigrams\":20}}",
+      key, selection, weight_control, weighted));
+  assert(!parse_start(
+      "{\"idempotencyKey\":\"weighted-invalid\",\"selection\":{\"kind\":\"profile\",\"profileId\":\"profile-2\"},\"weightControl\":{\"targetWeightDecigrams\":100,\"compensationDecigrams\":100}}",
+      key, selection, weight_control, weighted));
+
+  std::int32_t reference_decigrams = 0;
+  assert(parse_scale_calibration_complete(
+      "{\"referenceWeightDecigrams\":1000}", reference_decigrams));
+  assert(reference_decigrams == 1000);
+  assert(!parse_scale_calibration_complete(
+      "{\"referenceWeightDecigrams\":499}", reference_decigrams));
+
   key = "unchanged";
   selection = {ExtractionSelectionKind::kProfile, 2U};
   assert(!parse_start(
@@ -134,7 +156,7 @@ void test_workflow_codecs() {
 }
 
 void test_authoritative_route_matrix() {
-  assert(kApiRoutes.size() == 15U);
+  assert(kApiRoutes.size() == 20U);
   std::size_t protected_count = 0;
   for (std::size_t index = 0; index < kApiRoutes.size(); ++index) {
     const auto& route = kApiRoutes[index];
@@ -145,10 +167,11 @@ void test_authoritative_route_matrix() {
              std::string(route.path) != kApiRoutes[other].path);
     }
   }
-  assert(protected_count == 13U);
+  assert(protected_count == 18U);
   assert(!request_requires_auth(HttpMethod::kGet, "/healthz"));
   assert(request_requires_auth(HttpMethod::kPost,
                                "/api/v2/cooldowns/stop"));
+  assert(request_requires_auth(HttpMethod::kGet, "/api/v2/scale"));
   assert(find_api_route(HttpMethod::kPost, "/healthz") == nullptr);
   assert(find_api_route(HttpMethod::kGet, "/unknown") == nullptr);
 }

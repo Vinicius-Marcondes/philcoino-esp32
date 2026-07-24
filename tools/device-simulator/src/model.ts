@@ -17,6 +17,7 @@ import {
   MachineStateV2Schema,
   ProfileSetSchema,
   RunningExtractionStateSchema,
+  ScaleStateSchema,
   STEAM_TARGET_MAX_C,
   STEAM_TARGET_MIN_C,
   STEAM_TIMEOUT_MS,
@@ -45,7 +46,9 @@ import {
   type ExtractionState,
   type ProfileSet,
   type RunningExtractionState,
+  type ScaleState,
   type TerminalExtractionState,
+  type WeightControl,
 } from "@philcoino/protocol";
 
 const AMBIENT_TEMPERATURE_C = 24;
@@ -57,6 +60,8 @@ const MAX_SIMULATION_STEP_MS = 100;
 const BREW_OVER_TEMPERATURE_C = 98;
 const STEAM_OVER_TEMPERATURE_C = 130;
 const MANUAL_EXTRACTION_CUTOFF_MS = 60_000;
+const WEIGHT_EXTRACTION_CUTOFF_MS = 60_000;
+const SCALE_SETTLING_TIMEOUT_MS = 10_000;
 
 const DEFAULT_PROFILE_SET: ProfileSet = ProfileSetSchema.parse({
   profiles: [
@@ -127,7 +132,11 @@ export type StartExtractionResult =
       reason:
         | "brew-mode-required"
         | "profile-not-configured"
-        | "idempotency-mismatch";
+        | "idempotency-mismatch"
+        | "scale-not-calibrated"
+        | "scale-not-stable"
+        | "scale-unavailable"
+        | "scale-warning-unacknowledged";
     };
 
 export type StartCooldownResult =
@@ -166,6 +175,9 @@ interface ActiveExtraction {
   idempotencyKey: string;
   profile: ExtractionProfile | null;
   selection: ExtractionSelection;
+  tareWeightDecigrams: number | null;
+  weightControl: WeightControl | null;
+  weightFallback: boolean;
 }
 
 interface TerminalExtraction {
@@ -174,6 +186,22 @@ interface TerminalExtraction {
   idempotencyKey: string;
   outcome: ExtractionOutcome;
   selection: ExtractionSelection;
+}
+
+interface TerminalWeightRecord {
+  compensationDecigrams: number;
+  completionReason:
+    | "weight-reached"
+    | "timer-fallback"
+    | "stopped"
+    | "safety-cutoff";
+  cutoffWeightDecigrams: number;
+  extractionId: string;
+  fallbackOccurred: boolean;
+  finalWeightDecigrams: number | null;
+  settled: boolean;
+  settlingElapsedMs: number;
+  targetWeightDecigrams: number;
 }
 
 interface CooldownRecord {
@@ -208,6 +236,13 @@ export class SimulatorMachine {
   private profiles = cloneProfileSet(DEFAULT_PROFILE_SET);
   private activeExtraction: ActiveExtraction | null = null;
   private terminalExtraction: TerminalExtraction | null = null;
+  private scaleCalibrated = false;
+  private scaleCalibrationInProgress = false;
+  private scaleAvailable = true;
+  private scaleStable = true;
+  private scaleWeightDecigrams = 0;
+  private terminalWeight: TerminalWeightRecord | null = null;
+  private scaleWarningExtractionId: string | null = null;
   private extractionCounter = 0;
   private cooldown: CooldownRecord | null = null;
   private cooldownCounter = 0;
@@ -328,6 +363,124 @@ export class SimulatorMachine {
     return cloneProfileSet(this.profiles);
   }
 
+  getScaleState(): ScaleState {
+    const active = this.activeExtraction;
+    const weighted =
+      active !== null &&
+      active.weightControl !== null &&
+      active.tareWeightDecigrams !== null;
+    const netWeight =
+      weighted && this.scaleAvailable
+        ? this.scaleWeightDecigrams - active.tareWeightDecigrams!
+        : null;
+    return ScaleStateSchema.parse({
+      availability: !this.scaleAvailable
+        ? "unavailable"
+        : this.scaleStable
+          ? "ready"
+          : "unstable",
+      calibrationStatus: this.scaleCalibrationInProgress
+        ? "calibrating"
+        : this.scaleCalibrated
+          ? "calibrated"
+          : "uncalibrated",
+      stable: this.scaleAvailable && this.scaleStable,
+      grossWeightDecigrams: this.scaleCalibrated && this.scaleAvailable
+        ? this.scaleWeightDecigrams
+        : null,
+      netWeightDecigrams: netWeight,
+      activeExtraction:
+        weighted
+          ? {
+              extractionId: active.extractionId,
+              mode: active.weightFallback ? "timer-fallback" : "weight",
+              targetWeightDecigrams:
+                active.weightControl!.targetWeightDecigrams,
+              compensationDecigrams:
+                active.weightControl!.compensationDecigrams,
+              cutoffWeightDecigrams: weightCutoff(active.weightControl!),
+              netWeightDecigrams: netWeight,
+            }
+          : null,
+      terminalExtraction:
+        this.terminalWeight === null
+          ? null
+          : {
+              extractionId: this.terminalWeight.extractionId,
+              targetWeightDecigrams:
+                this.terminalWeight.targetWeightDecigrams,
+              compensationDecigrams:
+                this.terminalWeight.compensationDecigrams,
+              cutoffWeightDecigrams:
+                this.terminalWeight.cutoffWeightDecigrams,
+              finalWeightDecigrams:
+                this.terminalWeight.finalWeightDecigrams,
+              settled: this.terminalWeight.settled,
+              completionReason: this.terminalWeight.completionReason,
+              fallbackOccurred: this.terminalWeight.fallbackOccurred,
+            },
+      warning:
+        this.scaleWarningExtractionId === null
+          ? null
+          : {
+              code: "scale_fallback",
+              extractionId: this.scaleWarningExtractionId,
+              acknowledged: false,
+            },
+    });
+  }
+
+  startScaleCalibration(): "ok" | "active" | "unavailable" | "unstable" {
+    if (this.hasActiveWorkflow()) {
+      return "active";
+    }
+    if (!this.scaleAvailable) {
+      return "unavailable";
+    }
+    if (!this.scaleStable) {
+      return "unstable";
+    }
+    this.scaleCalibrationInProgress = true;
+    return "ok";
+  }
+
+  completeScaleCalibration(
+    _referenceWeightDecigrams: number,
+  ): "ok" | "not-started" | "unavailable" | "unstable" | "persistence" {
+    if (!this.scaleCalibrationInProgress) {
+      return "not-started";
+    }
+    if (!this.scaleAvailable) {
+      return "unavailable";
+    }
+    if (!this.scaleStable) {
+      return "unstable";
+    }
+    this.scaleCalibrated = true;
+    this.scaleCalibrationInProgress = false;
+    return "ok";
+  }
+
+  cancelScaleCalibration(): void {
+    this.scaleCalibrationInProgress = false;
+  }
+
+  acknowledgeScaleWarning(): void {
+    this.scaleWarningExtractionId = null;
+  }
+
+  setScaleState(options: {
+    available?: boolean;
+    stable?: boolean;
+    weightDecigrams?: number;
+  }): void {
+    this.scaleAvailable = options.available ?? this.scaleAvailable;
+    this.scaleStable = options.stable ?? this.scaleStable;
+    this.scaleWeightDecigrams =
+      options.weightDecigrams ?? this.scaleWeightDecigrams;
+    this.evaluateWeightedExtraction();
+  }
+
   replaceProfiles(profiles: ProfileSet): ReplaceProfilesResult {
     const extraction = this.getExtractionState();
     if (extraction.status === "running") {
@@ -361,11 +514,17 @@ export class SimulatorMachine {
   startExtraction(
     idempotencyKey: string,
     selection: ExtractionSelection,
+    weightControl: WeightControl | null = null,
   ): StartExtractionResult {
     const current = this.getExtractionState();
     if (current.status === "running") {
       if (this.activeExtraction?.idempotencyKey === idempotencyKey) {
-        return sameSelection(this.activeExtraction.selection, selection)
+        return sameStart(
+          this.activeExtraction.selection,
+          this.activeExtraction.weightControl,
+          selection,
+          weightControl,
+        )
           ? { ok: true, extraction: current }
           : { ok: false, reason: "idempotency-mismatch" };
       }
@@ -376,7 +535,19 @@ export class SimulatorMachine {
       };
     }
     if (this.terminalExtraction?.idempotencyKey === idempotencyKey) {
-      return sameSelection(this.terminalExtraction.selection, selection)
+      return sameStart(
+        this.terminalExtraction.selection,
+        this.terminalWeight === null
+          ? null
+          : {
+              targetWeightDecigrams:
+                this.terminalWeight.targetWeightDecigrams,
+              compensationDecigrams:
+                this.terminalWeight.compensationDecigrams,
+            },
+        selection,
+        weightControl,
+      )
         ? { ok: true, extraction: current as TerminalExtractionState }
         : { ok: false, reason: "idempotency-mismatch" };
     }
@@ -402,15 +573,36 @@ export class SimulatorMachine {
     if (selection.kind === "profile" && profile === null) {
       return { ok: false, reason: "profile-not-configured" };
     }
+    if (weightControl !== null) {
+      if (this.scaleWarningExtractionId !== null) {
+        return { ok: false, reason: "scale-warning-unacknowledged" };
+      }
+      if (!this.scaleCalibrated) {
+        return { ok: false, reason: "scale-not-calibrated" };
+      }
+      if (!this.scaleAvailable) {
+        return { ok: false, reason: "scale-unavailable" };
+      }
+      if (!this.scaleStable) {
+        return { ok: false, reason: "scale-not-stable" };
+      }
+    }
 
     this.extractionCounter += 1;
     this.terminalExtraction = null;
+    if (weightControl !== null) {
+      this.terminalWeight = null;
+    }
     this.activeExtraction = {
       elapsedMs: 0,
       extractionId: `sim-run-${this.extractionCounter}`,
       idempotencyKey,
       profile: profile === null ? null : { ...profile },
       selection,
+      tareWeightDecigrams:
+        weightControl === null ? null : this.scaleWeightDecigrams,
+      weightControl,
+      weightFallback: false,
     };
     return {
       ok: true,
@@ -420,6 +612,10 @@ export class SimulatorMachine {
 
   stopExtraction(): ExtractionState {
     if (this.activeExtraction !== null) {
+      if (this.activeExtraction.weightControl !== null) {
+        this.finishWeightedExtraction("stopped");
+        return this.getExtractionState();
+      }
       this.terminalExtraction = {
         elapsedMs: this.activeExtraction.elapsedMs,
         extractionId: this.activeExtraction.extractionId,
@@ -491,7 +687,10 @@ export class SimulatorMachine {
       selection: active.selection,
       phase,
       elapsedMs: active.elapsedMs,
-      remainingMs: totalMs - active.elapsedMs,
+      remainingMs:
+        active.weightControl === null || active.weightFallback
+          ? Math.max(0, totalMs - active.elapsedMs)
+          : WEIGHT_EXTRACTION_CUTOFF_MS - active.elapsedMs,
       pumpCommand: phase === "soak" ? "off" : "running",
     });
   }
@@ -760,6 +959,7 @@ export class SimulatorMachine {
     this.brewTargetC = this.initialBrewTargetC;
     this.steamTargetC = this.initialSteamTargetC;
     this.profiles = cloneProfileSet(DEFAULT_PROFILE_SET);
+    this.scaleCalibrated = false;
     this.failNextProfileSave = false;
     this.failNextOutputCommands.clear();
     this.resetVolatileState();
@@ -783,6 +983,7 @@ export class SimulatorMachine {
 
     this.uptimeMs += milliseconds;
     this.advanceExtraction(milliseconds);
+    this.advanceScaleSettling(milliseconds);
     this.advanceCooldown(milliseconds);
 
     if (!this.fault && this.isActiveTemperatureReady()) {
@@ -847,12 +1048,27 @@ export class SimulatorMachine {
     if (this.activeExtraction === null) {
       return;
     }
-    const durationMs =
-      this.activeExtraction.selection.kind === "manual"
-        ? MANUAL_EXTRACTION_CUTOFF_MS
+    this.evaluateWeightedExtraction();
+    if (this.activeExtraction === null) {
+      return;
+    }
+    const weighted = this.activeExtraction.weightControl !== null;
+    const durationMs = this.activeExtraction.selection.kind === "manual"
+      ? MANUAL_EXTRACTION_CUTOFF_MS
+      : weighted && !this.activeExtraction.weightFallback
+        ? WEIGHT_EXTRACTION_CUTOFF_MS
         : profileDurationMs(this.activeExtraction.profile);
     const nextElapsedMs = this.activeExtraction.elapsedMs + milliseconds;
     if (nextElapsedMs >= durationMs) {
+      if (weighted) {
+        this.finishWeightedExtraction(
+          this.activeExtraction.weightFallback
+            ? "timer-fallback"
+            : "safety-cutoff",
+          durationMs,
+        );
+        return;
+      }
       this.terminalExtraction = {
         elapsedMs: durationMs,
         extractionId: this.activeExtraction.extractionId,
@@ -864,6 +1080,83 @@ export class SimulatorMachine {
       return;
     }
     this.activeExtraction.elapsedMs = nextElapsedMs;
+    this.evaluateWeightedExtraction();
+  }
+
+  private evaluateWeightedExtraction(): void {
+    const active = this.activeExtraction;
+    if (active?.weightControl === null || active === null) {
+      return;
+    }
+    if (!this.scaleAvailable) {
+      active.weightFallback = true;
+      this.scaleWarningExtractionId = active.extractionId;
+      if (active.elapsedMs >= profileDurationMs(active.profile)) {
+        this.finishWeightedExtraction(
+          "timer-fallback",
+          profileDurationMs(active.profile),
+        );
+      }
+      return;
+    }
+    if (active.weightFallback || active.tareWeightDecigrams === null) {
+      return;
+    }
+    const netWeight =
+      this.scaleWeightDecigrams - active.tareWeightDecigrams;
+    if (netWeight >= weightCutoff(active.weightControl)) {
+      this.finishWeightedExtraction("weight-reached");
+    }
+  }
+
+  private finishWeightedExtraction(
+    completionReason: TerminalWeightRecord["completionReason"],
+    elapsedMs?: number,
+  ): void {
+    const active = this.activeExtraction;
+    if (active?.weightControl === null || active === null) {
+      return;
+    }
+    const measured =
+      this.scaleAvailable && active.tareWeightDecigrams !== null
+        ? this.scaleWeightDecigrams - active.tareWeightDecigrams
+        : null;
+    this.terminalExtraction = {
+      elapsedMs: elapsedMs ?? active.elapsedMs,
+      extractionId: active.extractionId,
+      idempotencyKey: active.idempotencyKey,
+      outcome: completionReason === "stopped" ? "stopped" : "completed",
+      selection: active.selection,
+    };
+    this.terminalWeight = {
+      compensationDecigrams: active.weightControl.compensationDecigrams,
+      completionReason,
+      cutoffWeightDecigrams: weightCutoff(active.weightControl),
+      extractionId: active.extractionId,
+      fallbackOccurred: active.weightFallback,
+      finalWeightDecigrams: measured,
+      settled: this.scaleAvailable && this.scaleStable,
+      settlingElapsedMs: 0,
+      targetWeightDecigrams: active.weightControl.targetWeightDecigrams,
+    };
+    this.activeExtraction = null;
+  }
+
+  private advanceScaleSettling(milliseconds: number): void {
+    const terminal = this.terminalWeight;
+    if (terminal === null || terminal.settled) {
+      return;
+    }
+    terminal.settlingElapsedMs = Math.min(
+      SCALE_SETTLING_TIMEOUT_MS,
+      terminal.settlingElapsedMs + milliseconds,
+    );
+    if (this.scaleAvailable) {
+      terminal.finalWeightDecigrams = this.scaleWeightDecigrams;
+      if (this.scaleStable) {
+        terminal.settled = true;
+      }
+    }
   }
 
   private advanceCooldown(milliseconds: number): void {
@@ -965,6 +1258,9 @@ export class SimulatorMachine {
     this.uptimeMs = 0;
     this.activeExtraction = null;
     this.terminalExtraction = null;
+    this.scaleCalibrationInProgress = false;
+    this.terminalWeight = null;
+    this.scaleWarningExtractionId = null;
     this.extractionCounter = 0;
     this.cooldown = null;
     this.cooldownCounter = 0;
@@ -1043,6 +1339,28 @@ function sameSelection(
     (left.kind === "manual" ||
       (right.kind === "profile" && left.profileId === right.profileId))
   );
+}
+
+function sameStart(
+  leftSelection: ExtractionSelection,
+  leftWeightControl: WeightControl | null,
+  rightSelection: ExtractionSelection,
+  rightWeightControl: WeightControl | null,
+): boolean {
+  return (
+    sameSelection(leftSelection, rightSelection) &&
+    ((leftWeightControl === null && rightWeightControl === null) ||
+      (leftWeightControl !== null &&
+        rightWeightControl !== null &&
+        leftWeightControl.targetWeightDecigrams ===
+          rightWeightControl.targetWeightDecigrams &&
+        leftWeightControl.compensationDecigrams ===
+          rightWeightControl.compensationDecigrams))
+  );
+}
+
+function weightCutoff(control: WeightControl): number {
+  return control.targetWeightDecigrams - control.compensationDecigrams;
 }
 
 function cloneProfileSet(profiles: ProfileSet): ProfileSet {

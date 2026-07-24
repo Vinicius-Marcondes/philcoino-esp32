@@ -46,7 +46,7 @@ The simulator implements the contract and selected product semantics with a manu
 
 ## API contract
 
-`packages/protocol/openapi.yaml` is the language-neutral source of truth. It defines seven API v1/public operations plus seven API v2 operations, bearer security, strict object shapes, limits, fault/error codes, and examples. The file uses JSON syntax, which is valid YAML 1.2.
+`packages/protocol/openapi.yaml` is the language-neutral source of truth. It defines seven API v1/public operations plus the additive API v2 workflow, history, and scale operations, bearer security, strict object shapes, limits, fault/error codes, and examples. The file uses JSON syntax, which is valid YAML 1.2.
 
 API v2 defines authenticated combined machine/extraction/compensation/cooldown
 state, four-slot profile read/replace, and idempotent extraction and cooldown
@@ -270,8 +270,8 @@ validation.
 ### Layering
 
 - `firmware_config` contains identity, GPIOs, ranges, timeouts, duty-curve constants, and diagnostic flags.
-- `peripherals` defines pure interfaces/policies for MAX6675, target/profile storage, independent heater SSR and pump command outputs, and SSD1306. `esp_peripherals.cpp` supplies GPIO/I2C/NVS implementations.
-- `control` contains the pure `TemperatureController` state machine.
+- `peripherals` defines pure interfaces/policies for MAX6675, HX711, target/profile/calibration storage, independent heater SSR and pump command outputs, and SSD1306. `esp_peripherals.cpp` supplies GPIO/I2C/NVS implementations.
+- `control` contains the pure temperature, scale, extraction, and cooldown state machines.
 - `networking` separates bounded generic JSON syntax, typed machine/workflow codecs, immutable response serialization, authoritative route/access metadata, `FirmwareApi` controller/storage orchestration, and ESP-IDF Wi-Fi/HTTP/mDNS transport adapters.
 - `main/app_main.cpp` owns startup order, shared objects, mutex wiring, the sampling loop, display rendering, and network task creation.
 
@@ -281,6 +281,10 @@ Firmware first constructs and initializes `FailOffPump` on active-high GPIO10, c
 
 `ExtractionController` owns Manual cutoff, immutable active profile snapshots,
 pre-infusion/soak/main deadlines, replay/conflict behavior, and Stop.
+For weighted profile starts it also owns automatic tare, integer-decigram
+cutoff, scale-failure fallback to the immutable profile deadline, warning
+gating, and the retained terminal scale record. `ScaleController` owns rolling
+filter/stability state and the atomically persisted two-point calibration.
 `CooldownController` owns the snapshotted Brew threshold, ordered heater-inhibit
 then pump command, 45-second cutoff, five-second stabilization, replay, Stop,
 terminal outcome, and reset behavior. One high-priority 10 ms workflow task
@@ -298,6 +302,12 @@ bounds a firmware-commanded heater-high pulse if normal controller renewal
 stalls. None of these command paths confirm physical de-energization.
 
 Targets and the ordered four-slot extraction profile set load from separate one-key NVS blobs. Missing data initializes validated defaults; corrupt/invalid data stops startup. A profile replacement is validated as a complete set before its single blob commit, so firmware never deliberately publishes a partially replaced set. The first sensor sample and optional display render happen before networking starts. Wi-Fi/API startup runs in a separate FreeRTOS task so a network failure does not intentionally stop temperature control.
+
+HX711 reads run in a separate low-priority sampling task and publish through the
+same bounded workflow synchronization boundary. A missing or disconnected scale
+does not block temperature control or ordinary Manual/timed extraction.
+Calibration has its own NVS blob; invalid/missing calibration disables weighted
+Start without preventing machine startup.
 
 The API and control loops share controller snapshots behind the bounded workflow
 domain. Target updates first validate and command heater off under the boundary,
@@ -367,6 +377,10 @@ The ESP-IDF adapter owns the 512-byte authorization-header limit, 1,024-byte req
 | Mobile extraction profiles | Mobile SecureStore | Yes | Not applicable |
 | Keep-screen-awake preference | Mobile local key-value storage | Yes | App-level; independent of the selected machine |
 | Firmware extraction profiles | Firmware NVS | Not applicable | Yes |
+| Scale calibration | Firmware NVS | Not applicable | Yes |
+| Per-profile weight defaults | Mobile SecureStore | Yes | Not applicable |
+| Weighted-shot history (90 days) | Mobile SQLite | Yes | Not applicable |
+| Active/last weighted extraction and fallback warning | Firmware RAM | Reflected while connected | No |
 | Pump GPIO10 command | Firmware RAM/GPIO | Reflected while connected | No; boots `off` |
 | Extraction/cooldown identity, phase, deadlines, outcome | Firmware RAM | Reflected while connected | No; both boot idle and cooldown history is cleared |
 | Extraction duty compensation | Derived firmware policy | Reflected while eligible | No persisted setting; recomputed from acknowledged phase |

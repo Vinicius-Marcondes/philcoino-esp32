@@ -175,6 +175,66 @@ ThermocoupleReading Max6675::decode(std::uint16_t frame) {
   return reading;
 }
 
+Hx711::Hx711(Hx711Transport& transport) : transport_(transport) {}
+
+Hx711Reading Hx711::read() { return transport_.read(); }
+
+bool scale_calibration_is_valid(const ScaleCalibration& calibration) {
+  if (calibration.reference_decigrams <
+          config::kScaleCalibrationReferenceMinimumDecigrams ||
+      calibration.reference_decigrams >
+          config::kScaleCalibrationReferenceMaximumDecigrams) {
+    return false;
+  }
+  const auto span = static_cast<std::int64_t>(calibration.reference_raw) -
+                    static_cast<std::int64_t>(calibration.zero_raw);
+  return span != 0 && span >= -0x7FFFFFLL && span <= 0x7FFFFFLL;
+}
+
+bool scale_raw_to_decigrams(const ScaleCalibration& calibration,
+                            std::int32_t raw,
+                            std::int32_t& decigrams) {
+  if (!scale_calibration_is_valid(calibration)) {
+    return false;
+  }
+  const auto span = static_cast<std::int64_t>(calibration.reference_raw) -
+                    static_cast<std::int64_t>(calibration.zero_raw);
+  const auto delta = static_cast<std::int64_t>(raw) -
+                     static_cast<std::int64_t>(calibration.zero_raw);
+  const auto scaled =
+      delta * static_cast<std::int64_t>(calibration.reference_decigrams);
+  const auto value = scaled / span;
+  if (value < -500LL || value > 10500LL) {
+    return false;
+  }
+  decigrams = static_cast<std::int32_t>(value);
+  return true;
+}
+
+ScaleCalibrationStorage::ScaleCalibrationStorage(
+    ScaleCalibrationBackend& backend)
+    : backend_(backend) {}
+
+ScaleCalibrationLoadResult ScaleCalibrationStorage::load(
+    ScaleCalibration& calibration) {
+  const auto result = backend_.load(calibration);
+  if (result == BackendLoadResult::kNotFound) {
+    calibration = {};
+    return ScaleCalibrationLoadResult::kNotCalibrated;
+  }
+  if (result == BackendLoadResult::kError) {
+    return ScaleCalibrationLoadResult::kError;
+  }
+  return scale_calibration_is_valid(calibration)
+             ? ScaleCalibrationLoadResult::kOk
+             : ScaleCalibrationLoadResult::kCorrupt;
+}
+
+bool ScaleCalibrationStorage::save(const ScaleCalibration& calibration) {
+  return scale_calibration_is_valid(calibration) &&
+         backend_.save(calibration);
+}
+
 bool targets_are_valid(const TemperatureTargets& targets) {
   return targets.brew_c >= config::kBrewTargetMinimumC &&
          targets.brew_c <= config::kBrewTargetMaximumC &&

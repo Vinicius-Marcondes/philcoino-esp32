@@ -19,6 +19,10 @@ Status: DRAFT — NOT ELECTRICALLY OR MAINS-SAFETY APPROVED
 | Heater SSR input | Negative | GND |
 | Pump SSR input | Positive | GPIO10, active-high command; software configuration approved, physical wiring not approved |
 | Pump SSR input | Negative | GND |
+| HX711 load-cell ADC | VCC | 3V3 |
+| HX711 load-cell ADC | GND | GND |
+| HX711 load-cell ADC | DT/DOUT | GPIO0 |
+| HX711 load-cell ADC | SCK/PD_SCK | GPIO1 |
 
 ## Preliminary review
 
@@ -65,6 +69,22 @@ The original series pump switch remains the local hard cutoff but is not sensed 
 
 On 2026-07-14, the owner accepted the target functional matrix after reporting successful rebuilt HTTP/mDNS startup, mobile reachability, Manual and seeded-profile timing, Stop/cutoff behavior, continuation after app disconnection, and idle/no-resume behavior after reset or power cycle. This is owner-reported functional evidence, not an independently reviewed electrical record. No exact board identifier, firmware image hash, instrument model, raw GPIO10 capture, injected GPIO-write failure, target timer-wrap waveform, or separately authorized energized evidence was supplied. The wiring status therefore remains draft and not mains-safety approved.
 
+### HX711 scale
+
+The generic single-supply HX711 breakout is assigned to 3.3 V, common ground,
+DT/DOUT GPIO0, and PD_SCK GPIO1. The 1 kg full-bridge load cell connects to
+channel A (`E+`, `E-`, `A+`, `A-`); wire colors are not authoritative and must
+be confirmed against the actual cell before connection. Channel A uses gain
+128. Firmware samples without blocking the workflow loop, sign-extends 24-bit
+readings, filters a rolling window, detects saturation/unavailability, and
+stores calibration separately in NVS.
+
+GPIO0 and GPIO1 behavior, the actual breakout data-ready rate, load-cell
+polarity, mounting, repeatability, drift, and calibration around 0/35/100 g
+remain pending disconnected low-voltage validation. The 0.1 g wire/storage
+resolution is not an accuracy claim. No scale wiring or test authorizes mains
+power, and automatic tare cannot establish that a cup is present.
+
 ### Temperature sensors
 
 - The one MAX6675 thermocouple is mounted at the boiler base and controls both brew and steam modes.
@@ -89,6 +109,7 @@ The manufacturer's application guidance identifies a 1 A/250 VAC slow-blow input
 - Reset and power-cycle verification of the OLED pull-ups on the GPIO8/GPIO9 strapping pins.
 - FOTEK SSR-40 DA terminal verification, reliable 3.3 V drive test, current derating, mounting, and heat sink.
 - Pump SSR identity/rating, original series-switch wiring, reliable 3.3 V drive, and reset/power-cycle GPIO10 behavior with the mains load disconnected.
+- HX711/load-cell wire mapping, GPIO0/GPIO1 reset and power-cycle behavior, data-ready cadence, repeatability, drift, disconnection/saturation response, and calibration checks with all mains loads disconnected.
 - Original over-temperature fuse/thermostat identity, trip tolerance, reset behavior, electrical rating, placement, and proof that it interrupts a shorted SSR's heater current.
 - Verified HLK-5M05B input protection, PCB layout, enclosure, and 5 V connection to the chosen Super Mini board.
 - Validated thermocouple mounting, control limits, measurement error, thermal lag, and over-temperature limits.

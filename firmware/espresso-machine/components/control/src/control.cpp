@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <utility>
 
 #include "philcoino/config.hpp"
@@ -628,6 +629,164 @@ SteamTimeoutSnapshot TemperatureController::steam_timeout_snapshot(
   return {true, config::kSteamReadyTimeoutMs - elapsed_ms};
 }
 
+bool weight_control_is_valid(const WeightControl& control) {
+  return control.target_decigrams >= config::kScaleTargetMinimumDecigrams &&
+         control.target_decigrams <= config::kScaleTargetMaximumDecigrams &&
+         control.compensation_decigrams >= 0 &&
+         control.compensation_decigrams <=
+             config::kScaleCompensationMaximumDecigrams &&
+         control.compensation_decigrams < control.target_decigrams;
+}
+
+ScaleController::ScaleController(
+    peripherals::ScaleCalibration calibration,
+    bool calibrated,
+    peripherals::ScaleCalibrationStorage& storage)
+    : calibration_(calibration),
+      storage_(storage),
+      calibrated_(calibrated &&
+                  peripherals::scale_calibration_is_valid(calibration)) {}
+
+void ScaleController::update(peripherals::Hx711Reading reading,
+                             std::uint32_t now_ms) {
+  if (reading.status == peripherals::Hx711Status::kOk) {
+    samples_[sample_index_] = reading.raw;
+    sample_index_ = (sample_index_ + 1U) % samples_.size();
+    sample_count_ = std::min(samples_.size(), sample_count_ + 1U);
+    last_valid_ms_ = now_ms;
+    has_valid_sample_ = true;
+    transport_failed_ = false;
+    return;
+  }
+  if (reading.status == peripherals::Hx711Status::kTransportError ||
+      reading.status == peripherals::Hx711Status::kSaturated) {
+    transport_failed_ = true;
+  }
+}
+
+ScaleSnapshot ScaleController::snapshot(std::uint32_t now_ms) const {
+  ScaleSnapshot value{};
+  const bool current_available = available(now_ms);
+  value.calibration_status =
+      calibration_in_progress_
+          ? ScaleCalibrationStatus::kCalibrating
+          : calibrated_ ? ScaleCalibrationStatus::kCalibrated
+                        : ScaleCalibrationStatus::kUncalibrated;
+  value.stable = current_available && stable();
+  value.availability =
+      !current_available
+          ? ScaleAvailability::kUnavailable
+          : value.stable ? ScaleAvailability::kReady
+                         : ScaleAvailability::kUnstable;
+  if (calibrated_ && current_available) {
+    value.gross_weight_available = peripherals::scale_raw_to_decigrams(
+        calibration_, median_raw(), value.gross_weight_decigrams);
+    if (!value.gross_weight_available) {
+      value.availability = ScaleAvailability::kUnavailable;
+      value.stable = false;
+    }
+  }
+  return value;
+}
+
+ScaleCalibrationResult ScaleController::start_calibration(
+    bool workflow_active, std::uint32_t now_ms) {
+  if (workflow_active) {
+    return ScaleCalibrationResult::kWorkflowActive;
+  }
+  const auto current = snapshot(now_ms);
+  if (current.availability == ScaleAvailability::kUnavailable) {
+    return ScaleCalibrationResult::kUnavailable;
+  }
+  if (!current.stable) {
+    return ScaleCalibrationResult::kUnstable;
+  }
+  calibration_zero_raw_ = median_raw();
+  calibration_in_progress_ = true;
+  return ScaleCalibrationResult::kOk;
+}
+
+ScaleCalibrationResult ScaleController::complete_calibration(
+    std::int32_t reference_decigrams,
+    bool workflow_active,
+    std::uint32_t now_ms) {
+  if (workflow_active) {
+    return ScaleCalibrationResult::kWorkflowActive;
+  }
+  if (!calibration_in_progress_) {
+    return ScaleCalibrationResult::kNotStarted;
+  }
+  if (reference_decigrams <
+          config::kScaleCalibrationReferenceMinimumDecigrams ||
+      reference_decigrams >
+          config::kScaleCalibrationReferenceMaximumDecigrams) {
+    return ScaleCalibrationResult::kInvalidReference;
+  }
+  const auto current = snapshot(now_ms);
+  if (current.availability == ScaleAvailability::kUnavailable) {
+    return ScaleCalibrationResult::kUnavailable;
+  }
+  if (!current.stable) {
+    return ScaleCalibrationResult::kUnstable;
+  }
+  const peripherals::ScaleCalibration candidate{
+      calibration_zero_raw_, median_raw(), reference_decigrams};
+  if (!peripherals::scale_calibration_is_valid(candidate)) {
+    return ScaleCalibrationResult::kInvalidReference;
+  }
+  if (!storage_.save(candidate)) {
+    return ScaleCalibrationResult::kPersistenceFailure;
+  }
+  calibration_ = candidate;
+  calibrated_ = true;
+  calibration_in_progress_ = false;
+  return ScaleCalibrationResult::kOk;
+}
+
+void ScaleController::cancel_calibration() {
+  calibration_in_progress_ = false;
+}
+
+bool ScaleController::available(std::uint32_t now_ms) const {
+  return has_valid_sample_ && !transport_failed_ &&
+         static_cast<std::uint32_t>(now_ms - last_valid_ms_) <=
+             config::kScaleUnavailableTimeoutMs;
+}
+
+bool ScaleController::stable() const {
+  if (sample_count_ < samples_.size()) {
+    return false;
+  }
+  const auto range = std::minmax_element(samples_.begin(), samples_.end());
+  const auto spread =
+      static_cast<std::int64_t>(*range.second) -
+      static_cast<std::int64_t>(*range.first);
+  return spread <= stable_raw_spread_limit();
+}
+
+std::int32_t ScaleController::median_raw() const {
+  if (sample_count_ == 0U) {
+    return 0;
+  }
+  std::array<std::int32_t, 10> sorted{};
+  std::copy_n(samples_.begin(), sample_count_, sorted.begin());
+  std::sort(sorted.begin(), sorted.begin() + sample_count_);
+  return sorted[sample_count_ / 2U];
+}
+
+std::int32_t ScaleController::stable_raw_spread_limit() const {
+  if (!calibrated_) {
+    return 1000;
+  }
+  const auto raw_span = std::llabs(
+      static_cast<long long>(calibration_.reference_raw) -
+      static_cast<long long>(calibration_.zero_raw));
+  const auto scaled =
+      raw_span * config::kScaleStableSpreadDecigrams /
+      calibration_.reference_decigrams;
+  return static_cast<std::int32_t>(std::max(1LL, scaled));
+}
+
 ExtractionController::ExtractionController(
     peripherals::ExtractionProfiles profiles, peripherals::FailOffPump& pump)
     : profiles_(std::move(profiles)), pump_(pump) {
@@ -645,11 +804,14 @@ bool ExtractionController::active() const { return active_; }
 
 ExtractionReplayStatus ExtractionController::replay_status(
     const std::string& idempotency_key,
-    const ExtractionSelection& selection) const {
+    const ExtractionSelection& selection,
+    const WeightControl* weight_control) const {
   if (idempotency_key_.empty() || idempotency_key != idempotency_key_) {
     return ExtractionReplayStatus::kNone;
   }
-  return selections_equal(selection, selection_)
+  const WeightControl* retained = weighted_ ? &weight_control_ : nullptr;
+  return selections_equal(selection, selection_) &&
+                 weight_controls_equal(weight_control, retained)
              ? ExtractionReplayStatus::kMatch
              : ExtractionReplayStatus::kMismatch;
 }
@@ -673,7 +835,12 @@ ExtractionSnapshot ExtractionController::snapshot(std::uint32_t now_ms) const {
     };
   }
 
-  const auto total_ms = total_duration_ms();
+  const auto total_ms =
+      weighted_ && !weight_fallback_
+          ? static_cast<std::uint32_t>(
+                peripherals::kMaximumExtractionDurationSeconds) *
+                1000U
+          : total_duration_ms();
   const auto raw_elapsed_ms = static_cast<std::uint32_t>(now_ms - started_at_ms_);
   const auto elapsed_ms = raw_elapsed_ms < total_ms ? raw_elapsed_ms : total_ms;
   return {
@@ -686,6 +853,36 @@ ExtractionSnapshot ExtractionController::snapshot(std::uint32_t now_ms) const {
       pump_.command(),
       ExtractionOutcome::kNone,
   };
+}
+
+WeightExtractionSnapshot ExtractionController::weight_snapshot(
+    const ScaleSnapshot& scale, std::uint32_t) const {
+  WeightExtractionSnapshot value{};
+  if (!weighted_ && !weight_record_present_) {
+    value.warning_active = scale_warning_active_;
+    return value;
+  }
+  value.active = active_ && weighted_;
+  value.terminal = !value.active && weight_record_present_;
+  value.extraction_id =
+      value.active ? extraction_id_ : weight_record_extraction_id_;
+  value.control = value.active ? weight_control_ : weight_record_control_;
+  value.cutoff_decigrams =
+      value.control.target_decigrams - value.control.compensation_decigrams;
+  value.fallback =
+      value.active ? weight_fallback_ : weight_record_fallback_;
+  value.completion_reason = weight_completion_reason_;
+  value.warning_active = scale_warning_active_;
+  if (value.active && scale.gross_weight_available) {
+    value.net_weight_available = true;
+    value.net_weight_decigrams =
+        scale.gross_weight_decigrams - tare_decigrams_;
+  } else if (value.terminal && terminal_weight_available_) {
+    value.net_weight_available = true;
+    value.net_weight_decigrams = terminal_weight_decigrams_;
+  }
+  value.settled = terminal_weight_settled_;
+  return value;
 }
 
 ReplaceProfilesResult ExtractionController::replace_profiles(
@@ -715,14 +912,20 @@ bool ExtractionController::adopt_persisted_profiles(
 
 StartExtractionResult ExtractionController::start(
     const std::string& idempotency_key, ExtractionSelection selection,
-    std::uint32_t now_ms) {
+    std::uint32_t now_ms, const WeightControl* weight_control,
+    const ScaleSnapshot* scale) {
   if (!valid_idempotency_key(idempotency_key) ||
       (selection.kind == ExtractionSelectionKind::kProfile &&
-       selection.profile_index >= profiles_.size())) {
+       selection.profile_index >= profiles_.size()) ||
+      (weight_control != nullptr &&
+       (selection.kind != ExtractionSelectionKind::kProfile ||
+        !weight_control_is_valid(*weight_control)))) {
     return StartExtractionResult::kInvalidRequest;
   }
   if (!idempotency_key_.empty() && idempotency_key == idempotency_key_) {
-    return selections_equal(selection, selection_)
+    const WeightControl* retained = weighted_ ? &weight_control_ : nullptr;
+    return selections_equal(selection, selection_) &&
+                   weight_controls_equal(weight_control, retained)
                ? StartExtractionResult::kReplay
                : StartExtractionResult::kIdempotencyMismatch;
   }
@@ -737,6 +940,22 @@ StartExtractionResult ExtractionController::start(
       return StartExtractionResult::kProfileNotConfigured;
     }
   }
+  if (weight_control != nullptr) {
+    if (scale_warning_active_) {
+      return StartExtractionResult::kScaleWarningUnacknowledged;
+    }
+    if (scale == nullptr ||
+        scale->calibration_status != ScaleCalibrationStatus::kCalibrated) {
+      return StartExtractionResult::kScaleNotCalibrated;
+    }
+    if (scale->availability == ScaleAvailability::kUnavailable ||
+        !scale->gross_weight_available) {
+      return StartExtractionResult::kScaleUnavailable;
+    }
+    if (!scale->stable) {
+      return StartExtractionResult::kScaleNotStable;
+    }
+  }
 
   selection_ = selection;
   active_profile_ = selected_profile;
@@ -747,6 +966,23 @@ StartExtractionResult ExtractionController::start(
   phase_ = phase_at(0);
   outcome_ = ExtractionOutcome::kNone;
   terminal_elapsed_ms_ = 0;
+  weighted_ = weight_control != nullptr;
+  weight_control_ = weighted_ ? *weight_control : WeightControl{};
+  tare_decigrams_ =
+      weighted_ && scale != nullptr ? scale->gross_weight_decigrams : 0;
+  weight_fallback_ = false;
+  if (weighted_) {
+    weight_record_present_ = true;
+    weight_record_extraction_id_ = extraction_id_;
+    weight_record_control_ = weight_control_;
+    weight_record_tare_decigrams_ = tare_decigrams_;
+    weight_record_fallback_ = false;
+    terminal_weight_available_ = false;
+    terminal_weight_decigrams_ = 0;
+    terminal_weight_settled_ = false;
+    weight_settling_started_ms_ = 0;
+    weight_completion_reason_ = WeightCompletionReason::kNone;
+  }
   active_ = true;
   if (!command_for_phase(phase_)) {
     pump_.force_off();
@@ -764,15 +1000,35 @@ bool ExtractionController::stop(std::uint32_t now_ms) {
                               : terminal_elapsed_ms_;
   const bool forced_off = pump_.force_off();
   if (active_) {
-    finish(forced_off ? ExtractionOutcome::kStopped
-                      : ExtractionOutcome::kFailed,
-           elapsed_ms);
+    if (weighted_) {
+      finish_weighted(
+          forced_off ? ExtractionOutcome::kStopped
+                     : ExtractionOutcome::kFailed,
+          WeightCompletionReason::kStopped, elapsed_ms, nullptr);
+    } else {
+      finish(forced_off ? ExtractionOutcome::kStopped
+                        : ExtractionOutcome::kFailed,
+             elapsed_ms);
+    }
   }
   return forced_off;
 }
 
-ExtractionUpdateResult ExtractionController::update(std::uint32_t now_ms) {
+ExtractionUpdateResult ExtractionController::update(
+    std::uint32_t now_ms, const ScaleSnapshot* scale) {
   if (!active_) {
+    if (weight_record_present_ && !terminal_weight_settled_ &&
+        weight_settling_started_ms_ != 0U && scale != nullptr &&
+        scale->gross_weight_available) {
+      terminal_weight_available_ = true;
+      terminal_weight_decigrams_ =
+          scale->gross_weight_decigrams - weight_record_tare_decigrams_;
+      terminal_weight_settled_ = scale->stable;
+      if (static_cast<std::uint32_t>(now_ms - weight_settling_started_ms_) >=
+          config::kScaleSettlingTimeoutMs) {
+        weight_settling_started_ms_ = 0U;
+      }
+    }
     return (!pump_.output_state_unknown() &&
             pump_.command() == peripherals::PumpCommand::kOff) ||
                    pump_.force_off()
@@ -781,12 +1037,49 @@ ExtractionUpdateResult ExtractionController::update(std::uint32_t now_ms) {
   }
 
   const auto elapsed_ms = static_cast<std::uint32_t>(now_ms - started_at_ms_);
-  if (elapsed_ms >= total_duration_ms()) {
-    const auto total_ms = total_duration_ms();
+  if (weighted_) {
+    if (scale == nullptr ||
+        scale->availability == ScaleAvailability::kUnavailable ||
+        !scale->gross_weight_available) {
+      weight_fallback_ = true;
+      weight_record_fallback_ = true;
+      scale_warning_active_ = true;
+    } else if (!weight_fallback_) {
+      const auto net = scale->gross_weight_decigrams - tare_decigrams_;
+      const auto cutoff = weight_control_.target_decigrams -
+                          weight_control_.compensation_decigrams;
+      if (net >= cutoff) {
+        const bool forced_off = pump_.force_off();
+        finish_weighted(
+            forced_off ? ExtractionOutcome::kCompleted
+                       : ExtractionOutcome::kFailed,
+            WeightCompletionReason::kWeightReached, elapsed_ms, scale);
+        return forced_off ? ExtractionUpdateResult::kCompleted
+                          : ExtractionUpdateResult::kOutputFailure;
+      }
+    }
+  }
+  const auto active_deadline_ms =
+      weighted_ && !weight_fallback_
+          ? static_cast<std::uint32_t>(
+                peripherals::kMaximumExtractionDurationSeconds) *
+                1000U
+          : total_duration_ms();
+  if (elapsed_ms >= active_deadline_ms) {
+    const auto total_ms = active_deadline_ms;
     const bool forced_off = pump_.force_off();
-    finish(forced_off ? ExtractionOutcome::kCompleted
-                      : ExtractionOutcome::kFailed,
-           total_ms);
+    if (weighted_) {
+      finish_weighted(
+          forced_off ? ExtractionOutcome::kCompleted
+                     : ExtractionOutcome::kFailed,
+          weight_fallback_ ? WeightCompletionReason::kTimerFallback
+                           : WeightCompletionReason::kSafetyCutoff,
+          total_ms, scale);
+    } else {
+      finish(forced_off ? ExtractionOutcome::kCompleted
+                        : ExtractionOutcome::kFailed,
+             total_ms);
+    }
     return forced_off ? ExtractionUpdateResult::kCompleted
                       : ExtractionUpdateResult::kOutputFailure;
   }
@@ -865,11 +1158,43 @@ void ExtractionController::finish(ExtractionOutcome outcome,
   terminal_elapsed_ms_ = elapsed_ms;
 }
 
+void ExtractionController::finish_weighted(
+    ExtractionOutcome outcome, WeightCompletionReason reason,
+    std::uint32_t elapsed_ms, const ScaleSnapshot* scale) {
+  if (scale != nullptr && scale->gross_weight_available) {
+    terminal_weight_available_ = true;
+    terminal_weight_decigrams_ =
+        scale->gross_weight_decigrams - tare_decigrams_;
+    terminal_weight_settled_ = scale->stable;
+  }
+  weight_record_present_ = true;
+  weight_record_extraction_id_ = extraction_id_;
+  weight_record_control_ = weight_control_;
+  weight_record_tare_decigrams_ = tare_decigrams_;
+  weight_record_fallback_ = weight_fallback_;
+  weight_settling_started_ms_ =
+      terminal_weight_settled_ ? 0U : started_at_ms_ + elapsed_ms;
+  weight_completion_reason_ = reason;
+  finish(outcome, elapsed_ms);
+}
+
+void ExtractionController::acknowledge_scale_warning() {
+  scale_warning_active_ = false;
+}
+
 bool ExtractionController::selections_equal(
     const ExtractionSelection& left, const ExtractionSelection& right) {
   return left.kind == right.kind &&
          (left.kind == ExtractionSelectionKind::kManual ||
           left.profile_index == right.profile_index);
+}
+
+bool ExtractionController::weight_controls_equal(
+    const WeightControl* left, const WeightControl* right) {
+  return (left == nullptr && right == nullptr) ||
+         (left != nullptr && right != nullptr &&
+          left->target_decigrams == right->target_decigrams &&
+          left->compensation_decigrams == right->compensation_decigrams);
 }
 
 CooldownController::CooldownController(TemperatureController& temperature,

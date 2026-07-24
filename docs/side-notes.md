@@ -40,6 +40,24 @@ identifiers were not committed, so the evidence is owner-reported and is not
 certification. Existing single-sensor and source-review limitations remain
 engineering risks rather than pending STEAM-004 Human work.
 
+## PRD-011 HX711 scale validation
+
+Status: SOFTWARE IMPLEMENTED — PHYSICAL VALIDATION PENDING
+
+The implementation assigns the 3.3 V HX711 to DT GPIO0 and SCK GPIO1, stores
+two-point calibration in a dedicated NVS blob, and keeps sampling outside the
+temperature-control loop. Weighted profile Start requires a calibrated,
+available, stable reading, captures tare, and starts the pump without a second
+confirmation. Scale loss after Start falls back to the profile's original
+deadline and gates the next weighted Start until acknowledgement.
+
+Protocol, simulator, mobile, and C++ host checks do not establish 0.1 g
+accuracy, load-cell polarity, mechanical mounting, drift, boot-pin behavior,
+data-ready cadence, or electrical noise. Disconnected low-voltage checks around
+0/35/100 g, automatic tare, reset/power-cycle, injected disconnection, and
+saturation remain Human work. Energized drip-compensation tuning is not
+authorized by this implementation.
+
 ## PRD-004 extraction compensation and cooldown validation
 
 Status: COMPLETE — HUMAN ACCEPTED 2026-07-16
