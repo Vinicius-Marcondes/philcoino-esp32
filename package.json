@@ -20,6 +20,9 @@
     "validate:openapi": "bun run --cwd packages/protocol validate:openapi",
     "simulator": "bun run --cwd tools/device-simulator dev",
     "test:simulator": "bun run --cwd tools/device-simulator test",
-    "typecheck:simulator": "bun run --cwd tools/device-simulator typecheck"
+    "typecheck:simulator": "bun run --cwd tools/device-simulator typecheck",
+    "load:device": "bun run --cwd tools/device-load run",
+    "test:device-load": "bun run --cwd tools/device-load test",
+    "typecheck:device-load": "bun run --cwd tools/device-load typecheck"
   }
 }

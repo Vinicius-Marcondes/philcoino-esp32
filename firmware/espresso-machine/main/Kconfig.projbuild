@@ -19,4 +19,21 @@ menu "PhilcoINO"
         help
             Stored only in the generated, ignored sdkconfig file. Never log it.
 
+    config PHILCOINO_PERFORMANCE_DIAGNOSTICS
+        bool "Enable serial-only performance diagnostics"
+        default n
+        help
+            Adds aggregate serial diagnostics for HTTP, heap, stack, mutex,
+            controller, prediction, reset, and Wi-Fi behavior. This does not
+            change any HTTP response and is disabled in normal builds.
+
+    config PHILCOINO_PERFORMANCE_DISABLE_PREDICTION
+        bool "Disable prediction computation for diagnostic A/B comparison"
+        depends on PHILCOINO_PERFORMANCE_DIAGNOSTICS
+        default n
+        help
+            Preserves the prediction response shape while selecting the
+            existing model-invalid disabled state. Heater behavior remains
+            unchanged because prediction is passive in firmware 0.3.2.
+
 endmenu

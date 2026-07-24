@@ -9,6 +9,15 @@ namespace {
 
 using namespace philcoino::control;
 
+class PredictionObserver final : public PredictionPerformanceObserver {
+ public:
+  void prediction_update_started() override { ++started; }
+  void prediction_update_finished() override { ++finished; }
+
+  unsigned started{0};
+  unsigned finished{0};
+};
+
 bool close(float left, float right, float tolerance = 0.0001F) {
   return std::fabs(left - right) <= tolerance;
 }
@@ -193,6 +202,21 @@ void test_runtime_sanity_fallbacks_are_specific() {
          PredictionFallbackReason::kPredictionImplausible);
 }
 
+void test_performance_observer_balances_early_and_complete_updates() {
+  PredictionObserver observer;
+  PredictiveTemperatureMonitor monitor(
+      philcoino::config::kTemperaturePredictionConfig, &observer);
+
+  monitor.update(input(0U, 90.0F));
+  monitor.update(input(2000U, 90.0F));
+  for (std::uint32_t now_ms = 2500U; now_ms <= 33000U; now_ms += 500U) {
+    monitor.update(input(now_ms, 90.0F, true));
+  }
+
+  assert(observer.started == observer.finished);
+  assert(observer.started > 2U);
+}
+
 }  // namespace
 
 int main() {
@@ -202,5 +226,6 @@ int main() {
   test_history_maturity_and_timing_reset();
   test_invalid_inputs_fall_back_without_a_correction();
   test_runtime_sanity_fallbacks_are_specific();
+  test_performance_observer_balances_early_and_complete_updates();
   return 0;
 }

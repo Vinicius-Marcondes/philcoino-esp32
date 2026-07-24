@@ -63,10 +63,11 @@ const char* fault_message(FaultCode code) {
 
 TemperatureController::TemperatureController(
     peripherals::TemperatureTargets targets, peripherals::FailOffSsr& heater,
-    const config::TemperaturePredictionConfig& prediction_configuration)
+    const config::TemperaturePredictionConfig& prediction_configuration,
+    PredictionPerformanceObserver* performance_observer)
     : heater_(heater),
       targets_(targets),
-      prediction_monitor_(prediction_configuration),
+      prediction_monitor_(prediction_configuration, performance_observer),
       prediction_diagnostics_(prediction_monitor_.diagnostics()) {
   if (!peripherals::targets_are_valid(targets_)) {
     targets_ = {};

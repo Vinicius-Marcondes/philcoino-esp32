@@ -10,6 +10,7 @@
 
 #include "esp_event.h"
 #include "esp_err.h"
+#include "esp_heap_caps.h"
 #include "esp_http_server.h"
 #include "esp_log.h"
 #include "esp_netif.h"
@@ -70,6 +71,101 @@ esp_err_t send_http_response(httpd_req_t* request,
   return result;
 }
 
+HttpPerformanceRoute performance_route(HttpMethod method,
+                                       const std::string& path) {
+  const auto* route = find_api_route(method, path);
+  if (route == nullptr) return HttpPerformanceRoute::kUnknown;
+  switch (route->id) {
+    case ApiRouteId::kHealth: return HttpPerformanceRoute::kHealth;
+    case ApiRouteId::kDevice: return HttpPerformanceRoute::kDevice;
+    case ApiRouteId::kStateV1: return HttpPerformanceRoute::kStateV1;
+    case ApiRouteId::kTemperatures:
+      return HttpPerformanceRoute::kTemperatures;
+    case ApiRouteId::kMode: return HttpPerformanceRoute::kMode;
+    case ApiRouteId::kHeater: return HttpPerformanceRoute::kHeater;
+    case ApiRouteId::kDismissOverTemperature:
+      return HttpPerformanceRoute::kDismissOverTemperature;
+    case ApiRouteId::kStateV2:
+      return path.find("include=prediction") != std::string::npos
+                 ? HttpPerformanceRoute::kStateV2Prediction
+                 : HttpPerformanceRoute::kStateV2;
+    case ApiRouteId::kHistory: return HttpPerformanceRoute::kHistory;
+    case ApiRouteId::kProfilesGet:
+      return HttpPerformanceRoute::kProfilesGet;
+    case ApiRouteId::kProfilesPut:
+      return HttpPerformanceRoute::kProfilesPut;
+    case ApiRouteId::kExtractionStart:
+      return HttpPerformanceRoute::kExtractionStart;
+    case ApiRouteId::kExtractionStop:
+      return HttpPerformanceRoute::kExtractionStop;
+    case ApiRouteId::kCooldownStart:
+      return HttpPerformanceRoute::kCooldownStart;
+    case ApiRouteId::kCooldownStop:
+      return HttpPerformanceRoute::kCooldownStop;
+  }
+  return HttpPerformanceRoute::kUnknown;
+}
+
+class HttpRequestObservation final {
+ public:
+  HttpRequestObservation(NetworkPerformanceObserver* observer,
+                         httpd_handle_t server, HttpPerformanceRoute route)
+      : observer_(observer), server_(server) {
+    if (observer_ == nullptr) return;
+    sample_.route = route;
+    started_us_ = esp_timer_get_time();
+    sample_.heap_free_before =
+        heap_caps_get_free_size(MALLOC_CAP_8BIT);
+    sample_.largest_free_before =
+        heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
+    heap_monitor_started_ =
+        heap_caps_monitor_local_minimum_free_size_start() == ESP_OK;
+  }
+
+  ~HttpRequestObservation() {
+    if (observer_ == nullptr) return;
+    if (heap_monitor_started_) {
+      sample_.heap_minimum_during =
+          heap_caps_get_minimum_free_size(MALLOC_CAP_8BIT);
+      heap_caps_monitor_local_minimum_free_size_stop();
+    }
+    sample_.heap_free_after = heap_caps_get_free_size(MALLOC_CAP_8BIT);
+    sample_.largest_free_after =
+        heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
+    sample_.request_duration_us =
+        static_cast<std::uint64_t>(esp_timer_get_time() - started_us_);
+    sample_.http_stack_high_water_bytes =
+        static_cast<std::size_t>(uxTaskGetStackHighWaterMark(nullptr));
+    std::array<int, 8> clients{};
+    std::size_t client_count = clients.size();
+    if (server_ != nullptr &&
+        httpd_get_client_list(server_, &client_count, clients.data()) ==
+            ESP_OK) {
+      sample_.open_sessions = client_count;
+    }
+    observer_->record_http_request(sample_);
+  }
+
+  void record_api(int status, std::size_t bytes,
+                  std::uint64_t duration_us) {
+    sample_.status = status;
+    sample_.response_bytes = bytes;
+    sample_.api_duration_us = duration_us;
+  }
+
+  void record_send(int result, std::uint64_t duration_us) {
+    sample_.send_result = result;
+    sample_.send_duration_us = duration_us;
+  }
+
+ private:
+  NetworkPerformanceObserver* observer_;
+  httpd_handle_t server_;
+  HttpRequestPerformanceSample sample_{};
+  std::int64_t started_us_{0};
+  bool heap_monitor_started_{false};
+};
+
 HttpMethod request_method(int method) {
   switch (method) {
     case HTTP_PATCH: return HttpMethod::kPatch;
@@ -101,8 +197,12 @@ class AtomicFlagReset final {
 }  // namespace
 
 EspNetworkServer::EspNetworkServer(FirmwareApi& api,
-                                   const DeviceIdentity& identity)
-    : api_(api), identity_(identity) {}
+                                   const DeviceIdentity& identity,
+                                   NetworkPerformanceObserver*
+                                       performance_observer)
+    : api_(api),
+      identity_(identity),
+      performance_observer_(performance_observer) {}
 
 bool EspNetworkServer::start(const char* ssid, const char* password) {
   if (!start_wifi(ssid, password) || !start_http()) {
@@ -232,6 +332,10 @@ void EspNetworkServer::handle_wifi_event(const char* event_base,
       ESP_LOGW(kLogTag, "Wi-Fi disconnected: reason=%u rssi=%d; retrying",
                static_cast<unsigned>(disconnected->reason),
                static_cast<int>(disconnected->rssi));
+      if (performance_observer_ != nullptr) {
+        performance_observer_->record_wifi_disconnect(disconnected->reason,
+                                                       disconnected->rssi);
+      }
     }
     if (esp_wifi_connect() != ESP_OK) {
       wifi_status_.store(WifiStatus::kFailed, std::memory_order_relaxed);
@@ -354,6 +458,11 @@ bool EspNetworkServer::start_http() {
 
 int EspNetworkServer::handle_http_request(void* opaque_request) {
   auto* request = static_cast<httpd_req_t*>(opaque_request);
+  const auto method = request_method(request->method);
+  const std::string path(request->uri);
+  HttpRequestObservation observation(
+      performance_observer_, static_cast<httpd_handle_t>(http_server_),
+      performance_route(method, path));
   std::string authorization;
   const std::size_t header_length =
       httpd_req_get_hdr_value_len(request, "Authorization");
@@ -365,15 +474,22 @@ int EspNetworkServer::handle_http_request(void* opaque_request) {
     }
   }
 
-  const auto method = request_method(request->method);
-  const std::string path(request->uri);
   const char* authorization_value =
       authorization.empty() ? nullptr : authorization.c_str();
   if (request_requires_auth(method, path) &&
       !api_.authorized(authorization_value)) {
+    const auto api_started_us = esp_timer_get_time();
     const HttpResponse response =
         api_.handle(method, path, authorization_value, "", uptime_ms());
-    return send_http_response(request, response, path);
+    observation.record_api(
+        response.status, response.body.size(),
+        static_cast<std::uint64_t>(esp_timer_get_time() - api_started_us));
+    const auto send_started_us = esp_timer_get_time();
+    const auto result = send_http_response(request, response, path);
+    observation.record_send(
+        result,
+        static_cast<std::uint64_t>(esp_timer_get_time() - send_started_us));
+    return result;
   }
 
   std::string body;
@@ -410,9 +526,18 @@ int EspNetworkServer::handle_http_request(void* opaque_request) {
     body = "invalid";
   }
 
-  const HttpResponse response = api_.handle(
-      method, path, authorization_value, body, uptime_ms());
-  return send_http_response(request, response, path);
+  const auto api_started_us = esp_timer_get_time();
+  const HttpResponse response =
+      api_.handle(method, path, authorization_value, body, uptime_ms());
+  observation.record_api(
+      response.status, response.body.size(),
+      static_cast<std::uint64_t>(esp_timer_get_time() - api_started_us));
+  const auto send_started_us = esp_timer_get_time();
+  const auto result = send_http_response(request, response, path);
+  observation.record_send(
+      result,
+      static_cast<std::uint64_t>(esp_timer_get_time() - send_started_us));
+  return result;
 }
 
 }  // namespace philcoino::networking

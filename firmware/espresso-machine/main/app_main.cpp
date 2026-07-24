@@ -17,6 +17,9 @@
 #include "philcoino/esp_peripherals.hpp"
 #include "philcoino/history.hpp"
 #include "sdkconfig.h"
+#if CONFIG_PHILCOINO_PERFORMANCE_DIAGNOSTICS
+#include "performance_diagnostics.hpp"
+#endif
 
 namespace {
 
@@ -138,17 +141,41 @@ class FreeRtosApiSynchronization final
       SemaphoreHandle_t workflow_mutex,
       philcoino::peripherals::FailOffPump& pump,
       philcoino::peripherals::FailOffSsr& heater,
-      std::atomic<bool>& fail_safe_requested)
+      std::atomic<bool>& fail_safe_requested
+#if CONFIG_PHILCOINO_PERFORMANCE_DIAGNOSTICS
+      ,
+      philcoino::diagnostics::PerformanceDiagnostics* performance
+#endif
+      )
       : workflow_mutex_(workflow_mutex),
         pump_(pump),
         heater_(heater),
-        fail_safe_requested_(fail_safe_requested) {}
+        fail_safe_requested_(fail_safe_requested)
+#if CONFIG_PHILCOINO_PERFORMANCE_DIAGNOSTICS
+        ,
+        performance_(performance)
+#endif
+  {}
 
   bool lock(philcoino::networking::ApiDomain) override {
+#if CONFIG_PHILCOINO_PERFORMANCE_DIAGNOSTICS
+    const auto wait_started_us = esp_timer_get_time();
+#endif
     if (workflow_mutex_ != nullptr &&
         xSemaphoreTake(workflow_mutex_, pdMS_TO_TICKS(50)) == pdTRUE) {
+#if CONFIG_PHILCOINO_PERFORMANCE_DIAGNOSTICS
+      performance_->record_mutex_wait(
+          static_cast<std::uint64_t>(esp_timer_get_time() - wait_started_us),
+          true);
+      hold_started_us_ = esp_timer_get_time();
+#endif
       return true;
     }
+#if CONFIG_PHILCOINO_PERFORMANCE_DIAGNOSTICS
+    performance_->record_mutex_wait(
+        static_cast<std::uint64_t>(esp_timer_get_time() - wait_started_us),
+        false);
+#endif
     pump_.emergency_off();
     heater_.emergency_off();
     fail_safe_requested_.store(true, std::memory_order_release);
@@ -157,6 +184,10 @@ class FreeRtosApiSynchronization final
 
   void unlock(philcoino::networking::ApiDomain) override {
     if (workflow_mutex_ != nullptr) {
+#if CONFIG_PHILCOINO_PERFORMANCE_DIAGNOSTICS
+      performance_->record_mutex_hold(
+          static_cast<std::uint64_t>(esp_timer_get_time() - hold_started_us_));
+#endif
       xSemaphoreGive(workflow_mutex_);
     }
   }
@@ -166,6 +197,10 @@ class FreeRtosApiSynchronization final
   philcoino::peripherals::FailOffPump& pump_;
   philcoino::peripherals::FailOffSsr& heater_;
   std::atomic<bool>& fail_safe_requested_;
+#if CONFIG_PHILCOINO_PERFORMANCE_DIAGNOSTICS
+  philcoino::diagnostics::PerformanceDiagnostics* performance_;
+  std::int64_t hold_started_us_{0};
+#endif
 };
 
 struct NetworkStartContext {
@@ -191,6 +226,9 @@ struct WorkflowTaskContext {
   philcoino::peripherals::FailOffSsr* heater;
   std::atomic<bool>* fail_safe_requested;
   FreeRtosApiSynchronization* synchronization;
+#if CONFIG_PHILCOINO_PERFORMANCE_DIAGNOSTICS
+  philcoino::diagnostics::PerformanceDiagnostics* performance;
+#endif
 };
 
 philcoino::control::CooldownInput cooldown_input(
@@ -216,6 +254,10 @@ void workflow_control_task(void* argument) {
       context->heater->force_off();
       ESP_LOGE(kLogTag,
                "Workflow synchronization deadline missed; output-off commands issued");
+#if CONFIG_PHILCOINO_PERFORMANCE_DIAGNOSTICS
+      context->performance->record_workflow_stack(
+          static_cast<std::size_t>(uxTaskGetStackHighWaterMark(nullptr)));
+#endif
       vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(10));
       continue;
     }
@@ -261,6 +303,10 @@ void workflow_control_task(void* argument) {
       ESP_LOGE(kLogTag,
                "Cooldown output or input failed; output-off commands issued and fault latched");
     }
+#if CONFIG_PHILCOINO_PERFORMANCE_DIAGNOSTICS
+    context->performance->record_workflow_stack(
+        static_cast<std::size_t>(uxTaskGetStackHighWaterMark(nullptr)));
+#endif
     vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(10));
   }
 }
@@ -290,6 +336,10 @@ extern "C" void app_main() {
     pump.force_off();
     return;
   }
+
+#if CONFIG_PHILCOINO_PERFORMANCE_DIAGNOSTICS
+  static philcoino::diagnostics::PerformanceDiagnostics performance;
+#endif
 
   std::array<std::uint8_t, 6> station_mac{};
   if (esp_read_mac(station_mac.data(), ESP_MAC_WIFI_STA) != ESP_OK) {
@@ -347,7 +397,24 @@ extern "C" void app_main() {
     ssr.force_off();
     return;
   }
+#if CONFIG_PHILCOINO_PERFORMANCE_DIAGNOSTICS
+#if CONFIG_PHILCOINO_PERFORMANCE_DISABLE_PREDICTION
+  static const auto prediction_configuration = [] {
+    auto configuration = philcoino::config::kTemperaturePredictionConfig;
+    configuration.expected_checksum = 0;
+    return configuration;
+  }();
+  ESP_LOGW(kLogTag,
+           "Diagnostic A/B build: prediction computation disabled; response shape preserved");
+#else
+  static const auto& prediction_configuration =
+      philcoino::config::kTemperaturePredictionConfig;
+#endif
+  static philcoino::control::TemperatureController controller(
+      targets, ssr, prediction_configuration, &performance);
+#else
   static philcoino::control::TemperatureController controller(targets, ssr);
+#endif
   static philcoino::control::ExtractionController extraction_controller(
       profiles, pump);
   static philcoino::control::CooldownController cooldown_controller(controller,
@@ -367,7 +434,12 @@ extern "C" void app_main() {
   }
   static std::atomic<bool> fail_safe_requested{false};
   static FreeRtosApiSynchronization synchronization(
-      workflow_mutex, pump, ssr, fail_safe_requested);
+      workflow_mutex, pump, ssr, fail_safe_requested
+#if CONFIG_PHILCOINO_PERFORMANCE_DIAGNOSTICS
+      ,
+      &performance
+#endif
+  );
 
   static EspMax6675Transport max6675_transport;
   if (!max6675_transport.initialize()) {
@@ -407,7 +479,12 @@ extern "C" void app_main() {
 
   static WorkflowTaskContext workflow_context{
       &controller, &extraction_controller, &cooldown_controller,
-      &pump, &ssr, &fail_safe_requested, &synchronization};
+      &pump, &ssr, &fail_safe_requested, &synchronization
+#if CONFIG_PHILCOINO_PERFORMANCE_DIAGNOSTICS
+      ,
+      &performance
+#endif
+  };
   TaskHandle_t workflow_task = nullptr;
   if (xTaskCreate(workflow_control_task, "philcoino-workflow", 4096,
                   &workflow_context, configMAX_PRIORITIES - 2,
@@ -436,7 +513,13 @@ extern "C" void app_main() {
       identity, CONFIG_PHILCOINO_BEARER_TOKEN, controller, target_storage,
       extraction_controller, cooldown_controller, profile_storage,
       synchronization, &history);
-  static philcoino::networking::EspNetworkServer network(api, identity);
+  static philcoino::networking::EspNetworkServer network(
+      api, identity
+#if CONFIG_PHILCOINO_PERFORMANCE_DIAGNOSTICS
+      ,
+      &performance
+#endif
+  );
   static const NetworkStartContext network_context{
       &network,
       CONFIG_PHILCOINO_WIFI_SSID,
@@ -450,6 +533,9 @@ extern "C" void app_main() {
              "Network startup task creation failed; temperature control remains active");
   }
 
+#if CONFIG_PHILCOINO_PERFORMANCE_DIAGNOSTICS
+  std::int64_t previous_controller_started_us = 0;
+#endif
   while (true) {
     vTaskDelay(pdMS_TO_TICKS(kMax6675SampleIntervalMs));
     const auto reading = thermocouple.read(uptime_ms());
@@ -458,6 +544,9 @@ extern "C" void app_main() {
       ssr.force_off();
       ESP_LOGE(kLogTag,
                "Temperature synchronization deadline missed; output-off commands issued");
+#if CONFIG_PHILCOINO_PERFORMANCE_DIAGNOSTICS
+      performance.maybe_log();
+#endif
       continue;
     }
     if (fail_safe_requested.exchange(false, std::memory_order_acq_rel)) {
@@ -472,7 +561,26 @@ extern "C" void app_main() {
             uptime_ms());
       }
     }
+#if CONFIG_PHILCOINO_PERFORMANCE_DIAGNOSTICS
+    const auto controller_started_us = esp_timer_get_time();
+#endif
     snapshot = controller.update(reading, pump.command(), uptime_ms());
+#if CONFIG_PHILCOINO_PERFORMANCE_DIAGNOSTICS
+    const auto controller_finished_us = esp_timer_get_time();
+    const auto controller_interval_us =
+        previous_controller_started_us == 0
+            ? 0
+            : static_cast<std::uint64_t>(controller_started_us -
+                                         previous_controller_started_us);
+    previous_controller_started_us = controller_started_us;
+    performance.record_controller_update(
+        static_cast<std::uint64_t>(controller_finished_us -
+                                   controller_started_us),
+        controller_interval_us,
+        snapshot.prediction.fallback_reason ==
+            philcoino::control::PredictionFallbackReason::kTimingInvalid,
+        static_cast<std::size_t>(uxTaskGetStackHighWaterMark(nullptr)));
+#endif
     const auto extraction_snapshot = extraction_controller.snapshot(uptime_ms());
     const auto cooldown_snapshot = cooldown_controller.snapshot(uptime_ms());
     const bool compensation_active =
@@ -498,5 +606,8 @@ extern "C" void app_main() {
         return;
       }
     }
+#if CONFIG_PHILCOINO_PERFORMANCE_DIAGNOSTICS
+    performance.maybe_log();
+#endif
   }
 }

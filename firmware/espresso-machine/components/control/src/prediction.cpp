@@ -30,6 +30,21 @@ bool finite_model(const config::LinearTemperatureModel& model) {
                      [](float value) { return std::isfinite(value); });
 }
 
+class PredictionUpdateObservation final {
+ public:
+  explicit PredictionUpdateObservation(PredictionPerformanceObserver* observer)
+      : observer_(observer) {
+    if (observer_ != nullptr) observer_->prediction_update_started();
+  }
+
+  ~PredictionUpdateObservation() {
+    if (observer_ != nullptr) observer_->prediction_update_finished();
+  }
+
+ private:
+  PredictionPerformanceObserver* observer_;
+};
+
 }  // namespace
 
 const char* prediction_operating_mode_name(PredictionOperatingMode mode) {
@@ -141,8 +156,10 @@ bool temperature_prediction_config_is_valid(
 }
 
 PredictiveTemperatureMonitor::PredictiveTemperatureMonitor(
-    const config::TemperaturePredictionConfig& configuration)
+    const config::TemperaturePredictionConfig& configuration,
+    PredictionPerformanceObserver* performance_observer)
     : configuration_(configuration),
+      performance_observer_(performance_observer),
       configuration_valid_(
           temperature_prediction_config_is_valid(configuration)) {
   reset();
@@ -268,6 +285,7 @@ float PredictiveTemperatureMonitor::predict(
 
 PredictionDiagnostics PredictiveTemperatureMonitor::update(
     const PredictionInput& input) {
+  const PredictionUpdateObservation observation(performance_observer_);
   diagnostics_ = {};
   diagnostics_.run_mode = configuration_valid_ ? PredictionRunMode::kPassive
                                                 : PredictionRunMode::kDisabled;

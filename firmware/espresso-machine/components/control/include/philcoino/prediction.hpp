@@ -87,10 +87,18 @@ std::uint32_t temperature_prediction_checksum(
 bool temperature_prediction_config_is_valid(
     const config::TemperaturePredictionConfig& configuration);
 
+class PredictionPerformanceObserver {
+ public:
+  virtual ~PredictionPerformanceObserver() = default;
+  virtual void prediction_update_started() = 0;
+  virtual void prediction_update_finished() = 0;
+};
+
 class PredictiveTemperatureMonitor {
  public:
   explicit PredictiveTemperatureMonitor(
-      const config::TemperaturePredictionConfig& configuration);
+      const config::TemperaturePredictionConfig& configuration,
+      PredictionPerformanceObserver* performance_observer = nullptr);
 
   void reset();
   PredictionDiagnostics update(const PredictionInput& input);
@@ -129,6 +137,7 @@ class PredictiveTemperatureMonitor {
                     features) const;
 
   const config::TemperaturePredictionConfig& configuration_;
+  PredictionPerformanceObserver* performance_observer_{nullptr};
   bool configuration_valid_{false};
   bool initialized_{false};
   bool filter_initialized_{false};

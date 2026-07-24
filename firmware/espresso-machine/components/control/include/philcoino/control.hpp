@@ -57,7 +57,9 @@ class TemperatureController {
                         peripherals::FailOffSsr& heater,
                         const config::TemperaturePredictionConfig&
                             prediction_configuration =
-                                config::kTemperaturePredictionConfig);
+                                config::kTemperaturePredictionConfig,
+                        PredictionPerformanceObserver* performance_observer =
+                            nullptr);
 
   ControlMode mode() const;
   ControlStatus status() const;
