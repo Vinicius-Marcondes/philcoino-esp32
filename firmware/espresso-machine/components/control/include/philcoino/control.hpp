@@ -205,6 +205,7 @@ class ScaleController {
  private:
   bool available(std::uint32_t now_ms) const;
   bool stable() const;
+  bool stable_for_calibration() const;
   std::int32_t median_raw() const;
   std::int32_t stable_raw_spread_limit() const;
 

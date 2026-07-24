@@ -14,6 +14,9 @@ inline constexpr bool kWifiEnabled = true;
 // ESP-IDF uses quarter-dBm units; 44 limits station TX power to 11 dBm.
 inline constexpr std::int8_t kWifiMaximumTxPowerQuarterDbm = 44;
 inline constexpr bool kOledEnabled = false;
+// Logs every successful MAX6675 frame and can make the serial monitor noisy.
+// Sensor transport failures remain logged when this diagnostic is disabled.
+inline constexpr bool kTemperatureReadingLoggingEnabled = false;
 
 inline constexpr std::int32_t kBrewTargetMinimumC = 85;
 inline constexpr std::int32_t kBrewTargetMaximumC = 95;

@@ -55,7 +55,7 @@ i2c_master_dev_handle_t as_i2c_device(void* handle) {
   return static_cast<i2c_master_dev_handle_t>(handle);
 }
 
-const char* frame_status(std::uint16_t frame) {
+[[maybe_unused]] const char* frame_status(std::uint16_t frame) {
   if ((frame & 0x0004U) != 0U) {
     return "open_circuit";
   }
@@ -182,11 +182,13 @@ bool EspMax6675Transport::read_frame(std::uint16_t& frame) {
     return false;
   }
 
-  ESP_LOGI(kThermocoupleLogTag,
-           "boiler CS=GPIO%" PRId32 " SCK=GPIO%" PRId32 " SO=GPIO%" PRId32
-           " raw=0x%04X status=%s cs_verified=1",
-           selected_gpio, selected_clock_gpio, selected_data_gpio,
-           static_cast<unsigned>(frame), frame_status(frame));
+  if constexpr (config::kTemperatureReadingLoggingEnabled) {
+    ESP_LOGI(kThermocoupleLogTag,
+             "boiler CS=GPIO%" PRId32 " SCK=GPIO%" PRId32 " SO=GPIO%" PRId32
+             " raw=0x%04X status=%s cs_verified=1",
+             selected_gpio, selected_clock_gpio, selected_data_gpio,
+             static_cast<unsigned>(frame), frame_status(frame));
+  }
   return true;
 }
 

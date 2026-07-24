@@ -1182,6 +1182,25 @@ void test_scale_api_and_weighted_start_contract() {
   assert(response.status == 200);
   assert(response.body.find("\"calibrationStatus\":\"calibrated\"") !=
          std::string::npos);
+
+  ApiHarness stale_calibration;
+  for (std::int32_t index = 0; index < 10; ++index) {
+    stale_calibration.scale.update(
+        {Hx711Status::kOk, 2000000 + index * 75}, 2000U + index * 10U);
+  }
+  response = stale_calibration.request(
+      HttpMethod::kGet, "/api/v2/scale", authorization, "", 2100);
+  assert(response.status == 200);
+  assert(response.body.find("\"availability\":\"unavailable\"") !=
+         std::string::npos);
+  response = stale_calibration.request(
+      HttpMethod::kPost, "/api/v2/scale/calibration/start", authorization,
+      "", 2100);
+  assert(response.status == 200);
+  assert(response.body.find("\"availability\":\"ready\"") !=
+         std::string::npos);
+  assert(response.body.find("\"calibrationStatus\":\"calibrating\"") !=
+         std::string::npos);
 }
 
 }  // namespace
