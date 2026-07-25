@@ -10,6 +10,7 @@ import {
   useMemo,
   useState,
   type Dispatch,
+  type ReactNode,
   type SetStateAction,
 } from "react";
 import {
@@ -57,6 +58,7 @@ interface ExtractionPreviewProps {
   profileImportState?: ProfileImportState;
   profilesSynchronized?: boolean;
   profileWritePending?: boolean;
+  quickControlPanel?: ReactNode;
   state?: ExtractionPreviewState;
   view?: "all" | "profiles" | "quick";
   workflowBlock?: "cooldown" | "steam" | null;
@@ -77,6 +79,7 @@ export function ExtractionPreview({
   profileImportState: controlledProfileImportState,
   profilesSynchronized: controlledProfilesSynchronized,
   profileWritePending = false,
+  quickControlPanel,
   state: controlledState,
   view = "all",
   workflowBlock = null,
@@ -393,6 +396,9 @@ export function ExtractionPreview({
               </View>
             ) : null}
           </View>
+        ) : null}
+        {view === "quick" && quickControlPanel !== undefined ? (
+          <View style={styles.quickControlPanel}>{quickControlPanel}</View>
         ) : null}
         {!compact || view !== "quick" ? (
           <View style={styles.metricGrid}>
@@ -1440,6 +1446,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 8,
   },
+  quickControlPanel: { minWidth: 0 },
   compactAction: { alignSelf: "stretch", flex: 1, minWidth: 0 },
   profilePickerButton: {
     alignItems: "center",
