@@ -1,6 +1,7 @@
 # PERF-010 — Remove OLED support
 
 Status: Done
+Implementation Commit: `34dafe0`
 Review Mode: Agent
 Review Reason: Source/configuration/dependency removal and target size are
 deterministic through search, builds, and tests; physical GPIO reuse is absent.

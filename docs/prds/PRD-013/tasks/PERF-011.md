@@ -1,6 +1,6 @@
 # PERF-011 — Remove verified ghost features
 
-Status: Todo
+Status: Done
 Review Mode: Agent
 Review Reason: Production reachability and retained active feature coverage are
 deterministic through call-graph review and regression tests.
@@ -31,10 +31,14 @@ runtime is absent and active profiles, history, scale, and prediction remain.
 
 ## Acceptance Criteria
 
-- [ ] Every removed production helper has recorded unreachable evidence.
-- [ ] Active profiles/history/scale/prediction behavior remains present.
-- [ ] No dual-sensor runtime remains, while its safety limitation stays visible.
-- [ ] Firmware and affected workspace checks pass.
+- [x] Every removed production helper has recorded unreachable evidence.
+- [x] Active profiles/history/scale/prediction behavior remains present.
+- [x] No dual-sensor runtime remains, while its safety limitation stays visible.
+- [x] Firmware and affected workspace checks pass.
+
+## Evidence
+
+- `../evidence/PERF-011-GHOST-CALL-GRAPH.md`
 
 ## Verification Strategy
 

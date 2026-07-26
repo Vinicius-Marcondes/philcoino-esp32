@@ -179,6 +179,40 @@ ThermocoupleReading reading(float boiler_c) {
   return ok(boiler_c);
 }
 
+bool persist_targets(TemperatureController& controller, TargetStorage& storage,
+                     const TemperatureTargets& targets,
+                     std::uint32_t now_ms) {
+  const auto current = controller.targets();
+  if (targets.brew_c == current.brew_c &&
+      targets.steam_c == current.steam_c) {
+    return true;
+  }
+  if (!controller.prepare_target_update(targets, now_ms)) {
+    return false;
+  }
+  if (!storage.save(targets)) {
+    controller.rollback_target_update(now_ms);
+    return false;
+  }
+  return controller.adopt_persisted_targets(targets, now_ms);
+}
+
+bool persist_brew_target(TemperatureController& controller,
+                         TargetStorage& storage, std::int32_t brew_c,
+                         std::uint32_t now_ms) {
+  auto targets = controller.targets();
+  targets.brew_c = brew_c;
+  return persist_targets(controller, storage, targets, now_ms);
+}
+
+bool persist_steam_target(TemperatureController& controller,
+                          TargetStorage& storage, std::int32_t steam_c,
+                          std::uint32_t now_ms) {
+  auto targets = controller.targets();
+  targets.steam_c = steam_c;
+  return persist_targets(controller, storage, targets, now_ms);
+}
+
 ThermocoupleReading open_boiler() {
   ThermocoupleReading value{};
   value.status = ThermocoupleStatus::kOpenCircuit;
@@ -469,7 +503,7 @@ void test_target_updates_validate_and_persist_before_state_change() {
   ControllerHarness harness(state.targets);
   state.heater_level = &harness.output.level;
 
-  assert(!harness.controller.update_brew_target(84, storage, 0));
+  assert(!persist_brew_target(harness.controller, storage, 84, 0));
   assert(harness.controller.targets().brew_c == 93);
   assert(state.save_count == 0);
 
@@ -477,7 +511,7 @@ void test_target_updates_validate_and_persist_before_state_change() {
   auto snapshot = harness.controller.update(reading(80.0F), 0);
   assert(snapshot.heater_enabled);
   assert(harness.output.level);
-  assert(!harness.controller.update_steam_target(116, storage, 0));
+  assert(!persist_steam_target(harness.controller, storage, 116, 0));
   assert(harness.controller.targets().steam_c == 115);
   assert(state.targets.steam_c == 115);
   assert(!harness.output.level);
@@ -485,7 +519,7 @@ void test_target_updates_validate_and_persist_before_state_change() {
   assert(harness.safety_lease.disarm_count == 2);
 
   state.fail_save = false;
-  assert(harness.controller.update_steam_target(116, storage, 0));
+  assert(persist_steam_target(harness.controller, storage, 116, 0));
   assert(harness.controller.targets().steam_c == 116);
   assert(state.targets.steam_c == 116);
   assert(state.save_count == 1);
@@ -500,12 +534,13 @@ void test_noop_and_inactive_target_updates_preserve_warmup_deadline() {
 
   auto snapshot = harness.controller.update(reading(80.0F), 0);
   assert(snapshot.heater_enabled);
-  assert(harness.controller.update_brew_target(93, storage, 1000));
+  assert(persist_brew_target(harness.controller, storage, 93, 1000));
   assert(state.save_count == 0);
   assert(harness.output.level);
 
-  assert(harness.controller.update_steam_target(
-      116, storage, philcoino::config::kHeatingTimeoutMs / 2U));
+  assert(persist_steam_target(
+      harness.controller, storage, 116,
+      philcoino::config::kHeatingTimeoutMs / 2U));
   assert(state.save_count == 1);
   assert(harness.controller.targets().steam_c == 116);
   snapshot = harness.controller.update(
@@ -584,8 +619,9 @@ void test_active_target_change_does_not_extend_running_warmup_deadline() {
 
   auto snapshot = harness.controller.update(reading(80.0F), 0);
   assert(snapshot.heater_enabled);
-  assert(harness.controller.update_brew_target(
-      94, storage, philcoino::config::kHeatingTimeoutMs / 2U));
+  assert(persist_brew_target(
+      harness.controller, storage, 94,
+      philcoino::config::kHeatingTimeoutMs / 2U));
   assert(harness.controller.targets().brew_c == 94);
 
   snapshot = harness.controller.update(
@@ -1207,29 +1243,21 @@ void test_profile_phases_exact_deadlines_and_delayed_completion() {
 
 void test_profile_snapshot_export_and_empty_slot_rules() {
   ExtractionHarness harness;
-  FakeProfileBackend backend;
-  ProfileStorage storage(backend);
   auto replacement = default_extraction_profiles();
   replacement[0].main_extraction_seconds = 20U;
-  assert(harness.controller.replace_profiles(replacement, storage) ==
-         ReplaceProfilesResult::kReplaced);
-  assert(backend.save_count == 1);
+  assert(harness.controller.adopt_persisted_profiles(replacement));
   assert(harness.controller.start(
              kStartKey, {ExtractionSelectionKind::kProfile, 0}, 0) ==
          StartExtractionResult::kStarted);
 
   auto later = replacement;
   later[0].main_extraction_seconds = 10U;
-  assert(harness.controller.replace_profiles(later, storage) ==
-         ReplaceProfilesResult::kActive);
-  assert(backend.save_count == 1);
+  assert(!harness.controller.adopt_persisted_profiles(later));
   assert(harness.controller.update(10000) == ExtractionUpdateResult::kOk);
   assert(harness.controller.snapshot(10000).remaining_ms == 10000U);
   assert(harness.controller.stop());
 
-  backend.fail_save = true;
-  assert(harness.controller.replace_profiles(later, storage) ==
-         ReplaceProfilesResult::kPersistenceFailure);
+  assert(harness.controller.adopt_persisted_profiles(replacement));
   assert(harness.controller.profiles()[0].main_extraction_seconds == 20U);
   assert(harness.controller.start(
              kOtherStartKey, {ExtractionSelectionKind::kProfile, 2}, 0) ==
@@ -1573,7 +1601,8 @@ void test_cooldown_replay_conflict_target_snapshot_and_threshold() {
   memory.targets = {93, 115};
   MemoryBackend backend(memory);
   TargetStorage storage(backend);
-  assert(harness.temperature.controller.update_brew_target(95, storage, 9500));
+  assert(persist_brew_target(
+      harness.temperature.controller, storage, 95, 9500));
   assert(harness.cooldown.snapshot(9500).brew_target_c == 93);
   assert(harness.cooldown.update(cooldown_input(93.01F), 10000) ==
          CooldownUpdateResult::kOk);

@@ -74,9 +74,6 @@ class TemperatureController {
   bool force_cooldown_heater_off();
   bool end_cooldown_inhibit(std::uint32_t now_ms);
   bool set_heater_enabled(bool enabled, std::uint32_t now_ms);
-  bool update_targets(const peripherals::TemperatureTargets& targets,
-                      peripherals::TargetStorage& storage,
-                      std::uint32_t now_ms);
   bool prepare_target_update(
       const peripherals::TemperatureTargets& targets,
       std::uint32_t now_ms);
@@ -84,12 +81,6 @@ class TemperatureController {
       const peripherals::TemperatureTargets& targets,
       std::uint32_t now_ms);
   bool rollback_target_update(std::uint32_t now_ms);
-  bool update_brew_target(std::int32_t brew_c,
-                          peripherals::TargetStorage& storage,
-                          std::uint32_t now_ms);
-  bool update_steam_target(std::int32_t steam_c,
-                           peripherals::TargetStorage& storage,
-                           std::uint32_t now_ms);
   bool dismiss_over_temperature(std::uint32_t now_ms);
 
   ControlSnapshot update(const peripherals::ThermocoupleReading& reading,
@@ -282,13 +273,6 @@ enum class StartExtractionResult {
 
 enum class ExtractionReplayStatus { kNone, kMatch, kMismatch };
 
-enum class ReplaceProfilesResult {
-  kReplaced,
-  kActive,
-  kInvalidProfiles,
-  kPersistenceFailure,
-};
-
 enum class ExtractionUpdateResult { kOk, kCompleted, kOutputFailure };
 
 enum class WeightCompletionReason {
@@ -329,9 +313,6 @@ class ExtractionController {
       const ScaleSnapshot& scale,
       std::uint32_t now_ms) const;
 
-  ReplaceProfilesResult replace_profiles(
-      const peripherals::ExtractionProfiles& profiles,
-      peripherals::ProfileStorage& storage);
   bool adopt_persisted_profiles(
       const peripherals::ExtractionProfiles& profiles);
   StartExtractionResult start(const std::string& idempotency_key,

@@ -210,22 +210,6 @@ bool TemperatureController::set_heater_enabled(bool enabled,
   return true;
 }
 
-bool TemperatureController::update_targets(
-    const peripherals::TemperatureTargets& targets,
-    peripherals::TargetStorage& storage, std::uint32_t now_ms) {
-  if (targets.brew_c == targets_.brew_c && targets.steam_c == targets_.steam_c) {
-    return true;
-  }
-  if (!prepare_target_update(targets, now_ms)) {
-    return false;
-  }
-  if (!storage.save(targets)) {
-    rollback_target_update(now_ms);
-    return false;
-  }
-  return adopt_persisted_targets(targets, now_ms);
-}
-
 bool TemperatureController::prepare_target_update(
     const peripherals::TemperatureTargets& targets, std::uint32_t now_ms) {
   if (target_update_in_progress_ ||
@@ -299,22 +283,6 @@ bool TemperatureController::rollback_target_update(std::uint32_t now_ms) {
   reset_heater_control_window(now_ms);
   target_update_in_progress_ = false;
   return true;
-}
-
-bool TemperatureController::update_brew_target(
-    std::int32_t brew_c, peripherals::TargetStorage& storage,
-    std::uint32_t now_ms) {
-  auto targets = targets_;
-  targets.brew_c = brew_c;
-  return update_targets(targets, storage, now_ms);
-}
-
-bool TemperatureController::update_steam_target(
-    std::int32_t steam_c, peripherals::TargetStorage& storage,
-    std::uint32_t now_ms) {
-  auto targets = targets_;
-  targets.steam_c = steam_c;
-  return update_targets(targets, storage, now_ms);
 }
 
 bool TemperatureController::dismiss_over_temperature(std::uint32_t now_ms) {
@@ -1023,22 +991,6 @@ WeightExtractionSnapshot ExtractionController::weight_snapshot(
   }
   value.settled = terminal_weight_settled_;
   return value;
-}
-
-ReplaceProfilesResult ExtractionController::replace_profiles(
-    const peripherals::ExtractionProfiles& profiles,
-    peripherals::ProfileStorage& storage) {
-  if (active_) {
-    return ReplaceProfilesResult::kActive;
-  }
-  if (!peripherals::extraction_profiles_are_valid(profiles)) {
-    return ReplaceProfilesResult::kInvalidProfiles;
-  }
-  if (!storage.save(profiles)) {
-    return ReplaceProfilesResult::kPersistenceFailure;
-  }
-  profiles_ = profiles;
-  return ReplaceProfilesResult::kReplaced;
 }
 
 bool ExtractionController::adopt_persisted_profiles(
