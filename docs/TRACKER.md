@@ -1,7 +1,7 @@
 # PRD-013 Tracker
 
 PRD Status: Active — Approved 2026-07-26
-Current Task: None — Awaiting explicit task selection
+Current Task: PERF-007
 
 Implementation Boundary: Reduce avoidable ESP32-C3 runtime work and mobile
 scale polling without changing public wire schemas, firmware control authority,
@@ -44,7 +44,7 @@ PRD: `docs/prds/PRD-013/PRD-013.md`
 | [PERF-003](prds/PRD-013/tasks/PERF-003.md) | Agent | Done | Native/sanitizer 7/7; 32 contract captures; repeated-read and cooldown-handoff regression | State GET copies only; workflow task unconditionally owns phase publication | `8fee5ab` | None | None |
 | [PERF-004](prds/PRD-013/tasks/PERF-004.md) | Agent | Done | Native/sanitizer 7/7; 32 captures; lock-depth fake; bounded allocation audit | Coherent copies under lock; all response construction after unlock; one authorized route resolution | `8fee5ab` | ESP-IDF target resource delta unavailable | None |
 | [PERF-005](prds/PRD-013/tasks/PERF-005.md) | Agent | Software Complete — Target Pending | Native/sanitizer 7/7; event policy regression; 32 captures; target procedure | Falling-edge notify plus 750 ms timeout; task retains all sampling/publication; PERF-006 untouched | `8fee5ab` | ESP-IDF target build/map and connected low-voltage target unavailable | Run pinned target build/map and cache-suspension/low-voltage checks |
-| [PERF-006](prds/PRD-013/tasks/PERF-006.md) | Agent | Todo | Pending | Pending | Pending | None | None |
+| [PERF-006](prds/PRD-013/tasks/PERF-006.md) | Agent | Done | Native/sanitizer 7/7; cached filter, NotReady, age/wrap, saturation and recovery regression | `NotReady` bypasses mutex/publication; accepted samples refresh cached O(1) snapshots | Pending | Target diagnostics unavailable | None |
 | [PERF-007](prds/PRD-013/tasks/PERF-007.md) | Agent | Todo | Pending | Pending | Pending | None | None |
 | [PERF-008](prds/PRD-013/tasks/PERF-008.md) | Agent | Todo | Pending | Pending | Pending | None | None |
 | [PERF-009](prds/PRD-013/tasks/PERF-009.md) | Human | Todo | Pending | Pending | Pending | None | None |

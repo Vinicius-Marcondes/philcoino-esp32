@@ -1,6 +1,6 @@
 # PERF-006 — Cache accepted scale processing
 
-Status: Todo
+Status: Done
 Review Mode: Agent
 Review Reason: Accepted-sample processing, cached snapshots, age, and
 availability are deterministic in pure controller tests.
@@ -33,11 +33,15 @@ O(1) cached snapshots without locking for `NotReady`.
 
 ## Acceptance Criteria
 
-- [ ] `NotReady` never acquires the workflow mutex.
-- [ ] Derived scale work runs only after an accepted sample.
-- [ ] Consumer snapshots are O(1) and preserve age/availability.
-- [ ] Automatic tare and bounded settling behavior are unchanged.
-- [ ] Firmware host and available target checks pass.
+- [x] `NotReady` never acquires the workflow mutex.
+- [x] Derived scale work runs only after an accepted sample.
+- [x] Consumer snapshots are O(1) and preserve age/availability.
+- [x] Automatic tare and bounded settling behavior are unchanged.
+- [x] Firmware host and available target checks pass.
+
+## Evidence
+
+- `../evidence/PERF-006-CACHED-SCALE.md`
 
 ## Verification Strategy
 

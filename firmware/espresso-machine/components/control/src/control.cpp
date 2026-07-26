@@ -743,6 +743,7 @@ void ScaleController::update(peripherals::Hx711Reading reading,
     last_valid_ms_ = now_ms;
     has_valid_sample_ = true;
     transport_failed_ = false;
+    refresh_cached_derived_state();
     return;
   }
   if (reading.status == peripherals::Hx711Status::kTransportError ||
@@ -766,8 +767,8 @@ ScaleSnapshot ScaleController::snapshot(std::uint32_t now_ms) const {
           : value.stable ? ScaleAvailability::kReady
                          : ScaleAvailability::kUnstable;
   if (calibrated_ && !calibration_in_progress_ && current_available) {
-    value.gross_weight_available = peripherals::scale_raw_to_decigrams(
-        calibration_, median_raw(), value.gross_weight_decigrams);
+    value.gross_weight_available = cached_gross_weight_available_;
+    value.gross_weight_decigrams = cached_gross_weight_decigrams_;
     if (!value.gross_weight_available) {
       value.availability = ScaleAvailability::kUnavailable;
       value.stable = false;
@@ -825,6 +826,7 @@ ScaleCalibrationResult ScaleController::complete_calibration(
   calibration_ = candidate;
   calibrated_ = true;
   calibration_in_progress_ = false;
+  refresh_cached_derived_state();
   return ScaleCalibrationResult::kOk;
 }
 
@@ -839,35 +841,16 @@ bool ScaleController::available(std::uint32_t now_ms) const {
 }
 
 bool ScaleController::stable() const {
-  if (sample_count_ < samples_.size()) {
-    return false;
-  }
-  const auto range = std::minmax_element(samples_.begin(), samples_.end());
-  const auto spread =
-      static_cast<std::int64_t>(*range.second) -
-      static_cast<std::int64_t>(*range.first);
-  return spread <= stable_raw_spread_limit();
+  return sample_count_ == samples_.size() &&
+         cached_raw_spread_ <= stable_raw_spread_limit();
 }
 
 bool ScaleController::stable_for_calibration() const {
-  if (sample_count_ < samples_.size()) {
-    return false;
-  }
-  const auto range = std::minmax_element(samples_.begin(), samples_.end());
-  const auto spread =
-      static_cast<std::int64_t>(*range.second) -
-      static_cast<std::int64_t>(*range.first);
-  return spread <= 1000;
+  return sample_count_ == samples_.size() && cached_raw_spread_ <= 1000;
 }
 
 std::int32_t ScaleController::median_raw() const {
-  if (sample_count_ == 0U) {
-    return 0;
-  }
-  std::array<std::int32_t, 10> sorted{};
-  std::copy_n(samples_.begin(), sample_count_, sorted.begin());
-  std::sort(sorted.begin(), sorted.begin() + sample_count_);
-  return sorted[sample_count_ / 2U];
+  return cached_median_raw_;
 }
 
 std::int32_t ScaleController::stable_raw_spread_limit() const {
@@ -881,6 +864,30 @@ std::int32_t ScaleController::stable_raw_spread_limit() const {
       raw_span * config::kScaleStableSpreadDecigrams /
       calibration_.reference_decigrams;
   return static_cast<std::int32_t>(std::max(1LL, scaled));
+}
+
+void ScaleController::refresh_cached_derived_state() {
+  if (sample_count_ == 0U) {
+    cached_median_raw_ = 0;
+    cached_raw_spread_ = 0;
+    cached_gross_weight_available_ = false;
+    cached_gross_weight_decigrams_ = 0;
+    return;
+  }
+  std::array<std::int32_t, 10> sorted{};
+  std::copy_n(samples_.begin(), sample_count_, sorted.begin());
+  std::sort(sorted.begin(), sorted.begin() + sample_count_);
+  cached_median_raw_ = sorted[sample_count_ / 2U];
+  cached_raw_spread_ =
+      static_cast<std::int64_t>(sorted[sample_count_ - 1U]) -
+      static_cast<std::int64_t>(sorted[0]);
+  cached_gross_weight_available_ =
+      calibrated_ && peripherals::scale_raw_to_decigrams(
+                         calibration_, cached_median_raw_,
+                         cached_gross_weight_decigrams_);
+  if (!cached_gross_weight_available_) {
+    cached_gross_weight_decigrams_ = 0;
+  }
 }
 
 ExtractionController::ExtractionController(

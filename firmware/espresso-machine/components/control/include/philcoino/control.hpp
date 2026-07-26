@@ -224,6 +224,7 @@ class ScaleController {
   bool stable_for_calibration() const;
   std::int32_t median_raw() const;
   std::int32_t stable_raw_spread_limit() const;
+  void refresh_cached_derived_state();
 
   peripherals::ScaleCalibration calibration_{};
   peripherals::ScaleCalibrationStorage& storage_;
@@ -236,6 +237,10 @@ class ScaleController {
   bool calibrated_{false};
   bool calibration_in_progress_{false};
   std::int32_t calibration_zero_raw_{0};
+  std::int32_t cached_median_raw_{0};
+  std::int64_t cached_raw_spread_{0};
+  bool cached_gross_weight_available_{false};
+  std::int32_t cached_gross_weight_decigrams_{0};
 };
 
 struct ExtractionSnapshot {

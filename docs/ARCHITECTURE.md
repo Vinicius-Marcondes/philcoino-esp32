@@ -336,7 +336,10 @@ same bounded workflow synchronization boundary. After one immediate read, a
 falling edge on HX711 DOUT wakes that task; the IRAM GPIO ISR only posts a
 coalescing task notification, while GPIO clocking, filtering, logging, and
 publication remain in task context. A 750 ms notify timeout preserves bounded
-unavailable detection for a missing or disconnected scale. This does not block
+unavailable detection for a missing or disconnected scale. `NotReady` reads do
+not enter the workflow mutex or publish to `ScaleController`; accepted samples
+refresh the cached median, spread, stability, and calibrated weight once, and
+consumer snapshots apply only O(1) age/availability gating. This does not block
 temperature control or ordinary Manual/timed extraction.
 Calibration has its own NVS blob; invalid/missing calibration disables weighted
 Start without preventing machine startup.

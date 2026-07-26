@@ -1320,6 +1320,18 @@ void test_scale_filter_calibration_timeout_and_saturation() {
   assert(snapshot.gross_weight_decigrams >= 999 &&
          snapshot.gross_weight_decigrams <= 1001);
 
+  const auto accepted_weight = snapshot.gross_weight_decigrams;
+  for (std::int32_t index = 0; index < 5; ++index) {
+    scale.update({Hx711Status::kNotReady,
+                  std::numeric_limits<std::int32_t>::max()},
+                 301U + static_cast<std::uint32_t>(index));
+  }
+  snapshot = scale.snapshot(305);
+  assert(snapshot.availability == ScaleAvailability::kReady);
+  assert(snapshot.stable);
+  assert(snapshot.gross_weight_available);
+  assert(snapshot.gross_weight_decigrams == accepted_weight);
+
   scale.update({Hx711Status::kSaturated, 0}, 301);
   assert(scale.snapshot(301).availability == ScaleAvailability::kUnavailable);
   for (std::int32_t index = 0; index < 10; ++index) {
@@ -1327,6 +1339,17 @@ void test_scale_filter_calibration_timeout_and_saturation() {
   }
   assert(scale.snapshot(500).availability == ScaleAvailability::kReady);
   assert(scale.snapshot(1300).availability == ScaleAvailability::kUnavailable);
+
+  ScaleController rollover_scale({}, false, storage);
+  for (std::int32_t index = 0; index < 10; ++index) {
+    rollover_scale.update(
+        {Hx711Status::kOk, 300000 + index},
+        0xFFFFFF00U + static_cast<std::uint32_t>(index * 10));
+  }
+  assert(rollover_scale.snapshot(0x00000050U).availability ==
+         ScaleAvailability::kReady);
+  assert(rollover_scale.snapshot(0x00000350U).availability ==
+         ScaleAvailability::kUnavailable);
 }
 
 void test_scale_recalibrates_after_the_retained_baseline_moves_out_of_range() {

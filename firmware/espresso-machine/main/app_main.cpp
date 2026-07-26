@@ -436,11 +436,13 @@ void scale_sample_task(void* argument) {
         unavailable_reported = true;
       }
     }
-    if (context->synchronization->lock(
-            philcoino::networking::ApiDomain::kExtraction)) {
-      context->scale->update(reading, now_ms);
-      context->synchronization->unlock(
-          philcoino::networking::ApiDomain::kExtraction);
+    if (reading.status != philcoino::peripherals::Hx711Status::kNotReady) {
+      if (context->synchronization->lock(
+              philcoino::networking::ApiDomain::kExtraction)) {
+        context->scale->update(reading, now_ms);
+        context->synchronization->unlock(
+            philcoino::networking::ApiDomain::kExtraction);
+      }
     }
     if constexpr (philcoino::config::kPerformanceDiagnosticsEnabled) {
       context->performance_diagnostics->record(
