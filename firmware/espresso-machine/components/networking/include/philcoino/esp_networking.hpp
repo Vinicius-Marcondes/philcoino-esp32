@@ -4,6 +4,7 @@
 #include <string>
 
 #include "philcoino/api.hpp"
+#include "philcoino/performance_diagnostics.hpp"
 
 namespace philcoino::networking {
 
@@ -11,7 +12,9 @@ enum class WifiStatus { kOff, kConnecting, kConnected, kRetrying, kFailed };
 
 class EspNetworkServer {
  public:
-  EspNetworkServer(FirmwareApi& api, const DeviceIdentity& identity);
+  EspNetworkServer(
+      FirmwareApi& api, const DeviceIdentity& identity,
+      diagnostics::PerformanceDiagnostics* performance_diagnostics = nullptr);
 
   bool start(const char* ssid, const char* password);
   WifiStatus wifi_status() const;
@@ -28,6 +31,7 @@ class EspNetworkServer {
 
   FirmwareApi& api_;
   DeviceIdentity identity_;
+  diagnostics::PerformanceDiagnostics* performance_diagnostics_;
   void* event_group_{nullptr};
   void* http_server_{nullptr};
   void* wifi_event_handler_{nullptr};

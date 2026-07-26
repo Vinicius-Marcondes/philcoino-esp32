@@ -1,4 +1,60 @@
-# PRD-007 Tracker
+# PRD-013 Tracker
+
+PRD Status: Active — Approved 2026-07-26
+Current Task: None — Awaiting explicit task selection
+
+Implementation Boundary: Reduce avoidable ESP32-C3 runtime work and mobile
+scale polling without changing public wire schemas, firmware control authority,
+profiles, ten-minute history, passive prediction, heater/pump policy, timeouts,
+faults, or fail-off behavior.
+
+## Summary
+
+Capture an unchanged-code performance baseline, bound mobile scale polling, then
+incrementally reduce firmware workflow-mutex exposure, scale wakeups and
+processing, API allocation pressure, scheduling jitter, and abandoned OLED/code
+surface under separate supervised task approvals.
+
+PRD: `docs/prds/PRD-013/PRD-013.md`
+
+## Compatibility and Safety Boundary
+
+- No OpenAPI or public wire-schema changes are planned.
+- Firmware remains authoritative for all sensor, target, persistence, heater,
+  pump, workflow, timeout, fault, and fail-off decisions.
+- Every NVS/flash operation remains outside the workflow mutex.
+- Application ISRs remain minimal, allocation-free, logging-free, and
+  cache-safe; the heater safety lease remains 1,500 ms.
+- Host, target-build, connected-target, logic-analyzer, and Human evidence are
+  tracked separately. No software result proves physical de-energization or
+  energized mains safety.
+
+## Git
+
+- Planned branch: `feature/esp32c3-firmware-performance`
+- Base: `main`
+- Merge target: `main`
+
+## Execution State
+
+| Task | Review | Status | Evidence | Decision Log | Commit | Blocked Reason | Requested Decision |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| [PERF-001](prds/PRD-013/tasks/PERF-001.md) | Human | Software Complete — Target/Human Pending | Unchanged-code host/mobile baseline; native/sanitizer 7/7; 32 captures; target procedure | Default-off fixed diagnostics; target evidence not inferred | Pending | ESP-IDF toolchain and connected target unavailable | Run pinned target build and supervised low-voltage scenarios |
+| [PERF-002](prds/PRD-013/tasks/PERF-002.md) | Agent | Done | Focused 6 tests; mobile 173 tests; typecheck; lint; request-rate bounds | Fresh acknowledged scale state owns cadence; Manual/timed remain idle cadence | Pending | None | None |
+| [PERF-003](prds/PRD-013/tasks/PERF-003.md) | Agent | Done | Native/sanitizer 7/7; 32 contract captures; repeated-read and cooldown-handoff regression | State GET copies only; workflow task unconditionally owns phase publication | Pending | None | None |
+| [PERF-004](prds/PRD-013/tasks/PERF-004.md) | Agent | Done | Native/sanitizer 7/7; 32 captures; lock-depth fake; bounded allocation audit | Coherent copies under lock; all response construction after unlock; one authorized route resolution | Pending | ESP-IDF target resource delta unavailable | None |
+| [PERF-005](prds/PRD-013/tasks/PERF-005.md) | Agent | Software Complete — Target Pending | Native/sanitizer 7/7; event policy regression; 32 captures; target procedure | Falling-edge notify plus 750 ms timeout; task retains all sampling/publication; PERF-006 untouched | Pending | ESP-IDF target build/map and connected low-voltage target unavailable | Run pinned target build/map and cache-suspension/low-voltage checks |
+| [PERF-006](prds/PRD-013/tasks/PERF-006.md) | Agent | Todo | Pending | Pending | Pending | None | None |
+| [PERF-007](prds/PRD-013/tasks/PERF-007.md) | Agent | Todo | Pending | Pending | Pending | None | None |
+| [PERF-008](prds/PRD-013/tasks/PERF-008.md) | Agent | Todo | Pending | Pending | Pending | None | None |
+| [PERF-009](prds/PRD-013/tasks/PERF-009.md) | Human | Todo | Pending | Pending | Pending | None | None |
+| [PERF-010](prds/PRD-013/tasks/PERF-010.md) | Agent | Todo | Pending | Pending | Pending | None | None |
+| [PERF-011](prds/PRD-013/tasks/PERF-011.md) | Agent | Todo | Pending | Pending | Pending | None | None |
+| [PERF-012](prds/PRD-013/tasks/PERF-012.md) | Human | Todo | Pending | Pending | Pending | None | None |
+
+---
+
+## Prior PRD-007 Tracker
 
 PRD Status: Complete — Software Delivery Closed
 Current Task: None — Deferred validation remains documented

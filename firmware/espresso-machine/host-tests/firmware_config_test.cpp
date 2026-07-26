@@ -5,6 +5,7 @@
 #include <type_traits>
 
 #include "philcoino/config.hpp"
+#include "philcoino/performance_diagnostics.hpp"
 
 int main() {
   using namespace philcoino::config;
@@ -45,6 +46,7 @@ int main() {
   static_assert(
       std::is_same_v<decltype(kTemperatureReadingLoggingEnabled), const bool>);
   static_assert(!kTemperatureReadingLoggingEnabled);
+  static_assert(!kPerformanceDiagnosticsEnabled);
   static_assert(kOledI2cAddress == 0x3C);
   static_assert(kBoilerThermocoupleChipSelectGpio == 7);
   static_assert(kBoilerThermocoupleDataGpio == 5);
@@ -56,6 +58,33 @@ int main() {
   static_assert(kPumpGpio != kBoilerThermocoupleChipSelectGpio);
   static_assert(kPumpGpio != kBoilerThermocoupleClockGpio);
   static_assert(kPumpGpio != kBoilerThermocoupleDataGpio);
+
+  using namespace philcoino::diagnostics;
+  PerformanceDiagnostics diagnostics;
+  diagnostics.record(DurationMetric::kWorkflowMutexWaitUs, 9U);
+  diagnostics.record(DurationMetric::kWorkflowMutexWaitUs, 250U);
+  diagnostics.record(DurationMetric::kWorkflowMutexWaitUs, 5001U);
+  diagnostics.increment(EventCounter::kWorkflowMutexAcquired);
+  diagnostics.increment(EventCounter::kWorkflowMutexAcquired);
+  diagnostics.observe_stack_free(StackRole::kWorkflow, 2048U);
+  diagnostics.observe_stack_free(StackRole::kWorkflow, 2304U);
+  diagnostics.observe_stack_free(StackRole::kWorkflow, 1536U);
+
+  const auto performance = diagnostics.snapshot();
+  const auto wait_index =
+      static_cast<std::size_t>(DurationMetric::kWorkflowMutexWaitUs);
+  assert(performance.durations[wait_index].count == 3U);
+  assert(performance.durations[wait_index].maximum == 5001U);
+  assert(performance.durations[wait_index].buckets[0] == 1U);
+  assert(performance.durations[wait_index].buckets[3] == 1U);
+  assert(performance.durations[wait_index]
+             .buckets[kHistogramBucketCount - 1U] == 1U);
+  assert(performance.counters[static_cast<std::size_t>(
+             EventCounter::kWorkflowMutexAcquired)] == 2U);
+  assert(performance.minimum_stack_free_bytes[
+             static_cast<std::size_t>(StackRole::kWorkflow)] == 1536U);
+  assert(performance.minimum_stack_free_bytes[
+             static_cast<std::size_t>(StackRole::kHttp)] == 0U);
 
   return 0;
 }

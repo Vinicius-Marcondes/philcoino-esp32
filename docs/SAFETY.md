@@ -47,6 +47,9 @@ O firmware controla o temperature-control loop e não depende da conectividade d
 - amostra o HX711 fora do loop crítico e só inicia uma extração por peso após
   calibração, disponibilidade, estabilidade e tara automática; falha de tara
   mantém a pump desligada;
+- acorda a task da balança por uma notificação coalescente da borda de
+  data-ready; a ISR não faz clock, filtro, log ou publicação, e o timeout de
+  750 ms mantém a detecção bounded de uma balança desconectada;
 - em falha da balança durante a extração, abandona o corte por peso e usa o
   deadline monotônico original do perfil, preservando o cutoff independente de
   60 segundos e bloqueando novo Start por peso até acknowledgement;

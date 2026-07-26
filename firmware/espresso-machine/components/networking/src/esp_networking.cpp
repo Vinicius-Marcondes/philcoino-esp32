@@ -4,12 +4,13 @@
 #include <array>
 #include <cstddef>
 #include <cstring>
+#include <limits>
 #include <string>
 #include <utility>
-#include <vector>
 
 #include "esp_event.h"
 #include "esp_err.h"
+#include "esp_heap_caps.h"
 #include "esp_http_server.h"
 #include "esp_log.h"
 #include "esp_netif.h"
@@ -21,8 +22,10 @@
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "mdns.h"
+#include "sdkconfig.h"
 #include "philcoino/api_routes.hpp"
 #include "philcoino/config.hpp"
+#include "philcoino/performance_diagnostics.hpp"
 
 namespace philcoino::networking {
 namespace {
@@ -35,6 +38,62 @@ constexpr std::size_t kMaximumRequestBodyLength = 1024;
 constexpr std::int64_t kRequestBodyDeadlineUs = 2'000'000;
 constexpr unsigned kMaximumBodyTimeouts = 3;
 constexpr std::uint32_t kMaximumMdnsRetryDelayMs = 30'000;
+
+std::uint32_t bounded_u32(std::uint64_t value) {
+  return value > std::numeric_limits<std::uint32_t>::max()
+             ? std::numeric_limits<std::uint32_t>::max()
+             : static_cast<std::uint32_t>(value);
+}
+
+class RequestPerformanceObservation {
+ public:
+  explicit RequestPerformanceObservation(
+      diagnostics::PerformanceDiagnostics* diagnostics)
+      : diagnostics_(diagnostics) {
+    if constexpr (config::kPerformanceDiagnosticsEnabled) {
+      if (diagnostics_ != nullptr) {
+        started_us_ = static_cast<std::uint64_t>(esp_timer_get_time());
+        initial_free_heap_ = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+        initial_minimum_free_heap_ =
+            heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL);
+        diagnostics_->increment(diagnostics::EventCounter::kApiRequest);
+      }
+    }
+  }
+
+  ~RequestPerformanceObservation() {
+    if constexpr (config::kPerformanceDiagnosticsEnabled) {
+      if (diagnostics_ == nullptr) return;
+      const auto elapsed_us =
+          static_cast<std::uint64_t>(esp_timer_get_time()) - started_us_;
+      diagnostics_->record(diagnostics::DurationMetric::kApiLatencyUs,
+                           bounded_u32(elapsed_us));
+      const auto free_heap = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+      diagnostics_->record(
+          diagnostics::DurationMetric::kApiHeapDecreaseBytes,
+          initial_free_heap_ > free_heap
+              ? bounded_u32(initial_free_heap_ - free_heap)
+              : 0U);
+      const auto minimum_free_heap =
+          heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL);
+      diagnostics_->record(
+          diagnostics::DurationMetric::kApiNewMinimumHeapDropBytes,
+          initial_minimum_free_heap_ > minimum_free_heap
+              ? bounded_u32(initial_minimum_free_heap_ - minimum_free_heap)
+              : 0U);
+      diagnostics_->observe_stack_free(
+          diagnostics::StackRole::kHttp,
+          static_cast<std::uint32_t>(uxTaskGetStackHighWaterMark(nullptr)));
+    }
+  }
+
+ private:
+  diagnostics::PerformanceDiagnostics* diagnostics_;
+  std::uint64_t started_us_{0};
+  std::size_t initial_free_heap_{0};
+  std::size_t initial_minimum_free_heap_{0};
+};
+
 std::uint64_t uptime_ms() {
   return static_cast<std::uint64_t>(esp_timer_get_time() / 1000);
 }
@@ -101,8 +160,12 @@ class AtomicFlagReset final {
 }  // namespace
 
 EspNetworkServer::EspNetworkServer(FirmwareApi& api,
-                                   const DeviceIdentity& identity)
-    : api_(api), identity_(identity) {}
+                                   const DeviceIdentity& identity,
+                                   diagnostics::PerformanceDiagnostics*
+                                       performance_diagnostics)
+    : api_(api),
+      identity_(identity),
+      performance_diagnostics_(performance_diagnostics) {}
 
 bool EspNetworkServer::start(const char* ssid, const char* password) {
   if (!start_wifi(ssid, password) || !start_http()) {
@@ -353,23 +416,24 @@ bool EspNetworkServer::start_http() {
 }
 
 int EspNetworkServer::handle_http_request(void* opaque_request) {
+  RequestPerformanceObservation performance(performance_diagnostics_);
   auto* request = static_cast<httpd_req_t*>(opaque_request);
-  std::string authorization;
+  std::array<char, kMaximumAuthorizationLength + 1U> authorization{};
   const std::size_t header_length =
       httpd_req_get_hdr_value_len(request, "Authorization");
+  const char* authorization_value = nullptr;
   if (header_length > 0 && header_length <= kMaximumAuthorizationLength) {
-    std::vector<char> header(header_length + 1, '\0');
-    if (httpd_req_get_hdr_value_str(request, "Authorization", header.data(),
-                                    header.size()) == ESP_OK) {
-      authorization.assign(header.data(), header_length);
+    if (httpd_req_get_hdr_value_str(request, "Authorization",
+                                    authorization.data(),
+                                    header_length + 1U) == ESP_OK) {
+      authorization_value = authorization.data();
     }
   }
 
   const auto method = request_method(request->method);
   const std::string path(request->uri);
-  const char* authorization_value =
-      authorization.empty() ? nullptr : authorization.c_str();
-  if (request_requires_auth(method, path) &&
+  const auto* route = find_api_route(method, path);
+  if (route != nullptr && route->requires_authentication &&
       !api_.authorized(authorization_value)) {
     const HttpResponse response =
         api_.handle(method, path, authorization_value, "", uptime_ms());
@@ -410,8 +474,10 @@ int EspNetworkServer::handle_http_request(void* opaque_request) {
     body = "invalid";
   }
 
-  const HttpResponse response = api_.handle(
-      method, path, authorization_value, body, uptime_ms());
+  const HttpResponse response =
+      route == nullptr
+          ? api_.handle(method, path, authorization_value, body, uptime_ms())
+          : api_.handle_resolved(*route, path, body, uptime_ms());
   return send_http_response(request, response, path);
 }
 

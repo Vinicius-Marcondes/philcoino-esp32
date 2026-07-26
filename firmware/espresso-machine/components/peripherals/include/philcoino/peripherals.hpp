@@ -76,6 +76,24 @@ class Hx711 {
   Hx711Transport& transport_;
 };
 
+class Hx711ReadyWaiter {
+ public:
+  virtual ~Hx711ReadyWaiter() = default;
+  virtual bool wait(std::uint32_t timeout_ms) = 0;
+};
+
+class Hx711EventDrivenAcquisition {
+ public:
+  Hx711EventDrivenAcquisition(Hx711& hx711, Hx711ReadyWaiter& waiter);
+
+  Hx711Reading acquire(std::uint32_t timeout_ms);
+
+ private:
+  Hx711& hx711_;
+  Hx711ReadyWaiter& waiter_;
+  bool initial_read_pending_{true};
+};
+
 struct ScaleCalibration {
   std::int32_t zero_raw{0};
   std::int32_t reference_raw{0};

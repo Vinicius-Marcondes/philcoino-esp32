@@ -10,6 +10,10 @@
 #error "PhilcoINO requires CONFIG_GPIO_CTRL_FUNC_IN_IRAM for the heater lease"
 #endif
 
+#if !CONFIG_FREERTOS_IN_IRAM
+#error "PhilcoINO requires CONFIG_FREERTOS_IN_IRAM for cache-safe HX711 notification"
+#endif
+
 #include <algorithm>
 #include <array>
 #include <cinttypes>
@@ -254,6 +258,42 @@ Hx711Reading EspHx711Transport::read() {
     raw |= 0xFF000000U;
   }
   return {Hx711Status::kOk, static_cast<std::int32_t>(raw)};
+}
+
+bool EspHx711ReadyWaiter::initialize_for_current_task() {
+  if (initialized_) return true;
+  task_ = xTaskGetCurrentTaskHandle();
+  if (task_ == nullptr) return false;
+  const auto install_result = gpio_install_isr_service(ESP_INTR_FLAG_IRAM);
+  if (install_result != ESP_OK) {
+    task_ = nullptr;
+    return false;
+  }
+  const auto data_gpio = static_cast<gpio_num_t>(config::kScaleDataGpio);
+  if (gpio_set_intr_type(data_gpio, GPIO_INTR_NEGEDGE) != ESP_OK ||
+      gpio_isr_handler_add(data_gpio, &EspHx711ReadyWaiter::on_ready, this) !=
+          ESP_OK ||
+      gpio_intr_enable(data_gpio) != ESP_OK) {
+    gpio_isr_handler_remove(data_gpio);
+    task_ = nullptr;
+    return false;
+  }
+  initialized_ = true;
+  return true;
+}
+
+bool EspHx711ReadyWaiter::wait(std::uint32_t timeout_ms) {
+  if (!initialized_) return false;
+  return ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(timeout_ms)) > 0U;
+}
+
+void IRAM_ATTR EspHx711ReadyWaiter::on_ready(void* context) {
+  auto* waiter = static_cast<EspHx711ReadyWaiter*>(context);
+  BaseType_t higher_priority_task_woken = pdFALSE;
+  vTaskNotifyGiveFromISR(waiter->task_, &higher_priority_task_woken);
+  if (higher_priority_task_woken == pdTRUE) {
+    portYIELD_FROM_ISR();
+  }
 }
 
 bool EspNvsTargetBackend::initialize() {

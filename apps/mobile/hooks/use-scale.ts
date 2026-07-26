@@ -18,6 +18,7 @@ import {
 } from "@/src/scale/scale-preferences";
 import { scalePreferencesRepository } from "@/src/scale/scale-preferences-repository";
 import { scaleMutationErrorMessage } from "@/src/scale/scale-mutation-error";
+import { ScalePollingSession } from "@/src/scale/scale-polling-session";
 
 interface ScaleClient {
   acknowledgeScaleWarning(options?: { signal?: AbortSignal }): Promise<ScaleState>;
@@ -41,12 +42,12 @@ export function useScale({
   client,
   deviceId,
   extraction,
-  fastPolling,
+  scalePageVisible,
 }: {
   client: ScaleClient;
   deviceId: string;
   extraction: ExtractionState | null;
-  fastPolling: boolean;
+  scalePageVisible: boolean;
 }) {
   const [scale, setScale] = useState<ScaleState | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -58,15 +59,19 @@ export function useScale({
   const [historyError, setHistoryError] = useState<string | null>(null);
   const storedTerminal = useRef<string | null>(null);
   const extractionRef = useRef(extraction);
+  const pollingRef = useRef<ScalePollingSession | null>(null);
   extractionRef.current = extraction;
 
   useEffect(() => {
     let active = true;
-    const controller = new AbortController();
-    let timeout: ReturnType<typeof setTimeout> | null = null;
-    const poll = async () => {
-      try {
-        const next = await client.getScale({ signal: controller.signal });
+    const polling = new ScalePollingSession({
+      client,
+      onError: () => {
+        if (active) {
+          setError("Scale data is unavailable.");
+        }
+      },
+      onSnapshot: async (next) => {
         if (!active) return;
         setScale(next);
         setError(null);
@@ -89,17 +94,10 @@ export function useScale({
             setHistory(await shotHistoryRepository.load(deviceId));
           }
         }
-      } catch {
-        if (active && !controller.signal.aborted) {
-          setError("Scale data is unavailable.");
-        }
-      } finally {
-        if (active) {
-          const weightedActive = scale?.activeExtraction !== null;
-          timeout = setTimeout(poll, fastPolling || weightedActive ? 250 : 1000);
-        }
-      }
-    };
+      },
+      scalePageVisible,
+    });
+    pollingRef.current = polling;
     void Promise.all([
       scalePreferencesRepository.load(deviceId).then((value) => {
         if (active) setDefaults(value);
@@ -110,13 +108,19 @@ export function useScale({
     ]).catch(() => {
       if (active) setHistoryError("Local scale data could not be loaded.");
     });
-    void poll();
+    polling.start();
     return () => {
       active = false;
-      controller.abort();
-      if (timeout !== null) clearTimeout(timeout);
+      polling.stop();
+      if (pollingRef.current === polling) {
+        pollingRef.current = null;
+      }
     };
-  }, [client, deviceId, fastPolling]);
+  }, [client, deviceId]);
+
+  useEffect(() => {
+    pollingRef.current?.setScalePageVisible(scalePageVisible);
+  }, [scalePageVisible]);
 
   const run = useCallback(
     async (kind: Exclude<ScaleMutation, null>, operation: () => Promise<ScaleState>) => {

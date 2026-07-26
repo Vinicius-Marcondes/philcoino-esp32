@@ -179,6 +179,20 @@ Hx711::Hx711(Hx711Transport& transport) : transport_(transport) {}
 
 Hx711Reading Hx711::read() { return transport_.read(); }
 
+Hx711EventDrivenAcquisition::Hx711EventDrivenAcquisition(
+    Hx711& hx711, Hx711ReadyWaiter& waiter)
+    : hx711_(hx711), waiter_(waiter) {}
+
+Hx711Reading Hx711EventDrivenAcquisition::acquire(
+    std::uint32_t timeout_ms) {
+  if (initial_read_pending_) {
+    initial_read_pending_ = false;
+  } else {
+    waiter_.wait(timeout_ms);
+  }
+  return hx711_.read();
+}
+
 bool scale_calibration_is_valid(const ScaleCalibration& calibration) {
   if (calibration.reference_decigrams <
           config::kScaleCalibrationReferenceMinimumDecigrams ||

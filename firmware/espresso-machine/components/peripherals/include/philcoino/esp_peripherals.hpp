@@ -6,6 +6,7 @@
 #include "driver/gptimer.h"
 #include "esp_attr.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "philcoino/peripherals.hpp"
 
 namespace philcoino::peripherals {
@@ -34,6 +35,18 @@ class EspHx711Transport final : public Hx711Transport {
   Hx711Reading read() override;
 
  private:
+  bool initialized_{false};
+};
+
+class EspHx711ReadyWaiter final : public Hx711ReadyWaiter {
+ public:
+  bool initialize_for_current_task();
+  bool wait(std::uint32_t timeout_ms) override;
+
+ private:
+  static void IRAM_ATTR on_ready(void* context);
+
+  TaskHandle_t task_{nullptr};
   bool initialized_{false};
 };
 

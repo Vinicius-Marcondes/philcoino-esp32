@@ -34,6 +34,38 @@ class FakeMax6675Transport final : public Max6675Transport {
   bool read_active{false};
 };
 
+class FakeHx711Transport final : public Hx711Transport {
+ public:
+  Hx711Reading read() override {
+    ++read_count;
+    if (next_reading < readings.size()) {
+      return readings[next_reading++];
+    }
+    return {Hx711Status::kNotReady, 0};
+  }
+
+  std::vector<Hx711Reading> readings{};
+  std::size_t next_reading{0};
+  std::size_t read_count{0};
+};
+
+class FakeHx711ReadyWaiter final : public Hx711ReadyWaiter {
+ public:
+  bool wait(std::uint32_t timeout_ms) override {
+    ++wait_count;
+    last_timeout_ms = timeout_ms;
+    if (pending_notifications == 0U) return false;
+    pending_notifications = 0U;
+    return true;
+  }
+
+  void notify_from_isr() { ++pending_notifications; }
+
+  std::uint32_t pending_notifications{0};
+  std::uint32_t last_timeout_ms{0};
+  std::size_t wait_count{0};
+};
+
 struct MemoryState {
   bool present{false};
   bool fail_load{false};
@@ -304,6 +336,64 @@ void test_thermocouple() {
   assert(rollover_sensor.read(0x0000005BU).status ==
          ThermocoupleStatus::kNotReady);
   assert(rollover_sensor.read(0x0000005CU).status == ThermocoupleStatus::kOk);
+}
+
+void test_event_driven_hx711_acquisition() {
+  FakeHx711Transport transport;
+  transport.readings = {
+      {Hx711Status::kNotReady, 0},
+      {Hx711Status::kOk, 12345},
+      {Hx711Status::kNotReady, 0},
+      {Hx711Status::kNotReady, 0},
+      {Hx711Status::kOk, 23456},
+      {Hx711Status::kTransportError, 0},
+      {Hx711Status::kSaturated, 0},
+  };
+  Hx711 hx711(transport);
+  FakeHx711ReadyWaiter waiter;
+  Hx711EventDrivenAcquisition acquisition(hx711, waiter);
+
+  const auto initial = acquisition.acquire(
+      philcoino::config::kScaleUnavailableTimeoutMs);
+  assert(initial.status == Hx711Status::kNotReady);
+  assert(transport.read_count == 1U);
+  assert(waiter.wait_count == 0U);
+
+  waiter.notify_from_isr();
+  waiter.notify_from_isr();
+  assert(transport.read_count == 1U);
+  const auto ready_before_wait = acquisition.acquire(
+      philcoino::config::kScaleUnavailableTimeoutMs);
+  assert(ready_before_wait.status == Hx711Status::kOk);
+  assert(ready_before_wait.raw == 12345);
+  assert(waiter.pending_notifications == 0U);
+  assert(waiter.wait_count == 1U);
+  assert(transport.read_count == 2U);
+
+  const auto first_timeout = acquisition.acquire(
+      philcoino::config::kScaleUnavailableTimeoutMs);
+  const auto repeated_timeout = acquisition.acquire(
+      philcoino::config::kScaleUnavailableTimeoutMs);
+  assert(first_timeout.status == Hx711Status::kNotReady);
+  assert(repeated_timeout.status == Hx711Status::kNotReady);
+  assert(waiter.wait_count == 3U);
+  assert(waiter.last_timeout_ms ==
+         philcoino::config::kScaleUnavailableTimeoutMs);
+  assert(transport.read_count == 4U);
+
+  waiter.notify_from_isr();
+  const auto recovered = acquisition.acquire(
+      philcoino::config::kScaleUnavailableTimeoutMs);
+  assert(recovered.status == Hx711Status::kOk);
+  assert(recovered.raw == 23456);
+
+  waiter.notify_from_isr();
+  assert(acquisition.acquire(philcoino::config::kScaleUnavailableTimeoutMs)
+             .status == Hx711Status::kTransportError);
+  waiter.notify_from_isr();
+  assert(acquisition.acquire(philcoino::config::kScaleUnavailableTimeoutMs)
+             .status == Hx711Status::kSaturated);
+  assert(transport.read_count == 7U);
 }
 
 void test_target_storage() {
@@ -726,6 +816,7 @@ void test_oled() {
 
 int main() {
   test_thermocouple();
+  test_event_driven_hx711_acquisition();
   test_target_storage();
   test_profile_storage();
   test_fail_off_pump();

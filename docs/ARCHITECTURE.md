@@ -165,6 +165,14 @@ state together. Generation
 counters and `AbortController` prevent stopped/paused work from publishing.
 Failures clear both live snapshots before changing connection state.
 
+Scale polling has a separate completion-driven session with at most one request
+in flight. Its next timer uses the latest validated scale acknowledgement:
+one second while the Scale page is hidden and no weighted extraction is active,
+or 250 ms while the Scale page is visible or the acknowledged scale state
+reports a weighted extraction. Manual and timed extraction do not increase the
+scale cadence, and a failed hidden-page request falls back to one second without
+retaining stale weighted state.
+
 `DashboardMutationSession` serializes temperature, mode, heater, fault, complete
 profile export, extraction Start/Stop, and cooldown Start/Stop mutations. It:
 
@@ -287,6 +295,14 @@ validation.
 - `networking` separates bounded generic JSON syntax, typed machine/workflow codecs, immutable response serialization, authoritative route/access metadata, `FirmwareApi` controller/storage orchestration, and ESP-IDF Wi-Fi/HTTP/mDNS transport adapters.
 - `main/app_main.cpp` owns startup order, shared objects, mutex wiring, the sampling loop, display rendering, and network task creation.
 
+The default-off `PHILCOINO_PERFORMANCE_DIAGNOSTICS` build option adds no public
+API. When explicitly enabled for supervised target measurement, fixed-size
+atomic counters/histograms observe loop timing, workflow-mutex exposure, scale
+outcomes, API latency/request heap, task stack high-water, reset cause,
+internal-heap state, and task-side heater-lease trips. Hot paths do not log or
+persist measurements; a dedicated low-priority task emits a bounded serial
+summary once per minute, and neither application ISR is modified.
+
 ### Startup and fail-off ordering
 
 Firmware first constructs and initializes `FailOffPump` on active-high GPIO10, commanding low before and after GPIO output configuration. It then initializes the independent heater `FailOffSsr` with its existing safety lease. Pump initialization failure aborts immediately; later critical startup failures retain/attempt the pump-off and heater-off commands.
@@ -316,8 +332,12 @@ stalls. None of these command paths confirm physical de-energization.
 Targets and the ordered four-slot extraction profile set load from separate one-key NVS blobs. Missing data initializes validated defaults; corrupt/invalid data stops startup. A profile replacement is validated as a complete set before its single blob commit, so firmware never deliberately publishes a partially replaced set. The first sensor sample and optional display render happen before networking starts. Wi-Fi/API startup runs in a separate FreeRTOS task so a network failure does not intentionally stop temperature control.
 
 HX711 reads run in a separate low-priority sampling task and publish through the
-same bounded workflow synchronization boundary. A missing or disconnected scale
-does not block temperature control or ordinary Manual/timed extraction.
+same bounded workflow synchronization boundary. After one immediate read, a
+falling edge on HX711 DOUT wakes that task; the IRAM GPIO ISR only posts a
+coalescing task notification, while GPIO clocking, filtering, logging, and
+publication remain in task context. A 750 ms notify timeout preserves bounded
+unavailable detection for a missing or disconnected scale. This does not block
+temperature control or ordinary Manual/timed extraction.
 Calibration has its own NVS blob; invalid/missing calibration disables weighted
 Start without preventing machine startup.
 

@@ -10,6 +10,7 @@
 namespace philcoino::networking {
 
 class HistoryBuffer;
+struct ApiRouteDescriptor;
 
 inline constexpr char kApiVersion[] = "1";
 inline constexpr char kMdnsServiceType[] = "_philcoino";
@@ -66,6 +67,10 @@ class FirmwareApi {
   HttpResponse handle(HttpMethod method, const std::string& path,
                       const char* authorization, const std::string& body,
                       std::uint64_t uptime_ms);
+  HttpResponse handle_resolved(const ApiRouteDescriptor& route,
+                               const std::string& path,
+                               const std::string& body,
+                               std::uint64_t uptime_ms);
   bool authorized(const char* authorization) const;
 
  private:
