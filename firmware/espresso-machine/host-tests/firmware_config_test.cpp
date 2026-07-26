@@ -60,6 +60,22 @@ int main() {
   static_assert(kPumpGpio != kBoilerThermocoupleDataGpio);
 
   using namespace philcoino::diagnostics;
+  static_assert(fixed_period_lateness_ticks(1000U, 1000U) == 0U);
+  static_assert(fixed_period_lateness_ticks(999U, 1000U) == 0U);
+  static_assert(fixed_period_lateness_ticks(1025U, 1000U) == 25U);
+  static_assert(fixed_period_lateness_ticks(0x00000020U, 0xFFFFFFF0U) ==
+                48U);
+  static_assert(fixed_period_catch_up_deadline(1000U, 1000U, 500U) ==
+                1000U);
+  static_assert(fixed_period_catch_up_deadline(1000U, 1249U, 500U) ==
+                1000U);
+  static_assert(fixed_period_catch_up_deadline(1000U, 1500U, 500U) ==
+                1500U);
+  static_assert(fixed_period_catch_up_deadline(1000U, 2250U, 500U) ==
+                2000U);
+  static_assert(fixed_period_catch_up_deadline(
+                    0xFFFFFFF0U, 0x00000410U, 0x00000200U) ==
+                0x000003F0U);
   PerformanceDiagnostics diagnostics;
   diagnostics.record(DurationMetric::kWorkflowMutexWaitUs, 9U);
   diagnostics.record(DurationMetric::kWorkflowMutexWaitUs, 250U);

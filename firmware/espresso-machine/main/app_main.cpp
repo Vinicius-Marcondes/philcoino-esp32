@@ -509,7 +509,7 @@ void report_performance_diagnostics(
       kLogTag,
       "PERF maxima_us workflow_jitter=%" PRIu32 " workflow_work=%" PRIu32
       " scale_jitter=%" PRIu32 " scale_work=%" PRIu32
-      " temperature_jitter=%" PRIu32 " temperature_work=%" PRIu32
+      " temperature_lateness=%" PRIu32 " temperature_work=%" PRIu32
       " mutex_wait=%" PRIu32 " mutex_hold=%" PRIu32
       " api_latency=%" PRIu32 " api_heap_drop_bytes=%" PRIu32
       " api_new_min_heap_drop_bytes=%" PRIu32,
@@ -798,10 +798,8 @@ extern "C" void app_main() {
   }
 
   TaskHandle_t temperature_task = nullptr;
-  std::uint64_t previous_temperature_started_us = 0;
   if constexpr (philcoino::config::kPerformanceDiagnosticsEnabled) {
     temperature_task = xTaskGetCurrentTaskHandle();
-    previous_temperature_started_us = monotonic_us();
     static PerformanceTaskContext performance_context{
         performance_diagnostics, temperature_task, workflow_task, scale_task,
         &ssr};
@@ -811,20 +809,30 @@ extern "C" void app_main() {
                "Performance diagnostics reporter task could not be started");
     }
   }
+  const TickType_t temperature_period_ticks =
+      pdMS_TO_TICKS(kMax6675SampleIntervalMs);
+  TickType_t temperature_last_wake = xTaskGetTickCount();
   while (true) {
-    vTaskDelay(pdMS_TO_TICKS(kMax6675SampleIntervalMs));
+    xTaskDelayUntil(&temperature_last_wake, temperature_period_ticks);
+    const auto temperature_woke_at = xTaskGetTickCount();
+    const auto temperature_lateness_ticks =
+        philcoino::diagnostics::fixed_period_lateness_ticks(
+            static_cast<std::uint32_t>(temperature_woke_at),
+            static_cast<std::uint32_t>(temperature_last_wake));
+    temperature_last_wake = static_cast<TickType_t>(
+        philcoino::diagnostics::fixed_period_catch_up_deadline(
+            static_cast<std::uint32_t>(temperature_last_wake),
+            static_cast<std::uint32_t>(temperature_woke_at),
+            static_cast<std::uint32_t>(temperature_period_ticks)));
     std::uint64_t temperature_started_us = 0;
     if constexpr (philcoino::config::kPerformanceDiagnosticsEnabled) {
       temperature_started_us = monotonic_us();
       performance_diagnostics->record(
           philcoino::diagnostics::DurationMetric::
               kTemperaturePeriodDeviationUs,
-          period_deviation_us(temperature_started_us,
-                              previous_temperature_started_us,
-                              static_cast<std::uint64_t>(
-                                  kMax6675SampleIntervalMs) *
-                                  1000U));
-      previous_temperature_started_us = temperature_started_us;
+          bounded_u32(
+              static_cast<std::uint64_t>(temperature_lateness_ticks) *
+              portTICK_PERIOD_MS * 1000U));
     }
     const auto reading = thermocouple.read(uptime_ms());
     if (!synchronization.lock(philcoino::networking::ApiDomain::kTemperature)) {

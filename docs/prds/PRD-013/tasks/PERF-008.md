@@ -1,6 +1,6 @@
 # PERF-008 — Use deterministic temperature scheduling
 
-Status: Todo
+Status: Done
 Review Mode: Agent
 Review Reason: Fixed-period deadline arithmetic and bounded lateness are
 deterministic in host tests and observable through PERF-001 diagnostics.
@@ -31,11 +31,15 @@ measurement while preserving current priorities and control policy.
 
 ## Acceptance Criteria
 
-- [ ] Temperature updates use a fixed 500 ms period.
-- [ ] Lateness is bounded/observable without changing priorities.
-- [ ] Heater lease, timeouts, history, profiles, and passive prediction remain
+- [x] Temperature updates use a fixed 500 ms period.
+- [x] Lateness is bounded/observable without changing priorities.
+- [x] Heater lease, timeouts, history, profiles, and passive prediction remain
   behaviorally unchanged.
-- [ ] Firmware host, sanitizer, capture, and available target checks pass.
+- [x] Firmware host, sanitizer, capture, and available target checks pass.
+
+## Evidence
+
+- `../evidence/PERF-008-TEMPERATURE-SCHEDULE.md`
 
 ## Verification Strategy
 

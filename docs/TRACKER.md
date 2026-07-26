@@ -1,7 +1,7 @@
 # PRD-013 Tracker
 
 PRD Status: Active — Approved 2026-07-26
-Current Task: PERF-008
+Current Task: PERF-009
 
 Implementation Boundary: Reduce avoidable ESP32-C3 runtime work and mobile
 scale polling without changing public wire schemas, firmware control authority,
@@ -46,7 +46,7 @@ PRD: `docs/prds/PRD-013/PRD-013.md`
 | [PERF-005](prds/PRD-013/tasks/PERF-005.md) | Agent | Software Complete — Target Pending | Native/sanitizer 7/7; event policy regression; 32 captures; target procedure | Falling-edge notify plus 750 ms timeout; task retains all sampling/publication; PERF-006 untouched | `8fee5ab` | ESP-IDF target build/map and connected low-voltage target unavailable | Run pinned target build/map and cache-suspension/low-voltage checks |
 | [PERF-006](prds/PRD-013/tasks/PERF-006.md) | Agent | Done | Native/sanitizer 7/7; cached filter, NotReady, age/wrap, saturation and recovery regression | `NotReady` bypasses mutex/publication; accepted samples refresh cached O(1) snapshots | Pending | Target diagnostics unavailable | None |
 | [PERF-007](prds/PRD-013/tasks/PERF-007.md) | Agent | Done | Native/sanitizer 7/7; 32 captures; unlocked-save assertion; failure/reacquire/adopt/retry regressions | Tokenized prepare/save/adopt; old calibration retained; unresolved adoption blocks weighted Start | Pending | Target NVS/runtime evidence unavailable | None |
-| [PERF-008](prds/PRD-013/tasks/PERF-008.md) | Agent | Todo | Pending | Pending | Pending | None | None |
+| [PERF-008](prds/PRD-013/tasks/PERF-008.md) | Agent | Done | Native/sanitizer 7/7; 32 captures; on-time/late/multi-period/wrap arithmetic | ESP-IDF 6 `xTaskDelayUntil`; retained 500 ms deadline; missed slots skipped without rapid sensor reads | Pending | Target lateness diagnostics unavailable | None |
 | [PERF-009](prds/PRD-013/tasks/PERF-009.md) | Human | Todo | Pending | Pending | Pending | None | None |
 | [PERF-010](prds/PRD-013/tasks/PERF-010.md) | Agent | Todo | Pending | Pending | Pending | None | None |
 | [PERF-011](prds/PRD-013/tasks/PERF-011.md) | Agent | Todo | Pending | Pending | Pending | None | None |

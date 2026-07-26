@@ -8,6 +8,23 @@
 
 namespace philcoino::diagnostics {
 
+constexpr std::uint32_t fixed_period_lateness_ticks(
+    std::uint32_t current_tick, std::uint32_t deadline_tick) {
+  const auto lateness =
+      static_cast<std::int32_t>(current_tick - deadline_tick);
+  return lateness > 0 ? static_cast<std::uint32_t>(lateness) : 0U;
+}
+
+constexpr std::uint32_t fixed_period_catch_up_deadline(
+    std::uint32_t deadline_tick, std::uint32_t current_tick,
+    std::uint32_t period_ticks) {
+  const auto lateness =
+      fixed_period_lateness_ticks(current_tick, deadline_tick);
+  return period_ticks == 0U
+             ? deadline_tick
+             : deadline_tick + (lateness / period_ticks) * period_ticks;
+}
+
 enum class DurationMetric : std::size_t {
   kWorkflowPeriodDeviationUs,
   kWorkflowWorkUs,

@@ -319,6 +319,14 @@ terminal outcome, and reset behavior. One high-priority 10 ms workflow task
 advances the mutually exclusive policies with wrap-safe monotonic time and
 hands the acknowledged extraction phase to temperature control.
 
+The temperature owner retains a fixed 500 ms FreeRTOS wake deadline using the
+ESP-IDF 6 `xTaskDelayUntil` API. Deadline-relative lateness is recorded in the
+bounded default-off diagnostics without hot-path logging. If work overruns more
+than one period, elapsed deadline slots are skipped on the same fixed grid so
+the MAX6675 is not immediately reread during scheduler catch-up. Task priority,
+temperature policy, history cadence, passive prediction, and the independent
+1,500 ms heater lease remain unchanged.
+
 Temperature, extraction, and cooldown share one non-recursive 50 ms workflow
 mutex; the legacy API domain labels intentionally alias that boundary, so there
 is no cross-domain lock order. Sensor SPI reads, target/profile NVS, OLED
