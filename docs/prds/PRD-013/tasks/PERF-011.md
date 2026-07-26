@@ -1,6 +1,7 @@
 # PERF-011 — Remove verified ghost features
 
 Status: Done
+Implementation Commit: `8f42f83`
 Review Mode: Agent
 Review Reason: Production reachability and retained active feature coverage are
 deterministic through call-graph review and regression tests.

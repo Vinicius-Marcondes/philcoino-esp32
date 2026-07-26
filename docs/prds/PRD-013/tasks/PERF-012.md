@@ -1,6 +1,6 @@
 # PERF-012 — Repeat regression and target evidence
 
-Status: Todo
+Status: Software Complete — Target/Human Pending
 Review Mode: Human
 Human Review Needs: Accept connected-target runtime and logic-analyzer
 before/after evidence for the exact tested build and configuration.
@@ -32,13 +32,17 @@ honest before/after performance evidence and remaining Human gates.
 
 ## Acceptance Criteria
 
-- [ ] All required available software evidence passes.
-- [ ] Before/after comparisons use identical scenarios/configuration or clearly
+- [x] All required available software evidence passes.
+- [x] Before/after comparisons use identical scenarios/configuration or clearly
   document a reviewed exception.
-- [ ] Profiles, history, scale, passive prediction, heater/pump policies,
+- [x] Profiles, history, scale, passive prediction, heater/pump policies,
   timeouts, faults, and fail-off behavior show no regression.
-- [ ] Target and Human evidence is explicit and never represented as energized
+- [x] Target and Human evidence is explicit and never represented as energized
   mains approval.
+
+## Evidence
+
+- `../evidence/PERF-012-REGRESSION.md`
 
 ## Verification Strategy
 
