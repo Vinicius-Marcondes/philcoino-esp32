@@ -282,7 +282,7 @@ bool EspHx711ReadyWaiter::wait(std::uint32_t timeout_ms) {
   return ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(timeout_ms)) > 0U;
 }
 
-void IRAM_ATTR EspHx711ReadyWaiter::on_ready(void* context) {
+void EspHx711ReadyWaiter::on_ready(void* context) {
   auto* waiter = static_cast<EspHx711ReadyWaiter*>(context);
   BaseType_t higher_priority_task_woken = pdFALSE;
   vTaskNotifyGiveFromISR(waiter->task_, &higher_priority_task_woken);
@@ -528,13 +528,13 @@ bool EspGptimerSafetyLease::tripped() const {
   return value;
 }
 
-bool IRAM_ATTR EspGptimerSafetyLease::on_alarm(
+bool EspGptimerSafetyLease::on_alarm(
     gptimer_handle_t, const gptimer_alarm_event_data_t*, void* context) {
   static_cast<EspGptimerSafetyLease*>(context)->fail_off_from_isr();
   return false;
 }
 
-void IRAM_ATTR EspGptimerSafetyLease::fail_off_from_isr() {
+void EspGptimerSafetyLease::fail_off_from_isr() {
   gpio_set_level(static_cast<gpio_num_t>(gpio_), off_level_);
   portENTER_CRITICAL_ISR(&trip_lock_);
   tripped_ = true;
