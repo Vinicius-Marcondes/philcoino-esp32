@@ -28,7 +28,7 @@ SecureStore                       HTTP API v1 + v2
                                                      |
                                       MAX6675 -> control -> heater SSR
                                                      |
-                         pump controller -> GPIO10 command + NVS + OLED
+                         pump controller -> GPIO10 command + NVS
 ```
 
 ## Authority and dependency direction
@@ -290,10 +290,10 @@ validation.
 ### Layering
 
 - `firmware_config` contains identity, GPIOs, ranges, timeouts, duty-curve constants, and diagnostic flags.
-- `peripherals` defines pure interfaces/policies for MAX6675, HX711, target/profile/calibration storage, independent heater SSR and pump command outputs, and SSD1306. `esp_peripherals.cpp` supplies GPIO/I2C/NVS implementations.
+- `peripherals` defines pure interfaces/policies for MAX6675, HX711, target/profile/calibration storage, and independent heater SSR and pump command outputs. `esp_peripherals.cpp` supplies GPIO/NVS implementations.
 - `control` contains the pure temperature, scale, extraction, and cooldown state machines.
 - `networking` separates bounded generic JSON syntax, typed machine/workflow codecs, immutable response serialization, authoritative route/access metadata, `FirmwareApi` controller/storage orchestration, and ESP-IDF Wi-Fi/HTTP/mDNS transport adapters.
-- `main/app_main.cpp` owns startup order, shared objects, mutex wiring, the sampling loop, display rendering, and network task creation.
+- `main/app_main.cpp` owns startup order, shared objects, mutex wiring, the sampling loop, and network task creation.
 
 The default-off `PHILCOINO_PERFORMANCE_DIAGNOSTICS` build option adds no public
 API. When explicitly enabled for supervised target measurement, fixed-size
@@ -329,15 +329,15 @@ temperature policy, history cadence, passive prediction, and the independent
 
 Temperature, extraction, and cooldown share one non-recursive 50 ms workflow
 mutex; the legacy API domain labels intentionally alias that boundary, so there
-is no cross-domain lock order. Sensor SPI reads, target/profile NVS, OLED
-rendering, Wi-Fi reads, JSON serialization, and HTTP response transmission stay
+is no cross-domain lock order. Sensor reads, target/profile NVS, Wi-Fi reads,
+JSON serialization, and HTTP response transmission stay
 outside it. A missed acquisition immediately attempts both command outputs off
 and posts an atomic fail-safe request; the next owner latches an internal fault,
 ends extraction, and aborts active cooldown. The GPTimer safety lease separately
 bounds a firmware-commanded heater-high pulse if normal controller renewal
 stalls. None of these command paths confirm physical de-energization.
 
-Targets and the ordered four-slot extraction profile set load from separate one-key NVS blobs. Missing data initializes validated defaults; corrupt/invalid data stops startup. A profile replacement is validated as a complete set before its single blob commit, so firmware never deliberately publishes a partially replaced set. The first sensor sample and optional display render happen before networking starts. Wi-Fi/API startup runs in a separate FreeRTOS task so a network failure does not intentionally stop temperature control.
+Targets and the ordered four-slot extraction profile set load from separate one-key NVS blobs. Missing data initializes validated defaults; corrupt/invalid data stops startup. A profile replacement is validated as a complete set before its single blob commit, so firmware never deliberately publishes a partially replaced set. The first sensor sample happens before networking starts. Wi-Fi/API startup runs in a separate FreeRTOS task so a network failure does not intentionally stop temperature control.
 
 HX711 reads run in a separate low-priority sampling task and publish through the
 same bounded workflow synchronization boundary. After one immediate read, a
@@ -371,7 +371,7 @@ transport-failed frames from the permanent boiler-base thermocouple. The
 controller also rejects non-finite values before conversion. One controller-owned
 path then defines the active temperature: the validated raw reading in Brew and
 that raw reading plus the compile-time `kSteamTemperatureOffsetC = 5` correction
-in Steam. No API, OLED, mobile, simulator, or persistence caller adds another
+in Steam. No API, mobile, simulator, or persistence caller adds another
 correction.
 
 `TemperatureController` boots in brew mode with volatile heater permission enabled. A valid update:
@@ -385,7 +385,7 @@ correction.
 7. calculates filtered temperature, slope, recent command activity, and fixed
    linear 5/10/20-second predictions after thirty seconds of valid history;
 8. records the prediction and hypothetical duty reduction without applying it;
-9. returns the same active effective value to API and OLED consumers.
+9. returns the same active effective value to API consumers.
 
 The primary heater controller remains the existing nonlinear duty curve; it is
 not a PID. The prediction monitor runs in passive mode only. Its fixed-size
@@ -415,7 +415,7 @@ reset/power loss never resumes the RAM-only workflow.
 
 Consequently, a valid raw `115°C` reading is controlled and published as
 `120°C` in Steam and as `115°C` in Brew. A mode acknowledgement can change
-`boilerTemperatureC` and the OLED value by exactly `5°C` without a new sensor
+`boilerTemperatureC` by exactly `5°C` without a new sensor
 sample. This is an owner-selected correction pending repeatable instrumented
 physical validation, not proof of the upper-boiler temperature.
 

@@ -19,7 +19,6 @@
 #include <cinttypes>
 
 #include "driver/gpio.h"
-#include "driver/i2c_master.h"
 #include "esp_err.h"
 #include "esp_log.h"
 #include "esp_rom_sys.h"
@@ -53,10 +52,6 @@ bool initialize_nvs_flash() {
     result = nvs_flash_init();
   }
   return result == ESP_OK;
-}
-
-i2c_master_dev_handle_t as_i2c_device(void* handle) {
-  return static_cast<i2c_master_dev_handle_t>(handle);
 }
 
 [[maybe_unused]] const char* frame_status(std::uint16_t frame) {
@@ -544,59 +539,6 @@ void IRAM_ATTR EspGptimerSafetyLease::fail_off_from_isr() {
   portENTER_CRITICAL_ISR(&trip_lock_);
   tripped_ = true;
   portEXIT_CRITICAL_ISR(&trip_lock_);
-}
-
-bool EspOledTransport::initialize() {
-  i2c_master_bus_config_t bus_config{};
-  bus_config.i2c_port = I2C_NUM_0;
-  bus_config.sda_io_num = static_cast<gpio_num_t>(config::kOledSdaGpio);
-  bus_config.scl_io_num = static_cast<gpio_num_t>(config::kOledSclGpio);
-  bus_config.clk_source = I2C_CLK_SRC_DEFAULT;
-  bus_config.glitch_ignore_cnt = 7;
-  bus_config.flags.enable_internal_pullup = false;
-  i2c_master_bus_handle_t bus = nullptr;
-  if (i2c_new_master_bus(&bus_config, &bus) != ESP_OK) {
-    return false;
-  }
-
-  i2c_device_config_t device_config{};
-  device_config.dev_addr_length = I2C_ADDR_BIT_LEN_7;
-  device_config.device_address = config::kOledI2cAddress;
-  device_config.scl_speed_hz = 400000;
-  i2c_master_dev_handle_t device = nullptr;
-  if (i2c_master_bus_add_device(bus, &device_config, &device) != ESP_OK) {
-    return false;
-  }
-  bus_ = bus;
-  device_ = device;
-  initialized_ = true;
-  return true;
-}
-
-bool EspOledTransport::write_command(const std::uint8_t* bytes,
-                                     std::size_t length) {
-  return write(0x00, bytes, length);
-}
-
-bool EspOledTransport::write_data(const std::uint8_t* bytes,
-                                  std::size_t length) {
-  return write(0x40, bytes, length);
-}
-
-bool EspOledTransport::write(std::uint8_t control, const std::uint8_t* bytes,
-                             std::size_t length) {
-  constexpr std::size_t kMaximumPayload = Ssd1306Display::kBufferSize;
-  if (!initialized_ || bytes == nullptr || length == 0 ||
-      length > kMaximumPayload) {
-    return false;
-  }
-  std::array<std::uint8_t, kMaximumPayload + 1> packet{};
-  packet[0] = control;
-  for (std::size_t index = 0; index < length; ++index) {
-    packet[index + 1] = bytes[index];
-  }
-  return i2c_master_transmit(as_i2c_device(device_), packet.data(), length + 1,
-                             100) == ESP_OK;
 }
 
 void EspOutputCriticalSection::enter() { portENTER_CRITICAL(&lock_); }

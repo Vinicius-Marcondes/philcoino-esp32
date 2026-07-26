@@ -45,9 +45,6 @@ struct ControlSnapshot {
   PredictionDiagnostics prediction{};
 };
 
-peripherals::DisplayTemperature display_temperature(
-    const ControlSnapshot& snapshot);
-
 const char* fault_code_name(FaultCode code);
 const char* fault_message(FaultCode code);
 

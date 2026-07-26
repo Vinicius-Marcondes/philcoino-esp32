@@ -1,6 +1,6 @@
 # PhilcoINO ESP32-C3 firmware
 
-ESP-IDF C++ firmware for the ESP32-C3 Super Mini. It owns sensor sampling, persisted targets/profiles, brew/steam control state, extraction/cooldown workflows, independent heater/pump command boundaries, OLED status, bearer-authenticated API v1/v2 HTTP, and `_philcoino._tcp` mDNS advertising.
+ESP-IDF C++ firmware for the ESP32-C3 Super Mini. It owns sensor sampling, persisted targets/profiles, brew/steam control state, extraction/cooldown workflows, independent heater/pump command boundaries, bearer-authenticated API v1/v2 HTTP, and `_philcoino._tcp` mDNS advertising.
 
 > [!CAUTION]
 > This firmware is not approved for production, unattended, or mains-powered heater operation. Keep the heater/load disconnected for development and read [Safety](../../docs/en/SAFETY.md) plus the [current review](../../CODEBASE_REVIEW_REPORT.md).
@@ -8,13 +8,13 @@ ESP-IDF C++ firmware for the ESP32-C3 Super Mini. It owns sensor sampling, persi
 ## Architecture
 
 - `components/firmware_config`: identity, pins, target/safety constants, timeouts, and diagnostic flags.
-- `components/peripherals`: pure MAX6675, NVS target/profile, independent fail-off heater/pump command, and SSD1306 policies plus ESP-IDF adapters.
+- `components/peripherals`: pure MAX6675/HX711, NVS target/profile/calibration, and independent fail-off heater/pump command policies plus ESP-IDF adapters.
 - `components/control`: pure temperature controller, readiness, duty windows,
   timeouts, fault latching, and passive fixed-coefficient temperature prediction.
 - `components/networking`: bounded JSON syntax, typed machine/workflow codecs,
   compact 600-sample RAM history, response serializers, authoritative
   route/access metadata, API orchestration, and ESP-IDF Wi-Fi/HTTP/mDNS adapters.
-- `main`: fail-off startup ordering, shared-object wiring, control loop, display, mutex, and background networking.
+- `main`: fail-off startup ordering, shared-object wiring, control loop, mutex, and background networking.
 - `host-tests`: native C++ tests and protocol contract capture validation.
 
 Pure policy stays host-testable; ESP-IDF GPIO/I2C/NVS/Wi-Fi/HTTP/mDNS calls remain in `esp_*` adapters and startup wiring.
@@ -53,7 +53,7 @@ bun run firmware/espresso-machine/host-tests/validate_contract.ts \
 ```
 
 The suite covers identity/configuration, MAX6675 decoding, target/profile
-persistence policy, fail-off heater/pump command behavior, OLED serialization,
+persistence policy, fail-off heater/pump command behavior,
 control transitions/timeouts/faults, filtering/slope/command histories, passive
 prediction and output-trace equivalence, the bounded history ring and cursor codec,
 bearer/API parsing, and contract response captures. It does not exercise
@@ -85,7 +85,8 @@ already-installed coverage-guided engine. No fuzzing dependency is required.
 Current source has:
 
 - one boiler-base MAX6675 is read on SCK/SO/CS GPIO4/GPIO5/GPIO7 and controls both brew and steam modes;
-- `kOledEnabled = true`: SSD1306 initialization/render failure stops control startup;
+- GPIO8 and GPIO9 are unassigned; the disabled SSD1306 implementation and its
+  I2C dependency were removed in PERF-010;
 - `kPumpGpio = 10` and `kPumpActiveHigh = true`: startup commands GPIO10 low, while the firmware-owned extraction controller commands it for acknowledged Manual and profile phases;
 - `kWifiEnabled = true`.
 
@@ -93,6 +94,6 @@ The single sensor is a deliberate control-authority choice and provides no indep
 
 ## Low-voltage checks only
 
-Keep mains heater and pump loads disconnected. With qualified supervision, power only the ESP32 and 3.3 V peripherals to check boot, the boiler thermocouple reading, open-probe handling, OLED status, network API/discovery, and GPIO20/GPIO10 inactive levels through reset and induced failures.
+Keep mains heater and pump loads disconnected. With qualified supervision, power only the ESP32 and 3.3 V peripherals to check boot, the boiler thermocouple reading, open-probe handling, network API/discovery, and GPIO20/GPIO10 inactive levels through reset and induced failures.
 
 This does not authorize mains operation and cannot validate SSR load behavior, pump operation/de-energization, independent cutoff wiring, thermal response, enclosure, grounding, or regulatory compliance.

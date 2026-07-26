@@ -11,7 +11,7 @@ Philcoino is an experimental, mains-adjacent espresso-machine controller. The re
 - Current firmware permanently uses one boiler-base thermocouple for both brew and steam. It is a single point of control failure and provides no independent sensor cross-check.
 - PRD-003 implements an owner-selected fixed `+5°C` correction only after raw
   validation and only in Steam. The corrected value drives control, limits,
-  API, and OLED behavior. The owner accepted the value for the tested
+  and API behavior. The owner accepted the value for the tested
   configuration in STEAM-004; raw instrument/measurement records are not in the repository.
 - PRD-004 software adds a fixed Manual/main `+2°C` heater-duty-only bias and a
   firmware-owned cooldown command workflow with a 45-second pump cutoff and
@@ -19,7 +19,9 @@ Philcoino is an experimental, mains-adjacent espresso-machine controller. The re
   THERM-011 on 2026-07-16 after reporting tests of every feature and technical-
   equipment checks of the energy controls. Evidence is owner-reported and
   limited to the tested configuration.
-- Current firmware source enables the OLED (`kOledEnabled = true`), while tracker text records a temporary disabled-OLED state. Treat this as an unresolved documentation/configuration discrepancy, not an approved hardware state.
+- The previously disabled OLED/SSD1306 implementation was removed in PERF-010.
+  GPIO8 and GPIO9 remain unassigned; this neither approves new hardware nor
+  changes historical physical acceptance.
 - The 2026-07-16 acceptance remains limited to the configuration tested then.
   New history/passive-prediction Human gates (HIST-007/PRD-012), including
   firmware `0.3.3` runtime checks, remain pending; architecture, firmware, and
@@ -55,12 +57,12 @@ Firmware owns the temperature-control loop and does not rely on app connectivity
   5/10/20-second forecasts in strictly passive mode. Hypothetical correction is
   logged but never alters the heater command in this version;
 - uses a 1500 ms GPTimer heater-command safety lease and one bounded workflow
-  mutex, with NVS, display, and HTTP transmission outside that boundary;
+  mutex, with NVS and HTTP transmission outside that boundary;
 - starts critical hardware in a fail-off order.
 
 These are design intentions and tested software behaviors, not proof of physical de-energization or thermal safety.
 
-Agreement between control, API, and OLED establishes only software consistency.
+Agreement between control and API establishes only software consistency.
 It does not prove that `+5°C` represents the physical boiler gradient, that
 `+2°C` improves extraction, or that a cooldown command produces flow or cooling.
 It does not replace independent measurement, a thermal cutoff, or energized

@@ -42,12 +42,10 @@ int main() {
   static_assert(kSteamRecoveryTriggerDropC > kBrewRecoveryTriggerDropC);
   static_assert(kBrewRecoveryHeatRampBandC < kBrewHeatRampBandC);
   static_assert(kSteamRecoveryHeatRampBandC < kSteamHeatRampBandC);
-  static_assert(std::is_same_v<decltype(kOledEnabled), const bool>);
   static_assert(
       std::is_same_v<decltype(kTemperatureReadingLoggingEnabled), const bool>);
   static_assert(!kTemperatureReadingLoggingEnabled);
   static_assert(!kPerformanceDiagnosticsEnabled);
-  static_assert(kOledI2cAddress == 0x3C);
   static_assert(kBoilerThermocoupleChipSelectGpio == 7);
   static_assert(kBoilerThermocoupleDataGpio == 5);
   static_assert(kBoilerThermocoupleClockGpio == 4);

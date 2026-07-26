@@ -282,23 +282,6 @@ class SimpleSafetyLease final : public SsrSafetyLease {
   bool tripped_{false};
 };
 
-class FakeOledTransport final : public OledTransport {
- public:
-  bool write_command(const std::uint8_t* bytes, std::size_t length) override {
-    commands.insert(commands.end(), bytes, bytes + length);
-    return succeed;
-  }
-
-  bool write_data(const std::uint8_t* bytes, std::size_t length) override {
-    data.assign(bytes, bytes + length);
-    return succeed;
-  }
-
-  std::vector<std::uint8_t> commands{};
-  std::vector<std::uint8_t> data{};
-  bool succeed{true};
-};
-
 void test_thermocouple() {
   static_assert(kMax6675SampleIntervalMs >= kMax6675ConversionMs);
 
@@ -729,89 +712,6 @@ void test_emergency_inhibit_serializes_with_in_progress_high_commands() {
   }
 }
 
-void test_oled() {
-  FakeOledTransport transport;
-  Ssd1306Display display(transport);
-  DisplaySnapshot snapshot{};
-  snapshot.boiler = {true, 93.25F};
-  snapshot.targets = {93, 115};
-  snapshot.mode = DisplayMode::kBrew;
-  snapshot.status = DisplayStatus::kReady;
-  snapshot.heater_enabled = true;
-
-  std::array<char, 24> temperature_line{};
-  format_display_temperature_line(temperature_line.data(),
-                                  temperature_line.size(),
-                                  {true, 120.0F}, 120);
-  assert(std::string(temperature_line.data()) == "TEMP 120.0/120");
-  format_display_temperature_line(temperature_line.data(),
-                                  temperature_line.size(), {}, 120);
-  assert(std::string(temperature_line.data()) == "TEMP --.-/120");
-
-  assert(!display.render(snapshot));
-  assert(display.initialize());
-  assert(std::find(transport.commands.begin(), transport.commands.end(), 0x1F) !=
-         transport.commands.end());
-  assert(display.render(snapshot));
-  assert(transport.data.size() == Ssd1306Display::kBufferSize);
-  assert(std::any_of(transport.data.begin(), transport.data.end(),
-                     [](std::uint8_t value) { return value != 0; }));
-  const auto wifi_off_frame = transport.data;
-  constexpr std::array wifi_states{
-      DisplayWifiStatus::kConnecting,
-      DisplayWifiStatus::kConnected,
-      DisplayWifiStatus::kRetrying,
-      DisplayWifiStatus::kFailed,
-  };
-  for (const auto wifi_status : wifi_states) {
-    snapshot.wifi_status = wifi_status;
-    assert(display.render(snapshot));
-    assert(std::equal(wifi_off_frame.begin(),
-                      wifi_off_frame.begin() + 3 * Ssd1306Display::kWidth,
-                      transport.data.begin()));
-    assert(!std::equal(wifi_off_frame.begin() + 3 * Ssd1306Display::kWidth,
-                       wifi_off_frame.end(),
-                       transport.data.begin() + 3 * Ssd1306Display::kWidth));
-  }
-  const auto idle_frame = transport.data;
-  snapshot.extraction_active = true;
-  snapshot.pump_command = PumpCommand::kOff;
-  snapshot.extraction_phase = "SOAK";
-  std::array<char, 24> workflow_line{};
-  format_display_workflow_line(workflow_line.data(), workflow_line.size(),
-                               snapshot);
-  assert(std::string(workflow_line.data()) == "PUMP CMD OFF SOAK");
-  assert(display.render(snapshot));
-  assert(std::equal(idle_frame.begin(),
-                    idle_frame.begin() + 3 * Ssd1306Display::kWidth,
-                    transport.data.begin()));
-  assert(!std::equal(idle_frame.begin() + 3 * Ssd1306Display::kWidth,
-                     idle_frame.end(),
-                     transport.data.begin() + 3 * Ssd1306Display::kWidth));
-  snapshot.pump_command = PumpCommand::kRunning;
-  snapshot.extraction_phase = "MAN";
-  snapshot.compensation_active = true;
-  format_display_workflow_line(workflow_line.data(), workflow_line.size(),
-                               snapshot);
-  assert(std::string(workflow_line.data()) == "PUMP CMD RUN MAN +2C");
-  snapshot.extraction_active = false;
-  snapshot.compensation_active = false;
-  snapshot.cooldown_status = DisplayCooldownStatus::kPumping;
-  format_display_workflow_line(workflow_line.data(), workflow_line.size(),
-                               snapshot);
-  assert(std::string(workflow_line.data()) == "COOL CMD PUMP RUN");
-  snapshot.cooldown_status = DisplayCooldownStatus::kStabilizing;
-  format_display_workflow_line(workflow_line.data(), workflow_line.size(),
-                               snapshot);
-  assert(std::string(workflow_line.data()) == "STAB CMD PUMP OFF");
-  snapshot.cooldown_status = DisplayCooldownStatus::kIdle;
-  snapshot.pump_command = PumpCommand::kRunning;
-  format_display_workflow_line(workflow_line.data(), workflow_line.size(),
-                               snapshot);
-  assert(std::string(workflow_line.data()) == "PUMP CMD RUN FAULT");
-  assert(transport.commands.size() == 61);
-}
-
 }  // namespace
 
 int main() {
@@ -822,6 +722,5 @@ int main() {
   test_fail_off_pump();
   test_fail_off_ssr();
   test_emergency_inhibit_serializes_with_in_progress_high_commands();
-  test_oled();
   return 0;
 }

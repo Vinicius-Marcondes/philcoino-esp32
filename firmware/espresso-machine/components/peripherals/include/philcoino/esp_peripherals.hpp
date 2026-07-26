@@ -117,20 +117,4 @@ class EspGptimerSafetyLease final : public SsrSafetyLease {
   bool initialized_{false};
 };
 
-class EspOledTransport final : public OledTransport {
- public:
-  bool initialize();
-  bool write_command(const std::uint8_t* bytes,
-                     std::size_t length) override;
-  bool write_data(const std::uint8_t* bytes, std::size_t length) override;
-
- private:
-  bool write(std::uint8_t control, const std::uint8_t* bytes,
-             std::size_t length);
-
-  void* bus_{nullptr};
-  void* device_{nullptr};
-  bool initialized_{false};
-};
-
 }  // namespace philcoino::peripherals

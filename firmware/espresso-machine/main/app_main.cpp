@@ -54,108 +54,12 @@ std::uint32_t period_deviation_us(std::uint64_t current,
   return bounded_u32(actual > expected ? actual - expected : expected - actual);
 }
 
-philcoino::peripherals::DisplayWifiStatus display_wifi_status(
-    philcoino::networking::WifiStatus status) {
-  using philcoino::networking::WifiStatus;
-  using philcoino::peripherals::DisplayWifiStatus;
-
-  switch (status) {
-    case WifiStatus::kOff: return DisplayWifiStatus::kOff;
-    case WifiStatus::kConnecting: return DisplayWifiStatus::kConnecting;
-    case WifiStatus::kConnected: return DisplayWifiStatus::kConnected;
-    case WifiStatus::kRetrying: return DisplayWifiStatus::kRetrying;
-    case WifiStatus::kFailed: return DisplayWifiStatus::kFailed;
-  }
-  return DisplayWifiStatus::kFailed;
-}
-
-bool active_temperature_above_target(
-    const philcoino::control::ControlSnapshot& control) {
-  using philcoino::control::ControlMode;
-
-  const auto target = control.mode == ControlMode::kBrew
-                          ? control.targets.brew_c
-                          : control.targets.steam_c;
-  return control.boiler_temperature.temperature_c >
-         static_cast<float>(target + philcoino::config::kReadyBandC);
-}
-
-philcoino::peripherals::DisplaySnapshot display_snapshot(
-    const philcoino::control::ControlSnapshot& control,
-    const philcoino::control::ExtractionSnapshot& extraction = {},
-    const philcoino::control::CooldownSnapshot& cooldown = {},
-    bool compensation_active = false,
-    philcoino::peripherals::DisplayWifiStatus wifi_status =
-        philcoino::peripherals::DisplayWifiStatus::kOff) {
-  using philcoino::control::ControlMode;
-  using philcoino::control::ControlStatus;
-  using philcoino::peripherals::DisplayMode;
-  using philcoino::peripherals::DisplayStatus;
-
-  philcoino::peripherals::DisplaySnapshot display{};
-  display.boiler = philcoino::control::display_temperature(control);
-  display.targets = control.targets;
-  display.mode = control.mode == ControlMode::kBrew ? DisplayMode::kBrew
-                                                     : DisplayMode::kSteam;
-  switch (control.status) {
-    case ControlStatus::kHeating:
-      display.status = !control.heater_enabled &&
-                               active_temperature_above_target(control)
-                           ? DisplayStatus::kCooling
-                           : DisplayStatus::kHeating;
-      break;
-    case ControlStatus::kReady: display.status = DisplayStatus::kReady; break;
-    case ControlStatus::kFault: display.status = DisplayStatus::kFault; break;
-  }
-  display.heater_enabled = control.heater_enabled;
-  display.wifi_status = wifi_status;
-  display.extraction_active =
-      extraction.status == philcoino::control::ExtractionStatus::kRunning;
-  display.compensation_active = compensation_active;
-  display.pump_command = cooldown.status ==
-                                 philcoino::control::CooldownStatus::kIdle
-                             ? extraction.pump_command
-                             : cooldown.pump_command;
-  switch (cooldown.status) {
-    case philcoino::control::CooldownStatus::kIdle:
-      display.cooldown_status =
-          philcoino::peripherals::DisplayCooldownStatus::kIdle;
-      break;
-    case philcoino::control::CooldownStatus::kPumping:
-      display.cooldown_status =
-          philcoino::peripherals::DisplayCooldownStatus::kPumping;
-      break;
-    case philcoino::control::CooldownStatus::kStabilizing:
-      display.cooldown_status =
-          philcoino::peripherals::DisplayCooldownStatus::kStabilizing;
-      break;
-  }
-  switch (extraction.phase) {
-    case philcoino::control::ExtractionPhase::kManual:
-      display.extraction_phase = "MAN";
-      break;
-    case philcoino::control::ExtractionPhase::kPreInfusion:
-      display.extraction_phase = "PRE";
-      break;
-    case philcoino::control::ExtractionPhase::kSoak:
-      display.extraction_phase = "SOAK";
-      break;
-    case philcoino::control::ExtractionPhase::kMainExtraction:
-      display.extraction_phase = "MAIN";
-      break;
-    case philcoino::control::ExtractionPhase::kIdle:
-      display.extraction_phase = "IDLE";
-      break;
-  }
-  return display;
-}
-
 class FreeRtosApiSynchronization final
     : public philcoino::networking::ApiSynchronization {
  public:
   // Both API domains intentionally alias this one bounded mutex. Holders may
   // only copy snapshots or execute controller transitions; NVS, HTTP response
-  // transmission, sensor I/O, and display rendering stay outside the lock.
+  // transmission and sensor I/O stay outside the lock.
   FreeRtosApiSynchronization(
       SemaphoreHandle_t workflow_mutex,
       philcoino::peripherals::FailOffPump& pump,
@@ -613,10 +517,6 @@ extern "C" void app_main() {
     ESP_LOGW(kLogTag,
              "Wi-Fi and bearer-token secrets are not configured; values are never logged");
   }
-  if (!philcoino::config::kOledEnabled) {
-    ESP_LOGW(kLogTag, "OLED display disabled; boot continues without SSD1306");
-  }
-
   static EspNvsTargetBackend nvs_backend;
   if (!nvs_backend.initialize()) {
     ESP_LOGE(kLogTag, "NVS target storage initialization failed");
@@ -710,33 +610,8 @@ extern "C" void app_main() {
   }
   static Max6675 thermocouple(max6675_transport, uptime_ms());
 
-  static EspOledTransport oled_transport;
-  static Ssd1306Display display(oled_transport);
-  if (philcoino::config::kOledEnabled) {
-    if (!oled_transport.initialize() || !display.initialize()) {
-      ESP_LOGE(kLogTag, "SSD1306 initialization failed");
-      ssr.force_off();
-      return;
-    }
-
-    DisplaySnapshot boot_display{};
-    boot_display.targets = targets;
-    if (!display.render(boot_display)) {
-      ESP_LOGE(kLogTag, "SSD1306 boot-state render failed");
-      ssr.force_off();
-      return;
-    }
-  }
-
   vTaskDelay(pdMS_TO_TICKS(kMax6675SampleIntervalMs));
   auto snapshot = controller.update(thermocouple.read(uptime_ms()), uptime_ms());
-  if (philcoino::config::kOledEnabled) {
-    if (!display.render(display_snapshot(snapshot))) {
-      ESP_LOGE(kLogTag, "SSD1306 sensor-state render failed");
-      ssr.force_off();
-      return;
-    }
-  }
 
   static WorkflowTaskContext workflow_context{
       &controller, &extraction_controller, &cooldown_controller,
@@ -855,31 +730,9 @@ extern "C" void app_main() {
       }
     }
     snapshot = controller.update(reading, pump.command(), uptime_ms());
-    const auto extraction_snapshot = extraction_controller.snapshot(uptime_ms());
-    const auto cooldown_snapshot = cooldown_controller.snapshot(uptime_ms());
-    const bool compensation_active =
-        controller.extraction_compensation_active();
     synchronization.unlock(philcoino::networking::ApiDomain::kTemperature);
     history.record(static_cast<std::uint64_t>(esp_timer_get_time() / 1000),
                    snapshot, pump.command());
-    if (philcoino::config::kOledEnabled) {
-      if (!display.render(display_snapshot(
-              snapshot, extraction_snapshot, cooldown_snapshot,
-              compensation_active,
-              display_wifi_status(network.wifi_status())))) {
-        ESP_LOGE(kLogTag, "SSD1306 state render failed");
-        if (synchronization.lock(
-                philcoino::networking::ApiDomain::kTemperature)) {
-          controller.latch_fault(
-              philcoino::control::FaultCode::kInternalError);
-          synchronization.unlock(
-              philcoino::networking::ApiDomain::kTemperature);
-        } else {
-          ssr.force_off();
-        }
-        return;
-      }
-    }
     if constexpr (philcoino::config::kPerformanceDiagnosticsEnabled) {
       performance_diagnostics->record(
           philcoino::diagnostics::DurationMetric::kTemperatureWorkUs,

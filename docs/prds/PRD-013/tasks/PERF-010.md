@@ -1,6 +1,6 @@
 # PERF-010 — Remove OLED support
 
-Status: Todo
+Status: Done
 Review Mode: Agent
 Review Reason: Source/configuration/dependency removal and target size are
 deterministic through search, builds, and tests; physical GPIO reuse is absent.
@@ -32,12 +32,17 @@ dependency, startup paths, and stale current-hardware claims.
 
 ## Acceptance Criteria
 
-- [ ] OLED symbols, source, configuration, tests, and `esp_driver_i2c` are
+- [x] OLED symbols, source, configuration, tests, and `esp_driver_i2c` are
   absent from active firmware.
-- [ ] GPIO8/GPIO9 are unassigned.
-- [ ] Startup and safety behavior remain fail-off.
-- [ ] Firmware suites and available target build pass.
-- [ ] Target image delta is recorded when comparable evidence is available.
+- [x] GPIO8/GPIO9 are unassigned.
+- [x] Startup and safety behavior remain fail-off.
+- [x] Firmware suites pass; the target build is unavailable.
+- [x] Target image delta is explicitly pending because comparable target
+  evidence is unavailable.
+
+## Evidence
+
+- `../evidence/PERF-010-OLED-REMOVAL.md`
 
 ## Verification Strategy
 

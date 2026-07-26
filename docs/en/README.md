@@ -25,7 +25,7 @@ The phone discovers and authenticates one machine, displays live state, and subm
 - Current-day SQLite history with automatic backfill from up to ten minutes of
   ESP32 RAM history and horizontally paged 30-second Live windows.
 - Firmware-acknowledged brew/steam targets, active mode, heater permission, and over-temperature dismissal.
-- ESP32-C3 control, NVS target persistence, MAX6675 sampling, SSD1306 output, HTTP/mDNS networking, and host-testable policy boundaries.
+- ESP32-C3 control, NVS target persistence, MAX6675 sampling, HTTP/mDNS networking, and host-testable policy boundaries.
 - Deterministic Bun/Hono simulator for mobile and contract development.
 - Manual plus four local profile slots, explicit whole-set export, and
   firmware-acknowledged pre-infusion/soak/main extraction, Stop, and 60-second
