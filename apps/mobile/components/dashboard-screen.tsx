@@ -20,6 +20,7 @@ import {
   ActivityIndicator,
   Alert,
   FlatList,
+  KeyboardAvoidingView,
   type LayoutChangeEvent,
   type NativeScrollEvent,
   type NativeSyntheticEvent,
@@ -278,7 +279,12 @@ export function DashboardScreen({
     compensationDecigrams: 10,
   });
   useEffect(() => {
-    setShotWeightControl({ ...scale.defaults[selectedProfileId] });
+    setShotWeightControl({
+      ...(scale.defaults?.[selectedProfileId] ?? {
+        targetWeightDecigrams: 350,
+        compensationDecigrams: 10,
+      }),
+    });
     setBrewControlMode("timed");
   }, [scale.defaults, selectedProfileId]);
   useEffect(() => {
@@ -509,6 +515,10 @@ export function DashboardScreen({
       <PairedKeepAwake
         enabled={displayPreferences.preferences.keepScreenAwake}
       />
+      <KeyboardAvoidingView
+        behavior={process.env.EXPO_OS === "ios" ? "padding" : undefined}
+        keyboardVerticalOffset={landscape ? 0 : safeAreaInsets.top}
+        style={styles.keyboardAvoidingContent}>
       <Animated.View
         entering={
           dashboardTransitionDirection.current === "forward"
@@ -520,6 +530,7 @@ export function DashboardScreen({
         style={styles.dashboardPageTransition}>
         <ScrollView
           contentInsetAdjustmentBehavior="never"
+          automaticallyAdjustKeyboardInsets={process.env.EXPO_OS === "ios"}
           contentContainerStyle={[
             styles.content,
             landscape && styles.contentLandscape,
@@ -552,6 +563,10 @@ export function DashboardScreen({
             );
           }}
           ref={dashboardScrollView}
+          keyboardDismissMode={
+            process.env.EXPO_OS === "ios" ? "interactive" : "on-drag"
+          }
+          keyboardShouldPersistTaps="handled"
           style={styles.dashboardScroll}
           scrollEventThrottle={16}>
         <View style={[styles.pageHeader, landscape && styles.pageHeaderLandscape]}>
@@ -636,21 +651,6 @@ export function DashboardScreen({
               state={cooldownStopMutation}
               visibility="errors-only"
             />
-            {selectedExtraction.kind === "profile" ? (
-              <WeightModeCard
-                disabled={
-                  freshness !== "live" ||
-                  extraction?.status === "running" ||
-                  extractionStartMutation.status === "pending"
-                }
-                mode={brewControlMode}
-                onModeChange={setBrewControlMode}
-                onWeightChange={setShotWeightControl}
-                scale={scale.scale}
-                startPending={extractionStartMutation.status === "pending"}
-                value={shotWeightControl}
-              />
-            ) : null}
             {scale.scale?.warning !== null && scale.scale?.warning !== undefined ? (
               <View style={styles.scaleWarningCard}>
                 <Text selectable style={styles.unavailableTitle}>
@@ -702,27 +702,50 @@ export function DashboardScreen({
                       </View>
                       <View style={styles.dashboardLandscapeControl}>
                         {mobileProfiles !== null && machineProfiles !== null ? (
-                          <ExtractionPreview
-                            compact
-                            debugPreview={false}
-                            onOpenMachine={() => openDashboardPage("machine")}
-                            onOpenProfiles={() => openDashboardPage("profiles")}
-                            onStateChange={applyExtractionUiState}
-                            state={extractionUiState}
-                            view="quick"
-                            workflowBlock={
-                              cooldownActive
-                                ? "cooldown"
-                                : snapshot.activeMode === "steam"
-                                  ? "steam"
-                                  : null
-                            }
-                            workflowMutationPending={
-                              freshness !== "live" ||
-                              cooldownStartMutation.status === "pending" ||
-                              cooldownStopMutation.status === "pending"
-                            }
-                          />
+                          <View style={styles.extractionControlGroup}>
+                            <ExtractionPreview
+                              compact
+                              debugPreview={false}
+                              onOpenMachine={() => openDashboardPage("machine")}
+                              onOpenProfiles={() => openDashboardPage("profiles")}
+                              onStateChange={applyExtractionUiState}
+                              quickControlPanel={
+                                selectedExtraction.kind === "profile" ? (
+                                  <WeightModeCard
+                                    compact
+                                    disabled={
+                                      freshness !== "live" ||
+                                      extraction?.status === "running" ||
+                                      extractionStartMutation.status === "pending"
+                                    }
+                                    embedded
+                                    mode={brewControlMode}
+                                    onModeChange={setBrewControlMode}
+                                    onWeightChange={setShotWeightControl}
+                                    scale={scale.scale}
+                                    startPending={
+                                      extractionStartMutation.status === "pending"
+                                    }
+                                    value={shotWeightControl}
+                                  />
+                                ) : undefined
+                              }
+                              state={extractionUiState}
+                              view="quick"
+                              workflowBlock={
+                                cooldownActive
+                                  ? "cooldown"
+                                  : snapshot.activeMode === "steam"
+                                    ? "steam"
+                                    : null
+                              }
+                              workflowMutationPending={
+                                freshness !== "live" ||
+                                cooldownStartMutation.status === "pending" ||
+                                cooldownStopMutation.status === "pending"
+                              }
+                            />
+                          </View>
                         ) : (
                           <ProfileLoadingCard error={profileStorageError} />
                         )}
@@ -795,27 +818,50 @@ export function DashboardScreen({
                           syncWarning={temperatureHistory.syncWarning}
                         />
                         {mobileProfiles !== null && machineProfiles !== null ? (
-                          <ExtractionPreview
-                            compact={landscape}
-                            debugPreview={debugDeviceMode}
-                            onOpenMachine={() => openDashboardPage("machine")}
-                            onOpenProfiles={() => openDashboardPage("profiles")}
-                            onStateChange={applyExtractionUiState}
-                            state={extractionUiState}
-                            view="quick"
-                            workflowBlock={
-                              cooldownActive
-                                ? "cooldown"
-                                : snapshot.activeMode === "steam"
-                                  ? "steam"
-                                  : null
-                            }
-                            workflowMutationPending={
-                              freshness !== "live" ||
-                              cooldownStartMutation.status === "pending" ||
-                              cooldownStopMutation.status === "pending"
-                            }
-                          />
+                          <View style={styles.extractionControlGroup}>
+                            <ExtractionPreview
+                              compact={landscape}
+                              debugPreview={debugDeviceMode}
+                              onOpenMachine={() => openDashboardPage("machine")}
+                              onOpenProfiles={() => openDashboardPage("profiles")}
+                              onStateChange={applyExtractionUiState}
+                              quickControlPanel={
+                                selectedExtraction.kind === "profile" ? (
+                                  <WeightModeCard
+                                    compact={landscape}
+                                    disabled={
+                                      freshness !== "live" ||
+                                      extraction?.status === "running" ||
+                                      extractionStartMutation.status === "pending"
+                                    }
+                                    embedded
+                                    mode={brewControlMode}
+                                    onModeChange={setBrewControlMode}
+                                    onWeightChange={setShotWeightControl}
+                                    scale={scale.scale}
+                                    startPending={
+                                      extractionStartMutation.status === "pending"
+                                    }
+                                    value={shotWeightControl}
+                                  />
+                                ) : undefined
+                              }
+                              state={extractionUiState}
+                              view="quick"
+                              workflowBlock={
+                                cooldownActive
+                                  ? "cooldown"
+                                  : snapshot.activeMode === "steam"
+                                    ? "steam"
+                                    : null
+                              }
+                              workflowMutationPending={
+                                freshness !== "live" ||
+                                cooldownStartMutation.status === "pending" ||
+                                cooldownStopMutation.status === "pending"
+                              }
+                            />
+                          </View>
                         ) : (
                           <ProfileLoadingCard error={profileStorageError} />
                         )}
@@ -1053,12 +1099,18 @@ export function DashboardScreen({
         {dashboardPage === "scale" ? (
           <ScalePage
             profileId={selectedProfileId}
-            referenceDefaults={scale.defaults[selectedProfileId]}
+            referenceDefaults={
+              scale.defaults?.[selectedProfileId] ?? {
+                targetWeightDecigrams: 350,
+                compensationDecigrams: 10,
+              }
+            }
             scale={scale}
           />
         ) : null}
         </ScrollView>
       </Animated.View>
+      </KeyboardAvoidingView>
 
       <View
         style={[
@@ -1142,7 +1194,9 @@ function scaleStateIsWeighted(
 }
 
 function WeightModeCard({
+  compact = false,
   disabled,
+  embedded = false,
   mode,
   onModeChange,
   onWeightChange,
@@ -1150,7 +1204,9 @@ function WeightModeCard({
   startPending,
   value,
 }: {
+  compact?: boolean;
   disabled: boolean;
+  embedded?: boolean;
   mode: "timed" | "weight";
   onModeChange: (mode: "timed" | "weight") => void;
   onWeightChange: (value: WeightControl) => void;
@@ -1159,11 +1215,20 @@ function WeightModeCard({
   value: WeightControl;
 }) {
   return (
-    <View style={styles.contextCard}>
+    <View
+      style={[
+        styles.contextCard,
+        compact && styles.weightModeCardCompact,
+        embedded && styles.weightModeCardEmbedded,
+      ]}>
       <Text selectable style={styles.cardLabel}>
         {translate("scale.brewControl")}
       </Text>
-      <View style={styles.scaleModeRow}>
+      <View
+        style={[
+          styles.scaleModeRow,
+          embedded && styles.scaleModeRowEmbedded,
+        ]}>
         {(["timed", "weight"] as const).map((option) => (
           <Pressable
             accessibilityRole="radio"
@@ -1173,9 +1238,14 @@ function WeightModeCard({
             onPress={() => onModeChange(option)}
             style={[
               styles.scaleModeButton,
+              embedded && styles.scaleModeButtonEmbedded,
               mode === option && styles.scaleModeButtonActive,
             ]}>
-            <Text style={styles.scaleModeButtonText}>
+            <Text
+              style={[
+                styles.scaleModeButtonText,
+                mode === option && styles.scaleModeButtonTextActive,
+              ]}>
               {translate(`scale.mode.${option}`)}
             </Text>
           </Pressable>
@@ -1183,9 +1253,36 @@ function WeightModeCard({
       </View>
       {mode === "weight" ? (
         <>
-          <Text selectable style={styles.contextText}>
-            {translate("scale.placeCup")}
-          </Text>
+          <View
+            style={[
+              styles.scaleReadinessNotice,
+              (scale?.calibrationStatus !== "calibrated" ||
+                scale.availability !== "ready") &&
+                styles.scaleReadinessNoticeError,
+            ]}>
+            <Text
+              accessibilityLiveRegion="polite"
+              selectable
+              style={[
+                styles.scaleReadinessText,
+                (scale?.calibrationStatus !== "calibrated" ||
+                  scale.availability !== "ready") &&
+                  styles.historyError,
+              ]}>
+              {scale === null
+                ? translate("scale.readinessLoading")
+                : scale.calibrationStatus !== "calibrated"
+                  ? translate("scale.readinessCalibration")
+                  : scale.availability !== "ready"
+                    ? translate("scale.readinessUnavailable", {
+                        status: scale.availability,
+                      })
+                    : translate("scale.readinessReady")}
+            </Text>
+            <Text selectable style={styles.scaleReadinessText}>
+              {translate("scale.placeCup")}
+            </Text>
+          </View>
           <WeightControlEditor
             disabled={disabled}
             onChange={onWeightChange}
@@ -1264,6 +1361,29 @@ function ScaleNumberInput({
   onChange: (value: number) => void;
   value: number;
 }) {
+  const [draft, setDraft] = useState(() => formatDecigrams(value));
+  const focused = useRef(false);
+  useEffect(() => {
+    if (!focused.current) {
+      setDraft(formatDecigrams(value));
+    }
+  }, [value]);
+  const commit = useCallback(() => {
+    const normalized = draft.trim().replace(",", ".");
+    const parsed = normalized.length === 0 ? Number.NaN : Number(normalized);
+    if (!Number.isFinite(parsed)) {
+      setDraft(formatDecigrams(value));
+      return;
+    }
+    const next = Math.max(
+      minimum,
+      Math.min(maximum, Math.round(parsed * 10)),
+    );
+    setDraft(formatDecigrams(next));
+    if (next !== value) {
+      onChange(next);
+    }
+  }, [draft, maximum, minimum, onChange, value]);
   return (
     <View style={styles.scaleInputGroup}>
       <Text selectable style={styles.cardLabel}>{label}</Text>
@@ -1271,15 +1391,18 @@ function ScaleNumberInput({
         accessibilityLabel={label}
         editable={!disabled}
         inputMode="decimal"
-        onChangeText={(text) => {
-          const parsed = Number(text.replace(",", "."));
-          if (Number.isFinite(parsed)) {
-            onChange(Math.max(minimum, Math.min(maximum, Math.round(parsed * 10))));
-          }
+        onBlur={() => {
+          focused.current = false;
+          commit();
         }}
+        onChangeText={setDraft}
+        onFocus={() => {
+          focused.current = true;
+        }}
+        onSubmitEditing={commit}
         selectTextOnFocus
         style={styles.scaleInput}
-        value={formatDecigrams(value)}
+        value={draft}
       />
     </View>
   );
@@ -2531,6 +2654,7 @@ const styles = StyleSheet.create({
   screen: { backgroundColor: "#F4F0E8", flex: 1 },
   screenLandscape: { flexDirection: "row-reverse" },
   dashboardPageTransition: { flex: 1, minWidth: 0 },
+  keyboardAvoidingContent: { flex: 1, minHeight: 0 },
   dashboardScroll: { flex: 1, minWidth: 0 },
   content: {
     backgroundColor: "#F4F0E8",
@@ -2899,6 +3023,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     minWidth: 0,
   },
+  extractionControlGroup: { flex: 1, gap: 8, minWidth: 0 },
   dashboardLandscapeControlRow: {
     alignItems: "stretch",
     flexDirection: "row",
@@ -2977,6 +3102,13 @@ const styles = StyleSheet.create({
     gap: 8,
     padding: 17,
   },
+  weightModeCardCompact: { gap: 6, padding: 12 },
+  weightModeCardEmbedded: {
+    backgroundColor: "transparent",
+    borderRadius: 0,
+    borderWidth: 0,
+    padding: 0,
+  },
   scaleWarningCard: {
     backgroundColor: "#FFF0D8",
     borderColor: "#C66A24",
@@ -2991,6 +3123,16 @@ const styles = StyleSheet.create({
     flexWrap: "wrap",
     gap: 8,
   },
+  scaleModeRowEmbedded: {
+    backgroundColor: "#FFF9F3",
+    borderColor: "#D3B9A7",
+    borderCurve: "continuous",
+    borderRadius: 16,
+    borderWidth: 1,
+    flexWrap: "nowrap",
+    gap: 4,
+    padding: 4,
+  },
   scaleModeButton: {
     alignItems: "center",
     borderColor: "#8B3A2B",
@@ -3000,8 +3142,35 @@ const styles = StyleSheet.create({
     minHeight: 42,
     paddingHorizontal: 15,
   },
+  scaleModeButtonEmbedded: {
+    backgroundColor: "#FFF9F3",
+    borderCurve: "continuous",
+    borderRadius: 12,
+    flex: 1,
+    minWidth: 0,
+  },
   scaleModeButtonActive: { backgroundColor: "#8B3A2B" },
   scaleModeButtonText: { color: "#5D2D22", fontSize: 14, fontWeight: "800" },
+  scaleModeButtonTextActive: { color: "#FFFFFF" },
+  scaleReadinessNotice: {
+    backgroundColor: "#E5F1E8",
+    borderColor: "#A9C9B0",
+    borderCurve: "continuous",
+    borderRadius: 14,
+    borderWidth: 1,
+    gap: 4,
+    padding: 10,
+  },
+  scaleReadinessNoticeError: {
+    backgroundColor: "#FFF0D8",
+    borderColor: "#C66A24",
+  },
+  scaleReadinessText: {
+    color: "#3E4E42",
+    fontSize: 13,
+    fontWeight: "700",
+    lineHeight: 18,
+  },
   scaleEditorRow: { flexDirection: "row", flexWrap: "wrap", gap: 12 },
   scaleInputGroup: { flex: 1, gap: 5, minWidth: 130 },
   scaleInput: {

@@ -1,5 +1,6 @@
 #include <array>
 #include <atomic>
+#include <cinttypes>
 #include <cmath>
 #include <cstdio>
 
@@ -276,11 +277,52 @@ struct ScaleTaskContext {
 void scale_sample_task(void* argument) {
   auto* context = static_cast<ScaleTaskContext*>(argument);
   TickType_t last_wake = xTaskGetTickCount();
+  auto last_usable_sample_ms = uptime_ms();
+  bool usable_sample_received = false;
+  bool unavailable_reported = false;
   while (true) {
     const auto reading = context->hx711->read();
+    const auto now_ms = uptime_ms();
+    if (reading.status == philcoino::peripherals::Hx711Status::kOk) {
+      last_usable_sample_ms = now_ms;
+      if (!usable_sample_received) {
+        ESP_LOGI(kLogTag, "HX711 samples ready: DT=GPIO%" PRId32
+                             " SCK=GPIO%" PRId32 " raw=%" PRId32,
+                 philcoino::config::kScaleDataGpio,
+                 philcoino::config::kScaleClockGpio, reading.raw);
+      } else if (unavailable_reported) {
+        ESP_LOGI(kLogTag, "HX711 recovered: raw=%" PRId32, reading.raw);
+      }
+      usable_sample_received = true;
+      unavailable_reported = false;
+    } else if (!unavailable_reported) {
+      if (reading.status ==
+          philcoino::peripherals::Hx711Status::kTransportError) {
+        ESP_LOGW(kLogTag,
+                 "HX711 GPIO transport failure: DT=GPIO%" PRId32
+                 " SCK=GPIO%" PRId32,
+                 philcoino::config::kScaleDataGpio,
+                 philcoino::config::kScaleClockGpio);
+        unavailable_reported = true;
+      } else if (reading.status ==
+                 philcoino::peripherals::Hx711Status::kSaturated) {
+        ESP_LOGW(kLogTag,
+                 "HX711 ADC saturated; check load-cell A+/A-/E+/E- wiring and load");
+        unavailable_reported = true;
+      } else if (static_cast<std::uint32_t>(
+                     now_ms - last_usable_sample_ms) >=
+                 philcoino::config::kScaleUnavailableTimeoutMs) {
+        ESP_LOGW(kLogTag,
+                 "HX711 unavailable: no data-ready sample for %" PRIu32
+                 " ms; DT GPIO%" PRId32 " remains high",
+                 philcoino::config::kScaleUnavailableTimeoutMs,
+                 philcoino::config::kScaleDataGpio);
+        unavailable_reported = true;
+      }
+    }
     if (context->synchronization->lock(
             philcoino::networking::ApiDomain::kExtraction)) {
-      context->scale->update(reading, uptime_ms());
+      context->scale->update(reading, now_ms);
       context->synchronization->unlock(
           philcoino::networking::ApiDomain::kExtraction);
     }

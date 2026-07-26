@@ -293,6 +293,13 @@ describe("extraction design preview model", () => {
     expect(temperatureCurve).toBeGreaterThan(boilerTemperature);
     expect(extraction).toBeGreaterThan(temperatureCurve);
     expect(cooldown).toBeGreaterThan(extraction);
+    expect(source.slice(temperatureCurve, extraction)).not.toContain(
+      "<WeightModeCard",
+    );
+    expect(source).toContain("quickControlPanel={");
+    expect(source.indexOf("<WeightModeCard", extraction)).toBeGreaterThan(
+      extraction,
+    );
     expect(source).toContain("<MachineStatus\n                          compact\n                          disabled=");
     expect(source).toContain("faultMutation={faultMutation}\n                          fillHeight");
     expect(source).toContain("<ThermalWorkflowStatus\n                          compact\n                          fillHeight");
@@ -310,6 +317,21 @@ describe("extraction design preview model", () => {
     expect(savedMachine).toBeGreaterThan(historyExport);
     expect(source).not.toContain("function CurveTab");
     expect(source).not.toContain("downsampleTemperatureHistory");
+
+    const extractionSource = await Bun.file(
+      new URL("../components/extraction-preview.tsx", import.meta.url),
+    ).text();
+    const extractionHeading = extractionSource.indexOf("<SectionHeading");
+    const embeddedWeightControl = extractionSource.indexOf(
+      "quickControlPanel !== undefined",
+      extractionHeading,
+    );
+    const extractionMetrics = extractionSource.indexOf(
+      "<PreviewMetric",
+      embeddedWeightControl,
+    );
+    expect(embeddedWeightControl).toBeGreaterThan(extractionHeading);
+    expect(extractionMetrics).toBeGreaterThan(embeddedWeightControl);
 
     const controlsSource = await Bun.file(
       new URL("../components/machine-controls.tsx", import.meta.url),

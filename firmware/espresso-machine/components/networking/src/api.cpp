@@ -505,13 +505,19 @@ HttpResponse FirmwareApi::complete_scale_calibration(
                           "Scale calibration could not be persisted.");
   }
   if (result != control::ScaleCalibrationResult::kOk) {
-    return error_response(
-        409,
+    const char* code =
         result == control::ScaleCalibrationResult::kUnavailable
             ? "scale_unavailable"
             : result == control::ScaleCalibrationResult::kUnstable
                   ? "scale_not_stable"
-                  : "calibration_in_progress",
+                  : result == control::ScaleCalibrationResult::kWorkflowActive
+                        ? "extraction_active"
+                        : result == control::ScaleCalibrationResult::kInvalidReference
+                              ? "malformed_request"
+                              : "calibration_in_progress";
+    return error_response(
+        result == control::ScaleCalibrationResult::kInvalidReference ? 400 : 409,
+        code,
         "Scale calibration cannot be completed in its current state.");
   }
   const auto current =

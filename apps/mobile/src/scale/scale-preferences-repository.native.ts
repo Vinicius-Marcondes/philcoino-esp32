@@ -9,7 +9,7 @@ import {
   defaultScaleProfileDefaults,
   type ScalePreferencesRepository,
   type ScaleProfileDefaults,
-} from "./scale-preferences-repository";
+} from "./scale-preferences";
 
 const PREFIX = "philcoino.scale-defaults.";
 

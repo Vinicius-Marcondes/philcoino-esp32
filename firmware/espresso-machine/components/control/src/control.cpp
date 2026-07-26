@@ -678,7 +678,7 @@ ScaleSnapshot ScaleController::snapshot(std::uint32_t now_ms) const {
           ? ScaleAvailability::kUnavailable
           : value.stable ? ScaleAvailability::kReady
                          : ScaleAvailability::kUnstable;
-  if (calibrated_ && current_available) {
+  if (calibrated_ && !calibration_in_progress_ && current_available) {
     value.gross_weight_available = peripherals::scale_raw_to_decigrams(
         calibration_, median_raw(), value.gross_weight_decigrams);
     if (!value.gross_weight_available) {
@@ -694,11 +694,10 @@ ScaleCalibrationResult ScaleController::start_calibration(
   if (workflow_active) {
     return ScaleCalibrationResult::kWorkflowActive;
   }
-  const auto current = snapshot(now_ms);
-  if (current.availability == ScaleAvailability::kUnavailable) {
+  if (!available(now_ms)) {
     return ScaleCalibrationResult::kUnavailable;
   }
-  if (!current.stable) {
+  if (!stable_for_calibration()) {
     return ScaleCalibrationResult::kUnstable;
   }
   calibration_zero_raw_ = median_raw();
@@ -722,11 +721,10 @@ ScaleCalibrationResult ScaleController::complete_calibration(
           config::kScaleCalibrationReferenceMaximumDecigrams) {
     return ScaleCalibrationResult::kInvalidReference;
   }
-  const auto current = snapshot(now_ms);
-  if (current.availability == ScaleAvailability::kUnavailable) {
+  if (!available(now_ms)) {
     return ScaleCalibrationResult::kUnavailable;
   }
-  if (!current.stable) {
+  if (!stable()) {
     return ScaleCalibrationResult::kUnstable;
   }
   const peripherals::ScaleCalibration candidate{
@@ -764,6 +762,17 @@ bool ScaleController::stable() const {
   return spread <= stable_raw_spread_limit();
 }
 
+bool ScaleController::stable_for_calibration() const {
+  if (sample_count_ < samples_.size()) {
+    return false;
+  }
+  const auto range = std::minmax_element(samples_.begin(), samples_.end());
+  const auto spread =
+      static_cast<std::int64_t>(*range.second) -
+      static_cast<std::int64_t>(*range.first);
+  return spread <= 1000;
+}
+
 std::int32_t ScaleController::median_raw() const {
   if (sample_count_ == 0U) {
     return 0;
@@ -775,7 +784,7 @@ std::int32_t ScaleController::median_raw() const {
 }
 
 std::int32_t ScaleController::stable_raw_spread_limit() const {
-  if (!calibrated_) {
+  if (!calibrated_ || calibration_in_progress_) {
     return 1000;
   }
   const auto raw_span = std::llabs(

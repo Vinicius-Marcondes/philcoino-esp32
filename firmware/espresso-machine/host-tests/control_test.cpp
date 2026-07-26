@@ -1297,6 +1297,40 @@ void test_scale_filter_calibration_timeout_and_saturation() {
   assert(scale.snapshot(1300).availability == ScaleAvailability::kUnavailable);
 }
 
+void test_scale_recalibrates_after_the_retained_baseline_moves_out_of_range() {
+  FakeScaleCalibrationBackend backend;
+  ScaleCalibrationStorage storage(backend);
+  const ScaleCalibration retained{100000, 200000, 1000};
+  ScaleController scale(retained, true, storage);
+
+  for (std::int32_t index = 0; index < 10; ++index) {
+    scale.update({Hx711Status::kOk, 2000000 + index * 75}, index * 10U);
+  }
+  auto snapshot = scale.snapshot(100);
+  assert(snapshot.calibration_status == ScaleCalibrationStatus::kCalibrated);
+  assert(snapshot.availability == ScaleAvailability::kUnavailable);
+  assert(!snapshot.gross_weight_available);
+
+  assert(scale.start_calibration(false, 100) == ScaleCalibrationResult::kOk);
+  snapshot = scale.snapshot(100);
+  assert(snapshot.calibration_status == ScaleCalibrationStatus::kCalibrating);
+  assert(snapshot.availability == ScaleAvailability::kReady);
+  assert(!snapshot.gross_weight_available);
+
+  for (std::int32_t index = 0; index < 10; ++index) {
+    scale.update({Hx711Status::kOk, 2100000 + index * 75},
+                 200U + index * 10U);
+  }
+  assert(scale.complete_calibration(1000, false, 300) ==
+         ScaleCalibrationResult::kOk);
+  snapshot = scale.snapshot(300);
+  assert(snapshot.calibration_status == ScaleCalibrationStatus::kCalibrated);
+  assert(snapshot.availability == ScaleAvailability::kUnstable);
+  assert(snapshot.gross_weight_available);
+  assert(snapshot.gross_weight_decigrams >= 999 &&
+         snapshot.gross_weight_decigrams <= 1001);
+}
+
 void test_weighted_extraction_tare_cutoff_fallback_and_acknowledgement() {
   ExtractionHarness harness;
   const WeightControl control{350, 20};
@@ -1656,6 +1690,7 @@ int main() {
   test_extraction_wraparound_disconnect_and_heater_fault_independence();
   test_pump_output_failures_end_extraction_off();
   test_scale_filter_calibration_timeout_and_saturation();
+  test_scale_recalibrates_after_the_retained_baseline_moves_out_of_range();
   test_weighted_extraction_tare_cutoff_fallback_and_acknowledgement();
   test_cooldown_start_orders_outputs_and_preserves_permission();
   test_shared_pump_snapshots_keep_workflow_ownership();

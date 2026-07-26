@@ -6,6 +6,7 @@ import type {
   MachineState,
   Mode,
   ProfileSet,
+  StartExtractionRequest,
   TemperatureSettingsResponse,
 } from "@philcoino/protocol";
 
@@ -345,6 +346,50 @@ describe("DashboardMutationSession", () => {
       elapsedMs: 5_000,
       status: "running",
     });
+  });
+
+  test("sends the selected target and drip compensation in a weighted Start", async () => {
+    const requests: StartExtractionRequest[] = [];
+    const client = mutationClient({
+      startExtraction: async (request) => {
+        requests.push(request);
+        return {
+          status: "running",
+          extractionId: "weighted-run-1",
+          selection: { kind: "profile", profileId: "profile-1" },
+          phase: "main-extraction",
+          elapsedMs: 0,
+          remainingMs: 60_000,
+          pumpCommand: "running",
+        };
+      },
+    });
+    const harness = createHarness(client, () => "weighted-start-key-1");
+    harness.session.start();
+
+    harness.session.startExtraction(
+      { kind: "profile", profileId: "profile-1" },
+      {
+        targetWeightDecigrams: 355,
+        compensationDecigrams: 15,
+      },
+    );
+    expect(harness.outcomes.at(-1)?.state).toEqual({
+      message: "Taring and starting…",
+      status: "pending",
+    });
+    await settle();
+
+    expect(requests).toEqual([
+      {
+        idempotencyKey: "weighted-start-key-1",
+        selection: { kind: "profile", profileId: "profile-1" },
+        weightControl: {
+          targetWeightDecigrams: 355,
+          compensationDecigrams: 15,
+        },
+      },
+    ]);
   });
 
   test("uses a fresh Start key after a detected device reboot", async () => {

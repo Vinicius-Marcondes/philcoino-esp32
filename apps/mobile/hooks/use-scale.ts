@@ -14,9 +14,10 @@ import { shotHistoryExporter } from "@/src/history/shot-history-export";
 import { shotHistoryRepository } from "@/src/history/shot-history-repository";
 import {
   defaultScaleProfileDefaults,
-  scalePreferencesRepository,
   type ScaleProfileDefaults,
-} from "@/src/scale/scale-preferences-repository";
+} from "@/src/scale/scale-preferences";
+import { scalePreferencesRepository } from "@/src/scale/scale-preferences-repository";
+import { scaleMutationErrorMessage } from "@/src/scale/scale-mutation-error";
 
 interface ScaleClient {
   acknowledgeScaleWarning(options?: { signal?: AbortSignal }): Promise<ScaleState>;
@@ -124,8 +125,8 @@ export function useScale({
       setError(null);
       try {
         setScale(await operation());
-      } catch {
-        setError("The scale rejected the request. Check stability and try again.");
+      } catch (error) {
+        setError(scaleMutationErrorMessage(error));
       } finally {
         setMutation(null);
       }
