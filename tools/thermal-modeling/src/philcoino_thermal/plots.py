@@ -16,6 +16,20 @@ def _matplotlib():
         raise RuntimeError("Matplotlib is required to generate report plots. Install the declared project dependencies.") from error
 
 
+def prediction_plot_copy(horizon: int) -> dict[str, str]:
+    return {
+        "title": f"{horizon}-second temperature prediction",
+        "subtitle": (
+            "Each blue dot compares one model prediction with the temperature "
+            "actually measured later"
+        ),
+        "actual_axis": f"Actual boiler temperature {horizon} seconds later (°C)",
+        "predicted_axis": f"Model-predicted boiler temperature {horizon} seconds later (°C)",
+        "predictions_label": "Model predictions (one dot per sample)",
+        "perfect_label": "Perfect prediction (predicted = actual)",
+    }
+
+
 def plot_timeline(frame: pd.DataFrame, output: Path) -> None:
     plt = _matplotlib()
     figure, axis = plt.subplots(figsize=(12, 5))
@@ -30,12 +44,34 @@ def plot_timeline(frame: pd.DataFrame, output: Path) -> None:
 
 def plot_prediction(actual: pd.Series, predicted: pd.Series, horizon: int, output: Path) -> None:
     plt = _matplotlib()
+    copy = prediction_plot_copy(horizon)
     figure, axis = plt.subplots(figsize=(6, 6))
-    axis.scatter(actual, predicted, s=8, alpha=0.5)
+    axis.scatter(
+        actual,
+        predicted,
+        s=10,
+        alpha=0.5,
+        color="tab:blue",
+        label=copy["predictions_label"],
+    )
     low = min(actual.min(), predicted.min()); high = max(actual.max(), predicted.max())
-    axis.plot([low, high], [low, high], "k--", linewidth=1)
-    axis.set(xlabel="Actual (°C)", ylabel="Predicted (°C)", title=f"{horizon}-second prediction")
-    figure.tight_layout(); output.parent.mkdir(parents=True, exist_ok=True); figure.savefig(output, dpi=140); plt.close(figure)
+    axis.plot(
+        [low, high],
+        [low, high],
+        "k--",
+        linewidth=1,
+        label=copy["perfect_label"],
+    )
+    figure.suptitle(copy["title"], fontsize=14, fontweight="bold")
+    axis.set_title(copy["subtitle"], fontsize=9, pad=10)
+    axis.set_xlabel(copy["actual_axis"])
+    axis.set_ylabel(copy["predicted_axis"])
+    axis.legend(loc="best", title="How to read this graph")
+    axis.grid(alpha=0.2)
+    figure.tight_layout(rect=(0, 0, 1, 0.94))
+    output.parent.mkdir(parents=True, exist_ok=True)
+    figure.savefig(output, dpi=140)
+    plt.close(figure)
 
 
 def plot_residuals(actual: pd.Series, predicted: pd.Series, horizon: int, output: Path) -> None:

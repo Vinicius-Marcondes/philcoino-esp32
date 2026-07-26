@@ -29,7 +29,7 @@ def synthetic_csvs(tmp_path: Path) -> list[Path]:
     outputs = []
     for index in range(3):
         frame = fixture.copy()
-        timestamps = pd.to_datetime(frame["recorded_at_utc"], utc=True) + pd.Timedelta(days=index)
+        timestamps = pd.to_datetime(frame["recorded_at_utc"], utc=True) + pd.to_timedelta(index, unit="D")
         frame["recorded_at_utc"] = timestamps.dt.strftime("%Y-%m-%dT%H:%M:%SZ")
         frame["boiler_temperature_c"] += 0.05 * index
         path = tmp_path / f"session-{index + 1}.csv"

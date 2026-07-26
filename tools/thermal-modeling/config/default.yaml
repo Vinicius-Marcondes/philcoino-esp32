@@ -2,8 +2,11 @@ schema_version: 1
 sampling:
   expected_interval_seconds: null
   session_gap_multiplier: 5.0
+  uptime_reset_minimum_drop_ms: 5000
   target_tolerance_multiplier: 0.6
   minimum_session_seconds: 35.0
+modeling:
+  active_modes: [brew]
 features:
   schema_version: 1
   filter_alpha: 0.25
@@ -62,4 +65,3 @@ aliases:
   fault: [fault_code, fault]
   uptime_ms: [machine_uptime_ms, uptime_ms]
   device_id: [device_id]
-

@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class StrictModel(BaseModel):
@@ -14,8 +14,21 @@ class StrictModel(BaseModel):
 class SamplingConfig(StrictModel):
     expected_interval_seconds: float | None = None
     session_gap_multiplier: float = 5.0
+    uptime_reset_minimum_drop_ms: int = 5000
     target_tolerance_multiplier: float = 0.6
     minimum_session_seconds: float = 35.0
+
+
+class ModelingConfig(StrictModel):
+    active_modes: list[str] = Field(default_factory=lambda: ["brew"])
+
+    @field_validator("active_modes")
+    @classmethod
+    def validate_active_modes(cls, values: list[str]) -> list[str]:
+        normalized = [value.strip().lower() for value in values]
+        if not normalized or any(value not in {"brew", "steam"} for value in normalized):
+            raise ValueError("active_modes must contain one or more of: brew, steam")
+        return list(dict.fromkeys(normalized))
 
 
 class FeatureConfig(StrictModel):
@@ -74,6 +87,7 @@ class ValidationConfig(StrictModel):
 class ToolConfig(StrictModel):
     schema_version: int = 1
     sampling: SamplingConfig
+    modeling: ModelingConfig = Field(default_factory=ModelingConfig)
     features: FeatureConfig
     predictor: PredictorConfig
     plant: PlantConfig

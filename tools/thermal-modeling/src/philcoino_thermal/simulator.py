@@ -11,6 +11,7 @@ from .features import FEATURE_ORDER, IncrementalFirmwareFeatures
 from .metrics import controller_metrics
 from .plant import plant_step
 from .predictor import predict_raw
+from .scope import healthy_modeling_segments, modeling_scope_summary
 
 
 def simulate_session(
@@ -31,6 +32,9 @@ def simulate_session(
     simulated_rows: list[dict[str, Any]] = []
     feature_state = IncrementalFirmwareFeatures(config)
     extrapolation: set[str] = set()
+    prediction_steps = 0
+    correction_active_steps = 0
+    total_requested_duty_reduction = 0.0
     started = source["timestamp"].iloc[0]
     for index, historical in source.iterrows():
         target = float(historical["target"])
@@ -50,10 +54,15 @@ def simulate_session(
         requested = baseline
         predictions: dict[int, float] = {}
         if correction is not None and bool(features["feature_valid"]):
+            prediction_steps += 1
             vector = features[FEATURE_ORDER].to_numpy(np.float32)
             for horizon in correction.horizons:
                 predictions[horizon] = float(predict_raw(predictor, horizon, vector.reshape(1, -1))[0])
             requested = apply_prediction_correction(baseline, temperature, target, list(predictions.values()), correction)
+            reduction = max(0.0, baseline - requested)
+            if reduction > 1e-9:
+                correction_active_steps += 1
+                total_requested_duty_reduction += reduction
         duty_target = target + (config.controller.extraction_duty_offset_c if mode == "brew" and brewing else 0)
         duty_target = min(duty_target, config.controller.brew_over_temperature_c - 1) if mode == "brew" else duty_target
         heater_active = float(controller.command_active(now_s, requested, temperature, duty_target))
@@ -84,23 +93,57 @@ def simulate_session(
     report = controller_metrics(result, config.validation.stable_band_c)
     report["extrapolation_features"] = sorted(extrapolation)
     report["extrapolation_steps_detected"] = bool(extrapolation)
+    report["prediction_steps"] = prediction_steps
+    report["correction_active_steps"] = correction_active_steps
+    report["total_requested_duty_reduction"] = total_requested_duty_reduction
     return result, report
 
 
 def compare_simulations(frame: pd.DataFrame, predictor: dict[str, Any], plant: dict[str, Any], config: ToolConfig, candidate: PredictionCorrection) -> tuple[pd.DataFrame, dict[str, Any]]:
+    scoped = healthy_modeling_segments(frame, config)
+    scope = modeling_scope_summary(frame, config)
     comparisons: list[pd.DataFrame] = []
     baseline_metrics: list[dict[str, Any]] = []
     candidate_metrics: list[dict[str, Any]] = []
-    for session_id, session in frame.groupby("session_id", sort=False):
+    simulated_source_sessions: set[str] = set()
+    simulated_segments = 0
+    for segment_id, session in scoped.groupby("modeling_segment_id", sort=False):
+        if len(session) < 2:
+            continue
+        source_session_id = str(session["session_id"].iloc[0])
         baseline, baseline_report = simulate_session(session, predictor, plant, config, None)
         proposed, proposed_report = simulate_session(session, predictor, plant, config, candidate)
         baseline["configuration"] = "current"; proposed["configuration"] = "candidate"
-        baseline["session_id"] = session_id; proposed["session_id"] = session_id
+        baseline["session_id"] = segment_id; proposed["session_id"] = segment_id
+        baseline["source_session_id"] = source_session_id
+        proposed["source_session_id"] = source_session_id
         comparisons.extend([baseline, proposed]); baseline_metrics.append(baseline_report); candidate_metrics.append(proposed_report)
+        simulated_source_sessions.add(source_session_id)
+        simulated_segments += 1
+    if not comparisons:
+        raise ValueError("No fault-free rows in the configured modeling modes are available for simulation.")
+
     def aggregate(reports: list[dict[str, Any]]) -> dict[str, Any]:
         numeric = [key for key, value in reports[0].items() if isinstance(value, (int, float)) and not isinstance(value, bool)]
-        merged = {key: float(np.median([report[key] for report in reports])) for key in numeric}
+        summed = {
+            "correction_active_steps", "prediction_steps",
+            "safety_violation_count", "total_requested_duty_reduction",
+        }
+        merged = {
+            key: float(
+                np.sum([report[key] for report in reports])
+                if key in summed
+                else np.median([report[key] for report in reports])
+            )
+            for key in numeric
+        }
         merged["extrapolation_features"] = sorted({value for report in reports for value in report["extrapolation_features"]})
         merged["extrapolation_steps_detected"] = bool(merged["extrapolation_features"])
+        merged["simulated_segments"] = simulated_segments
+        merged["simulated_source_sessions"] = sorted(simulated_source_sessions)
         return merged
-    return pd.concat(comparisons, ignore_index=True), {"current": aggregate(baseline_metrics), "candidate": aggregate(candidate_metrics)}
+    return pd.concat(comparisons, ignore_index=True), {
+        "current": aggregate(baseline_metrics),
+        "candidate": aggregate(candidate_metrics),
+        "modeling_scope": scope,
+    }

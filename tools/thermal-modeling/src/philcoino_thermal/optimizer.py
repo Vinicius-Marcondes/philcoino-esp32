@@ -45,6 +45,8 @@ def evaluate_promotion(predictor: dict[str, Any], optimization: dict[str, Any], 
     groups = len(set(predictor["training_sessions"] + predictor["test_sessions"]))
     if groups < config.validation.minimum_groups_for_promotion:
         reasons.append("Insufficient independent session groups.")
+    if predictor.get("evaluation_type") != "held_out":
+        reasons.append("Predictor metrics are training-only; no independent test session was available.")
     ten = predictor["metrics"].get("10")
     if ten:
         improvement = 1.0 - ten["mae"] / max(ten["persistence"]["mae"], 1e-9)
@@ -61,6 +63,8 @@ def evaluate_promotion(predictor: dict[str, Any], optimization: dict[str, Any], 
     overshoot_improvement = 1.0 - candidate["peak_overshoot_c"] / max(current["peak_overshoot_c"], 1e-9)
     if overshoot_improvement < config.validation.minimum_overshoot_improvement:
         reasons.append("Simulated overshoot improvement is below threshold.")
+    if candidate.get("correction_active_steps", 0) <= 0:
+        reasons.append("Predictive correction did not reduce heater duty in simulation.")
     if candidate["extrapolation_steps_detected"]:
         reasons.append("Candidate simulation leaves plant training ranges.")
     if candidate.get("safety_violation_count", 0) > 0:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
@@ -144,19 +145,38 @@ def _normalize(raw: pd.DataFrame, config: ToolConfig, path: Path, file_hash: str
 
 def _split_sessions(frame: pd.DataFrame, config: ToolConfig, file_reports: list[dict[str, Any]]) -> pd.DataFrame:
     output: list[pd.DataFrame] = []
-    expected_by_file = {report["path"]: report["expected_interval_seconds"] for report in file_reports}
+    reports_by_file = {report["path"]: report for report in file_reports}
     for source_file, group in frame.groupby("source_file", sort=False):
         group = group.copy().reset_index(drop=True)
         delta = group["timestamp"].diff().dt.total_seconds()
         uptime_delta = group["uptime_ms"].diff()
-        expected = expected_by_file[source_file]
+        expected = reports_by_file[source_file]["expected_interval_seconds"]
         threshold = config.sampling.session_gap_multiplier * expected if expected else np.inf
-        boundary = group["timestamp"].isna() | (delta <= 0) | (delta > threshold) | (uptime_delta < 0)
-        boundary.iloc[0] = True
+        uptime_reset = uptime_delta <= -config.sampling.uptime_reset_minimum_drop_ms
+        ignored_uptime_backstep = (uptime_delta < 0) & ~uptime_reset
+        reasons = pd.Series("", index=group.index, dtype="string")
+        reasons.loc[group["timestamp"].isna()] = "missing_timestamp"
+        reasons.loc[group["timestamp"].notna() & delta.le(0)] = "non_increasing_timestamp"
+        reasons.loc[delta.gt(threshold)] = "timestamp_gap"
+        reasons.loc[uptime_reset.fillna(False) & reasons.eq("")] = "uptime_reset"
+        reasons.iloc[0] = "file_start"
+        boundary = reasons.ne("")
         group["session_number"] = boundary.cumsum().astype(int)
         short_hash = str(group["source_hash"].iloc[0])[:12]
         group["session_id"] = group["session_number"].map(lambda number: f"{short_hash}-{number:04d}")
-        group["sample_interval_seconds"] = delta
+        group["session_boundary_reason"] = reasons
+        group["sample_interval_seconds"] = delta.mask(boundary)
+        report = reports_by_file[source_file]
+        report["session_gap_threshold_seconds"] = float(threshold) if np.isfinite(threshold) else None
+        report["session_boundary_counts"] = {
+            str(reason): int(count)
+            for reason, count in Counter(reasons[reasons.ne("")].astype(str)).items()
+        }
+        report["ignored_uptime_backsteps"] = int(ignored_uptime_backstep.sum())
+        ignored_drops = -uptime_delta[ignored_uptime_backstep]
+        report["largest_ignored_uptime_backstep_ms"] = (
+            float(ignored_drops.max()) if len(ignored_drops) else 0.0
+        )
         output.append(group)
     return pd.concat(output, ignore_index=True)
 
@@ -197,6 +217,11 @@ def validate_dataset(frame: pd.DataFrame, reports: list[dict[str, Any]], config:
     short_sessions = int((session_durations < config.sampling.minimum_session_seconds).sum())
     if short_sessions:
         warnings.append(f"{short_sessions} session(s) are too short for training.")
+    ignored_uptime_backsteps = sum(int(report.get("ignored_uptime_backsteps", 0)) for report in reports)
+    if ignored_uptime_backsteps:
+        warnings.append(
+            f"{ignored_uptime_backsteps} small uptime backstep(s) were treated as timing jitter, not machine restarts."
+        )
     interval_values = interval[interval > 0].dropna()
     statuses = sorted(value for value in frame["status"].dropna().astype(str).str.lower().unique() if value)
     known_statuses = {"heating", "ready", "fault", "cooldown", "stabilizing"}
@@ -213,6 +238,17 @@ def validate_dataset(frame: pd.DataFrame, reports: list[dict[str, Any]], config:
         "faulted_rows": int(faulted.sum()),
         "long_constant_sensor_rows": constant_rows,
         "sessions_too_short": short_sessions,
+        "session_boundary_counts": {
+            str(reason): int(count)
+            for reason, count in Counter(
+                frame.loc[frame["session_boundary_reason"].ne(""), "session_boundary_reason"].astype(str)
+            ).items()
+        },
+        "ignored_uptime_backsteps": ignored_uptime_backsteps,
+        "largest_ignored_uptime_backstep_ms": max(
+            (float(report.get("largest_ignored_uptime_backstep_ms", 0.0)) for report in reports),
+            default=0.0,
+        ),
         "sample_interval_seconds": {
             "minimum": float(interval_values.min()) if len(interval_values) else None,
             "median": float(interval_values.median()) if len(interval_values) else None,
