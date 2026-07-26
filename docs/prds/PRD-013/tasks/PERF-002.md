@@ -1,6 +1,7 @@
 # PERF-002 — Bound mobile scale polling
 
 Status: Done
+Implementation Commit: `8fee5ab`
 Review Mode: Agent
 Review Reason: Poll completion, concurrency, and request cadence are
 deterministic through injected clocks and clients.

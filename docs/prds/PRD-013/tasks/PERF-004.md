@@ -1,6 +1,7 @@
 # PERF-004 — Contain API lock and allocation exposure
 
 Status: Done
+Implementation Commit: `8fee5ab`
 Review Mode: Agent
 Review Reason: Lock lifetime, response equivalence, and bounded allocation
 behavior are deterministic in host and target-build evidence.

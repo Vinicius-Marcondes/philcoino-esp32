@@ -1,6 +1,7 @@
 # PERF-005 — Add event-driven HX711 acquisition
 
 Status: Software Complete — Target Pending
+Implementation Commit: `8fee5ab`
 Review Mode: Agent
 Review Reason: Notification, coalescing, timeout, and recovery policy are
 host-testable; target interrupt timing is isolated in PERF-009.

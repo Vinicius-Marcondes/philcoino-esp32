@@ -1,6 +1,7 @@
 # PERF-003 — Make live-state reads observational
 
 Status: Done
+Implementation Commit: `8fee5ab`
 Review Mode: Agent
 Review Reason: Snapshot-only reads and workflow advancement ownership are
 deterministic in host tests.

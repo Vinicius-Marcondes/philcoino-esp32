@@ -1,6 +1,7 @@
 # PERF-001 — Capture unchanged-code baseline and add bounded diagnostics
 
 Status: Software Complete — Target/Human Pending
+Implementation Commit: `8fee5ab`
 Review Mode: Human
 Human Review Needs: Provide connected ESP32-C3 runtime and logic-analyzer
 measurements that cannot be produced by host tests or a target build.
