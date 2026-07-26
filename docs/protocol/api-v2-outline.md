@@ -17,7 +17,7 @@ v2 adds no raw-temperature or offset field.
 - `GET /api/v2/state` returns one acknowledged
   machine/extraction/compensation/cooldown snapshot.
 - `GET /api/v2/state?include=prediction` returns the same snapshot plus required
-  nullable `predictiveTemperature` diagnostics. Firmware `0.3.2` populates the
+  nullable `predictiveTemperature` diagnostics. Firmware `0.3.3` populates the
   object; the deterministic simulator returns `null`. Omitting the query keeps
   the original strict response shape unchanged.
 - `GET /api/v2/history` returns up to eight ascending RAM-retained samples with

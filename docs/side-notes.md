@@ -366,7 +366,7 @@ powered did not reproduce after the power-source change.
 The following live run exposed a separate mobile data-path issue: ordinary
 queryless API v2 state did not carry prediction diagnostics, so rows captured
 while the app stayed open exported empty prediction columns unless retained
-history later replaced them. Firmware `0.3.2` adds the opt-in
+history later replaced them. Firmware `0.3.3` adds the opt-in
 `GET /api/v2/state?include=prediction` shape while preserving queryless state.
 Mobile now stores those live fields immediately, invokes retained history only
 after a detected gap, waits for an already-running recovery before export, and
