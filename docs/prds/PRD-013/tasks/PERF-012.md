@@ -1,6 +1,7 @@
 # PERF-012 — Repeat regression and target evidence
 
 Status: Software Complete — Target/Human Pending
+Implementation Commit: `6843013`
 Review Mode: Human
 Human Review Needs: Accept connected-target runtime and logic-analyzer
 before/after evidence for the exact tested build and configuration.
