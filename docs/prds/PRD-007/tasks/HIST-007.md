@@ -42,10 +42,10 @@ Complete the Human/native acceptance gates for PRD-007.
   close/reopen recovery on a stable 5 V supply.
 - A later live export exposed empty prediction columns because queryless state
   did not carry those diagnostics, and incoming samples reset an older viewed
-  graph page. Firmware/mobile `0.3.2` now uses opt-in live diagnostics,
+  graph page. Firmware/mobile `0.3.3` now uses opt-in live diagnostics,
   gap-triggered history recovery, and stable timestamp page identity.
 - The acceptance criteria remain open until the owner repeats the native app
-  and connected-target checks on `0.3.2`.
+  and connected-target checks on `0.3.3`.
 
 ## Dependencies
 

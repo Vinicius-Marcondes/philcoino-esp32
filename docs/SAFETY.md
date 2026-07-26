@@ -22,7 +22,7 @@ Philcoino é um controller experimental para máquina de espresso que trabalha p
 - O source atual do firmware habilita o OLED (`kOledEnabled = true`), enquanto o tracker registra um estado temporário com OLED desabilitado. Trate isso como uma divergência não resolvida entre documentação e configuração, não como um estado de hardware aprovado.
 - A aceitação de 2026-07-16 permanece limitada à configuração então testada.
   As novas gates Human de histórico/predição passiva (HIST-007/PRD-012),
-  incluindo runtime do firmware `0.3.2`, continuam pendentes; findings de
+  incluindo runtime do firmware `0.3.3`, continuam pendentes; findings de
   arquitetura, firmware e security continuam sendo trabalho de engenharia.
 - Em 2026-07-14, o owner aceitou a matriz funcional da pump no target após relatar discovery HTTP/mDNS, Manual/profiles, Stop/cutoff, continuidade sem app e boot sem retomada. Isso é evidência funcional reportada pelo owner; não inclui captures elétricos independentes, injeção de falha GPIO, timer-wrap no target nem aprovação energizada.
 

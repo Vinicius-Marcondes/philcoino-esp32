@@ -4,7 +4,7 @@ Date: 2026-07-21
 
 ## Implemented boundary
 
-- Firmware version `0.3.2` calculates passive temperature predictions and
+- Firmware version `0.3.3` calculates passive temperature predictions and
   hypothetical heater corrections without connecting them to SSR output.
 - The existing nonlinear ten-second duty controller remains the sole heater
   policy. A host test compares complete heater command traces with prediction
@@ -61,7 +61,7 @@ same boot ID across repeated 50-request stress runs, and gap-free one-minute
 close/reopen recovery when using the stable 5 V supply. USB-powered graph gaps
 did not reproduce on that supply and were treated as a power/setup observation.
 
-Firmware `0.3.2` adds opt-in live prediction diagnostics so ordinary live rows
+Firmware `0.3.3` adds opt-in live prediction diagnostics so ordinary live rows
 no longer depend on history backfill, plus gap-only recovery and stable graph
-page identities. A fresh target/app check after flashing `0.3.2` remains
+page identities. A fresh target/app check after flashing `0.3.3` remains
 required; the earlier owner observations do not validate this new build.

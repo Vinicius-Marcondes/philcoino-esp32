@@ -1,7 +1,7 @@
 # PRD-007 Tracker
 
-PRD Status: Active
-Current Task: HIST-007
+PRD Status: Complete — Software Delivery Closed
+Current Task: None — Deferred validation remains documented
 
 Implementation Boundary: Add bounded observational device history, strict
 history retrieval, mobile backfill, and thirty-second graph paging without
@@ -42,7 +42,7 @@ PRD: `docs/prds/PRD-007/PRD-007.md`
 | [HIST-004](prds/PRD-007/tasks/HIST-004.md) | Agent | Done | Mobile 133 tests; typecheck; lint | Native-safe cancellation; exclusive idempotent page/cursor commit | Pending | None | None |
 | [HIST-005](prds/PRD-007/tasks/HIST-005.md) | Agent | Done | 30 s window/gap/follow tests; localization | Rolling newest window; user-driven follow state | Pending | None | None |
 | [HIST-006](prds/PRD-007/tasks/HIST-006.md) | Agent | Done | All configured host/workspace checks pass | Host evidence is not target evidence | Pending | Target toolchain unavailable | Complete target evidence in HIST-007 |
-| [HIST-007](prds/PRD-007/tasks/HIST-007.md) | Human | Todo | Partial owner evidence: complete bounded pages, stable boot ID under repeated stress, and gap-free one-minute reopen; 0.3.2 retest pending | Gap-only recovery and stable timestamp page identity | Pending | Connected-target resource evidence unavailable | Flash/test 0.3.2 and complete target timing/resource checks |
+| [HIST-007](prds/PRD-007/tasks/HIST-007.md) | Human | Deferred | Partial owner evidence: complete bounded pages, stable boot ID under repeated stress, and gap-free one-minute reopen; 0.3.3 retest pending | Gap-only recovery and stable timestamp page identity | Pending | Connected-target resource evidence unavailable | Flash/test 0.3.3 and complete target timing/resource checks |
 
 ## PRD-011 Brew by weight
 
