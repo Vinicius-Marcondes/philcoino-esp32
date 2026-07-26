@@ -1,6 +1,7 @@
 # PERF-009 — Validate interrupt safety and GPIO timing
 
 Status: Software Complete — Target/Human Pending
+Implementation Commit: `c7f5791`
 Review Mode: Human
 Human Review Needs: Inspect target map/placement and capture HX711 and heater
 GPIO timing with a logic analyzer on a disconnected low-voltage setup.

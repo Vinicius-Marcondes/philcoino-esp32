@@ -1,6 +1,7 @@
 # PERF-006 — Cache accepted scale processing
 
 Status: Done
+Implementation Commit: `726d5c4`
 Review Mode: Agent
 Review Reason: Accepted-sample processing, cached snapshots, age, and
 availability are deterministic in pure controller tests.

@@ -1,6 +1,7 @@
 # PERF-008 — Use deterministic temperature scheduling
 
 Status: Done
+Implementation Commit: `ca88239`
 Review Mode: Agent
 Review Reason: Fixed-period deadline arithmetic and bounded lateness are
 deterministic in host tests and observable through PERF-001 diagnostics.

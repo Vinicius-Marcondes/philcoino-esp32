@@ -1,6 +1,7 @@
 # PERF-007 — Make scale calibration persistence transactional
 
 Status: Done
+Implementation Commit: `2a5c09e`
 Review Mode: Agent
 Review Reason: Prepare/save/adopt/retry state transitions and storage failures
 are deterministic with injected locks and persistence.
