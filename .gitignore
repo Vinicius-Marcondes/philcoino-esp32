@@ -73,6 +73,7 @@ yarn-error.*
 app-example
 
 # PhilcoINO thermal-modeling local data and generated runs
+/.codex/*.csv
 /tools/thermal-modeling/data/raw/
 /tools/thermal-modeling/data/processed/
 /tools/thermal-modeling/models/
