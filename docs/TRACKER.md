@@ -1,7 +1,7 @@
 # PRD-013 Tracker
 
 PRD Status: Active — Approved 2026-07-26
-Current Task: PERF-009
+Current Task: None — Awaiting explicit task selection
 
 Implementation Boundary: Reduce avoidable ESP32-C3 runtime work and mobile
 scale polling without changing public wire schemas, firmware control authority,
@@ -47,7 +47,7 @@ PRD: `docs/prds/PRD-013/PRD-013.md`
 | [PERF-006](prds/PRD-013/tasks/PERF-006.md) | Agent | Done | Native/sanitizer 7/7; cached filter, NotReady, age/wrap, saturation and recovery regression | `NotReady` bypasses mutex/publication; accepted samples refresh cached O(1) snapshots | Pending | Target diagnostics unavailable | None |
 | [PERF-007](prds/PRD-013/tasks/PERF-007.md) | Agent | Done | Native/sanitizer 7/7; 32 captures; unlocked-save assertion; failure/reacquire/adopt/retry regressions | Tokenized prepare/save/adopt; old calibration retained; unresolved adoption blocks weighted Start | Pending | Target NVS/runtime evidence unavailable | None |
 | [PERF-008](prds/PRD-013/tasks/PERF-008.md) | Agent | Done | Native/sanitizer 7/7; 32 captures; on-time/late/multi-period/wrap arithmetic | ESP-IDF 6 `xTaskDelayUntil`; retained 500 ms deadline; missed slots skipped without rapid sensor reads | Pending | Target lateness diagnostics unavailable | None |
-| [PERF-009](prds/PRD-013/tasks/PERF-009.md) | Human | Todo | Pending | Pending | Pending | None | None |
+| [PERF-009](prds/PRD-013/tasks/PERF-009.md) | Human | Software Complete — Target/Human Pending | Source/config call-graph audit; native/sanitizer 7/7; 32 captures; target/Human procedure | Explicit IRAM callbacks; no ISR logging/allocation/controller work; Human timing not inferred | Pending | ESP-IDF build/map, connected low-voltage target, logic analyzer, and Human reviewer unavailable | Run pinned build/map, cache-suspension stress, and GPIO0/GPIO1/GPIO20 captures |
 | [PERF-010](prds/PRD-013/tasks/PERF-010.md) | Agent | Todo | Pending | Pending | Pending | None | None |
 | [PERF-011](prds/PRD-013/tasks/PERF-011.md) | Agent | Todo | Pending | Pending | Pending | None | None |
 | [PERF-012](prds/PRD-013/tasks/PERF-012.md) | Human | Todo | Pending | Pending | Pending | None | None |

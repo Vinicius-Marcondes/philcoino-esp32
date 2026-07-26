@@ -1,6 +1,6 @@
 # PERF-009 — Validate interrupt safety and GPIO timing
 
-Status: Todo
+Status: Software Complete — Target/Human Pending
 Review Mode: Human
 Human Review Needs: Inspect target map/placement and capture HX711 and heater
 GPIO timing with a logic analyzer on a disconnected low-voltage setup.
@@ -33,10 +33,16 @@ pulses under representative target load without weakening either ISR.
 ## Acceptance Criteria
 
 - [ ] Both ISRs remain minimal, allocation-free, logging-free, and cache-safe.
-- [ ] No broad interrupt-disabled region is introduced.
+  Source/configuration audit passes; target map and cache-suspension evidence
+  remain pending.
+- [x] No broad interrupt-disabled region is introduced.
 - [ ] HX711 clock and ready timing meet the device policy on target.
 - [ ] Heater lease commands GPIO low at or before 1,500 ms in the tested build.
-- [ ] Human acceptance remains separate from energized or mains-safety claims.
+- [x] Human acceptance remains separate from energized or mains-safety claims.
+
+## Evidence
+
+- `../evidence/PERF-009-INTERRUPT-AUDIT.md`
 
 ## Verification Strategy
 

@@ -286,7 +286,7 @@ void workflow_control_task(void* argument) {
             philcoino::diagnostics::DurationMetric::kWorkflowWorkUs,
             bounded_u32(monotonic_us() - started_us));
       }
-      vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(10));
+      xTaskDelayUntil(&last_wake, pdMS_TO_TICKS(10));
       continue;
     }
     const auto now_ms = uptime_ms();
@@ -340,7 +340,7 @@ void workflow_control_task(void* argument) {
           philcoino::diagnostics::DurationMetric::kWorkflowWorkUs,
           bounded_u32(monotonic_us() - started_us));
     }
-    vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(10));
+    xTaskDelayUntil(&last_wake, pdMS_TO_TICKS(10));
   }
 }
 
