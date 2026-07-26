@@ -50,6 +50,26 @@ const char* status_text(int status) {
   }
 }
 
+esp_err_t send_http_response(httpd_req_t* request,
+                             const HttpResponse& response,
+                             const std::string& path) {
+  httpd_resp_set_status(request, status_text(response.status));
+  httpd_resp_set_type(request, "application/json");
+  if (response.bearer_challenge) {
+    httpd_resp_set_hdr(request, "WWW-Authenticate",
+                       "Bearer realm=\"philcoino\"");
+  }
+  const auto result = httpd_resp_send(request, response.body.c_str(),
+                                      response.body.size());
+  if (result != ESP_OK) {
+    ESP_LOGE(kLogTag,
+             "HTTP response send failed path=%s bytes=%u error=%s",
+             path.c_str(), static_cast<unsigned>(response.body.size()),
+             esp_err_to_name(result));
+  }
+  return result;
+}
+
 HttpMethod request_method(int method) {
   switch (method) {
     case HTTP_PATCH: return HttpMethod::kPatch;
@@ -353,14 +373,7 @@ int EspNetworkServer::handle_http_request(void* opaque_request) {
       !api_.authorized(authorization_value)) {
     const HttpResponse response =
         api_.handle(method, path, authorization_value, "", uptime_ms());
-    httpd_resp_set_status(request, status_text(response.status));
-    httpd_resp_set_type(request, "application/json");
-    if (response.bearer_challenge) {
-      httpd_resp_set_hdr(request, "WWW-Authenticate",
-                         "Bearer realm=\"philcoino\"");
-    }
-    return httpd_resp_send(request, response.body.c_str(),
-                           response.body.size());
+    return send_http_response(request, response, path);
   }
 
   std::string body;
@@ -399,13 +412,7 @@ int EspNetworkServer::handle_http_request(void* opaque_request) {
 
   const HttpResponse response = api_.handle(
       method, path, authorization_value, body, uptime_ms());
-  httpd_resp_set_status(request, status_text(response.status));
-  httpd_resp_set_type(request, "application/json");
-  if (response.bearer_challenge) {
-    httpd_resp_set_hdr(request, "WWW-Authenticate",
-                       "Bearer realm=\"philcoino\"");
-  }
-  return httpd_resp_send(request, response.body.c_str(), response.body.size());
+  return send_http_response(request, response, path);
 }
 
 }  // namespace philcoino::networking

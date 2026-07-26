@@ -5,6 +5,7 @@
 #include <string>
 
 #include "philcoino/peripherals.hpp"
+#include "philcoino/prediction.hpp"
 
 namespace philcoino::control {
 
@@ -41,6 +42,7 @@ struct ControlSnapshot {
   bool fault_active{false};
   FaultSnapshot fault{};
   SteamTimeoutSnapshot steam_timeout{};
+  PredictionDiagnostics prediction{};
 };
 
 peripherals::DisplayTemperature display_temperature(
@@ -52,7 +54,10 @@ const char* fault_message(FaultCode code);
 class TemperatureController {
  public:
   TemperatureController(peripherals::TemperatureTargets targets,
-                        peripherals::FailOffSsr& heater);
+                        peripherals::FailOffSsr& heater,
+                        const config::TemperaturePredictionConfig&
+                            prediction_configuration =
+                                config::kTemperaturePredictionConfig);
 
   ControlMode mode() const;
   ControlStatus status() const;
@@ -92,6 +97,9 @@ class TemperatureController {
 
   ControlSnapshot update(const peripherals::ThermocoupleReading& reading,
                          std::uint32_t now_ms);
+  ControlSnapshot update(const peripherals::ThermocoupleReading& reading,
+                         peripherals::PumpCommand pump_command,
+                         std::uint32_t now_ms);
   ControlSnapshot snapshot(std::uint32_t now_ms) const;
   void latch_fault(FaultCode code);
 
@@ -109,6 +117,10 @@ class TemperatureController {
   void reset_recovery_heat();
   void update_recovery_heat();
   std::uint32_t heater_pulse_ms() const;
+  float baseline_heater_duty() const;
+  PredictionOperatingMode prediction_operating_mode() const;
+  void update_prediction(peripherals::PumpCommand pump_command,
+                         std::uint32_t now_ms, float baseline_duty);
   void reset_heater_control_window(std::uint32_t now_ms);
   void reset_readiness(std::uint32_t now_ms);
   void return_to_brew(std::uint32_t now_ms);
@@ -142,6 +154,10 @@ class TemperatureController {
   bool recovery_heat_active_{false};
   bool steam_timeout_active_{false};
   std::uint32_t steam_timeout_started_ms_{0};
+  bool post_brew_recovery_active_{false};
+  std::uint32_t last_pump_running_ms_{0};
+  PredictiveTemperatureMonitor prediction_monitor_;
+  PredictionDiagnostics prediction_diagnostics_{};
 };
 
 enum class ExtractionStatus { kIdle, kRunning };

@@ -56,6 +56,7 @@ A PRD e os arquivos de task são registros históricos/de aprovação. Se a impl
 - [`SAFETY.md`](SAFETY.md): status público de segurança e regras de contribuição.
 - [`hardware/esp32-c3-wiring.md`](hardware/esp32-c3-wiring.md): GPIOs, ligações dos módulos e checks elétricos não resolvidos.
 - [`hardware/temperature-control-tuning.md`](hardware/temperature-control-tuning.md): duty curve implementada e considerações de tuning.
+- [`../tools/thermal-modeling/README.md`](../tools/thermal-modeling/README.md): workflow desktop offline para validar CSV, treinar, simular e gerar candidatos revisáveis.
 - [`side-notes.md`](side-notes.md): checks adiados de iPhone físico, hardware, relay, cutoff e rede elétrica.
 - [`references/README.md`](references/README.md): referências de versões exatas para framework, firmware, componentes e safety.
 

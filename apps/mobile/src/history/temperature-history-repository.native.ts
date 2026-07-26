@@ -6,7 +6,11 @@ import type {
   RecoveredHistoryPage,
   TemperatureHistoryRepository,
 } from "./temperature-history-repository";
-import type { HistoryCursor } from "@philcoino/protocol";
+import {
+  PredictiveTemperatureDiagnosticsSchema,
+  type HistoryCursor,
+  type PredictiveTemperatureDiagnostics,
+} from "@philcoino/protocol";
 
 interface TemperatureHistoryRow {
   active_mode: unknown;
@@ -19,6 +23,7 @@ interface TemperatureHistoryRow {
   heater_enabled: unknown;
   machine_status: unknown;
   pump_active: unknown;
+  predictive_temperature_json: unknown;
   recorded_at_ms: unknown;
   source_boot_id: unknown;
   source_sequence: unknown;
@@ -50,8 +55,9 @@ class SQLiteTemperatureHistoryRepository
         heater_active,
         pump_active,
         machine_status,
-        fault_code
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        fault_code,
+        predictive_temperature_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(device_id, recorded_at_ms) DO UPDATE SET
         uptime_ms = excluded.uptime_ms,
         boiler_temperature_c = excluded.boiler_temperature_c,
@@ -63,7 +69,8 @@ class SQLiteTemperatureHistoryRepository
         heater_active = excluded.heater_active,
         pump_active = excluded.pump_active,
         machine_status = excluded.machine_status,
-        fault_code = excluded.fault_code
+        fault_code = excluded.fault_code,
+        predictive_temperature_json = excluded.predictive_temperature_json
       WHERE temperature_history.source_sequence IS NULL`,
       sample.deviceId,
       sample.recordedAtMs,
@@ -78,6 +85,7 @@ class SQLiteTemperatureHistoryRepository
       sample.pumpActive === null ? null : sample.pumpActive ? 1 : 0,
       sample.machineStatus,
       sample.faultCode,
+      serializePredictiveTemperature(sample.predictiveTemperature),
     );
     await this.prune(sample.recordedAtMs);
   }
@@ -151,10 +159,11 @@ class SQLiteTemperatureHistoryRepository
         heater_active,
         pump_active,
         machine_status,
-        fault_code
-        ,source_boot_id
-        ,source_sequence
-        ,starts_after_history_gap
+        fault_code,
+        predictive_temperature_json,
+        source_boot_id,
+        source_sequence,
+        starts_after_history_gap
       FROM temperature_history
       WHERE device_id = ? AND recorded_at_ms >= ? AND recorded_at_ms < ?
       ORDER BY recorded_at_ms ASC`,
@@ -206,9 +215,9 @@ class SQLiteTemperatureHistoryRepository
             device_id, recorded_at_ms, uptime_ms,
             boiler_temperature_c, brew_target_c, steam_target_c,
             active_mode, active_target_c, heater_enabled, heater_active,
-            pump_active, machine_status, fault_code,
+            pump_active, machine_status, fault_code, predictive_temperature_json,
             source_boot_id, source_sequence, starts_after_history_gap
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           sample.deviceId,
           sample.recordedAtMs,
           sample.uptimeMs,
@@ -222,6 +231,7 @@ class SQLiteTemperatureHistoryRepository
           sample.pumpActive === null ? null : sample.pumpActive ? 1 : 0,
           sample.machineStatus,
           sample.faultCode,
+          serializePredictiveTemperature(sample.predictiveTemperature),
           sample.sourceBootId,
           sample.sourceSequence,
           sample.startsAfterHistoryGap ? 1 : 0,
@@ -270,6 +280,7 @@ class SQLiteTemperatureHistoryRepository
           'heating_timeout',
           'internal_error'
         )),
+        predictive_temperature_json TEXT,
         source_boot_id TEXT,
         source_sequence INTEGER,
         starts_after_history_gap INTEGER NOT NULL DEFAULT 0
@@ -311,11 +322,20 @@ class SQLiteTemperatureHistoryRepository
           CHECK(starts_after_history_gap IN (0, 1));
       `);
     }
+    if (
+      !columns.some(
+        (column) => column.name === "predictive_temperature_json",
+      )
+    ) {
+      await database.execAsync(
+        "ALTER TABLE temperature_history ADD COLUMN predictive_temperature_json TEXT;",
+      );
+    }
     await database.execAsync(`
       CREATE UNIQUE INDEX IF NOT EXISTS temperature_history_device_source
         ON temperature_history(device_id, source_boot_id, source_sequence)
         WHERE source_boot_id IS NOT NULL AND source_sequence IS NOT NULL;
-      PRAGMA user_version = 3;
+      PRAGMA user_version = 4;
     `);
     return database;
   }
@@ -351,6 +371,9 @@ function rowToSample(row: TemperatureHistoryRow): TemperatureHistorySample {
     heaterEnabled: sqliteBoolean(row.heater_enabled),
     machineStatus,
     pumpActive: nullableSqliteBoolean(row.pump_active),
+    predictiveTemperature: parsePredictiveTemperature(
+      row.predictive_temperature_json,
+    ),
     recordedAtMs: nonNegativeInteger(row.recorded_at_ms),
     sourceBootId:
       row.source_boot_id === null ? null : historyBootId(row.source_boot_id),
@@ -362,6 +385,30 @@ function rowToSample(row: TemperatureHistoryRow): TemperatureHistorySample {
     steamTargetC: finiteNumber(row.steam_target_c),
     uptimeMs: nonNegativeInteger(row.uptime_ms),
   };
+}
+
+function serializePredictiveTemperature(
+  value: PredictiveTemperatureDiagnostics | null,
+): string | null {
+  return value === null ? null : JSON.stringify(value);
+}
+
+function parsePredictiveTemperature(
+  value: unknown,
+): PredictiveTemperatureDiagnostics | null {
+  if (value === null) {
+    return null;
+  }
+  if (typeof value !== "string") {
+    throw new Error("Stored predictive temperature diagnostics are invalid.");
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw new Error("Stored predictive temperature diagnostics are invalid.");
+  }
+  return PredictiveTemperatureDiagnosticsSchema.parse(parsed);
 }
 
 function enumValue<const T extends readonly string[]>(

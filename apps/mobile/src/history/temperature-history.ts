@@ -4,6 +4,7 @@ import type {
   MachineState,
   MachineStatus,
   Mode,
+  PredictiveTemperatureDiagnostics,
 } from "@philcoino/protocol";
 
 export const LIVE_HISTORY_WINDOW_MS = 30 * 1_000;
@@ -23,6 +24,7 @@ export interface TemperatureHistorySample {
   heaterEnabled: boolean;
   machineStatus: MachineStatus;
   pumpActive: boolean | null;
+  predictiveTemperature: PredictiveTemperatureDiagnostics | null;
   recordedAtMs: number;
   sourceBootId: string | null;
   sourceSequence: number | null;
@@ -52,6 +54,7 @@ export function createTemperatureHistorySample(
   snapshot: MachineState,
   extraction: ExtractionState,
   recordedAtMs = Date.now(),
+  predictiveTemperature: PredictiveTemperatureDiagnostics | null = null,
 ): TemperatureHistorySample {
   return {
     activeMode: snapshot.activeMode,
@@ -67,6 +70,7 @@ export function createTemperatureHistorySample(
     heaterEnabled: snapshot.heaterEnabled,
     machineStatus: snapshot.status,
     pumpActive: extraction.pumpCommand === "running",
+    predictiveTemperature,
     recordedAtMs,
     sourceBootId: null,
     sourceSequence: null,
@@ -143,13 +147,14 @@ export function temperatureHistoryWindows(
     return [];
   }
 
-  const durationMs = Math.max(0, last.recordedAtMs - first.recordedAtMs);
-  const windowCount = Math.floor(durationMs / windowMs) + 1;
-  const firstWindowStartMs = last.recordedAtMs - windowCount * windowMs;
+  const firstWindowEndMs = Math.ceil(first.recordedAtMs / windowMs) * windowMs;
+  const lastWindowEndMs = Math.ceil(last.recordedAtMs / windowMs) * windowMs;
+  const windowCount =
+    Math.floor((lastWindowEndMs - firstWindowEndMs) / windowMs) + 1;
 
   return Array.from({ length: windowCount }, (_, index) => ({
-    endMs: firstWindowStartMs + (index + 1) * windowMs,
-    startMs: firstWindowStartMs + index * windowMs,
+    endMs: firstWindowEndMs + index * windowMs,
+    startMs: firstWindowEndMs + (index - 1) * windowMs,
   }));
 }
 
