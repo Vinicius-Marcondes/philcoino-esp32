@@ -19,7 +19,7 @@ icon = "tool"
 command = '''
 cd firmware/espresso-machine
 source "/Users/vinicius/.espressif/tools/activate_idf_v6.0.2.sh"
-idf.py -p /dev/tty.usbmodem3101 flash'''
+idf.py flash'''
 
 [[actions]]
 name = "Pre-Build Mobile App"
@@ -38,3 +38,11 @@ cd android
 ./gradlew assembleRelease
 cd app/build/outputs/apk/release
 mv app-release.apk philcoino.apk'''
+
+[[actions]]
+name = "Monitor ESP32C3 Super Mini Serial"
+icon = "tool"
+command = '''
+cd firmware/espresso-machine
+source "/Users/vinicius/.espressif/tools/activate_idf_v6.0.2.sh"
+idf.py monitor'''
