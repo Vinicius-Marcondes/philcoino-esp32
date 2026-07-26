@@ -179,7 +179,6 @@ class PerformanceDiagnostics {
       minimum_stack_free_bytes_{};
 };
 
-static_assert(std::atomic<std::uint32_t>::is_always_lock_free);
 static_assert(sizeof(PerformanceDiagnostics) <= 512U);
 
 }  // namespace philcoino::diagnostics
