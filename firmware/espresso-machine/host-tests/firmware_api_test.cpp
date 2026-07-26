@@ -68,10 +68,16 @@ class ScaleMemoryBackend final : public ScaleCalibrationBackend {
     return BackendLoadResult::kOk;
   }
   bool save(const ScaleCalibration& calibration) override {
+    assert(lock_held == nullptr || !*lock_held);
+    ++save_count;
+    if (fail_save) return false;
     saved = calibration;
     return true;
   }
   ScaleCalibration saved{0, 100000, 1000};
+  const bool* lock_held{nullptr};
+  bool fail_save{false};
+  int save_count{0};
 };
 
 class FakeApiSynchronization final : public ApiSynchronization {
@@ -150,12 +156,13 @@ struct ApiHarness {
         extraction(profile_backend.saved, pump),
         cooldown(controller, pump),
         scale_storage(scale_backend),
-        scale(scale_backend.saved, true, scale_storage),
+        scale(scale_backend.saved, true),
         api({"philcoino-0102AF", "PhilcoINO", "ESP32-C3 Super Mini", "0.2.0"},
             "test-secret", controller, storage, extraction, cooldown,
-            profile_storage, synchronization, &history, &scale) {
+            profile_storage, scale_storage, synchronization, &history, &scale) {
     assert(ssr.initialize());
     assert(pump.initialize());
+    scale_backend.lock_held = &synchronization.held;
     controller.update(ok(87.5F), 1000);
     for (std::int32_t index = 0; index < 10; ++index) {
       scale.update({Hx711Status::kOk, 80000}, 1000U + index);
@@ -1298,6 +1305,71 @@ void test_scale_api_and_weighted_start_contract() {
   assert(response.status == 200);
   assert(response.body.find("\"calibrationStatus\":\"calibrated\"") !=
          std::string::npos);
+  assert(calibration.scale_backend.save_count == 1);
+
+  ApiHarness retry_calibration;
+  response = retry_calibration.request(
+      HttpMethod::kPost, "/api/v2/scale/calibration/start", authorization,
+      "", 1100);
+  assert(response.status == 200);
+  for (std::int32_t index = 0; index < 10; ++index) {
+    retry_calibration.scale.update({Hx711Status::kOk, 90000}, 1200U + index);
+  }
+  retry_calibration.scale_backend.fail_save = true;
+  expect_error(
+      retry_calibration.request(
+          HttpMethod::kPost, "/api/v2/scale/calibration/complete",
+          authorization, "{\"referenceWeightDecigrams\":1000}", 1300),
+      500, "persistence_failure");
+  assert(retry_calibration.scale_backend.save_count == 1);
+  retry_calibration.scale_backend.fail_save = false;
+  response = retry_calibration.request(
+      HttpMethod::kPost, "/api/v2/scale/calibration/complete", authorization,
+      "{\"referenceWeightDecigrams\":1000}", 1310);
+  assert(response.status == 200);
+  assert(retry_calibration.scale_backend.save_count == 2);
+
+  ApiHarness adoption_retry;
+  response = adoption_retry.request(
+      HttpMethod::kPost, "/api/v2/scale/calibration/start", authorization,
+      "", 1100);
+  assert(response.status == 200);
+  for (std::int32_t index = 0; index < 10; ++index) {
+    adoption_retry.scale.update({Hx711Status::kOk, 90000}, 1200U + index);
+  }
+  adoption_retry.synchronization.fail_on_lock =
+      adoption_retry.synchronization.lock_count + 2;
+  expect_error(
+      adoption_retry.request(
+          HttpMethod::kPost, "/api/v2/scale/calibration/complete",
+          authorization, "{\"referenceWeightDecigrams\":1000}", 1300),
+      500, "internal_error");
+  assert(adoption_retry.scale_backend.save_count == 1);
+  response = adoption_retry.request(
+      HttpMethod::kPost, "/api/v2/scale/calibration/cancel", authorization,
+      "", 1310);
+  assert(response.status == 200);
+  assert(response.body.find("\"calibrationStatus\":\"calibrating\"") !=
+         std::string::npos);
+  expect_error(
+      adoption_retry.request(
+          HttpMethod::kPost, "/api/v2/scale/calibration/start",
+          authorization, "", 1310),
+      409, "calibration_in_progress");
+  expect_error(
+      adoption_retry.request(
+          HttpMethod::kPost, "/api/v2/extractions/start", authorization,
+          "{\"idempotencyKey\":\"pending-adoption-weighted\",\"selection\":{\"kind\":\"profile\",\"profileId\":\"profile-2\"},\"weightControl\":{\"targetWeightDecigrams\":350,\"compensationDecigrams\":20}}",
+          1310),
+      409, "scale_not_calibrated");
+  assert(adoption_retry.pump.command() == PumpCommand::kOff);
+  response = adoption_retry.request(
+      HttpMethod::kPost, "/api/v2/scale/calibration/complete", authorization,
+      "{\"referenceWeightDecigrams\":1000}", 1320);
+  assert(response.status == 200);
+  assert(response.body.find("\"calibrationStatus\":\"calibrated\"") !=
+         std::string::npos);
+  assert(adoption_retry.scale_backend.save_count == 2);
 
   ApiHarness stale_calibration;
   for (std::int32_t index = 0; index < 10; ++index) {

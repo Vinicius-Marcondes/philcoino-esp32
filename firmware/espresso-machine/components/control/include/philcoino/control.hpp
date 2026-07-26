@@ -200,22 +200,31 @@ enum class ScaleCalibrationResult {
   kNotStarted,
   kInvalidReference,
   kPersistenceFailure,
+  kAdoptionPending,
+};
+
+struct ScaleCalibrationTransaction {
+  peripherals::ScaleCalibration candidate{};
+  std::uint32_t token{0};
 };
 
 class ScaleController {
  public:
   ScaleController(peripherals::ScaleCalibration calibration,
-                  bool calibrated,
-                  peripherals::ScaleCalibrationStorage& storage);
+                  bool calibrated);
 
   void update(peripherals::Hx711Reading reading, std::uint32_t now_ms);
   ScaleSnapshot snapshot(std::uint32_t now_ms) const;
   ScaleCalibrationResult start_calibration(bool workflow_active,
                                            std::uint32_t now_ms);
-  ScaleCalibrationResult complete_calibration(
+  ScaleCalibrationResult prepare_calibration_completion(
       std::int32_t reference_decigrams,
       bool workflow_active,
-      std::uint32_t now_ms);
+      std::uint32_t now_ms,
+      ScaleCalibrationTransaction& transaction);
+  bool calibration_persistence_failed(std::uint32_t token);
+  bool adopt_persisted_calibration(
+      const ScaleCalibrationTransaction& transaction);
   void cancel_calibration();
 
  private:
@@ -225,9 +234,11 @@ class ScaleController {
   std::int32_t median_raw() const;
   std::int32_t stable_raw_spread_limit() const;
   void refresh_cached_derived_state();
+  static bool calibrations_equal(
+      const peripherals::ScaleCalibration& left,
+      const peripherals::ScaleCalibration& right);
 
   peripherals::ScaleCalibration calibration_{};
-  peripherals::ScaleCalibrationStorage& storage_;
   std::array<std::int32_t, 10> samples_{};
   std::size_t sample_count_{0};
   std::size_t sample_index_{0};
@@ -236,7 +247,11 @@ class ScaleController {
   bool transport_failed_{false};
   bool calibrated_{false};
   bool calibration_in_progress_{false};
+  bool calibration_adoption_pending_{false};
   std::int32_t calibration_zero_raw_{0};
+  peripherals::ScaleCalibration pending_calibration_{};
+  std::uint32_t pending_calibration_token_{0};
+  std::uint32_t next_calibration_token_{1};
   std::int32_t cached_median_raw_{0};
   std::int64_t cached_raw_spread_{0};
   bool cached_gross_weight_available_{false};

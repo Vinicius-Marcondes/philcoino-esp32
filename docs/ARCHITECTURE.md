@@ -341,7 +341,12 @@ not enter the workflow mutex or publish to `ScaleController`; accepted samples
 refresh the cached median, spread, stability, and calibrated weight once, and
 consumer snapshots apply only O(1) age/availability gating. This does not block
 temperature control or ordinary Manual/timed extraction.
-Calibration has its own NVS blob; invalid/missing calibration disables weighted
+Calibration has its own NVS blob; completion prepares an immutable tokenized
+candidate under the workflow mutex, saves it after unlocking, then reacquires
+the mutex to adopt that exact candidate. Save failure retains the previous
+calibration for retry. A save that cannot be acknowledged remains pending and
+blocks weighted Start until the same transaction is recovered; Cancel cannot
+clear that pending adoption. Invalid/missing calibration disables weighted
 Start without preventing machine startup.
 
 The API and control loops share controller snapshots behind the bounded workflow

@@ -1298,7 +1298,7 @@ void test_pump_output_failures_end_extraction_off() {
 void test_scale_filter_calibration_timeout_and_saturation() {
   FakeScaleCalibrationBackend backend;
   ScaleCalibrationStorage storage(backend);
-  ScaleController scale({}, false, storage);
+  ScaleController scale({}, false);
   for (std::int32_t index = 0; index < 10; ++index) {
     scale.update({Hx711Status::kOk, 100000 + index}, index * 10U);
   }
@@ -1311,8 +1311,12 @@ void test_scale_filter_calibration_timeout_and_saturation() {
   for (std::int32_t index = 0; index < 10; ++index) {
     scale.update({Hx711Status::kOk, 200000 + index}, 200U + index * 10U);
   }
-  assert(scale.complete_calibration(1000, false, 300) ==
+  ScaleCalibrationTransaction transaction{};
+  assert(scale.prepare_calibration_completion(
+             1000, false, 300, transaction) ==
          ScaleCalibrationResult::kOk);
+  assert(storage.save(transaction.candidate));
+  assert(scale.adopt_persisted_calibration(transaction));
   assert(backend.save_count == 1);
   snapshot = scale.snapshot(300);
   assert(snapshot.calibration_status == ScaleCalibrationStatus::kCalibrated);
@@ -1340,7 +1344,7 @@ void test_scale_filter_calibration_timeout_and_saturation() {
   assert(scale.snapshot(500).availability == ScaleAvailability::kReady);
   assert(scale.snapshot(1300).availability == ScaleAvailability::kUnavailable);
 
-  ScaleController rollover_scale({}, false, storage);
+  ScaleController rollover_scale({}, false);
   for (std::int32_t index = 0; index < 10; ++index) {
     rollover_scale.update(
         {Hx711Status::kOk, 300000 + index},
@@ -1356,7 +1360,7 @@ void test_scale_recalibrates_after_the_retained_baseline_moves_out_of_range() {
   FakeScaleCalibrationBackend backend;
   ScaleCalibrationStorage storage(backend);
   const ScaleCalibration retained{100000, 200000, 1000};
-  ScaleController scale(retained, true, storage);
+  ScaleController scale(retained, true);
 
   for (std::int32_t index = 0; index < 10; ++index) {
     scale.update({Hx711Status::kOk, 2000000 + index * 75}, index * 10U);
@@ -1376,11 +1380,71 @@ void test_scale_recalibrates_after_the_retained_baseline_moves_out_of_range() {
     scale.update({Hx711Status::kOk, 2100000 + index * 75},
                  200U + index * 10U);
   }
-  assert(scale.complete_calibration(1000, false, 300) ==
+  ScaleCalibrationTransaction transaction{};
+  assert(scale.prepare_calibration_completion(
+             1000, false, 300, transaction) ==
          ScaleCalibrationResult::kOk);
+  assert(storage.save(transaction.candidate));
+  assert(scale.adopt_persisted_calibration(transaction));
   snapshot = scale.snapshot(300);
   assert(snapshot.calibration_status == ScaleCalibrationStatus::kCalibrated);
   assert(snapshot.availability == ScaleAvailability::kUnstable);
+  assert(snapshot.gross_weight_available);
+  assert(snapshot.gross_weight_decigrams >= 999 &&
+         snapshot.gross_weight_decigrams <= 1001);
+}
+
+void test_scale_calibration_transaction_retry_and_adoption_guard() {
+  FakeScaleCalibrationBackend backend;
+  backend.saved = {100000, 200000, 1000};
+  backend.present = true;
+  ScaleCalibrationStorage storage(backend);
+  ScaleController scale(backend.saved, true);
+
+  for (std::int32_t index = 0; index < 10; ++index) {
+    scale.update({Hx711Status::kOk, 100000 + index}, index * 10U);
+  }
+  assert(scale.start_calibration(false, 100U) ==
+         ScaleCalibrationResult::kOk);
+  for (std::int32_t index = 0; index < 10; ++index) {
+    scale.update({Hx711Status::kOk, 300000 + index}, 200U + index * 10U);
+  }
+
+  ScaleCalibrationTransaction failed{};
+  assert(scale.prepare_calibration_completion(1000, false, 300U, failed) ==
+         ScaleCalibrationResult::kOk);
+  backend.fail_save = true;
+  assert(!storage.save(failed.candidate));
+  assert(scale.calibration_persistence_failed(failed.token));
+  scale.cancel_calibration();
+  auto snapshot = scale.snapshot(300U);
+  assert(snapshot.calibration_status == ScaleCalibrationStatus::kCalibrated);
+  assert(snapshot.gross_weight_available);
+  assert(snapshot.gross_weight_decigrams > 1900);
+
+  backend.fail_save = false;
+  assert(scale.start_calibration(false, 310U) ==
+         ScaleCalibrationResult::kOk);
+  for (std::int32_t index = 0; index < 10; ++index) {
+    scale.update({Hx711Status::kOk, 400000 + index}, 320U + index * 10U);
+  }
+  ScaleCalibrationTransaction pending{};
+  assert(scale.prepare_calibration_completion(1000, false, 420U, pending) ==
+         ScaleCalibrationResult::kOk);
+  assert(storage.save(pending.candidate));
+  scale.cancel_calibration();
+  assert(scale.snapshot(420U).calibration_status ==
+         ScaleCalibrationStatus::kCalibrating);
+  assert(scale.start_calibration(false, 420U) ==
+         ScaleCalibrationResult::kAdoptionPending);
+
+  auto mismatch = pending;
+  ++mismatch.candidate.reference_raw;
+  assert(!scale.adopt_persisted_calibration(mismatch));
+  assert(!scale.calibration_persistence_failed(pending.token + 1U));
+  assert(scale.adopt_persisted_calibration(pending));
+  snapshot = scale.snapshot(420U);
+  assert(snapshot.calibration_status == ScaleCalibrationStatus::kCalibrated);
   assert(snapshot.gross_weight_available);
   assert(snapshot.gross_weight_decigrams >= 999 &&
          snapshot.gross_weight_decigrams <= 1001);
@@ -1747,6 +1811,7 @@ int main() {
   test_pump_output_failures_end_extraction_off();
   test_scale_filter_calibration_timeout_and_saturation();
   test_scale_recalibrates_after_the_retained_baseline_moves_out_of_range();
+  test_scale_calibration_transaction_retry_and_adoption_guard();
   test_weighted_extraction_tare_cutoff_fallback_and_acknowledgement();
   test_cooldown_start_orders_outputs_and_preserves_permission();
   test_shared_pump_snapshots_keep_workflow_ownership();

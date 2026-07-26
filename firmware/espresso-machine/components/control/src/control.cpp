@@ -727,10 +727,8 @@ bool weight_control_is_valid(const WeightControl& control) {
 
 ScaleController::ScaleController(
     peripherals::ScaleCalibration calibration,
-    bool calibrated,
-    peripherals::ScaleCalibrationStorage& storage)
+    bool calibrated)
     : calibration_(calibration),
-      storage_(storage),
       calibrated_(calibrated &&
                   peripherals::scale_calibration_is_valid(calibration)) {}
 
@@ -782,6 +780,9 @@ ScaleCalibrationResult ScaleController::start_calibration(
   if (workflow_active) {
     return ScaleCalibrationResult::kWorkflowActive;
   }
+  if (calibration_adoption_pending_) {
+    return ScaleCalibrationResult::kAdoptionPending;
+  }
   if (!available(now_ms)) {
     return ScaleCalibrationResult::kUnavailable;
   }
@@ -793,12 +794,20 @@ ScaleCalibrationResult ScaleController::start_calibration(
   return ScaleCalibrationResult::kOk;
 }
 
-ScaleCalibrationResult ScaleController::complete_calibration(
+ScaleCalibrationResult ScaleController::prepare_calibration_completion(
     std::int32_t reference_decigrams,
     bool workflow_active,
-    std::uint32_t now_ms) {
+    std::uint32_t now_ms,
+    ScaleCalibrationTransaction& transaction) {
   if (workflow_active) {
     return ScaleCalibrationResult::kWorkflowActive;
+  }
+  if (calibration_adoption_pending_) {
+    if (pending_calibration_.reference_decigrams != reference_decigrams) {
+      return ScaleCalibrationResult::kAdoptionPending;
+    }
+    transaction = {pending_calibration_, pending_calibration_token_};
+    return ScaleCalibrationResult::kOk;
   }
   if (!calibration_in_progress_) {
     return ScaleCalibrationResult::kNotStarted;
@@ -820,18 +829,55 @@ ScaleCalibrationResult ScaleController::complete_calibration(
   if (!peripherals::scale_calibration_is_valid(candidate)) {
     return ScaleCalibrationResult::kInvalidReference;
   }
-  if (!storage_.save(candidate)) {
-    return ScaleCalibrationResult::kPersistenceFailure;
+  pending_calibration_ = candidate;
+  pending_calibration_token_ = next_calibration_token_++;
+  if (next_calibration_token_ == 0U) {
+    next_calibration_token_ = 1U;
   }
-  calibration_ = candidate;
-  calibrated_ = true;
-  calibration_in_progress_ = false;
-  refresh_cached_derived_state();
+  calibration_adoption_pending_ = true;
+  transaction = {pending_calibration_, pending_calibration_token_};
   return ScaleCalibrationResult::kOk;
 }
 
-void ScaleController::cancel_calibration() {
+bool ScaleController::calibration_persistence_failed(std::uint32_t token) {
+  if (!calibration_adoption_pending_ ||
+      token != pending_calibration_token_) {
+    return false;
+  }
+  calibration_adoption_pending_ = false;
+  pending_calibration_ = {};
+  pending_calibration_token_ = 0U;
+  return true;
+}
+
+bool ScaleController::adopt_persisted_calibration(
+    const ScaleCalibrationTransaction& transaction) {
+  if (!calibration_adoption_pending_ ||
+      transaction.token != pending_calibration_token_ ||
+      !calibrations_equal(transaction.candidate, pending_calibration_)) {
+    return false;
+  }
+  calibration_ = pending_calibration_;
+  calibrated_ = true;
   calibration_in_progress_ = false;
+  calibration_adoption_pending_ = false;
+  pending_calibration_ = {};
+  pending_calibration_token_ = 0U;
+  refresh_cached_derived_state();
+  return true;
+}
+
+void ScaleController::cancel_calibration() {
+  if (calibration_adoption_pending_) return;
+  calibration_in_progress_ = false;
+}
+
+bool ScaleController::calibrations_equal(
+    const peripherals::ScaleCalibration& left,
+    const peripherals::ScaleCalibration& right) {
+  return left.zero_raw == right.zero_raw &&
+         left.reference_raw == right.reference_raw &&
+         left.reference_decigrams == right.reference_decigrams;
 }
 
 bool ScaleController::available(std::uint32_t now_ms) const {

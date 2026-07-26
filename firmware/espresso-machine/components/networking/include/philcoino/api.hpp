@@ -60,6 +60,7 @@ class FirmwareApi {
               control::ExtractionController& extraction_controller,
               control::CooldownController& cooldown_controller,
               peripherals::ProfileStorage& profile_storage,
+              peripherals::ScaleCalibrationStorage& scale_calibration_storage,
               ApiSynchronization& synchronization,
               HistoryBuffer* history = nullptr,
               control::ScaleController* scale_controller = nullptr);
@@ -111,6 +112,7 @@ class FirmwareApi {
   control::ExtractionController& extraction_controller_;
   control::CooldownController& cooldown_controller_;
   peripherals::ProfileStorage& profile_storage_;
+  peripherals::ScaleCalibrationStorage& scale_calibration_storage_;
   ApiSynchronization& synchronization_;
   HistoryBuffer* history_;
   control::ScaleController* scale_controller_;

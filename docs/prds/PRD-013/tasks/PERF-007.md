@@ -1,6 +1,6 @@
 # PERF-007 — Make scale calibration persistence transactional
 
-Status: Todo
+Status: Done
 Review Mode: Agent
 Review Reason: Prepare/save/adopt/retry state transitions and storage failures
 are deterministic with injected locks and persistence.
@@ -31,11 +31,15 @@ previous calibration until a new value is safely adopted.
 
 ## Acceptance Criteria
 
-- [ ] NVS save never occurs under the workflow mutex.
-- [ ] Save failure retains the prior calibration and permits retry.
-- [ ] Reacquisition/adoption failure blocks weighted Start until recovery.
-- [ ] Calibration API compatibility and fail-safe behavior are preserved.
-- [ ] Firmware host, sanitizer, and available target checks pass.
+- [x] NVS save never occurs under the workflow mutex.
+- [x] Save failure retains the prior calibration and permits retry.
+- [x] Reacquisition/adoption failure blocks weighted Start until recovery.
+- [x] Calibration API compatibility and fail-safe behavior are preserved.
+- [x] Firmware host, sanitizer, and available target checks pass.
+
+## Evidence
+
+- `../evidence/PERF-007-CALIBRATION-TRANSACTION.md`
 
 ## Verification Strategy
 

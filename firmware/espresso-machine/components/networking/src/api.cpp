@@ -141,6 +141,8 @@ FirmwareApi::FirmwareApi(DeviceIdentity identity, std::string bearer_token,
                          control::ExtractionController& extraction_controller,
                          control::CooldownController& cooldown_controller,
                          peripherals::ProfileStorage& profile_storage,
+                         peripherals::ScaleCalibrationStorage&
+                             scale_calibration_storage,
                          ApiSynchronization& synchronization,
                          HistoryBuffer* history,
                          control::ScaleController* scale_controller)
@@ -151,6 +153,7 @@ FirmwareApi::FirmwareApi(DeviceIdentity identity, std::string bearer_token,
       extraction_controller_(extraction_controller),
       cooldown_controller_(cooldown_controller),
       profile_storage_(profile_storage),
+      scale_calibration_storage_(scale_calibration_storage),
       synchronization_(synchronization),
       history_(history),
       scale_controller_(scale_controller) {}
@@ -540,12 +543,16 @@ HttpResponse FirmwareApi::start_scale_calibration(std::uint64_t uptime_ms) {
             ? "extraction_active"
             : result == control::ScaleCalibrationResult::kUnavailable
                   ? "scale_unavailable"
-                  : "scale_not_stable",
+                  : result == control::ScaleCalibrationResult::kAdoptionPending
+                        ? "calibration_in_progress"
+                        : "scale_not_stable",
         result == control::ScaleCalibrationResult::kWorkflowActive
             ? "Scale calibration requires all workflows to be idle."
             : result == control::ScaleCalibrationResult::kUnavailable
                   ? "The scale is unavailable."
-                  : "The scale must be stable before calibration.");
+                  : result == control::ScaleCalibrationResult::kAdoptionPending
+                        ? "Persisted scale calibration is awaiting acknowledgement."
+                        : "The scale must be stable before calibration.");
   }
   const auto current =
       scale_controller_->snapshot(static_cast<std::uint32_t>(uptime_ms));
@@ -565,19 +572,18 @@ HttpResponse FirmwareApi::complete_scale_calibration(
   if (scale_controller_ == nullptr) {
     return error_response(500, "internal_error", "Scale support is unavailable.");
   }
-  ScopedApiLock lock(synchronization_, ApiDomain::kExtraction);
-  if (!lock.locked()) {
-    return error_response(500, "internal_error",
-                          "Scale synchronization failed.");
-  }
-  const auto result = scale_controller_->complete_calibration(
-      reference_decigrams,
-      extraction_controller_.active() || cooldown_controller_.active(),
-      static_cast<std::uint32_t>(uptime_ms));
-  if (result == control::ScaleCalibrationResult::kPersistenceFailure) {
-    lock.unlock();
-    return error_response(500, "persistence_failure",
-                          "Scale calibration could not be persisted.");
+  control::ScaleCalibrationTransaction transaction{};
+  control::ScaleCalibrationResult result{};
+  {
+    ScopedApiLock lock(synchronization_, ApiDomain::kExtraction);
+    if (!lock.locked()) {
+      return error_response(500, "internal_error",
+                            "Scale synchronization failed.");
+    }
+    result = scale_controller_->prepare_calibration_completion(
+        reference_decigrams,
+        extraction_controller_.active() || cooldown_controller_.active(),
+        static_cast<std::uint32_t>(uptime_ms), transaction);
   }
   if (result != control::ScaleCalibrationResult::kOk) {
     const char* code =
@@ -590,17 +596,40 @@ HttpResponse FirmwareApi::complete_scale_calibration(
                         : result == control::ScaleCalibrationResult::kInvalidReference
                               ? "malformed_request"
                               : "calibration_in_progress";
-    lock.unlock();
     return error_response(
         result == control::ScaleCalibrationResult::kInvalidReference ? 400 : 409,
         code,
         "Scale calibration cannot be completed in its current state.");
   }
-  const auto current =
-      scale_controller_->snapshot(static_cast<std::uint32_t>(uptime_ms));
-  const auto weight = extraction_controller_.weight_snapshot(
-      current, static_cast<std::uint32_t>(uptime_ms));
-  lock.unlock();
+  if (!scale_calibration_storage_.save(transaction.candidate)) {
+    {
+      ScopedApiLock lock(synchronization_, ApiDomain::kExtraction);
+      if (lock.locked()) {
+        scale_controller_->calibration_persistence_failed(transaction.token);
+      }
+    }
+    return error_response(500, "persistence_failure",
+                          "Scale calibration could not be persisted.");
+  }
+  control::ScaleSnapshot current{};
+  control::WeightExtractionSnapshot weight{};
+  bool adopted = false;
+  {
+    ScopedApiLock lock(synchronization_, ApiDomain::kExtraction);
+    if (lock.locked()) {
+      adopted = scale_controller_->adopt_persisted_calibration(transaction);
+      if (adopted) {
+        const auto now_ms = static_cast<std::uint32_t>(uptime_ms);
+        current = scale_controller_->snapshot(now_ms);
+        weight = extraction_controller_.weight_snapshot(current, now_ms);
+      }
+    }
+  }
+  if (!adopted) {
+    return error_response(
+        500, "internal_error",
+        "Persisted scale calibration could not be acknowledged.");
+  }
   return json_response(
       200, serialize_scale(current, weight));
 }

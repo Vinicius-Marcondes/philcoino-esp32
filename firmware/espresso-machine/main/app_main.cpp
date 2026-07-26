@@ -690,7 +690,7 @@ extern "C" void app_main() {
              "Scale calibration storage unavailable; weighted extraction remains blocked");
   }
   static philcoino::control::ScaleController scale_controller(
-      scale_calibration, scale_calibrated, scale_calibration_storage);
+      scale_calibration, scale_calibrated);
   static EspHx711Transport hx711_transport;
   const bool hx711_initialized = hx711_transport.initialize();
   if (!hx711_initialized) {
@@ -781,7 +781,7 @@ extern "C" void app_main() {
   static philcoino::networking::FirmwareApi api(
       identity, CONFIG_PHILCOINO_BEARER_TOKEN, controller, target_storage,
       extraction_controller, cooldown_controller, profile_storage,
-      synchronization, &history, &scale_controller);
+      scale_calibration_storage, synchronization, &history, &scale_controller);
   static philcoino::networking::EspNetworkServer network(
       api, identity, performance_diagnostics);
   static const NetworkStartContext network_context{
