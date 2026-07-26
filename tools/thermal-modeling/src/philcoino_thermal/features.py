@@ -64,6 +64,7 @@ class IncrementalFirmwareFeatures:
         self.filtered_raw = 0.0
         self.previous_mode: str | None = None
         self.previous_target: float | None = None
+        self.previous_faulted: bool | None = None
 
     def reset(self) -> None:
         self.command_history.clear(); self.temperature_history.clear()
@@ -72,9 +73,14 @@ class IncrementalFirmwareFeatures:
     def update(self, row: pd.Series, now_ms: int) -> dict[str, float | bool | str]:
         active_mode = str(row["mode"]).lower()
         target = float(row["target"]) if pd.notna(row["target"]) else np.nan
-        if self.previous_mode is not None and (active_mode != self.previous_mode or target != self.previous_target):
+        faulted = bool(str(row.get("fault", "")).strip())
+        if self.previous_mode is not None and (
+            active_mode != self.previous_mode
+            or target != self.previous_target
+            or faulted != self.previous_faulted
+        ):
             self.reset()
-        self.previous_mode, self.previous_target = active_mode, target
+        self.previous_mode, self.previous_target, self.previous_faulted = active_mode, target, faulted
         valid_timing = True
         if self.initialized:
             interval_ms = now_ms - self.previous_ms
@@ -131,13 +137,71 @@ class IncrementalFirmwareFeatures:
                 "operating_mode": MODE_CODE[operating_mode], "feature_valid": valid}
 
 
-def recreate_features(frame: pd.DataFrame, config: ToolConfig) -> pd.DataFrame:
+def recreate_features(
+    frame: pd.DataFrame,
+    config: ToolConfig,
+    prefer_logged: bool = True,
+) -> pd.DataFrame:
     sessions: list[pd.DataFrame] = []
     for _, group in frame.groupby("session_id", sort=False):
         state = IncrementalFirmwareFeatures(config); base_time = group["timestamp"].iloc[0]
         rows = [state.update(row, int((row["timestamp"] - base_time).total_seconds() * 1000) if pd.notna(row["timestamp"]) else state.previous_ms) for _, row in group.iterrows()]
         sessions.append(pd.concat([group.reset_index(drop=True), pd.DataFrame(rows)], axis=1))
-    return pd.concat(sessions, ignore_index=True)
+    output = pd.concat(sessions, ignore_index=True)
+    output["feature_source"] = "reconstructed"
+    if not prefer_logged:
+        return output
+
+    logged_mode = (
+        output["logged_prediction_operating_mode"]
+        .astype("string")
+        .str.strip()
+        .str.lower()
+        .map(MODE_CODE)
+    )
+    logged_values = pd.DataFrame({
+        "temperature_filtered_c": pd.to_numeric(output["temperature_filtered"], errors="coerce"),
+        "target_temperature_c": pd.to_numeric(output["target"], errors="coerce"),
+        "temperature_slope_c_per_s": pd.to_numeric(output["logged_temperature_slope_c_per_s"], errors="coerce"),
+        "heat_5s": pd.to_numeric(output["logged_heat_5s"], errors="coerce"),
+        "heat_15s": pd.to_numeric(output["logged_heat_15s"], errors="coerce"),
+        "heat_30s": pd.to_numeric(output["logged_heat_30s"], errors="coerce"),
+        "pump_5s": pd.to_numeric(output["logged_pump_5s"], errors="coerce"),
+        "pump_15s": pd.to_numeric(output["logged_pump_15s"], errors="coerce"),
+        "baseline_heater_duty": pd.to_numeric(output["baseline_duty"], errors="coerce"),
+        "operating_mode": logged_mode,
+    })
+    logged_values["temperature_error_c"] = (
+        logged_values["target_temperature_c"] - logged_values["temperature_filtered_c"]
+    )
+    logged_usable = (
+        output["logged_prediction_usable"]
+        .astype("string")
+        .str.strip()
+        .str.lower()
+        .isin({"true", "1"})
+    )
+    logged_schema = pd.to_numeric(
+        output["logged_prediction_feature_schema_version"],
+        errors="coerce",
+    )
+    schema_matches = logged_schema.eq(config.features.schema_version)
+    complete = logged_values[FEATURE_ORDER].apply(np.isfinite).all(axis=1)
+    slope_valid = (
+        logged_values["temperature_slope_c_per_s"].abs()
+        <= config.features.maximum_absolute_slope_c_per_s
+    )
+    use_logged = logged_usable & schema_matches & complete & slope_valid
+    output.loc[use_logged, FEATURE_ORDER] = logged_values.loc[use_logged, FEATURE_ORDER]
+    output.loc[use_logged, "operating_mode_name"] = (
+        output.loc[use_logged, "logged_prediction_operating_mode"]
+        .astype(str)
+        .str.strip()
+        .str.lower()
+    )
+    output.loc[use_logged, "feature_valid"] = True
+    output.loc[use_logged, "feature_source"] = "logged_firmware"
+    return output
 
 
 def align_future_targets(frame: pd.DataFrame, horizons: list[int], tolerance_multiplier: float) -> pd.DataFrame:
@@ -150,6 +214,16 @@ def align_future_targets(frame: pd.DataFrame, horizons: list[int], tolerance_mul
         # ns or us depending on the pandas release).
         times = group["timestamp"].map(lambda value: value.timestamp()).to_numpy(dtype=float)
         temperatures = group["temperature"].to_numpy(dtype=float)
+        active_modes = group["mode"].astype(str).str.lower().to_numpy()
+        targets = group["target"].to_numpy(dtype=float)
+        faulted = group["fault"].fillna("").astype(str).str.strip().ne("").to_numpy()
+        context_changes = np.r_[
+            True,
+            (active_modes[1:] != active_modes[:-1])
+            | ~np.isclose(targets[1:], targets[:-1], equal_nan=False)
+            | (faulted[1:] != faulted[:-1]),
+        ]
+        context_ids = np.cumsum(context_changes)
         positive = np.diff(times); positive = positive[positive > 0]
         interval = float(np.median(positive)) if len(positive) else 1.0
         tolerance = interval * tolerance_multiplier
@@ -158,5 +232,13 @@ def align_future_targets(frame: pd.DataFrame, horizons: list[int], tolerance_mul
             valid = positions < len(times)
             valid_positions = positions[valid]
             matched = np.abs(times[valid_positions] - (times[valid] + horizon)) <= tolerance
-            output.loc[indices[valid][matched], f"target_{horizon}s_c"] = temperatures[valid_positions[matched]]
+            source_positions = np.flatnonzero(valid)[matched]
+            target_positions = valid_positions[matched]
+            same_context = (
+                context_ids[source_positions] == context_ids[target_positions]
+            )
+            output.loc[
+                indices[source_positions[same_context]],
+                f"target_{horizon}s_c",
+            ] = temperatures[target_positions[same_context]]
     return output

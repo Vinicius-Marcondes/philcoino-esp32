@@ -53,13 +53,20 @@ def _choose_alpha(frame: pd.DataFrame, groups: list[str], target: str, config: T
 
 
 def train_predictor(frame: pd.DataFrame, dataset_hash: str, config: ToolConfig, source_file_hashes: list[str] | None = None) -> PredictorTrainingResult:
-    usable = frame[frame["feature_valid"] & frame["fault"].fillna("").eq("")].copy()
+    modeling_modes = {mode.lower() for mode in config.modeling.active_modes}
+    usable = frame[
+        frame["feature_valid"]
+        & frame["fault"].fillna("").eq("")
+        & frame["mode"].astype(str).str.lower().isin(modeling_modes)
+    ].copy()
     complete = usable.dropna(subset=[f"target_{horizon}s_c" for horizon in config.predictor.horizons_seconds])
     groups = chronological_groups(complete)
     if not groups:
         raise ValueError("No rows have mature, valid firmware features.")
-    test_groups = groups[-1:]
-    train_groups = groups[:-1] or groups
+    held_out = len(groups) >= 2
+    test_groups = groups[-1:] if held_out else []
+    train_groups = groups[:-1] if held_out else groups
+    evaluation_type = "held_out" if held_out else "training_only"
     models: dict[str, Any] = {}
     fitted: dict[int, tuple[StandardScaler, Ridge]] = {}
     all_metrics: dict[str, Any] = {}
@@ -74,14 +81,15 @@ def train_predictor(frame: pd.DataFrame, dataset_hash: str, config: ToolConfig, 
         scaler = StandardScaler().fit(train[FEATURE_ORDER])
         model = Ridge(alpha=alpha).fit(scaler.transform(train[FEATURE_ORDER]), train[target])
         intercept, coefficients = _raw_coefficients(scaler, model)
-        evaluation = test if not test.empty else train
+        evaluation = test if held_out else train
         predicted = np.float32(intercept) + evaluation[FEATURE_ORDER].to_numpy(np.float32) @ np.asarray(coefficients, dtype=np.float32)
         metrics = prediction_metrics(evaluation, horizon, predicted.astype(float))
         models[str(horizon)] = {"alpha": alpha, "intercept": intercept, "coefficients": coefficients, "metrics": metrics}
         fitted[horizon] = (scaler, model)
         all_metrics[str(horizon)] = metrics
+    training_feature_rows = usable[usable["session_id"].isin(train_groups)]
     bounds = {
-        name: {"minimum": float(usable[name].min()), "maximum": float(usable[name].max())}
+        name: {"minimum": float(training_feature_rows[name].min()), "maximum": float(training_feature_rows[name].max())}
         for name in FEATURE_ORDER
     }
     artifact = {
@@ -94,9 +102,13 @@ def train_predictor(frame: pd.DataFrame, dataset_hash: str, config: ToolConfig, 
         "horizons_seconds": config.predictor.horizons_seconds,
         "dataset_sha256": dataset_hash,
         "source_file_hashes": source_file_hashes or [],
+        "active_modes": sorted(modeling_modes),
         "training_data_hash": int(dataset_hash[:8], 16),
         "training_sessions": train_groups,
+        "validation_sessions": train_groups[1:],
         "test_sessions": test_groups,
+        "evaluation_type": evaluation_type,
+        "evaluation_sessions": test_groups if held_out else train_groups,
         "input_ranges": bounds,
         "models": models,
         "metrics": all_metrics,
@@ -108,3 +120,17 @@ def train_predictor(frame: pd.DataFrame, dataset_hash: str, config: ToolConfig, 
 def predict_raw(artifact: dict[str, Any], horizon: int, features: np.ndarray) -> np.ndarray:
     model = artifact["models"][str(horizon)]
     return np.float32(model["intercept"]) + np.asarray(features, dtype=np.float32) @ np.asarray(model["coefficients"], dtype=np.float32)
+
+
+def predictor_evaluation_rows(
+    frame: pd.DataFrame,
+    artifact: dict[str, Any],
+    horizon: int,
+) -> pd.DataFrame:
+    sessions = artifact.get("evaluation_sessions", artifact.get("test_sessions", []))
+    return frame[
+        frame["session_id"].isin(sessions)
+        & frame["feature_valid"]
+        & frame["fault"].fillna("").eq("")
+        & frame["mode"].astype(str).str.lower().isin(artifact.get("active_modes", ["brew"]))
+    ].dropna(subset=[f"target_{horizon}s_c"])

@@ -234,7 +234,10 @@ tools/thermal-modeling/.venv/bin/pytest tools/thermal-modeling/tests
 
 Dependency installation requires explicit owner approval under the repository
 working agreements. See `tools/thermal-modeling/README.md` for every CLI command,
-artifact path, promotion rule, and the synthetic-example boundary.
+artifact path, promotion rule, session-boundary policy, brew-only default, and
+daily-export workflow. The mobile app exports the current local day; assemble a
+weekly run from separate daily CSVs rather than relying on an automatic age
+filter.
 
 ## Firmware workflows
 

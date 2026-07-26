@@ -92,6 +92,26 @@ def test_all_cli_commands_and_weekly_safe_workflow(synthetic_csvs, config, tmp_p
     eligible_path = tmp_path / "eligible.json"; write_json(eligible_path, artifact)
     run(["export-firmware", str(eligible_path), "--output", str(tmp_path / "export" / "temp_prediction_model.h")])
     run(["weekly-run", *inputs, "--output", str(tmp_path / "weekly")])
-    assert (tmp_path / "weekly" / "model_report.md").exists()
+    report_path = tmp_path / "weekly" / "model_report.md"
+    assert report_path.exists()
+    report = report_path.read_text(encoding="utf-8")
+    assert "## Decision: REJECTED" in report
+    assert "## Executive insights" in report
+    assert "## Artifact index" in report
+    assert "reports/simulation_comparison.png" in report
+    assert "analysis/data_quality.json" in report
+    assert "rejected_candidate/temp_prediction_model.json" in report
+    assert "actual future boiler temperature on the horizontal axis" in report
+    assert "Points above the line predicted too hot" in report
+    assert "Points below predicted too cold" in report
+    assert "Active machine modes: `brew`" in report
+    assert "Evaluation type: **held_out**" in report
+    assert "Candidate duty-reduction steps:" in report
     assert (tmp_path / "weekly" / "rejected_candidate" / "temp_prediction_model.json").exists()
     assert not (tmp_path / "weekly" / "exports" / "temp_prediction_model.h").exists()
+
+    run(["weekly-run", inputs[0], "--output", str(tmp_path / "weekly-single")])
+    single_report = (tmp_path / "weekly-single" / "model_report.md").read_text(encoding="utf-8")
+    assert "Metrics below are training-only diagnostics" in single_report
+    assert "Evaluation type: **training_only**" in single_report
+    assert "Final test sessions: `none`" in single_report
