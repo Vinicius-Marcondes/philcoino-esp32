@@ -16,6 +16,10 @@ export const PROFILE_NAME_MAX_LENGTH = 12;
 export const HISTORY_PAGE_SIZE = 8;
 export const HISTORY_COMPATIBILITY_PAGE_SIZE = 60;
 export const HISTORY_RETENTION_SAMPLES = 600;
+export const WEIGHTED_TRACE_PAGE_SIZE = 16;
+export const WEIGHTED_TRACE_RETENTION_SAMPLES = 320;
+export const WEIGHTED_TRACE_SAMPLE_INTERVAL_MS = 250;
+export const WEIGHTED_TRACE_SETTLING_LIMIT_MS = 10_000;
 export const WEIGHT_TARGET_MIN_DECIGRAMS = 50;
 export const WEIGHT_TARGET_MAX_DECIGRAMS = 1_000;
 export const WEIGHT_COMPENSATION_MIN_DECIGRAMS = 0;
@@ -620,6 +624,105 @@ export const ScaleStateSchema = z.strictObject({
   terminalExtraction: TerminalWeightExtractionSchema.nullable(),
   warning: ScaleWarningSchema.nullable(),
 });
+
+export const WeightedExtractionTraceSequenceSchema = z
+  .number()
+  .int()
+  .nonnegative()
+  .safe();
+export const WeightedExtractionTraceStatusSchema = z.enum([
+  "running",
+  "settling",
+  "terminal",
+]);
+export const WeightedExtractionTracePhaseSchema = z.enum([
+  "pre-infusion",
+  "soak",
+  "main-extraction",
+  "settling",
+]);
+export const WeightedExtractionTraceCursorSchema = z.strictObject({
+  extractionId: ExtractionIdSchema,
+  bootId: z
+    .string()
+    .length(32)
+    .regex(/^[0-9a-f]{32}$/),
+  afterSequence: WeightedExtractionTraceSequenceSchema,
+});
+export const WeightedExtractionTraceSampleSchema = z.strictObject({
+  sequence: WeightedExtractionTraceSequenceSchema,
+  uptimeMs: z.number().int().nonnegative().safe(),
+  elapsedMs: z
+    .number()
+    .int()
+    .nonnegative()
+    .max(EXTRACTION_MAX_DURATION_MS + WEIGHTED_TRACE_SETTLING_LIMIT_MS),
+  phase: WeightedExtractionTracePhaseSchema,
+  boilerTemperatureC: z.number().finite(),
+  activeTargetC: BrewTargetSchema,
+  netWeightDecigrams: ScaleWeightDecigramsSchema.nullable(),
+  scaleAvailability: ScaleAvailabilitySchema,
+  pumpCommand: PumpCommandSchema,
+});
+export const WeightedExtractionTracePageSchema = z
+  .strictObject({
+    deviceId: DeviceResponseSchema.shape.deviceId,
+    extractionId: ExtractionIdSchema,
+    bootId: WeightedExtractionTraceCursorSchema.shape.bootId,
+    capturedAtUptimeMs: z.number().int().nonnegative().safe(),
+    status: WeightedExtractionTraceStatusSchema,
+    oldestSequence: WeightedExtractionTraceSequenceSchema,
+    latestSequence: WeightedExtractionTraceSequenceSchema,
+    nextCursor: WeightedExtractionTraceCursorSchema,
+    hasMore: z.boolean(),
+    continuity: z.enum(["initial", "continuous", "truncated", "reset"]),
+    samples: z
+      .array(WeightedExtractionTraceSampleSchema)
+      .max(WEIGHTED_TRACE_PAGE_SIZE),
+  })
+  .superRefine((page, context) => {
+    if (
+      page.nextCursor.bootId !== page.bootId ||
+      page.nextCursor.extractionId !== page.extractionId
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["nextCursor"],
+        message: "The trace cursor must identify the returned boot and extraction.",
+      });
+    }
+    if (page.oldestSequence > page.latestSequence) {
+      context.addIssue({
+        code: "custom",
+        path: ["oldestSequence"],
+        message: "The oldest trace sequence cannot exceed the latest sequence.",
+      });
+    }
+    for (let index = 1; index < page.samples.length; index += 1) {
+      if (page.samples[index].sequence <= page.samples[index - 1].sequence) {
+        context.addIssue({
+          code: "custom",
+          path: ["samples", index, "sequence"],
+          message: "Trace samples must be strictly sequence ordered.",
+        });
+      }
+    }
+    const last = page.samples.at(-1);
+    if (
+      last !== undefined &&
+      page.nextCursor.afterSequence !== last.sequence
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["nextCursor", "afterSequence"],
+        message: "The next trace cursor must acknowledge the last returned sample.",
+      });
+    }
+  });
+export const ScaleTraceResponseSchema = z.strictObject({
+  scale: ScaleStateSchema,
+  trace: WeightedExtractionTracePageSchema.nullable(),
+});
 export const CompleteScaleCalibrationRequestSchema = z.strictObject({
   referenceWeightDecigrams: CalibrationReferenceDecigramsSchema,
 });
@@ -919,6 +1022,22 @@ export type TerminalWeightExtraction = z.infer<
   typeof TerminalWeightExtractionSchema
 >;
 export type ScaleState = z.infer<typeof ScaleStateSchema>;
+export type ScaleTraceResponse = z.infer<typeof ScaleTraceResponseSchema>;
+export type WeightedExtractionTraceCursor = z.infer<
+  typeof WeightedExtractionTraceCursorSchema
+>;
+export type WeightedExtractionTracePage = z.infer<
+  typeof WeightedExtractionTracePageSchema
+>;
+export type WeightedExtractionTracePhase = z.infer<
+  typeof WeightedExtractionTracePhaseSchema
+>;
+export type WeightedExtractionTraceSample = z.infer<
+  typeof WeightedExtractionTraceSampleSchema
+>;
+export type WeightedExtractionTraceStatus = z.infer<
+  typeof WeightedExtractionTraceStatusSchema
+>;
 export type CompleteScaleCalibrationRequest = z.infer<
   typeof CompleteScaleCalibrationRequestSchema
 >;

@@ -173,6 +173,14 @@ reports a weighted extraction. Manual and timed extraction do not increase the
 scale cadence, and a failed hidden-page request falls back to one second without
 retaining stale weighted state.
 
+Weighted trace synchronization is a second completion-driven, non-overlapping
+session. It commits each page before advancing the durable
+extraction/boot/sequence cursor, aborts on backgrounding, and resumes backfill
+after reconnection. Firmware 404 permanently selects the legacy scale and
+temperature-graph path for that session. The phone derives beverage mass flow
+from raw net weight with a causal one-second regression and resets across every
+identity, sequence, availability, or null-weight discontinuity.
+
 `DashboardMutationSession` serializes temperature, mode, heater, fault, complete
 profile export, extraction Start/Stop, and cooldown Start/Stop mutations. It:
 
@@ -214,9 +222,15 @@ capability fallback keeps older firmware usable through queryless API v2 state.
 The repository retains only the current
 local calendar day; background/offline periods and firmware uptime resets remain
 explicit graph gaps. The Dashboard presents consecutive thirty-second Live
-pages, while Machine can export every stored row for the current day. This
-observational data never participates in firmware control and contains neither
-bearer tokens nor network addresses.
+pages in the same telemetry surface used for weighted extraction traces. In
+temperature-history mode, the upper band renders only acknowledged boiler and
+target samples, the current scale state supplies the weight metric, and the
+lower band explicitly marks weight history and derived flow unavailable. A
+weighted trace populates that unchanged surface with retained weight and
+app-derived beverage flow, so extraction state changes do not replace or
+restyle the graph. Machine can export every stored temperature row for the
+current day. This observational data never participates in firmware control
+and contains neither bearer tokens nor network addresses.
 
 Mobile compares each new row with the latest stored timestamp, firmware uptime,
 boot/sequence provenance, and explicit gap marker. Only a detected discontinuity

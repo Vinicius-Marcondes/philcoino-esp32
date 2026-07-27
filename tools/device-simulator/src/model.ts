@@ -18,10 +18,15 @@ import {
   ProfileSetSchema,
   RunningExtractionStateSchema,
   ScaleStateSchema,
+  ScaleTraceResponseSchema,
   STEAM_TARGET_MAX_C,
   STEAM_TARGET_MIN_C,
   STEAM_TIMEOUT_MS,
   TemperatureSettingsResponseSchema,
+  WEIGHTED_TRACE_PAGE_SIZE,
+  WEIGHTED_TRACE_RETENTION_SAMPLES,
+  WEIGHTED_TRACE_SAMPLE_INTERVAL_MS,
+  WEIGHTED_TRACE_SETTLING_LIMIT_MS,
   type DeviceResponse,
   type ActiveCooldownState,
   type CompensationState,
@@ -47,8 +52,12 @@ import {
   type ProfileSet,
   type RunningExtractionState,
   type ScaleState,
+  type ScaleTraceResponse,
   type TerminalExtractionState,
   type WeightControl,
+  type WeightedExtractionTraceCursor,
+  type WeightedExtractionTracePage,
+  type WeightedExtractionTraceSample,
 } from "@philcoino/protocol";
 
 const AMBIENT_TEMPERATURE_C = 24;
@@ -204,6 +213,14 @@ interface TerminalWeightRecord {
   targetWeightDecigrams: number;
 }
 
+interface WeightedTraceRecord {
+  extractionId: string;
+  lastCaptureUptimeMs: number;
+  samples: WeightedExtractionTraceSample[];
+  sequence: number;
+  terminalCaptured: boolean;
+}
+
 interface CooldownRecord {
   cooldownId: string;
   idempotencyKey: string;
@@ -243,6 +260,7 @@ export class SimulatorMachine {
   private scaleWeightDecigrams = 0;
   private terminalWeight: TerminalWeightRecord | null = null;
   private scaleWarningExtractionId: string | null = null;
+  private weightedTrace: WeightedTraceRecord | null = null;
   private extractionCounter = 0;
   private cooldown: CooldownRecord | null = null;
   private cooldownCounter = 0;
@@ -430,6 +448,65 @@ export class SimulatorMachine {
     });
   }
 
+  getScaleTrace(
+    cursor?: WeightedExtractionTraceCursor,
+  ): ScaleTraceResponse | null {
+    const trace = this.weightedTrace;
+    if (trace === null || trace.samples.length === 0) {
+      return ScaleTraceResponseSchema.parse({
+        scale: this.getScaleState(),
+        trace: null,
+      });
+    }
+
+    const oldestSequence = trace.samples[0].sequence;
+    const latestSequence = trace.samples.at(-1)!.sequence;
+    let afterSequence = cursor?.afterSequence ?? 0;
+    let continuity: WeightedExtractionTracePage["continuity"] = "initial";
+
+    if (cursor !== undefined) {
+      if (
+        cursor.bootId !== this.bootId ||
+        cursor.extractionId !== trace.extractionId
+      ) {
+        continuity = "reset";
+        afterSequence = oldestSequence - 1;
+      } else if (afterSequence > latestSequence) {
+        return null;
+      } else if (afterSequence < oldestSequence - 1) {
+        continuity = "truncated";
+        afterSequence = oldestSequence - 1;
+      } else {
+        continuity = "continuous";
+      }
+    }
+
+    const samples = trace.samples
+      .filter((sample) => sample.sequence > afterSequence)
+      .slice(0, WEIGHTED_TRACE_PAGE_SIZE);
+    const nextSequence = samples.at(-1)?.sequence ?? afterSequence;
+    return ScaleTraceResponseSchema.parse({
+      scale: this.getScaleState(),
+      trace: {
+        deviceId: this.device.deviceId,
+        extractionId: trace.extractionId,
+        bootId: this.bootId,
+        capturedAtUptimeMs: this.uptimeMs,
+        status: this.weightedTraceStatus(),
+        oldestSequence,
+        latestSequence,
+        nextCursor: {
+          extractionId: trace.extractionId,
+          bootId: this.bootId,
+          afterSequence: nextSequence,
+        },
+        hasMore: nextSequence < latestSequence,
+        continuity,
+        samples,
+      },
+    });
+  }
+
   startScaleCalibration(): "ok" | "active" | "unavailable" | "unstable" {
     if (this.hasActiveWorkflow()) {
       return "active";
@@ -604,6 +681,17 @@ export class SimulatorMachine {
       weightControl,
       weightFallback: false,
     };
+    if (weightControl !== null) {
+      this.weightedTrace = {
+        extractionId: this.activeExtraction.extractionId,
+        lastCaptureUptimeMs:
+          this.uptimeMs - WEIGHTED_TRACE_SAMPLE_INTERVAL_MS,
+        samples: [],
+        sequence: 0,
+        terminalCaptured: false,
+      };
+      this.captureWeightedTraceIfDue();
+    }
     return {
       ok: true,
       extraction: RunningExtractionStateSchema.parse(this.getExtractionState()),
@@ -939,9 +1027,19 @@ export class SimulatorMachine {
     let remainingMs = milliseconds;
 
     while (remainingMs > 0) {
+      const traceDelayMs =
+        this.weightedTrace === null || this.weightedTrace.terminalCaptured
+          ? Number.POSITIVE_INFINITY
+          : Math.max(
+              1,
+              this.weightedTrace.lastCaptureUptimeMs +
+                WEIGHTED_TRACE_SAMPLE_INTERVAL_MS -
+                this.uptimeMs,
+            );
       const stepMs = Math.min(
         remainingMs,
         MAX_SIMULATION_STEP_MS,
+        traceDelayMs,
         this.steamTimeoutRemainingMs ?? Number.POSITIVE_INFINITY,
       );
       this.advanceStep(stepMs);
@@ -984,6 +1082,7 @@ export class SimulatorMachine {
     this.uptimeMs += milliseconds;
     this.advanceExtraction(milliseconds);
     this.advanceScaleSettling(milliseconds);
+    this.captureWeightedTraceIfDue();
     this.advanceCooldown(milliseconds);
 
     if (!this.fault && this.isActiveTemperatureReady()) {
@@ -1140,6 +1239,11 @@ export class SimulatorMachine {
       targetWeightDecigrams: active.weightControl.targetWeightDecigrams,
     };
     this.activeExtraction = null;
+    if (this.weightedTrace?.extractionId === active.extractionId) {
+      this.weightedTrace.lastCaptureUptimeMs =
+        this.uptimeMs - WEIGHTED_TRACE_SAMPLE_INTERVAL_MS;
+      this.captureWeightedTraceIfDue();
+    }
   }
 
   private advanceScaleSettling(milliseconds: number): void {
@@ -1157,6 +1261,96 @@ export class SimulatorMachine {
         terminal.settled = true;
       }
     }
+  }
+
+  private captureWeightedTraceIfDue(): void {
+    const trace = this.weightedTrace;
+    if (
+      trace === null ||
+      trace.terminalCaptured ||
+      this.uptimeMs - trace.lastCaptureUptimeMs <
+        WEIGHTED_TRACE_SAMPLE_INTERVAL_MS
+    ) {
+      return;
+    }
+
+    const active = this.activeExtraction;
+    const terminal = this.terminalWeight;
+    if (
+      active?.weightControl === null &&
+      terminal?.extractionId !== trace.extractionId
+    ) {
+      return;
+    }
+    const extraction = this.getExtractionState();
+    const running =
+      active !== null &&
+      active.weightControl !== null &&
+      active.extractionId === trace.extractionId;
+    const settlingElapsedMs = running ? 0 : (terminal?.settlingElapsedMs ?? 0);
+    const phase = running
+      ? extraction.phase === "pre-infusion" ||
+        extraction.phase === "soak" ||
+        extraction.phase === "main-extraction"
+        ? extraction.phase
+        : "main-extraction"
+      : "settling";
+    const availability = !this.scaleAvailable
+      ? "unavailable"
+      : this.scaleStable
+        ? "ready"
+        : "unstable";
+    const netWeightDecigrams = running
+      ? this.scaleAvailable && active.tareWeightDecigrams !== null
+        ? this.scaleWeightDecigrams - active.tareWeightDecigrams
+        : null
+      : terminal?.finalWeightDecigrams ?? null;
+
+    trace.sequence += 1;
+    trace.lastCaptureUptimeMs = this.uptimeMs;
+    trace.samples.push({
+      sequence: trace.sequence,
+      uptimeMs: this.uptimeMs,
+      elapsedMs: Math.min(
+        WEIGHT_EXTRACTION_CUTOFF_MS + WEIGHTED_TRACE_SETTLING_LIMIT_MS,
+        running
+          ? active.elapsedMs
+          : (this.terminalExtraction?.elapsedMs ?? 0) + settlingElapsedMs,
+      ),
+      phase,
+      boilerTemperatureC: roundTemperature(this.boilerTemperatureC),
+      activeTargetC: this.brewTargetC,
+      netWeightDecigrams,
+      scaleAvailability: availability,
+      pumpCommand: running ? extraction.pumpCommand : "off",
+    });
+    if (trace.samples.length > WEIGHTED_TRACE_RETENTION_SAMPLES) {
+      trace.samples.splice(
+        0,
+        trace.samples.length - WEIGHTED_TRACE_RETENTION_SAMPLES,
+      );
+    }
+    if (this.weightedTraceStatus() === "terminal") {
+      trace.terminalCaptured = true;
+    }
+  }
+
+  private weightedTraceStatus(): WeightedExtractionTracePage["status"] {
+    const trace = this.weightedTrace;
+    if (
+      trace !== null &&
+      this.activeExtraction?.extractionId === trace.extractionId &&
+      this.activeExtraction.weightControl !== null
+    ) {
+      return "running";
+    }
+    const terminal = this.terminalWeight;
+    return terminal !== null &&
+      terminal.extractionId === trace?.extractionId &&
+      !terminal.settled &&
+      terminal.settlingElapsedMs < WEIGHTED_TRACE_SETTLING_LIMIT_MS
+      ? "settling"
+      : "terminal";
   }
 
   private advanceCooldown(milliseconds: number): void {
@@ -1261,6 +1455,7 @@ export class SimulatorMachine {
     this.scaleCalibrationInProgress = false;
     this.terminalWeight = null;
     this.scaleWarningExtractionId = null;
+    this.weightedTrace = null;
     this.extractionCounter = 0;
     this.cooldown = null;
     this.cooldownCounter = 0;

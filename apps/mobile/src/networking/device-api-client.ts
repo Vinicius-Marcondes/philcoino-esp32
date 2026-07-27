@@ -20,6 +20,7 @@ import {
   StartExtractionRequestSchema,
   StartExtractionResponseSchema,
   ScaleStateSchema,
+  ScaleTraceResponseSchema,
   CompleteScaleCalibrationRequestSchema,
   StopExtractionResponseSchema,
   StopCooldownResponseSchema,
@@ -43,6 +44,8 @@ import {
   type StartExtractionRequest,
   type StartExtractionResponse,
   type ScaleState,
+  type ScaleTraceResponse,
+  type WeightedExtractionTraceCursor,
   type CompleteScaleCalibrationRequest,
   type StopExtractionResponse,
   type StopCooldownResponse,
@@ -290,6 +293,22 @@ export class DeviceApiClient {
     return this.request(
       "/api/v2/scale",
       ScaleStateSchema,
+      { authenticated: true, errorVersion: "v2" },
+      options,
+    );
+  }
+
+  getScaleTrace(
+    cursor?: WeightedExtractionTraceCursor,
+    options: RequestOptions = {},
+  ): Promise<ScaleTraceResponse> {
+    const query =
+      cursor === undefined
+        ? ""
+        : `?extractionId=${encodeURIComponent(cursor.extractionId)}&bootId=${encodeURIComponent(cursor.bootId)}&afterSequence=${cursor.afterSequence}`;
+    return this.request(
+      `/api/v2/scale/trace${query}`,
+      ScaleTraceResponseSchema,
       { authenticated: true, errorVersion: "v2" },
       options,
     );

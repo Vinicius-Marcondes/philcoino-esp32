@@ -7,6 +7,7 @@
 #include "philcoino/api_codec.hpp"
 #include "philcoino/api_routes.hpp"
 #include "philcoino/history.hpp"
+#include "philcoino/weighted_trace.hpp"
 
 namespace philcoino::networking {
 namespace {
@@ -145,7 +146,8 @@ FirmwareApi::FirmwareApi(DeviceIdentity identity, std::string bearer_token,
                              scale_calibration_storage,
                          ApiSynchronization& synchronization,
                          HistoryBuffer* history,
-                         control::ScaleController* scale_controller)
+                         control::ScaleController* scale_controller,
+                         WeightedTraceBuffer* weighted_trace)
     : identity_(std::move(identity)),
       bearer_token_(std::move(bearer_token)),
       controller_(controller),
@@ -156,7 +158,8 @@ FirmwareApi::FirmwareApi(DeviceIdentity identity, std::string bearer_token,
       scale_calibration_storage_(scale_calibration_storage),
       synchronization_(synchronization),
       history_(history),
-      scale_controller_(scale_controller) {}
+      scale_controller_(scale_controller),
+      weighted_trace_(weighted_trace) {}
 
 bool FirmwareApi::authorized(const char* authorization) const {
   return constant_time_bearer_matches(authorization, bearer_token_);
@@ -188,6 +191,7 @@ HttpResponse FirmwareApi::handle_resolved(const ApiRouteDescriptor& route,
                                 : path.substr(query_separator + 1U);
   if (route.id != ApiRouteId::kHistory &&
       route.id != ApiRouteId::kStateV2 &&
+      route.id != ApiRouteId::kScaleTrace &&
       query_separator != std::string::npos) {
     return error_response(404, "internal_error",
                           "The requested endpoint does not exist.");
@@ -201,6 +205,7 @@ HttpResponse FirmwareApi::handle_resolved(const ApiRouteDescriptor& route,
     case ApiRouteId::kStateV2: return state_v2(query, uptime_ms);
     case ApiRouteId::kHistory: return history(query, uptime_ms);
     case ApiRouteId::kScaleGet: return scale(uptime_ms);
+    case ApiRouteId::kScaleTrace: return scale_trace(query, uptime_ms);
     case ApiRouteId::kScaleCalibrationStart:
       return start_scale_calibration(uptime_ms);
     case ApiRouteId::kScaleCalibrationComplete:
@@ -521,6 +526,47 @@ HttpResponse FirmwareApi::scale(std::uint64_t uptime_ms) const {
     weight = extraction_controller_.weight_snapshot(current, now_ms);
   }
   return json_response(200, serialize_scale(current, weight));
+}
+
+HttpResponse FirmwareApi::scale_trace(const std::string& query,
+                                      std::uint64_t uptime_ms) const {
+  if (scale_controller_ == nullptr || weighted_trace_ == nullptr) {
+    return error_response(500, "internal_error",
+                          "Scale trace support is unavailable.");
+  }
+  WeightedTraceCursor cursor{};
+  if (!parse_weighted_trace_cursor(query, cursor)) {
+    return error_response(400, "malformed_request",
+                          "The scale trace cursor is malformed.");
+  }
+  control::ScaleSnapshot current{};
+  control::WeightExtractionSnapshot weight{};
+  {
+    ScopedApiLock lock(synchronization_, ApiDomain::kExtraction);
+    if (!lock.locked()) {
+      return error_response(500, "internal_error",
+                            "Scale synchronization failed.");
+    }
+    const auto now_ms = static_cast<std::uint32_t>(uptime_ms);
+    current = scale_controller_->snapshot(now_ms);
+    weight = extraction_controller_.weight_snapshot(current, now_ms);
+  }
+  WeightedTracePage page{};
+  const bool has_page = weighted_trace_->page(cursor, uptime_ms, page);
+  if (cursor.supplied && !has_page && weighted_trace_->has_trace()) {
+    return error_response(400, "malformed_request",
+                          "The scale trace cursor is outside the retained trace.");
+  }
+  std::string response{"{\"scale\":"};
+  response.append(serialize_scale(current, weight));
+  response.append(",\"trace\":");
+  if (has_page) {
+    response.append(serialize_weighted_trace_page(identity_.device_id, page));
+  } else {
+    response.append("null");
+  }
+  response.push_back('}');
+  return json_response(200, std::move(response));
 }
 
 HttpResponse FirmwareApi::start_scale_calibration(std::uint64_t uptime_ms) {

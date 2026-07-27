@@ -6,8 +6,10 @@ import type {
   HistoryPage,
   MachineState,
   ModeRequest,
+  ScaleTraceResponse,
   StartCooldownRequest,
   TemperatureSettingsRequest,
+  WeightedExtractionTraceCursor,
 } from "../src/index.ts";
 
 const brewUpdate: TemperatureSettingsRequest = { brewTargetC: 93 };
@@ -32,6 +34,31 @@ const historyPage: HistoryPage = {
   hasMore: false,
   continuity: "continuous",
   samples: [],
+};
+const traceCursor: WeightedExtractionTraceCursor = {
+  extractionId: "run-1",
+  bootId: historyCursor.bootId,
+  afterSequence: 2,
+};
+const scaleTrace: ScaleTraceResponse = {
+  scale: {
+    availability: "ready",
+    calibrationStatus: "calibrated",
+    stable: false,
+    grossWeightDecigrams: 910,
+    netWeightDecigrams: 110,
+    activeExtraction: {
+      extractionId: "run-1",
+      mode: "weight",
+      targetWeightDecigrams: 350,
+      compensationDecigrams: 20,
+      cutoffWeightDecigrams: 330,
+      netWeightDecigrams: 110,
+    },
+    terminalExtraction: null,
+    warning: null,
+  },
+  trace: null,
 };
 const cooldownStart: StartCooldownRequest = {
   idempotencyKey: "cooldown-01J2ABCDEF1",
@@ -80,6 +107,8 @@ void [
   heaterUpdate,
   historyCursor,
   historyPage,
+  traceCursor,
+  scaleTrace,
   cooldownStart,
   compensation,
   cooldown,

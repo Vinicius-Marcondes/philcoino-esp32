@@ -36,6 +36,8 @@ v2 adds no raw-temperature or offset field.
   current stabilization/terminal acknowledgement.
 - `GET /api/v2/scale` returns calibration, availability, live weight, active
   weighted extraction, warning, and retained terminal state.
+- `GET /api/v2/scale/trace` returns current scale state plus a nullable page
+  from the latest RAM-retained weighted-profile extraction.
 - `POST /api/v2/scale/calibration/start`, `/complete`, and `/cancel` implement
   the strict two-step calibration workflow.
 - `POST /api/v2/scale/warnings/acknowledge` clears the weighted-start gate
@@ -58,6 +60,14 @@ current boot ID, capture uptime, available sequence bounds, next durable cursor,
 `hasMore`, and complete graph command/status/fault context. New firmware adds a
 strict `predictiveTemperature` object to each sample; the property remains
 optional so older firmware pages continue to parse.
+
+Scale-trace cursors require exactly one `extractionId`, `bootId`, and
+`afterSequence`. Pages contain at most sixteen ordered 250 ms observation
+samples and expose running, settling, or terminal state plus continuity and
+sequence bounds. Sequence jumps are real gaps and clients must not synthesize
+samples. Firmware without the additive route returns 404; clients retain
+current weight and the existing temperature graph without flow or trace
+history.
 
 ## Authority and timing
 

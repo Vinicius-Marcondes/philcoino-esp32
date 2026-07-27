@@ -22,6 +22,7 @@
 #include "philcoino/esp_peripherals.hpp"
 #include "philcoino/history.hpp"
 #include "philcoino/performance_diagnostics.hpp"
+#include "philcoino/weighted_trace.hpp"
 
 namespace {
 
@@ -146,6 +147,7 @@ struct WorkflowTaskContext {
   std::atomic<bool>* fail_safe_requested;
   FreeRtosApiSynchronization* synchronization;
   philcoino::control::ScaleController* scale;
+  philcoino::networking::WeightedTraceBuffer* weighted_trace;
   philcoino::diagnostics::PerformanceDiagnostics* performance_diagnostics;
 };
 
@@ -194,6 +196,12 @@ void workflow_control_task(void* argument) {
       continue;
     }
     const auto now_ms = uptime_ms();
+    philcoino::control::ControlSnapshot trace_machine{};
+    philcoino::control::ExtractionSnapshot trace_extraction{};
+    philcoino::control::ScaleSnapshot trace_scale{};
+    philcoino::control::WeightExtractionSnapshot trace_weight{};
+    bool capture_trace = false;
+    bool trace_scale_copied = false;
     auto extraction_result =
         philcoino::control::ExtractionUpdateResult::kOk;
     auto cooldown_result = philcoino::control::CooldownUpdateResult::kOk;
@@ -215,21 +223,41 @@ void workflow_control_task(void* argument) {
       cooldown_result = context->cooldown->update(
           cooldown_input(temperature, context->extraction->active()), now_ms);
     } else {
-      const auto scale = context->scale->snapshot(now_ms);
-      extraction_result = context->extraction->update(now_ms, &scale);
+      trace_scale = context->scale->snapshot(now_ms);
+      trace_scale_copied = true;
+      extraction_result =
+          context->extraction->update(now_ms, &trace_scale);
     }
+    trace_extraction = context->extraction->snapshot(now_ms);
     context->temperature->set_extraction_phase(
         context->cooldown->active()
             ? philcoino::control::ExtractionPhase::kIdle
-            : context->extraction->snapshot(now_ms).phase,
+            : trace_extraction.phase,
         now_ms);
     if (extraction_result ==
         philcoino::control::ExtractionUpdateResult::kOutputFailure) {
       context->temperature->latch_fault(
           philcoino::control::FaultCode::kInternalError);
     }
+    if (!context->cooldown->active()) {
+      if (!trace_scale_copied) {
+        trace_scale = context->scale->snapshot(now_ms);
+      }
+      trace_weight =
+          context->extraction->weight_snapshot(trace_scale, now_ms);
+      capture_trace = (trace_weight.active || trace_weight.terminal) &&
+                      context->weighted_trace->capture_due(
+                          now_ms, trace_weight.extraction_id);
+      if (capture_trace) {
+        trace_machine = context->temperature->snapshot(now_ms);
+      }
+    }
     context->synchronization->unlock(
         philcoino::networking::ApiDomain::kExtraction);
+    if (capture_trace) {
+      context->weighted_trace->record(now_ms, trace_machine, trace_extraction,
+                                      trace_scale, trace_weight);
+    }
     if (extraction_result ==
         philcoino::control::ExtractionUpdateResult::kOutputFailure) {
       ESP_LOGE(kLogTag,
@@ -613,10 +641,21 @@ extern "C" void app_main() {
   vTaskDelay(pdMS_TO_TICKS(kMax6675SampleIntervalMs));
   auto snapshot = controller.update(thermocouple.read(uptime_ms()), uptime_ms());
 
+  std::array<char, 33> history_boot_id{};
+  std::snprintf(history_boot_id.data(), history_boot_id.size(),
+                "%08lx%08lx%08lx%08lx",
+                static_cast<unsigned long>(esp_random()),
+                static_cast<unsigned long>(esp_random()),
+                static_cast<unsigned long>(esp_random()),
+                static_cast<unsigned long>(esp_random()));
+  static philcoino::networking::HistoryBuffer history(history_boot_id.data());
+  static philcoino::networking::WeightedTraceBuffer weighted_trace(
+      history_boot_id.data());
+
   static WorkflowTaskContext workflow_context{
       &controller, &extraction_controller, &cooldown_controller,
       &pump, &ssr, &fail_safe_requested, &synchronization, &scale_controller,
-      performance_diagnostics};
+      &weighted_trace, performance_diagnostics};
   TaskHandle_t workflow_task = nullptr;
   if (xTaskCreate(workflow_control_task, "philcoino-workflow", 4096,
                   &workflow_context, configMAX_PRIORITIES - 2,
@@ -645,18 +684,11 @@ extern "C" void app_main() {
       philcoino::config::kDeviceModel,
       philcoino::config::kFirmwareVersion,
   };
-  std::array<char, 33> history_boot_id{};
-  std::snprintf(history_boot_id.data(), history_boot_id.size(),
-                "%08lx%08lx%08lx%08lx",
-                static_cast<unsigned long>(esp_random()),
-                static_cast<unsigned long>(esp_random()),
-                static_cast<unsigned long>(esp_random()),
-                static_cast<unsigned long>(esp_random()));
-  static philcoino::networking::HistoryBuffer history(history_boot_id.data());
   static philcoino::networking::FirmwareApi api(
       identity, CONFIG_PHILCOINO_BEARER_TOKEN, controller, target_storage,
       extraction_controller, cooldown_controller, profile_storage,
-      scale_calibration_storage, synchronization, &history, &scale_controller);
+      scale_calibration_storage, synchronization, &history, &scale_controller,
+      &weighted_trace);
   static philcoino::networking::EspNetworkServer network(
       api, identity, performance_diagnostics);
   static const NetworkStartContext network_context{

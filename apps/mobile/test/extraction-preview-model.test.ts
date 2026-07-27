@@ -285,17 +285,24 @@ describe("extraction design preview model", () => {
 
     const machineStatus = source.indexOf("<MachineStatus");
     const boilerTemperature = source.indexOf("<TemperatureCard", machineStatus);
-    const temperatureCurve = source.indexOf("<TemperatureCurve", boilerTemperature);
-    const extraction = source.indexOf("<ExtractionPreview", temperatureCurve);
+    const telemetryGraph = source.indexOf(
+      "<ExtractionTelemetryChart",
+      boilerTemperature,
+    );
+    const extraction = source.indexOf("<ExtractionPreview", telemetryGraph);
     const cooldown = source.indexOf("<ThermalWorkflowPreview", extraction);
     expect(machineStatus).toBeGreaterThan(-1);
     expect(boilerTemperature).toBeGreaterThan(machineStatus);
-    expect(temperatureCurve).toBeGreaterThan(boilerTemperature);
-    expect(extraction).toBeGreaterThan(temperatureCurve);
+    expect(telemetryGraph).toBeGreaterThan(boilerTemperature);
+    expect(extraction).toBeGreaterThan(telemetryGraph);
     expect(cooldown).toBeGreaterThan(extraction);
-    expect(source.slice(temperatureCurve, extraction)).not.toContain(
+    expect(source.slice(telemetryGraph, extraction)).not.toContain(
       "<WeightModeCard",
     );
+    expect(source).toContain('mode="temperature-history"');
+    expect(source).toContain('mode="weighted-trace"');
+    expect(source).toContain("scale={null}");
+    expect(source).not.toContain("function TemperatureCurve");
     expect(source).toContain("quickControlPanel={");
     expect(source.indexOf("<WeightModeCard", extraction)).toBeGreaterThan(
       extraction,

@@ -1,3 +1,37 @@
+# PRD-014 Tracker
+
+PRD Status: Active — Approved 2026-07-26
+Current Task: Software implementation complete — Figma/Target/Human pending
+
+Implementation Boundary: Add observation-only weighted extraction telemetry,
+derived beverage mass flow, durable trace history, and responsive graph-first
+UI without allowing telemetry or the phone to influence firmware control.
+
+PRD: `docs/prds/PRD-014/PRD-014.md`
+
+## Compatibility and Safety Boundary
+
+- Existing strict API responses are unchanged; `/api/v2/scale/trace` is
+  additive, authenticated, and optional for older firmware.
+- Firmware remains authoritative for temperature, scale validity, extraction,
+  heater/pump commands, faults, timeouts, and persisted targets.
+- Missing and skipped samples remain explicit gaps. Mobile flow is derived
+  diagnostic data, not a physical flow sensor.
+- Software evidence does not prove scale accuracy, water flow, pump operation,
+  de-energization, or energized mains safety.
+
+## Execution State
+
+| Area | Status | Evidence | Blocked Reason |
+| --- | --- | --- | --- |
+| Contract and simulator | Software complete | Protocol validation and 138 tests; simulator 77 tests/typecheck | None |
+| Firmware | Host complete | Native host 7/7; strict trace route and bounded ring | ESP-IDF target/map evidence unavailable |
+| Mobile | Software complete | 180 tests; typecheck; lint; unified default telemetry surface | Native device visual review pending |
+| Figma | Blocked after file creation | Named file created; all follow-up connector calls return `INVALID_ARGUMENT` | Figma connector/account access |
+| Physical validation | Pending Human | Procedures remain bounded by safety docs | Connected low-voltage target and Human reviewer unavailable |
+
+---
+
 # PRD-013 Tracker
 
 PRD Status: Active — Approved 2026-07-26

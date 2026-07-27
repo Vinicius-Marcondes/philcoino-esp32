@@ -3,6 +3,7 @@ import type {
   ScaleCompletionReason,
   TerminalWeightExtraction,
 } from "@philcoino/protocol";
+import type { TraceCompleteness } from "./weighted-shot-trace";
 
 export interface WeightedShotSummary {
   compensationDecigrams: number;
@@ -17,6 +18,8 @@ export interface WeightedShotSummary {
   recordedAtMs: number;
   settled: boolean;
   targetDecigrams: number;
+  traceCompleteness?: TraceCompleteness | null;
+  traceSampleCount?: number;
 }
 
 export function shotSummaryFromTerminal(
@@ -39,6 +42,8 @@ export function shotSummaryFromTerminal(
     recordedAtMs,
     settled: terminal.settled,
     targetDecigrams: terminal.targetWeightDecigrams,
+    traceCompleteness: null,
+    traceSampleCount: 0,
   };
 }
 

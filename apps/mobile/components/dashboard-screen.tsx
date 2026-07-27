@@ -18,11 +18,8 @@ import {
 import {
   ActivityIndicator,
   Alert,
-  FlatList,
   KeyboardAvoidingView,
   type LayoutChangeEvent,
-  type NativeScrollEvent,
-  type NativeSyntheticEvent,
   PanResponder,
   Pressable,
   ScrollView,
@@ -39,6 +36,7 @@ import {
   MutationFeedback,
 } from "@/components/machine-controls";
 import { CompensationIndicator } from "@/components/compensation-indicator";
+import { ExtractionTelemetryChart } from "@/components/extraction-telemetry-chart";
 import {
   ExtractionPreview,
   phaseLabel,
@@ -82,24 +80,10 @@ import {
   type TemperatureHistoryExporter,
 } from "@/src/history/temperature-history-export";
 import {
-  formatHistoryDurationMs,
-  isLatestTemperatureHistoryWindow,
-  isTemperatureHistoryGap,
-  isLatestHistoryPageOffset,
-  LIVE_HISTORY_WINDOW_MS,
-  temperatureGraphValueTopPercent,
-  temperatureHistoryGraphScale,
-  temperatureHistoryWindowSamples,
-  temperatureHistoryWindows,
-  type TemperatureGraphScale,
-  type TemperatureHistorySample,
-  type TemperatureHistoryWindow,
-} from "@/src/history/temperature-history";
-import {
   temperatureHistoryRepository,
   type TemperatureHistoryRepository,
 } from "@/src/history/temperature-history-repository";
-import { currentLocale, translate } from "@/src/localization/i18n";
+import { translate } from "@/src/localization/i18n";
 import { mobileLayoutMode } from "@/src/layout/responsive-layout";
 import {
   dashboardPageAfterVerticalSwipe,
@@ -248,6 +232,10 @@ export function DashboardScreen({
     extraction,
     scalePageVisible: dashboardPage === "scale",
   });
+  const traceCutoffDecigrams =
+    scale.scale?.activeExtraction?.cutoffWeightDecigrams ??
+    scale.scale?.terminalExtraction?.cutoffWeightDecigrams ??
+    null;
   const clearTemperatureHistory = temperatureHistory.clear;
   const dashboardScrollView = useRef<ScrollView>(null);
   const dashboardContentHeight = useRef(0);
@@ -762,14 +750,25 @@ export function DashboardScreen({
                         />
                       </View>
                       <View style={styles.dashboardLandscapeGraph}>
-                        <TemperatureCurve
-                          compact
-                          error={temperatureHistory.error}
-                          history={temperatureHistory.samples}
-                          loading={temperatureHistory.status === "loading"}
-                          syncStatus={temperatureHistory.syncStatus}
-                          syncWarning={temperatureHistory.syncWarning}
-                        />
+                        {scale.trace !== null ? (
+                          <ExtractionTelemetryChart
+                            compact
+                            cutoffDecigrams={traceCutoffDecigrams}
+                            mode="weighted-trace"
+                            trace={scale.trace}
+                          />
+                        ) : (
+                          <ExtractionTelemetryChart
+                            compact
+                            error={temperatureHistory.error}
+                            history={temperatureHistory.samples}
+                            loading={temperatureHistory.status === "loading"}
+                            mode="temperature-history"
+                            scale={scale.scale}
+                            syncStatus={temperatureHistory.syncStatus}
+                            syncWarning={temperatureHistory.syncWarning}
+                          />
+                        )}
                       </View>
                     </View>
                   </Fragment>
@@ -808,14 +807,25 @@ export function DashboardScreen({
                           styles.dashboardActivityColumn,
                           landscape && styles.dashboardActivityColumnLandscape,
                         ]}>
-                        <TemperatureCurve
-                          compact={landscape}
-                          error={temperatureHistory.error}
-                          history={temperatureHistory.samples}
-                          loading={temperatureHistory.status === "loading"}
-                          syncStatus={temperatureHistory.syncStatus}
-                          syncWarning={temperatureHistory.syncWarning}
-                        />
+                        {scale.trace !== null ? (
+                          <ExtractionTelemetryChart
+                            compact={landscape}
+                            cutoffDecigrams={traceCutoffDecigrams}
+                            mode="weighted-trace"
+                            trace={scale.trace}
+                          />
+                        ) : (
+                          <ExtractionTelemetryChart
+                            compact={landscape}
+                            error={temperatureHistory.error}
+                            history={temperatureHistory.samples}
+                            loading={temperatureHistory.status === "loading"}
+                            mode="temperature-history"
+                            scale={scale.scale}
+                            syncStatus={temperatureHistory.syncStatus}
+                            syncWarning={temperatureHistory.syncWarning}
+                          />
+                        )}
                         {mobileProfiles !== null && machineProfiles !== null ? (
                           <View style={styles.extractionControlGroup}>
                             <ExtractionPreview
@@ -893,11 +903,13 @@ export function DashboardScreen({
               </View>
             )}
             {connection.status !== "online" || snapshot === null ? (
-              <TemperatureCurve
+              <ExtractionTelemetryChart
                 compact={landscape}
                 error={temperatureHistory.error}
                 history={temperatureHistory.samples}
                 loading={temperatureHistory.status === "loading"}
+                mode="temperature-history"
+                scale={null}
                 syncStatus={temperatureHistory.syncStatus}
                 syncWarning={temperatureHistory.syncWarning}
               />
@@ -1411,12 +1423,51 @@ function ScalePage({
 }) {
   const [reference, setReference] = useState("100.0");
   const [defaults, setDefaults] = useState(referenceDefaults);
+  const [selectedTrace, setSelectedTrace] = useState<
+    Awaited<ReturnType<typeof scale.selectTrace>>
+  >(null);
   useEffect(() => setDefaults(referenceDefaults), [referenceDefaults]);
   const state = scale.scale;
   const busy = scale.mutation !== null;
   return (
     <View style={styles.machineLayout}>
       <View style={styles.machineLayoutColumn}>
+        {selectedTrace !== null ? (
+          <View style={styles.contextCard}>
+            <View style={styles.shotDetailHeader}>
+              <View>
+                <Text selectable style={styles.cardLabel}>
+                  {translate("scale.traceTitle", {
+                    status: selectedTrace.completeness.toUpperCase(),
+                  })}
+                </Text>
+                <Text selectable style={styles.contextText}>
+                  {selectedTrace.extractionId}
+                </Text>
+              </View>
+              <View style={styles.scaleModeRow}>
+                <Pressable
+                  onPress={() => void scale.exportTrace(selectedTrace)}
+                  style={styles.exportButton}>
+                  <Text style={styles.exportButtonText}>
+                    {translate("scale.traceExport")}
+                  </Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => setSelectedTrace(null)}
+                  style={styles.scaleModeButton}>
+                  <Text style={styles.scaleModeButtonText}>
+                    {translate("scale.traceClose")}
+                  </Text>
+                </Pressable>
+              </View>
+            </View>
+            <ExtractionTelemetryChart
+              mode="weighted-trace"
+              trace={selectedTrace}
+            />
+          </View>
+        ) : null}
         <View style={styles.contextCard}>
           <Text selectable style={styles.cardLabel}>
             {translate("scale.diagnostics")}
@@ -1523,14 +1574,29 @@ function ScalePage({
             {translate("scale.history")}
           </Text>
           {scale.history.slice(0, 20).map((shot) => (
-            <View key={shot.extractionId} style={styles.scaleHistoryRow}>
+            <Pressable
+              accessibilityRole="button"
+              key={shot.extractionId}
+              onPress={() =>
+                void scale.selectTrace(shot.extractionId).then(setSelectedTrace)
+              }
+              style={({ pressed }) => [
+                styles.scaleHistoryRow,
+                pressed && styles.pressed,
+              ]}>
               <Text selectable style={styles.contextTitle}>
                 {formatNullableDecigrams(shot.finalWeightDecigrams)} · {shot.profileId}
               </Text>
               <Text selectable style={styles.contextText}>
                 {new Date(shot.recordedAtMs).toLocaleString()} · {shot.outcome}
               </Text>
-            </View>
+              <Text selectable style={styles.traceAvailability}>
+                {shot.traceCompleteness === null ||
+                shot.traceCompleteness === undefined
+                  ? translate("scale.traceUnavailable")
+                  : `${translate("scale.traceOpen")} · ${shot.traceCompleteness}`}
+              </Text>
+            </Pressable>
           ))}
           {scale.history.length === 0 ? (
             <Text selectable style={styles.contextText}>
@@ -1571,6 +1637,11 @@ function ScalePage({
           {scale.historyError !== null ? (
             <Text selectable style={styles.historyError}>
               {scale.historyError}
+            </Text>
+          ) : null}
+          {scale.traceSupported === false ? (
+            <Text selectable style={styles.contextText}>
+              {translate("scale.traceLegacy")}
             </Text>
           ) : null}
         </View>
@@ -1767,609 +1838,6 @@ function DisplayPreferencesCard({
       ) : null}
     </View>
   );
-}
-
-function TemperatureCurve({
-  compact,
-  error,
-  history,
-  loading,
-  syncStatus,
-  syncWarning,
-}: {
-  compact: boolean;
-  error: "storage" | null;
-  history: TemperatureHistorySample[];
-  loading: boolean;
-  syncStatus: "idle" | "restoring" | "warning";
-  syncWarning: "device" | "network" | "protocol" | "storage" | null;
-}) {
-  const [livePage, setLivePage] = useState<{
-    isLatest: boolean;
-    window: TemperatureHistoryWindow;
-  } | null>(null);
-  const [jumpToLatestRequest, setJumpToLatestRequest] = useState(0);
-  const liveWindows = useMemo(
-    () => temperatureHistoryWindows(history),
-    [history],
-  );
-  const latestLiveWindow = liveWindows.at(-1) ?? null;
-  const visibleLiveWindow =
-    livePage !== null &&
-    liveWindows.some(
-      (window) =>
-        window.startMs === livePage.window.startMs &&
-        window.endMs === livePage.window.endMs,
-    )
-      ? livePage.window
-      : latestLiveWindow;
-  const visibleLiveSamples =
-    visibleLiveWindow === null
-      ? []
-      : temperatureHistoryWindowSamples(history, visibleLiveWindow);
-  const graphScale = temperatureHistoryGraphScale(visibleLiveSamples);
-  const first = history[0];
-  const last = history.at(-1);
-  const duration =
-    first === undefined || last === undefined
-      ? translate("viewModel.collecting")
-      : formatHistoryDurationMs(LIVE_HISTORY_WINDOW_MS);
-  const mode = history.at(-1)?.activeMode;
-  const latestLivePage = isLatestTemperatureHistoryWindow(
-    liveWindows,
-    visibleLiveWindow,
-  );
-  const pageStatus = visibleLiveWindow === null
-    ? null
-    : translate(
-        compact
-          ? latestLivePage
-            ? "dashboard.historyPageLatestCompact"
-            : "dashboard.historyPageEarlierCompact"
-          : latestLivePage
-            ? "dashboard.historyPageLatest"
-            : "dashboard.historyPageEarlier",
-        {
-          end: formatHistoryPageTime(visibleLiveWindow.endMs),
-          start: formatHistoryPageTime(visibleLiveWindow.startMs),
-        },
-      );
-
-  return (
-    <View style={[styles.curveCard, compact && styles.curveCardCompact]}>
-      <View style={styles.curveHeading}>
-        <View style={styles.curveTitleGroup}>
-          <Text selectable style={styles.cardLabel}>{translate("dashboard.temperatureCurve")}</Text>
-          {!compact ? (
-            <Text selectable style={styles.curveTitle}>
-              {mode === undefined
-                ? translate("dashboard.historyTitle")
-                : translate("dashboard.controlTrend", { mode: modeLabel(mode) })}
-            </Text>
-          ) : null}
-        </View>
-        <View style={styles.curveWindowPill}>
-          <Text selectable style={styles.curveWindowText}>
-            {duration}
-          </Text>
-        </View>
-      </View>
-
-      {!compact ? (
-        <View style={styles.curveLegend}>
-          <LegendItem color="#8B3A2B" label={translate("dashboard.boiler")} />
-          <LegendItem color="#D39A42" label={translate("dashboard.target")} />
-          <LegendItem color="#F29A52" label={translate("dashboard.heater")} />
-          <LegendItem color="#3D7B80" label={translate("dashboard.pump")} />
-        </View>
-      ) : null}
-
-      {pageStatus !== null ? (
-        <View style={styles.historyPageStatus}>
-          <Text
-            accessibilityLiveRegion="polite"
-            selectable
-            style={styles.historyPageStatusText}>
-            {pageStatus}
-          </Text>
-          {!latestLivePage ? (
-            <Pressable
-              accessibilityLabel={translate("dashboard.historyJumpToLatest")}
-              accessibilityRole="button"
-              onPress={() => setJumpToLatestRequest((current) => current + 1)}
-              style={({ pressed }) => [
-                styles.historyJumpToLatest,
-                pressed && styles.pressed,
-              ]}>
-              <Text selectable style={styles.historyJumpToLatestText}>
-                {translate("dashboard.historyJumpToLatest")}
-              </Text>
-            </Pressable>
-          ) : null}
-        </View>
-      ) : null}
-
-      {syncStatus !== "idle" ? (
-        <Text
-          accessibilityLiveRegion="polite"
-          selectable
-          style={
-            syncStatus === "warning"
-              ? styles.historyError
-              : styles.historyScrollHint
-          }>
-          {translate(
-            syncStatus === "warning"
-              ? syncWarning === "protocol"
-                ? "dashboard.historySyncProtocolWarning"
-                : syncWarning === "network"
-                  ? "dashboard.historySyncNetworkWarning"
-                  : syncWarning === "device"
-                    ? "dashboard.historySyncDeviceWarning"
-                    : "dashboard.historySyncStorageWarning"
-              : "dashboard.historySyncRestoring",
-          )}
-        </Text>
-      ) : null}
-
-      {error !== null ? (
-        <Text accessibilityLiveRegion="polite" selectable style={styles.historyError}>
-          {translate("dashboard.historyStorageError")}
-        </Text>
-      ) : null}
-
-      <View style={[styles.curvePlot, compact && styles.curvePlotCompact]}>
-        {history.length > 0 ? (
-          <>
-            <TemperatureGraphGrid scale={graphScale} />
-            <PaginatedLineGraph
-              jumpToLatestRequest={jumpToLatestRequest}
-              onPageChange={setLivePage}
-              samples={history}
-            />
-          </>
-        ) : (
-          <View style={styles.historyEmpty}>
-            {loading ? <ActivityIndicator size="small" /> : null}
-            <Text selectable style={styles.historyEmptyText}>
-              {translate(
-                loading
-                  ? "dashboard.historyLoading"
-                  : "dashboard.historyEmpty",
-              )}
-            </Text>
-          </View>
-        )}
-      </View>
-    </View>
-  );
-}
-
-function TemperatureGraphGrid({ scale }: { scale: TemperatureGraphScale }) {
-  return (
-    <View pointerEvents="none" style={styles.curveGrid}>
-      {scale.ticks.map((tick) => (
-        <View
-          key={tick}
-          style={[
-            styles.curveGridTick,
-            {
-              top: `${temperatureGraphValueTopPercent(
-                tick,
-                scale.minimumValue,
-                scale.maximumValue,
-              )}%`,
-            },
-          ]}>
-          <Text selectable style={styles.curveAxisText}>
-            {formatGraphTick(tick)}°
-          </Text>
-          <View style={styles.curveGridLine} />
-        </View>
-      ))}
-    </View>
-  );
-}
-
-function formatGraphTick(value: number): string {
-  return Number.isInteger(value) ? value.toFixed(0) : value.toFixed(1);
-}
-
-function formatHistoryPageTime(timestampMs: number): string {
-  return new Intl.DateTimeFormat(currentLocale(), {
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  }).format(new Date(timestampMs));
-}
-
-function LegendItem({ color, label }: { color: string; label: string }) {
-  return (
-    <View style={styles.legendItem}>
-      <View style={[styles.legendSwatch, { backgroundColor: color }]} />
-      <Text selectable style={styles.legendText}>{label}</Text>
-    </View>
-  );
-}
-
-interface ChartPoint {
-  x: number;
-  y: number;
-}
-
-function PaginatedLineGraph({
-  jumpToLatestRequest,
-  onPageChange,
-  samples,
-}: {
-  jumpToLatestRequest: number;
-  onPageChange: (page: {
-    isLatest: boolean;
-    window: TemperatureHistoryWindow;
-  }) => void;
-  samples: TemperatureHistorySample[];
-}) {
-  const list = useRef<FlatList<TemperatureHistoryWindow>>(null);
-  const followsLatest = useRef(true);
-  const hasPositionedInitialWindow = useRef(false);
-  const handledJumpToLatestRequest = useRef(0);
-  const userDragging = useRef(false);
-  const viewedPageDistanceFromLatest = useRef(0);
-  const viewedWindowStartMs = useRef<number | null>(null);
-  const [viewportWidth, setViewportWidth] = useState(0);
-  const windows = useMemo(() => temperatureHistoryWindows(samples), [samples]);
-  const latestWindowStartMs = windows.at(-1)?.startMs ?? null;
-  const reportPage = useCallback(
-    (index: number) => {
-      const window = windows[index];
-      if (window === undefined) {
-        return;
-      }
-      onPageChange({
-        isLatest: index === windows.length - 1,
-        window,
-      });
-    },
-    [onPageChange, windows],
-  );
-  const updateViewedOffset = (
-    event: NativeSyntheticEvent<NativeScrollEvent>,
-  ) => {
-    if (!hasPositionedInitialWindow.current) {
-      return;
-    }
-    const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
-    followsLatest.current = isLatestHistoryPageOffset(
-      contentOffset.x,
-      contentSize.width,
-      layoutMeasurement.width,
-    );
-    const viewedIndex = Math.max(
-      0,
-      Math.min(
-        windows.length - 1,
-        Math.round(contentOffset.x / layoutMeasurement.width),
-      ),
-    );
-    viewedPageDistanceFromLatest.current = windows.length - 1 - viewedIndex;
-    viewedWindowStartMs.current = windows[viewedIndex]?.startMs ?? null;
-    reportPage(viewedIndex);
-  };
-
-  useEffect(() => {
-    if (
-      jumpToLatestRequest === 0 ||
-      jumpToLatestRequest === handledJumpToLatestRequest.current ||
-      viewportWidth <= 0
-    ) {
-      return;
-    }
-    handledJumpToLatestRequest.current = jumpToLatestRequest;
-    followsLatest.current = true;
-    viewedPageDistanceFromLatest.current = 0;
-    viewedWindowStartMs.current = latestWindowStartMs;
-    list.current?.scrollToEnd({ animated: false });
-    reportPage(windows.length - 1);
-  }, [
-    jumpToLatestRequest,
-    latestWindowStartMs,
-    reportPage,
-    viewportWidth,
-    windows.length,
-  ]);
-
-  return (
-    <View
-      accessibilityHint={translate("dashboard.historyScrollHint")}
-      onLayout={(event) => {
-        setViewportWidth(event.nativeEvent.layout.width);
-      }}
-      style={styles.curveCanvas}>
-      {viewportWidth > 0 ? (
-        <FlatList
-          data={windows}
-          decelerationRate="fast"
-          getItemLayout={(_, index) => ({
-            index,
-            length: viewportWidth,
-            offset: viewportWidth * index,
-          })}
-          horizontal
-          initialNumToRender={2}
-          keyExtractor={(window) => `history-window-${window.startMs}`}
-          maxToRenderPerBatch={3}
-          onContentSizeChange={() => {
-            if (
-              !hasPositionedInitialWindow.current ||
-              followsLatest.current
-            ) {
-              list.current?.scrollToEnd({ animated: false });
-              hasPositionedInitialWindow.current = true;
-              viewedPageDistanceFromLatest.current = 0;
-              viewedWindowStartMs.current = windows.at(-1)?.startMs ?? null;
-              reportPage(windows.length - 1);
-              return;
-            }
-            const preservedIndex = windows.findIndex(
-              (window) => window.startMs === viewedWindowStartMs.current,
-            );
-            const viewedIndex =
-              preservedIndex >= 0
-                ? preservedIndex
-                : Math.max(
-                    0,
-                    windows.length -
-                      1 -
-                      viewedPageDistanceFromLatest.current,
-                  );
-            list.current?.scrollToOffset({
-              animated: false,
-              offset: viewedIndex * viewportWidth,
-            });
-            reportPage(viewedIndex);
-          }}
-          onMomentumScrollEnd={updateViewedOffset}
-          onScroll={(event) => {
-            if (userDragging.current) {
-              updateViewedOffset(event);
-            }
-          }}
-          onScrollBeginDrag={() => {
-            userDragging.current = true;
-          }}
-          onScrollEndDrag={(event) => {
-            updateViewedOffset(event);
-            userDragging.current = false;
-          }}
-          pagingEnabled
-          ref={list}
-          renderItem={({ item }) => {
-            const windowSamples = temperatureHistoryWindowSamples(samples, item);
-            const scale = temperatureHistoryGraphScale(windowSamples);
-            return (
-              <View style={{ height: "100%", width: viewportWidth }}>
-                <LineGraph
-                  endMs={item.endMs}
-                  maximumValue={scale.maximumValue}
-                  minimumValue={scale.minimumValue}
-                  paginated
-                  samples={windowSamples}
-                  startMs={item.startMs}
-                />
-              </View>
-            );
-          }}
-          scrollEnabled={windows.length > 1}
-          scrollEventThrottle={32}
-          showsHorizontalScrollIndicator={false}
-          style={styles.historyPager}
-          windowSize={3}
-        />
-      ) : null}
-    </View>
-  );
-}
-
-function LineGraph({
-  endMs,
-  maximumValue,
-  minimumValue,
-  paginated = false,
-  samples,
-  startMs,
-}: {
-  endMs?: number;
-  maximumValue: number;
-  minimumValue: number;
-  paginated?: boolean;
-  samples: TemperatureHistorySample[];
-  startMs?: number;
-}) {
-  const [plotSize, setPlotSize] = useState({ height: 0, width: 0 });
-  const linePlotSize = {
-    height: plotSize.height,
-    width: plotSize.width,
-  };
-  const readyToDraw = linePlotSize.width > 0 && linePlotSize.height > 0;
-  const graphStartMs = startMs ?? samples[0]?.recordedAtMs ?? 0;
-  const graphEndMs = endMs ?? samples.at(-1)?.recordedAtMs ?? graphStartMs;
-  const points = readyToDraw
-    ? samples.map((sample) =>
-        samplePoint(
-          sample.boilerTemperatureC,
-          sample.recordedAtMs,
-          graphStartMs,
-          graphEndMs,
-          minimumValue,
-          maximumValue,
-          linePlotSize,
-        ),
-      )
-    : [];
-  const targetPoints = readyToDraw
-    ? samples.map((sample) =>
-        samplePoint(
-          sample.activeTargetC,
-          sample.recordedAtMs,
-          graphStartMs,
-          graphEndMs,
-          minimumValue,
-          maximumValue,
-          linePlotSize,
-        ),
-      )
-    : [];
-  const heaterBands = readyToDraw
-    ? chartActivityBands(samples, points, (sample) => sample.heaterActive)
-    : [];
-  const pumpBands = readyToDraw
-    ? chartActivityBands(samples, points, (sample) => sample.pumpActive === true)
-    : [];
-  return (
-    <View
-      accessibilityLabel={translate("dashboard.curveAccessibility", { count: samples.length })}
-      onLayout={(event) => {
-        const { height, width } = event.nativeEvent.layout;
-        setPlotSize({ height, width });
-      }}
-      style={paginated ? styles.curvePageCanvas : styles.curveCanvas}>
-      {heaterBands.map((band) => (
-        <View
-          key={`heater-${band.key}`}
-          style={[
-            styles.heaterPulseBand,
-            { left: band.left, width: band.width },
-          ]}
-        />
-      ))}
-      {pumpBands.map((band) => (
-        <View
-          key={`pump-${band.key}`}
-          style={[
-            styles.pumpActivityBand,
-            { left: band.left, width: band.width },
-          ]}
-        />
-      ))}
-      {targetPoints.slice(1).map((point, index) =>
-        isTemperatureHistoryGap(samples[index], samples[index + 1]) ? null : (
-          <LineSegment
-            color="#D39A42"
-            from={targetPoints[index]}
-            key={`target-${samples[index + 1].recordedAtMs}`}
-            thickness={2}
-            to={point}
-          />
-        ),
-      )}
-      {points.slice(1).map((point, index) =>
-        isTemperatureHistoryGap(samples[index], samples[index + 1]) ? null : (
-          <LineSegment
-            color="#8B3A2B"
-            from={points[index]}
-            key={`boiler-${samples[index + 1].recordedAtMs}`}
-            thickness={4}
-            to={point}
-          />
-        ),
-      )}
-    </View>
-  );
-}
-
-function chartActivityBands(
-  samples: TemperatureHistorySample[],
-  points: ChartPoint[],
-  isActive: (sample: TemperatureHistorySample) => boolean,
-): { key: number; left: number; width: number }[] {
-  const bands: { key: number; left: number; width: number }[] = [];
-  let startIndex: number | null = null;
-
-  for (let index = 0; index < samples.length; index += 1) {
-    if (isActive(samples[index]) && startIndex === null) {
-      startIndex = index;
-    }
-    if (startIndex === null) {
-      continue;
-    }
-
-    const next = samples[index + 1];
-    const continuous =
-      next !== undefined &&
-      isActive(next) &&
-      !isTemperatureHistoryGap(samples[index], next);
-    if (continuous) {
-      continue;
-    }
-
-    const canExtendToNextSample =
-      next !== undefined && !isTemperatureHistoryGap(samples[index], next);
-    const right = canExtendToNextSample
-      ? points[index + 1].x
-      : points[index].x + 2;
-    bands.push({
-      key: samples[startIndex].recordedAtMs,
-      left: points[startIndex].x,
-      width: Math.max(2, right - points[startIndex].x),
-    });
-    startIndex = null;
-  }
-
-  return bands;
-}
-
-function LineSegment({
-  color,
-  from,
-  thickness,
-  to,
-}: {
-  color: string;
-  from: ChartPoint;
-  thickness: number;
-  to: ChartPoint;
-}) {
-  const deltaX = to.x - from.x;
-  const deltaY = to.y - from.y;
-  const length = Math.sqrt(deltaX * deltaX + deltaY * deltaY);
-  const angle = Math.atan2(deltaY, deltaX);
-
-  return (
-    <View
-      style={[
-        styles.lineSegment,
-        {
-          backgroundColor: color,
-          height: thickness,
-          left: (from.x + to.x) / 2 - length / 2,
-          top: (from.y + to.y) / 2 - thickness / 2,
-          transform: [{ rotateZ: `${angle}rad` }],
-          width: length,
-        },
-      ]}
-    />
-  );
-}
-
-function samplePoint(
-  value: number,
-  recordedAtMs: number,
-  startMs: number,
-  endMs: number,
-  minimumValue: number,
-  maximumValue: number,
-  plotSize: { height: number; width: number },
-): ChartPoint {
-  const x =
-    endMs <= startMs
-      ? plotSize.width / 2
-      : ((recordedAtMs - startMs) / (endMs - startMs)) * plotSize.width;
-  const topPercent = temperatureGraphValueTopPercent(
-    value,
-    minimumValue,
-    maximumValue,
-  );
-  return { x, y: (topPercent / 100) * plotSize.height };
 }
 
 function MachineStatus({
@@ -2847,36 +2315,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
   },
   faultRecoveryButtonText: { color: "#FFFFFF", fontSize: 15, fontWeight: "800" },
-  curveCard: {
-    backgroundColor: "#FFFCF7",
-    borderColor: "#D7C9B8",
-    borderCurve: "continuous",
-    borderRadius: 20,
-    borderWidth: 1,
-    gap: 14,
-    padding: 18,
-  },
-  curveCardCompact: { flex: 1, gap: 8, minWidth: 0, padding: 10 },
-  curveHeading: {
-    alignItems: "flex-start",
-    flexDirection: "row",
-    gap: 12,
-    justifyContent: "space-between",
-  },
-  curveTitleGroup: { flex: 1, gap: 5 },
-  curveTitle: { color: "#2C231E", fontSize: 20, fontWeight: "800" },
-  curveWindowPill: {
-    backgroundColor: "#EFE6DA",
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-  },
-  curveWindowText: {
-    color: "#5D5048",
-    fontSize: 12,
-    fontVariant: ["tabular-nums"],
-    fontWeight: "800",
-  },
   exportButton: {
     alignItems: "center",
     alignSelf: "flex-start",
@@ -2894,126 +2332,6 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: "700",
     lineHeight: 18,
-  },
-  historyScrollHint: {
-    color: "#6B5B51",
-    fontSize: 12,
-    fontWeight: "700",
-  },
-  historyPageStatus: {
-    alignItems: "center",
-    flexDirection: "row",
-    gap: 10,
-    justifyContent: "space-between",
-  },
-  historyPageStatusText: {
-    color: "#5D5048",
-    flex: 1,
-    fontSize: 12,
-    fontVariant: ["tabular-nums"],
-    fontWeight: "800",
-  },
-  historyJumpToLatest: {
-    backgroundColor: "#EFE6DA",
-    borderColor: "#B98A76",
-    borderCurve: "continuous",
-    borderRadius: 999,
-    borderWidth: 1,
-    minHeight: 32,
-    paddingHorizontal: 10,
-    justifyContent: "center",
-  },
-  historyJumpToLatestText: {
-    color: "#7A3025",
-    fontSize: 12,
-    fontWeight: "800",
-  },
-  historyPager: { flex: 1 },
-  curveLegend: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
-  legendItem: { alignItems: "center", flexDirection: "row", gap: 6 },
-  legendSwatch: { borderRadius: 999, height: 8, width: 8 },
-  legendText: { color: "#5D5048", fontSize: 12, fontWeight: "700" },
-  curvePlot: {
-    backgroundColor: "#F7F1E9",
-    borderColor: "#E0D4C7",
-    borderCurve: "continuous",
-    borderRadius: 14,
-    borderWidth: 1,
-    height: 180,
-    overflow: "hidden",
-    position: "relative",
-  },
-  curvePlotCompact: { height: 90 },
-  curveGrid: {
-    bottom: 10,
-    left: 8,
-    position: "absolute",
-    right: 10,
-    top: 10,
-  },
-  curveGridTick: {
-    alignItems: "center",
-    flexDirection: "row",
-    gap: 6,
-    height: 14,
-    left: 0,
-    position: "absolute",
-    right: 0,
-    transform: [{ translateY: -7 }],
-  },
-  curveAxisText: {
-    color: "#7B6D63",
-    fontSize: 11,
-    fontVariant: ["tabular-nums"],
-    fontWeight: "700",
-    width: 28,
-  },
-  curveGridLine: { backgroundColor: "#E5D8CA", flex: 1, height: 1 },
-  curveCanvas: {
-    bottom: 10,
-    left: 42,
-    position: "absolute",
-    right: 10,
-    top: 10,
-  },
-  curvePageCanvas: {
-    flex: 1,
-    overflow: "hidden",
-    position: "relative",
-  },
-  historyEmpty: {
-    alignItems: "center",
-    bottom: 0,
-    gap: 8,
-    justifyContent: "center",
-    left: 40,
-    position: "absolute",
-    right: 0,
-    top: 0,
-  },
-  historyEmptyText: {
-    color: "#6B5B51",
-    fontSize: 14,
-    fontWeight: "700",
-    textAlign: "center",
-  },
-  lineSegment: {
-    borderRadius: 999,
-    position: "absolute",
-  },
-  heaterPulseBand: {
-    backgroundColor: "#F29A52",
-    borderRadius: 2,
-    bottom: 14,
-    height: 8,
-    position: "absolute",
-  },
-  pumpActivityBand: {
-    backgroundColor: "#3D7B80",
-    borderRadius: 2,
-    bottom: 0,
-    height: 10,
-    position: "absolute",
   },
   metricGrid: { flexDirection: "row", flexWrap: "wrap", gap: 12 },
   dashboardPrimary: { gap: 12 },
@@ -3203,6 +2521,18 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     gap: 2,
     paddingVertical: 9,
+  },
+  shotDetailHeader: {
+    alignItems: "flex-start",
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 12,
+    justifyContent: "space-between",
+  },
+  traceAvailability: {
+    color: "#537D7B",
+    fontSize: 12,
+    fontWeight: "700",
   },
   displayPreferenceRow: {
     alignItems: "center",

@@ -10,6 +10,7 @@
 #include "philcoino/api.hpp"
 #include "philcoino/config.hpp"
 #include "philcoino/history.hpp"
+#include "philcoino/weighted_trace.hpp"
 
 namespace {
 
@@ -159,7 +160,8 @@ struct ApiHarness {
         scale(scale_backend.saved, true),
         api({"philcoino-0102AF", "PhilcoINO", "ESP32-C3 Super Mini", "0.2.0"},
             "test-secret", controller, storage, extraction, cooldown,
-            profile_storage, scale_storage, synchronization, &history, &scale) {
+            profile_storage, scale_storage, synchronization, &history, &scale,
+            &weighted_trace) {
     assert(ssr.initialize());
     assert(pump.initialize());
     scale_backend.lock_held = &synchronization.held;
@@ -197,6 +199,7 @@ struct ApiHarness {
   ScaleController scale;
   FakeApiSynchronization synchronization;
   HistoryBuffer history{"00112233445566778899aabbccddeeff"};
+  WeightedTraceBuffer weighted_trace{"00112233445566778899aabbccddeeff"};
   FirmwareApi api;
 };
 
@@ -466,6 +469,7 @@ void test_api_v2_profiles_and_extraction_contract() {
        std::vector<std::pair<HttpMethod, const char*>>{
            {HttpMethod::kGet, "/api/v2/state"},
            {HttpMethod::kGet, "/api/v2/history"},
+           {HttpMethod::kGet, "/api/v2/scale/trace"},
            {HttpMethod::kGet, "/api/v2/profiles"},
            {HttpMethod::kPut, "/api/v2/profiles"},
            {HttpMethod::kPost, "/api/v2/extractions/start"},
@@ -976,6 +980,25 @@ void capture_contract_payloads(const std::filesystem::path& directory) {
   write_capture(directory, "scale-v2.json",
                 harness.request(HttpMethod::kGet, "/api/v2/scale",
                                 authorization).body);
+  ApiHarness trace_harness;
+  const auto trace_start = trace_harness.request(
+      HttpMethod::kPost, "/api/v2/extractions/start", authorization,
+      "{\"idempotencyKey\":\"trace-capture-0001\",\"selection\":{\"kind\":\"profile\",\"profileId\":\"profile-1\"},\"weightControl\":{\"targetWeightDecigrams\":350,\"compensationDecigrams\":20}}",
+      1100U);
+  assert(trace_start.status == 200);
+  for (std::uint32_t now_ms = 1100U; now_ms <= 1600U; now_ms += 250U) {
+    const auto scale = trace_harness.scale.snapshot(now_ms);
+    trace_harness.weighted_trace.record(
+        now_ms, trace_harness.controller.snapshot(now_ms),
+        trace_harness.extraction.snapshot(now_ms), scale,
+        trace_harness.extraction.weight_snapshot(scale, now_ms));
+  }
+  write_capture(
+      directory, "scale-trace-v2.json",
+      trace_harness
+          .request(HttpMethod::kGet, "/api/v2/scale/trace", authorization, "",
+                   1600U)
+          .body);
   ApiHarness extraction_harness;
   write_capture(directory, "extraction-running-v2.json",
                 extraction_harness.request(
@@ -1403,6 +1426,52 @@ void test_history_capture_deadline_does_not_accumulate_jitter() {
   assert(history.record(3000U, snapshot, PumpCommand::kOff));
 }
 
+void test_weighted_trace_is_bounded_paginated_and_observational() {
+  ApiHarness harness;
+  const auto scale = harness.scale.snapshot(1100U);
+  const ExtractionSelection selection{ExtractionSelectionKind::kProfile, 0U};
+  const WeightControl control{350, 60};
+  assert(harness.extraction.start("weighted-trace-0001", selection, 1100U,
+                                  &control, &scale) ==
+         StartExtractionResult::kStarted);
+
+  for (std::uint32_t index = 0; index < 20U; ++index) {
+    const auto now_ms = 1100U + index * kWeightedTraceIntervalMs;
+    const auto extraction = harness.extraction.snapshot(now_ms);
+    const auto current_scale = harness.scale.snapshot(now_ms);
+    const auto weight =
+        harness.extraction.weight_snapshot(current_scale, now_ms);
+    assert(harness.weighted_trace.record(
+        now_ms, harness.controller.snapshot(now_ms), extraction,
+        current_scale, weight));
+  }
+
+  auto response = harness.request(HttpMethod::kGet, "/api/v2/scale/trace",
+                                  "Bearer test-secret", "", 6000U);
+  assert(response.status == 200);
+  assert(response.body.find("\"trace\":{\"deviceId\":\"philcoino-0102AF\"") !=
+         std::string::npos);
+  assert(response.body.find("\"hasMore\":true") != std::string::npos);
+  assert(response.body.find("\"sequence\":16") != std::string::npos);
+  assert(response.body.find("\"sequence\":17") == std::string::npos);
+
+  response = harness.request(
+      HttpMethod::kGet,
+      "/api/v2/scale/trace?extractionId=run-1&bootId=00112233445566778899aabbccddeeff&afterSequence=16",
+      "Bearer test-secret", "", 6000U);
+  assert(response.status == 200);
+  assert(response.body.find("\"continuity\":\"continuous\"") !=
+         std::string::npos);
+  assert(response.body.find("\"sequence\":17") != std::string::npos);
+  assert(response.body.find("\"hasMore\":false") != std::string::npos);
+
+  response = harness.request(
+      HttpMethod::kGet,
+      "/api/v2/scale/trace?extractionId=run-1&afterSequence=16",
+      "Bearer test-secret", "", 6000U);
+  expect_error(response, 400, "malformed_request");
+}
+
 void test_usable_prediction_history_page_stays_within_transport_budget() {
   ApiHarness harness;
   for (std::uint32_t now_ms = 1500U; now_ms <= 42000U; now_ms += 500U) {
@@ -1439,6 +1508,7 @@ int main(int argc, char** argv) {
   test_bounded_history_contract();
   test_scale_api_and_weighted_start_contract();
   test_history_capture_deadline_does_not_accumulate_jitter();
+  test_weighted_trace_is_bounded_paginated_and_observational();
   test_usable_prediction_history_page_stays_within_transport_budget();
   if (argc == 2) {
     capture_contract_payloads(argv[1]);

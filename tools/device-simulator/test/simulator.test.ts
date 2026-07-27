@@ -60,6 +60,8 @@ describe("bearer authentication", () => {
     ["POST", "/api/v1/faults/over-temperature/dismiss"],
     ["GET", "/api/v2/state"],
     ["GET", "/api/v2/history"],
+    ["GET", "/api/v2/scale"],
+    ["GET", "/api/v2/scale/trace"],
     ["GET", "/api/v2/profiles"],
     ["PUT", "/api/v2/profiles"],
     ["POST", "/api/v2/extractions/start"],

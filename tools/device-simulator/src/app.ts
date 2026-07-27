@@ -15,6 +15,7 @@ import {
   StartCooldownRequestSchema,
   StartExtractionRequestSchema,
   TemperatureSettingsRequestSchema,
+  WeightedExtractionTraceCursorSchema,
   type ErrorCode,
   type ErrorResponse,
   type ApiV2ErrorCode,
@@ -239,6 +240,26 @@ export function createSimulator(
   });
 
   app.get("/api/v2/scale", (c) => c.json(machine.getScaleState()));
+  app.get("/api/v2/scale/trace", (c) => {
+    const cursor = weightedTraceCursor(c.req.url);
+    if (!cursor.ok) {
+      return contractV2Error(
+        c,
+        400,
+        "malformed_request",
+        "The weighted trace cursor is malformed.",
+      );
+    }
+    const response = machine.getScaleTrace(cursor.value);
+    return response === null
+      ? contractV2Error(
+          c,
+          400,
+          "malformed_request",
+          "The weighted trace cursor is outside the retained sequence.",
+        )
+      : c.json(response);
+  });
 
   app.post("/api/v2/scale/calibration/start", (c) => {
     const result = machine.startScaleCalibration();
@@ -639,6 +660,49 @@ function historyCursor(
     return { ok: false };
   }
   const parsed = HistoryCursorSchema.safeParse({
+    bootId,
+    afterSequence: Number(sequenceText),
+  });
+  return parsed.success ? { ok: true, value: parsed.data } : { ok: false };
+}
+
+function weightedTraceCursor(
+  requestUrl: string,
+):
+  | {
+      ok: true;
+      value:
+        | undefined
+        | { extractionId: string; bootId: string; afterSequence: number };
+    }
+  | { ok: false } {
+  const parameters = new URL(requestUrl).searchParams;
+  const allowed = new Set(["extractionId", "bootId", "afterSequence"]);
+  for (const key of parameters.keys()) {
+    if (!allowed.has(key) || parameters.getAll(key).length !== 1) {
+      return { ok: false };
+    }
+  }
+  const extractionId = parameters.get("extractionId");
+  const bootId = parameters.get("bootId");
+  const sequenceText = parameters.get("afterSequence");
+  if (
+    extractionId === null &&
+    bootId === null &&
+    sequenceText === null
+  ) {
+    return { ok: true, value: undefined };
+  }
+  if (
+    extractionId === null ||
+    bootId === null ||
+    sequenceText === null ||
+    !/^(0|[1-9][0-9]*)$/.test(sequenceText)
+  ) {
+    return { ok: false };
+  }
+  const parsed = WeightedExtractionTraceCursorSchema.safeParse({
+    extractionId,
     bootId,
     afterSequence: Number(sequenceText),
   });

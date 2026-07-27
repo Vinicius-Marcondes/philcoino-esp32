@@ -262,6 +262,43 @@
         }
       }
     },
+    "/api/v2/scale/trace": {
+      "get": {
+        "operationId": "getScaleTrace",
+        "summary": "Read current scale state and a bounded weighted-extraction trace page",
+        "description": "Observation-only telemetry. Supply no cursor parameters for the retained trace's initial page or supply extractionId, bootId, and afterSequence together for continuation.",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          {
+            "name": "extractionId",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$" }
+          },
+          {
+            "name": "bootId",
+            "in": "query",
+            "required": false,
+            "schema": { "$ref": "#/components/schemas/HistoryBootId" }
+          },
+          {
+            "name": "afterSequence",
+            "in": "query",
+            "required": false,
+            "schema": { "$ref": "#/components/schemas/HistorySequence" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Current strict scale state plus the retained trace page, or null when no weighted trace exists.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ScaleTraceResponse" } } }
+          },
+          "400": { "$ref": "#/components/responses/V2BadRequest" },
+          "401": { "$ref": "#/components/responses/V2Unauthorized" },
+          "500": { "$ref": "#/components/responses/V2InternalError" }
+        }
+      }
+    },
     "/api/v2/scale/calibration/start": {
       "post": {
         "operationId": "startScaleCalibration",
@@ -1845,6 +1882,113 @@
             "activeExtraction": null,
             "terminalExtraction": null,
             "warning": null
+          }
+        ]
+      },
+      "WeightedExtractionTraceCursor": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["extractionId", "bootId", "afterSequence"],
+        "properties": {
+          "extractionId": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$" },
+          "bootId": { "$ref": "#/components/schemas/HistoryBootId" },
+          "afterSequence": { "$ref": "#/components/schemas/HistorySequence" }
+        }
+      },
+      "WeightedExtractionTraceSample": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["sequence", "uptimeMs", "elapsedMs", "phase", "boilerTemperatureC", "activeTargetC", "netWeightDecigrams", "scaleAvailability", "pumpCommand"],
+        "properties": {
+          "sequence": { "$ref": "#/components/schemas/HistorySequence" },
+          "uptimeMs": { "type": "integer", "minimum": 0 },
+          "elapsedMs": { "type": "integer", "minimum": 0, "maximum": 70000 },
+          "phase": { "type": "string", "enum": ["pre-infusion", "soak", "main-extraction", "settling"] },
+          "boilerTemperatureC": { "type": "number" },
+          "activeTargetC": { "type": "integer", "minimum": 85, "maximum": 95 },
+          "netWeightDecigrams": { "oneOf": [{ "type": "integer", "minimum": -500, "maximum": 10500 }, { "type": "null" }] },
+          "scaleAvailability": { "type": "string", "enum": ["unavailable", "unstable", "ready"] },
+          "pumpCommand": { "$ref": "#/components/schemas/PumpCommand" }
+        }
+      },
+      "WeightedExtractionTracePage": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["deviceId", "extractionId", "bootId", "capturedAtUptimeMs", "status", "oldestSequence", "latestSequence", "nextCursor", "hasMore", "continuity", "samples"],
+        "properties": {
+          "deviceId": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$" },
+          "extractionId": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$" },
+          "bootId": { "$ref": "#/components/schemas/HistoryBootId" },
+          "capturedAtUptimeMs": { "type": "integer", "minimum": 0 },
+          "status": { "type": "string", "enum": ["running", "settling", "terminal"] },
+          "oldestSequence": { "$ref": "#/components/schemas/HistorySequence" },
+          "latestSequence": { "$ref": "#/components/schemas/HistorySequence" },
+          "nextCursor": { "$ref": "#/components/schemas/WeightedExtractionTraceCursor" },
+          "hasMore": { "type": "boolean" },
+          "continuity": { "type": "string", "enum": ["initial", "continuous", "truncated", "reset"] },
+          "samples": {
+            "type": "array",
+            "maxItems": 16,
+            "items": { "$ref": "#/components/schemas/WeightedExtractionTraceSample" }
+          }
+        }
+      },
+      "ScaleTraceResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["scale", "trace"],
+        "properties": {
+          "scale": { "$ref": "#/components/schemas/ScaleState" },
+          "trace": { "oneOf": [{ "$ref": "#/components/schemas/WeightedExtractionTracePage" }, { "type": "null" }] }
+        },
+        "examples": [
+          {
+            "scale": {
+              "availability": "ready",
+              "calibrationStatus": "calibrated",
+              "stable": false,
+              "grossWeightDecigrams": 910,
+              "netWeightDecigrams": 110,
+              "activeExtraction": {
+                "extractionId": "sim-run-1",
+                "mode": "weight",
+                "targetWeightDecigrams": 350,
+                "compensationDecigrams": 20,
+                "cutoffWeightDecigrams": 330,
+                "netWeightDecigrams": 110
+              },
+              "terminalExtraction": null,
+              "warning": null
+            },
+            "trace": {
+              "deviceId": "philcoino-simulator",
+              "extractionId": "sim-run-1",
+              "bootId": "00000000000000000000000000000001",
+              "capturedAtUptimeMs": 1250,
+              "status": "running",
+              "oldestSequence": 1,
+              "latestSequence": 5,
+              "nextCursor": {
+                "extractionId": "sim-run-1",
+                "bootId": "00000000000000000000000000000001",
+                "afterSequence": 5
+              },
+              "hasMore": false,
+              "continuity": "initial",
+              "samples": [
+                {
+                  "sequence": 5,
+                  "uptimeMs": 1250,
+                  "elapsedMs": 1250,
+                  "phase": "main-extraction",
+                  "boilerTemperatureC": 92.8,
+                  "activeTargetC": 93,
+                  "netWeightDecigrams": 110,
+                  "scaleAvailability": "ready",
+                  "pumpCommand": "running"
+                }
+              ]
+            }
           }
         ]
       },

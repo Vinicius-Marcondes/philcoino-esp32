@@ -10,6 +10,7 @@
 namespace philcoino::networking {
 
 class HistoryBuffer;
+class WeightedTraceBuffer;
 struct ApiRouteDescriptor;
 
 inline constexpr char kApiVersion[] = "1";
@@ -63,7 +64,8 @@ class FirmwareApi {
               peripherals::ScaleCalibrationStorage& scale_calibration_storage,
               ApiSynchronization& synchronization,
               HistoryBuffer* history = nullptr,
-              control::ScaleController* scale_controller = nullptr);
+              control::ScaleController* scale_controller = nullptr,
+              WeightedTraceBuffer* weighted_trace = nullptr);
 
   HttpResponse handle(HttpMethod method, const std::string& path,
                       const char* authorization, const std::string& body,
@@ -91,6 +93,8 @@ class FirmwareApi {
                        std::uint64_t uptime_ms) const;
   HttpResponse profiles() const;
   HttpResponse scale(std::uint64_t uptime_ms) const;
+  HttpResponse scale_trace(const std::string& query,
+                           std::uint64_t uptime_ms) const;
   HttpResponse start_scale_calibration(std::uint64_t uptime_ms);
   HttpResponse complete_scale_calibration(const std::string& body,
                                           std::uint64_t uptime_ms);
@@ -116,6 +120,7 @@ class FirmwareApi {
   ApiSynchronization& synchronization_;
   HistoryBuffer* history_;
   control::ScaleController* scale_controller_;
+  WeightedTraceBuffer* weighted_trace_;
 };
 
 }  // namespace philcoino::networking
