@@ -156,7 +156,7 @@ void test_workflow_codecs() {
 }
 
 void test_authoritative_route_matrix() {
-  assert(kApiRoutes.size() == 20U);
+  assert(kApiRoutes.size() == 21U);
   std::size_t protected_count = 0;
   for (std::size_t index = 0; index < kApiRoutes.size(); ++index) {
     const auto& route = kApiRoutes[index];
@@ -167,11 +167,12 @@ void test_authoritative_route_matrix() {
              std::string(route.path) != kApiRoutes[other].path);
     }
   }
-  assert(protected_count == 18U);
+  assert(protected_count == 19U);
   assert(!request_requires_auth(HttpMethod::kGet, "/healthz"));
   assert(request_requires_auth(HttpMethod::kPost,
                                "/api/v2/cooldowns/stop"));
   assert(request_requires_auth(HttpMethod::kGet, "/api/v2/scale"));
+  assert(request_requires_auth(HttpMethod::kGet, "/api/v2/scale/trace"));
   assert(find_api_route(HttpMethod::kGet,
                         "/api/v2/state?include=prediction") ==
          find_api_route(HttpMethod::kGet, "/api/v2/state"));

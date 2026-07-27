@@ -2,6 +2,7 @@ import { File, Paths } from "expo-file-system";
 import * as Sharing from "expo-sharing";
 
 import { weightedShotHistoryToCsv } from "./shot-history";
+import { weightedShotTraceToCsv } from "./weighted-shot-trace";
 import type { ShotHistoryExporter } from "./shot-history-export";
 
 export const shotHistoryExporter: ShotHistoryExporter = {
@@ -22,6 +23,26 @@ export const shotHistoryExporter: ShotHistoryExporter = {
       if (file.exists) {
         file.delete();
       }
+    }
+  },
+  async shareTrace(trace) {
+    if (!(await Sharing.isAvailableAsync())) {
+      throw new Error("Sharing is unavailable.");
+    }
+    const file = new File(
+      Paths.cache,
+      `philcoino-${trace.extractionId}-trace.csv`,
+    );
+    try {
+      file.create({ overwrite: true });
+      file.write(weightedShotTraceToCsv(trace));
+      await Sharing.shareAsync(file.uri, {
+        dialogTitle: "Export Philcoino shot trace",
+        mimeType: "text/csv",
+        UTI: "public.comma-separated-values-text",
+      });
+    } finally {
+      if (file.exists) file.delete();
     }
   },
 };

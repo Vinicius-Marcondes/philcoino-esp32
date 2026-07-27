@@ -60,6 +60,7 @@ import {
   PumpingCooldownStateSchema,
   RunningExtractionStateSchema,
   ScaleStateSchema,
+  ScaleTraceResponseSchema,
   TerminalExtractionStateSchema,
   STEAM_TARGET_MAX_C,
   STEAM_TARGET_MIN_C,
@@ -116,6 +117,7 @@ const documentedSchemas: Record<string, ZodType> = {
   MachineStateWithPredictionV2: MachineStateWithPredictionV2Schema,
   StartExtractionRequest: StartExtractionRequestSchema,
   ScaleState: ScaleStateSchema,
+  ScaleTraceResponse: ScaleTraceResponseSchema,
   CompleteScaleCalibrationRequest: CompleteScaleCalibrationRequestSchema,
   ApiV2ErrorResponse: ApiV2ErrorResponseSchema,
   ExtractionActiveConflictResponse: ExtractionActiveConflictResponseSchema,
@@ -151,6 +153,7 @@ const validFixtures = [
     StartExtractionRequestSchema,
   ],
   ["valid/scale-state.json", ScaleStateSchema],
+  ["valid/scale-trace-response.json", ScaleTraceResponseSchema],
   [
     "valid/scale-calibration-complete-request.json",
     CompleteScaleCalibrationRequestSchema,
@@ -184,6 +187,10 @@ const invalidFixtures = [
   ["invalid/device-api-version.json", DeviceResponseSchema],
   ["invalid/history-page-unordered.json", HistoryPageSchema],
   ["invalid/state-extra-property.json", MachineStateSchema],
+  [
+    "invalid/scale-trace-cursor-mismatch.json",
+    ScaleTraceResponseSchema,
+  ],
   ["invalid/state-legacy-temperatures.json", MachineStateSchema],
   ["invalid/state-fault-heater-active.json", MachineStateSchema],
   ["invalid/state-fault-without-details.json", MachineStateSchema],
@@ -679,6 +686,7 @@ describe("API v2 thermal workflow boundaries", () => {
       "/api/v2/scale/calibration/cancel",
       "/api/v2/scale/calibration/complete",
       "/api/v2/scale/calibration/start",
+      "/api/v2/scale/trace",
       "/api/v2/scale/warnings/acknowledge",
       "/api/v2/state",
     ]);

@@ -33,6 +33,8 @@ import {
   type StopCooldownResponse,
   type StopExtractionResponse,
   type ScaleState,
+  type ScaleTraceResponse,
+  type WeightedExtractionTraceCursor,
   type TemperatureSettingsRequest,
   type TemperatureSettingsResponse,
 } from "@philcoino/protocol";
@@ -333,6 +335,14 @@ export class DebugDeviceApiClient
   ): Promise<ScaleState> {
     throwIfAborted(options.signal);
     return this.scale;
+  }
+
+  async getScaleTrace(
+    _cursor?: WeightedExtractionTraceCursor,
+    options: { signal?: AbortSignal } = {},
+  ): Promise<ScaleTraceResponse> {
+    throwIfAborted(options.signal);
+    return { scale: this.scale, trace: null };
   }
 
   async startScaleCalibration(

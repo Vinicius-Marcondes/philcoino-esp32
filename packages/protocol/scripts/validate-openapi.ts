@@ -76,6 +76,7 @@ const expectedOperations = {
   "/api/v2/state": "get",
   "/api/v2/history": "get",
   "/api/v2/scale": "get",
+  "/api/v2/scale/trace": "get",
   "/api/v2/scale/calibration/start": "post",
   "/api/v2/scale/calibration/complete": "post",
   "/api/v2/scale/calibration/cancel": "post",

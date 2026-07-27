@@ -71,6 +71,7 @@ export {
   ScaleCalibrationStatusSchema,
   ScaleCompletionReasonSchema,
   ScaleStateSchema,
+  ScaleTraceResponseSchema,
   ScaleWarningSchema,
   ActiveWeightExtractionSchema,
   TerminalWeightExtractionSchema,
@@ -95,6 +96,16 @@ export {
   WeightCompensationDecigramsSchema,
   WeightControlSchema,
   WeightTargetDecigramsSchema,
+  WEIGHTED_TRACE_PAGE_SIZE,
+  WEIGHTED_TRACE_RETENTION_SAMPLES,
+  WEIGHTED_TRACE_SAMPLE_INTERVAL_MS,
+  WEIGHTED_TRACE_SETTLING_LIMIT_MS,
+  WeightedExtractionTraceCursorSchema,
+  WeightedExtractionTracePageSchema,
+  WeightedExtractionTracePhaseSchema,
+  WeightedExtractionTraceSampleSchema,
+  WeightedExtractionTraceSequenceSchema,
+  WeightedExtractionTraceStatusSchema,
 } from "./schemas.ts";
 
 export type {
@@ -148,6 +159,7 @@ export type {
   ScaleCalibrationStatus,
   ScaleCompletionReason,
   ScaleState,
+  ScaleTraceResponse,
   TerminalWeightExtraction,
   TerminalExtractionState,
   StartExtractionRequest,
@@ -159,4 +171,9 @@ export type {
   TemperatureSettingsRequest,
   TemperatureSettingsResponse,
   WeightControl,
+  WeightedExtractionTraceCursor,
+  WeightedExtractionTracePage,
+  WeightedExtractionTracePhase,
+  WeightedExtractionTraceSample,
+  WeightedExtractionTraceStatus,
 } from "./schemas.ts";

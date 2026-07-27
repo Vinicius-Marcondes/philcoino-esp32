@@ -81,6 +81,27 @@ describe("DeviceApiClient", () => {
     expect(authorization as string | null).toBe("Bearer secret-token");
   });
 
+  test("requests an authenticated weighted trace cursor", async () => {
+    const simulator = createSimulator();
+    let requestedUrl = "";
+    const client = new DeviceApiClient({
+      address: "http://127.0.0.1:3000",
+      fetch: (url, init) => {
+        requestedUrl = url;
+        return Promise.resolve(
+          simulator.app.request(url, {
+            headers: init.headers,
+            method: init.method,
+            signal: init.signal,
+          }),
+        );
+      },
+      token: DEFAULT_SIMULATOR_TOKEN,
+    });
+    await expect(client.getScaleTrace()).resolves.toMatchObject({ trace: null });
+    expect(requestedUrl).toBe("http://127.0.0.1:3000/api/v2/scale/trace");
+  });
+
   test("requests prediction diagnostics with the live state poll", async () => {
     const simulator = createSimulator();
     const request = simulator.app.request.bind(simulator.app);

@@ -19,6 +19,7 @@ enum class ApiRouteId {
   kStateV2,
   kHistory,
   kScaleGet,
+  kScaleTrace,
   kScaleCalibrationStart,
   kScaleCalibrationComplete,
   kScaleCalibrationCancel,
@@ -38,7 +39,7 @@ struct ApiRouteDescriptor {
   bool requires_authentication;
 };
 
-inline constexpr std::array<ApiRouteDescriptor, 20> kApiRoutes{{
+inline constexpr std::array<ApiRouteDescriptor, 21> kApiRoutes{{
     {ApiRouteId::kHealth, HttpMethod::kGet, "/healthz", false},
     {ApiRouteId::kDevice, HttpMethod::kGet, "/api/v1/device", false},
     {ApiRouteId::kStateV1, HttpMethod::kGet, "/api/v1/state", true},
@@ -51,6 +52,7 @@ inline constexpr std::array<ApiRouteDescriptor, 20> kApiRoutes{{
     {ApiRouteId::kStateV2, HttpMethod::kGet, "/api/v2/state", true},
     {ApiRouteId::kHistory, HttpMethod::kGet, "/api/v2/history", true},
     {ApiRouteId::kScaleGet, HttpMethod::kGet, "/api/v2/scale", true},
+    {ApiRouteId::kScaleTrace, HttpMethod::kGet, "/api/v2/scale/trace", true},
     {ApiRouteId::kScaleCalibrationStart, HttpMethod::kPost,
      "/api/v2/scale/calibration/start", true},
     {ApiRouteId::kScaleCalibrationComplete, HttpMethod::kPost,

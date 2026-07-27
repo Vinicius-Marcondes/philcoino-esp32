@@ -142,6 +142,15 @@ Enquanto os findings conhecidos não forem resolvidos:
 
 ## Níveis de evidência
 
+### Boundary de telemetria da extração
+
+Traços de peso/temperatura, marcadores do gráfico e o fluxo derivado em `g/s`
+são observações diagnósticas. Eles não comprovam fluxo físico de entrada,
+calibração da balança, operação da bomba, massa da bebida, desenergização ou
+segurança elétrica. A telemetria nunca pode bloquear, atrasar, retomar ou
+alterar decisões de temperatura, aquecedor, bomba, extração, timeout ou falha.
+Amostras ausentes permanecem lacunas explícitas.
+
 | Evidência | O que sustenta | O que não sustenta |
 | --- | --- | --- |
 | Testes Protocol/Zod | Consistência do wire shape | Timing do firmware ou comportamento do hardware |
