@@ -25,7 +25,7 @@ O celular descobre e autentica uma máquina, exibe o estado em tempo real e envi
 - Histórico atual em SQLite com backfill automático de até dez minutos do
   buffer RAM do ESP32 e Live paginado em janelas horizontais de 30 s.
 - Targets de brew/steam, active mode, permissão do heater e dismissal de over-temperature confirmados pelo firmware.
-- Controle pelo ESP32-C3, persistência dos targets em NVS, amostragem MAX6675, saída SSD1306, rede HTTP/mDNS e policy boundaries testáveis no host.
+- Controle pelo ESP32-C3, persistência dos targets em NVS, amostragem MAX6675, rede HTTP/mDNS e policy boundaries testáveis no host.
 - Simulador determinístico Bun/Hono para desenvolvimento mobile e do contrato.
 - Profiles locais Manual + quatro slots, importação revisada do ESP32, export
   completo e extração reconhecida pelo firmware com pre-infusion, soak, main,

@@ -10,6 +10,7 @@
 namespace philcoino::networking {
 
 class HistoryBuffer;
+struct ApiRouteDescriptor;
 
 inline constexpr char kApiVersion[] = "1";
 inline constexpr char kMdnsServiceType[] = "_philcoino";
@@ -59,6 +60,7 @@ class FirmwareApi {
               control::ExtractionController& extraction_controller,
               control::CooldownController& cooldown_controller,
               peripherals::ProfileStorage& profile_storage,
+              peripherals::ScaleCalibrationStorage& scale_calibration_storage,
               ApiSynchronization& synchronization,
               HistoryBuffer* history = nullptr,
               control::ScaleController* scale_controller = nullptr);
@@ -66,6 +68,10 @@ class FirmwareApi {
   HttpResponse handle(HttpMethod method, const std::string& path,
                       const char* authorization, const std::string& body,
                       std::uint64_t uptime_ms);
+  HttpResponse handle_resolved(const ApiRouteDescriptor& route,
+                               const std::string& path,
+                               const std::string& body,
+                               std::uint64_t uptime_ms);
   bool authorized(const char* authorization) const;
 
  private:
@@ -106,6 +112,7 @@ class FirmwareApi {
   control::ExtractionController& extraction_controller_;
   control::CooldownController& cooldown_controller_;
   peripherals::ProfileStorage& profile_storage_;
+  peripherals::ScaleCalibrationStorage& scale_calibration_storage_;
   ApiSynchronization& synchronization_;
   HistoryBuffer* history_;
   control::ScaleController* scale_controller_;

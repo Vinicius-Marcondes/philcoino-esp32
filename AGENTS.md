@@ -30,10 +30,10 @@ Philcoino is a local-only espresso-machine monitoring and temperature-control sy
   - `test`: contract, authentication, persistence, mutation, timeout, and injected-fault scenarios. Simulator success is not firmware-safety evidence.
 - `firmware/espresso-machine`: independent ESP-IDF 6.0.2 CMake project, outside the Bun workspace.
   - `components/firmware_config`: version, identity, pins, ranges, timeouts, duty-curve constants, and diagnostic feature flags.
-  - `components/peripherals`: host-testable MAX6675 decoding, target storage policy, fail-off SSR wrapper, SSD1306 rendering, and ESP-IDF GPIO/I2C/NVS adapters.
+  - `components/peripherals`: host-testable MAX6675/HX711 decoding, target/profile/calibration storage policy, fail-off heater/pump wrappers, and ESP-IDF GPIO/NVS adapters.
   - `components/control`: host-testable brew/steam state machine, readiness, steam return, heating timeout, fault latching, permission gating, and ten-second SSR duty windows.
   - `components/networking`: strict C++ API parser/serializer and ESP-IDF Wi-Fi, HTTP, bearer, mutex, and mDNS adapters.
-  - `main`: fail-off startup ordering, storage/sensor/display initialization, control-loop ownership, API synchronization, and background network startup.
+  - `main`: fail-off startup ordering, storage/sensor initialization, control-loop ownership, API synchronization, and background network startup.
   - `host-tests`: native C++ policy/API tests and TypeScript validation of firmware contract captures; no hardware is required.
 - `docs`: human-facing source of truth.
   - `README.md`: documentation map and document authority.

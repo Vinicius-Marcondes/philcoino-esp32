@@ -50,6 +50,12 @@ class ScopedApiLock {
   }
 
   bool locked() const { return locked_; }
+  void unlock() {
+    if (locked_) {
+      synchronization_.unlock(domain_);
+      locked_ = false;
+    }
+  }
 
  private:
   ApiSynchronization& synchronization_;
@@ -135,6 +141,8 @@ FirmwareApi::FirmwareApi(DeviceIdentity identity, std::string bearer_token,
                          control::ExtractionController& extraction_controller,
                          control::CooldownController& cooldown_controller,
                          peripherals::ProfileStorage& profile_storage,
+                         peripherals::ScaleCalibrationStorage&
+                             scale_calibration_storage,
                          ApiSynchronization& synchronization,
                          HistoryBuffer* history,
                          control::ScaleController* scale_controller)
@@ -145,6 +153,7 @@ FirmwareApi::FirmwareApi(DeviceIdentity identity, std::string bearer_token,
       extraction_controller_(extraction_controller),
       cooldown_controller_(cooldown_controller),
       profile_storage_(profile_storage),
+      scale_calibration_storage_(scale_calibration_storage),
       synchronization_(synchronization),
       history_(history),
       scale_controller_(scale_controller) {}
@@ -166,19 +175,25 @@ HttpResponse FirmwareApi::handle(HttpMethod method, const std::string& path,
     return error_response(401, "unauthorized",
                           "A valid bearer token is required.", true);
   }
+  return handle_resolved(*route, path, body, uptime_ms);
+}
 
+HttpResponse FirmwareApi::handle_resolved(const ApiRouteDescriptor& route,
+                                          const std::string& path,
+                                          const std::string& body,
+                                          std::uint64_t uptime_ms) {
   const auto query_separator = path.find('?');
   const std::string query = query_separator == std::string::npos
                                 ? std::string{}
                                 : path.substr(query_separator + 1U);
-  if (route->id != ApiRouteId::kHistory &&
-      route->id != ApiRouteId::kStateV2 &&
+  if (route.id != ApiRouteId::kHistory &&
+      route.id != ApiRouteId::kStateV2 &&
       query_separator != std::string::npos) {
     return error_response(404, "internal_error",
                           "The requested endpoint does not exist.");
   }
 
-  switch (route->id) {
+  switch (route.id) {
     case ApiRouteId::kHealth: return health(uptime_ms);
     case ApiRouteId::kDevice: return device();
     case ApiRouteId::kTemperatures:
@@ -201,27 +216,14 @@ HttpResponse FirmwareApi::handle(HttpMethod method, const std::string& path,
     case ApiRouteId::kExtractionStop: return stop_extraction(uptime_ms);
     case ApiRouteId::kCooldownStart: return start_cooldown(body, uptime_ms);
     case ApiRouteId::kCooldownStop: return stop_cooldown(uptime_ms);
-    case ApiRouteId::kStateV1:
-    case ApiRouteId::kMode:
-    case ApiRouteId::kHeater:
-    case ApiRouteId::kDismissOverTemperature: break;
-  }
-
-  ScopedApiLock lock(synchronization_, ApiDomain::kTemperature);
-  if (!lock.locked()) {
-    return error_response(500, "internal_error",
-                          "Temperature control synchronization failed.");
-  }
-  switch (route->id) {
     case ApiRouteId::kStateV1: return state(uptime_ms);
     case ApiRouteId::kMode: return update_mode(body, uptime_ms);
     case ApiRouteId::kHeater: return update_heater(body, uptime_ms);
     case ApiRouteId::kDismissOverTemperature:
       return dismiss_over_temperature(uptime_ms);
-    default:
-      return error_response(404, "internal_error",
-                            "The requested endpoint does not exist.");
   }
+  return error_response(404, "internal_error",
+                        "The requested endpoint does not exist.");
 }
 
 HttpResponse FirmwareApi::health(std::uint64_t uptime_ms) const {
@@ -252,10 +254,16 @@ HttpResponse FirmwareApi::history(const std::string& query,
 }
 
 HttpResponse FirmwareApi::state(std::uint64_t uptime_ms) const {
-  return json_response(
-      200, serialize_state(
-               controller_.snapshot(static_cast<std::uint32_t>(uptime_ms)),
-               uptime_ms));
+  control::ControlSnapshot snapshot{};
+  {
+    ScopedApiLock lock(synchronization_, ApiDomain::kTemperature);
+    if (!lock.locked()) {
+      return error_response(500, "internal_error",
+                            "Temperature control synchronization failed.");
+    }
+    snapshot = controller_.snapshot(static_cast<std::uint32_t>(uptime_ms));
+  }
+  return json_response(200, serialize_state(snapshot, uptime_ms));
 }
 
 HttpResponse FirmwareApi::update_temperatures(const std::string& body,
@@ -280,6 +288,8 @@ HttpResponse FirmwareApi::update_temperatures(const std::string& body,
         "Temperature targets must be whole values within their allowed ranges.");
   }
   bool no_change = false;
+  bool revalidation_failed = false;
+  bool prepare_failed = false;
   {
     ScopedApiLock lock(synchronization_, ApiDomain::kTemperature);
     if (!lock.locked()) {
@@ -289,24 +299,36 @@ HttpResponse FirmwareApi::update_temperatures(const std::string& body,
     current = controller_.targets();
     if (!parse_temperatures(body, current, updated, constraint_violation) ||
         constraint_violation) {
-      return error_response(400, "malformed_request", kMalformedMessage);
+      revalidation_failed = true;
+    } else {
+      no_change = updated.brew_c == current.brew_c &&
+                  updated.steam_c == current.steam_c;
+      prepare_failed =
+          !no_change &&
+          !controller_.prepare_target_update(
+              updated, static_cast<std::uint32_t>(uptime_ms));
     }
-    no_change = updated.brew_c == current.brew_c &&
-                updated.steam_c == current.steam_c;
-    if (!no_change &&
-        !controller_.prepare_target_update(
-            updated, static_cast<std::uint32_t>(uptime_ms))) {
-      return error_response(500, "internal_error",
-                            "Temperature control synchronization failed.");
-    }
+  }
+  if (revalidation_failed) {
+    return error_response(400, "malformed_request", kMalformedMessage);
+  }
+  if (prepare_failed) {
+    return error_response(500, "internal_error",
+                          "Temperature control synchronization failed.");
   }
   if (no_change) {
     return json_response(200, serialize_targets(current));
   }
   if (!target_storage_.save(updated)) {
-    ScopedApiLock lock(synchronization_, ApiDomain::kTemperature);
-    if (!lock.locked() || !controller_.rollback_target_update(
-                              static_cast<std::uint32_t>(uptime_ms))) {
+    bool rollback_acknowledged = false;
+    {
+      ScopedApiLock lock(synchronization_, ApiDomain::kTemperature);
+      rollback_acknowledged =
+          lock.locked() &&
+          controller_.rollback_target_update(
+              static_cast<std::uint32_t>(uptime_ms));
+    }
+    if (!rollback_acknowledged) {
       return error_response(
           500, "internal_error",
           "Target persistence failed and safe rollback could not be acknowledged.");
@@ -314,13 +336,16 @@ HttpResponse FirmwareApi::update_temperatures(const std::string& body,
     return error_response(500, "persistence_failure",
                           "Temperature targets could not be persisted.");
   }
+  bool adopted = false;
   {
     ScopedApiLock lock(synchronization_, ApiDomain::kTemperature);
-    if (!lock.locked() || !controller_.adopt_persisted_targets(
-                              updated, static_cast<std::uint32_t>(uptime_ms))) {
-      return error_response(500, "internal_error",
-                            "Persisted targets could not be acknowledged.");
-    }
+    adopted = lock.locked() &&
+              controller_.adopt_persisted_targets(
+                  updated, static_cast<std::uint32_t>(uptime_ms));
+  }
+  if (!adopted) {
+    return error_response(500, "internal_error",
+                          "Persisted targets could not be acknowledged.");
   }
   return json_response(200, serialize_targets(updated));
 }
@@ -331,22 +356,43 @@ HttpResponse FirmwareApi::update_mode(const std::string& body,
   if (!parse_mode(body, mode)) {
     return error_response(400, "malformed_request", kMalformedMessage);
   }
-  if (controller_.has_fault()) {
+  enum class Result { kOk, kFault, kWorkflowActive, kFailed };
+  Result result = Result::kOk;
+  control::ControlMode acknowledged{};
+  {
+    ScopedApiLock lock(synchronization_, ApiDomain::kTemperature);
+    if (!lock.locked()) {
+      return error_response(500, "internal_error",
+                            "Temperature control synchronization failed.");
+    }
+    if (controller_.has_fault()) {
+      result = Result::kFault;
+    } else if (mode == control::ControlMode::kSteam &&
+               (extraction_controller_.active() ||
+                cooldown_controller_.active())) {
+      result = Result::kWorkflowActive;
+    } else if (!controller_.set_mode(
+                   mode, static_cast<std::uint32_t>(uptime_ms))) {
+      result = Result::kFailed;
+    } else {
+      acknowledged = controller_.mode();
+    }
+  }
+  if (result == Result::kFault) {
     return error_response(
         409, "sensor_unavailable",
         "Mode cannot be changed while a machine fault is latched.");
   }
-  if (mode == control::ControlMode::kSteam &&
-      (extraction_controller_.active() || cooldown_controller_.active())) {
+  if (result == Result::kWorkflowActive) {
     return error_response(
         409, "sensor_unavailable",
         "Steam mode is unavailable while extraction or cooldown is active.");
   }
-  if (!controller_.set_mode(mode, static_cast<std::uint32_t>(uptime_ms))) {
+  if (result == Result::kFailed) {
     return error_response(500, "internal_error",
                           "The control mode could not be changed safely.");
   }
-  return json_response(200, serialize_mode(controller_.mode()));
+  return json_response(200, serialize_mode(acknowledged));
 }
 
 HttpResponse FirmwareApi::update_heater(const std::string& body,
@@ -355,23 +401,44 @@ HttpResponse FirmwareApi::update_heater(const std::string& body,
   if (!parse_heater_enabled(body, enabled)) {
     return error_response(400, "malformed_request", kMalformedMessage);
   }
-  if (!controller_.set_heater_enabled(
-          enabled, static_cast<std::uint32_t>(uptime_ms))) {
+  bool updated = false;
+  bool acknowledged = false;
+  {
+    ScopedApiLock lock(synchronization_, ApiDomain::kTemperature);
+    if (!lock.locked()) {
+      return error_response(500, "internal_error",
+                            "Temperature control synchronization failed.");
+    }
+    updated = controller_.set_heater_enabled(
+        enabled, static_cast<std::uint32_t>(uptime_ms));
+    acknowledged = controller_.heater_enabled_permission();
+  }
+  if (!updated) {
     return error_response(500, "internal_error",
                           "The heater permission could not be changed safely.");
   }
-  return json_response(
-      200, serialize_heater_enabled(controller_.heater_enabled_permission()));
+  return json_response(200, serialize_heater_enabled(acknowledged));
 }
 
 HttpResponse FirmwareApi::dismiss_over_temperature(std::uint64_t uptime_ms) {
-  if (!controller_.dismiss_over_temperature(
-          static_cast<std::uint32_t>(uptime_ms))) {
+  bool dismissed = false;
+  control::ControlSnapshot snapshot{};
+  {
+    ScopedApiLock lock(synchronization_, ApiDomain::kTemperature);
+    if (!lock.locked()) {
+      return error_response(500, "internal_error",
+                            "Temperature control synchronization failed.");
+    }
+    dismissed = controller_.dismiss_over_temperature(
+        static_cast<std::uint32_t>(uptime_ms));
+    snapshot = controller_.snapshot(static_cast<std::uint32_t>(uptime_ms));
+  }
+  if (!dismissed) {
     return error_response(
         409, "sensor_unavailable",
         "Over-temperature can only be dismissed after the active temperature returns to target.");
   }
-  return state(uptime_ms);
+  return json_response(200, serialize_state(snapshot, uptime_ms));
 }
 
 HttpResponse FirmwareApi::state_v2(const std::string& query,
@@ -384,7 +451,7 @@ HttpResponse FirmwareApi::state_v2(const std::string& query,
   control::ControlSnapshot machine{};
   control::ExtractionSnapshot extraction{};
   control::CooldownSnapshot cooldown{};
-  std::string compensation;
+  bool compensation_active = false;
   {
     ScopedApiLock lock(synchronization_, ApiDomain::kTemperature);
     if (!lock.locked()) {
@@ -392,44 +459,35 @@ HttpResponse FirmwareApi::state_v2(const std::string& query,
                             "Temperature control synchronization failed.");
     }
     const auto now_ms = static_cast<std::uint32_t>(uptime_ms);
-    control::ScaleSnapshot scale_snapshot{};
-    const control::ScaleSnapshot* scale =
-        scale_controller_ == nullptr ? nullptr : &scale_snapshot;
-    if (scale_controller_ != nullptr) {
-      scale_snapshot = scale_controller_->snapshot(now_ms);
-    }
-    if (!cooldown_controller_.active()) {
-      if (extraction_controller_.update(now_ms, scale) ==
-          control::ExtractionUpdateResult::kOutputFailure) {
-        controller_.latch_fault(control::FaultCode::kInternalError);
-      }
-    }
-    extraction = extraction_controller_.snapshot(now_ms);
-    controller_.set_extraction_phase(
-        cooldown_controller_.active() ? control::ExtractionPhase::kIdle
-                                      : extraction.phase,
-        now_ms);
-    if (cooldown_controller_.active()) {
-      cooldown_controller_.update(
-          current_cooldown_input(controller_, extraction_controller_), now_ms);
-    }
     extraction = extraction_controller_.snapshot(now_ms);
     cooldown = cooldown_controller_.snapshot(now_ms);
     machine = controller_.snapshot(now_ms);
-    compensation = serialize_compensation(
-        controller_.extraction_compensation_active(), extraction);
+    compensation_active = controller_.extraction_compensation_active();
   }
-  std::string response = std::string("{\"machine\":") +
-                         serialize_state(machine, uptime_ms) +
-                         ",\"extraction\":" +
-                         serialize_extraction(extraction) +
-                         ",\"compensation\":" + compensation +
-                         ",\"cooldown\":" + serialize_cooldown(cooldown);
+  const auto serialized_machine = serialize_state(machine, uptime_ms);
+  const auto serialized_extraction = serialize_extraction(extraction);
+  const auto compensation =
+      serialize_compensation(compensation_active, extraction);
+  const auto serialized_cooldown = serialize_cooldown(cooldown);
+  const auto prediction =
+      include_prediction ? serialize_prediction(machine) : std::string{};
+  std::string response;
+  response.reserve(64U + serialized_machine.size() +
+                   serialized_extraction.size() + compensation.size() +
+                   serialized_cooldown.size() + prediction.size());
+  response.append("{\"machine\":");
+  response.append(serialized_machine);
+  response.append(",\"extraction\":");
+  response.append(serialized_extraction);
+  response.append(",\"compensation\":");
+  response.append(compensation);
+  response.append(",\"cooldown\":");
+  response.append(serialized_cooldown);
   if (include_prediction) {
-    response += ",\"predictiveTemperature\":" +
-                serialize_prediction(machine);
+    response.append(",\"predictiveTemperature\":");
+    response.append(prediction);
   }
-  response += '}';
+  response.push_back('}');
   return json_response(200, std::move(response));
 }
 
@@ -450,15 +508,18 @@ HttpResponse FirmwareApi::scale(std::uint64_t uptime_ms) const {
   if (scale_controller_ == nullptr) {
     return error_response(500, "internal_error", "Scale support is unavailable.");
   }
-  ScopedApiLock lock(synchronization_, ApiDomain::kExtraction);
-  if (!lock.locked()) {
-    return error_response(500, "internal_error",
-                          "Scale synchronization failed.");
+  control::ScaleSnapshot current{};
+  control::WeightExtractionSnapshot weight{};
+  {
+    ScopedApiLock lock(synchronization_, ApiDomain::kExtraction);
+    if (!lock.locked()) {
+      return error_response(500, "internal_error",
+                            "Scale synchronization failed.");
+    }
+    const auto now_ms = static_cast<std::uint32_t>(uptime_ms);
+    current = scale_controller_->snapshot(now_ms);
+    weight = extraction_controller_.weight_snapshot(current, now_ms);
   }
-  const auto now_ms = static_cast<std::uint32_t>(uptime_ms);
-  const auto current = scale_controller_->snapshot(now_ms);
-  const auto weight =
-      extraction_controller_.weight_snapshot(current, now_ms);
   return json_response(200, serialize_scale(current, weight));
 }
 
@@ -475,25 +536,31 @@ HttpResponse FirmwareApi::start_scale_calibration(std::uint64_t uptime_ms) {
       extraction_controller_.active() || cooldown_controller_.active(),
       static_cast<std::uint32_t>(uptime_ms));
   if (result != control::ScaleCalibrationResult::kOk) {
+    lock.unlock();
     return error_response(
         409,
         result == control::ScaleCalibrationResult::kWorkflowActive
             ? "extraction_active"
             : result == control::ScaleCalibrationResult::kUnavailable
                   ? "scale_unavailable"
-                  : "scale_not_stable",
+                  : result == control::ScaleCalibrationResult::kAdoptionPending
+                        ? "calibration_in_progress"
+                        : "scale_not_stable",
         result == control::ScaleCalibrationResult::kWorkflowActive
             ? "Scale calibration requires all workflows to be idle."
             : result == control::ScaleCalibrationResult::kUnavailable
                   ? "The scale is unavailable."
-                  : "The scale must be stable before calibration.");
+                  : result == control::ScaleCalibrationResult::kAdoptionPending
+                        ? "Persisted scale calibration is awaiting acknowledgement."
+                        : "The scale must be stable before calibration.");
   }
   const auto current =
       scale_controller_->snapshot(static_cast<std::uint32_t>(uptime_ms));
+  const auto weight = extraction_controller_.weight_snapshot(
+      current, static_cast<std::uint32_t>(uptime_ms));
+  lock.unlock();
   return json_response(
-      200, serialize_scale(
-               current, extraction_controller_.weight_snapshot(
-                            current, static_cast<std::uint32_t>(uptime_ms))));
+      200, serialize_scale(current, weight));
 }
 
 HttpResponse FirmwareApi::complete_scale_calibration(
@@ -505,18 +572,18 @@ HttpResponse FirmwareApi::complete_scale_calibration(
   if (scale_controller_ == nullptr) {
     return error_response(500, "internal_error", "Scale support is unavailable.");
   }
-  ScopedApiLock lock(synchronization_, ApiDomain::kExtraction);
-  if (!lock.locked()) {
-    return error_response(500, "internal_error",
-                          "Scale synchronization failed.");
-  }
-  const auto result = scale_controller_->complete_calibration(
-      reference_decigrams,
-      extraction_controller_.active() || cooldown_controller_.active(),
-      static_cast<std::uint32_t>(uptime_ms));
-  if (result == control::ScaleCalibrationResult::kPersistenceFailure) {
-    return error_response(500, "persistence_failure",
-                          "Scale calibration could not be persisted.");
+  control::ScaleCalibrationTransaction transaction{};
+  control::ScaleCalibrationResult result{};
+  {
+    ScopedApiLock lock(synchronization_, ApiDomain::kExtraction);
+    if (!lock.locked()) {
+      return error_response(500, "internal_error",
+                            "Scale synchronization failed.");
+    }
+    result = scale_controller_->prepare_calibration_completion(
+        reference_decigrams,
+        extraction_controller_.active() || cooldown_controller_.active(),
+        static_cast<std::uint32_t>(uptime_ms), transaction);
   }
   if (result != control::ScaleCalibrationResult::kOk) {
     const char* code =
@@ -534,12 +601,37 @@ HttpResponse FirmwareApi::complete_scale_calibration(
         code,
         "Scale calibration cannot be completed in its current state.");
   }
-  const auto current =
-      scale_controller_->snapshot(static_cast<std::uint32_t>(uptime_ms));
+  if (!scale_calibration_storage_.save(transaction.candidate)) {
+    {
+      ScopedApiLock lock(synchronization_, ApiDomain::kExtraction);
+      if (lock.locked()) {
+        scale_controller_->calibration_persistence_failed(transaction.token);
+      }
+    }
+    return error_response(500, "persistence_failure",
+                          "Scale calibration could not be persisted.");
+  }
+  control::ScaleSnapshot current{};
+  control::WeightExtractionSnapshot weight{};
+  bool adopted = false;
+  {
+    ScopedApiLock lock(synchronization_, ApiDomain::kExtraction);
+    if (lock.locked()) {
+      adopted = scale_controller_->adopt_persisted_calibration(transaction);
+      if (adopted) {
+        const auto now_ms = static_cast<std::uint32_t>(uptime_ms);
+        current = scale_controller_->snapshot(now_ms);
+        weight = extraction_controller_.weight_snapshot(current, now_ms);
+      }
+    }
+  }
+  if (!adopted) {
+    return error_response(
+        500, "internal_error",
+        "Persisted scale calibration could not be acknowledged.");
+  }
   return json_response(
-      200, serialize_scale(
-               current, extraction_controller_.weight_snapshot(
-                            current, static_cast<std::uint32_t>(uptime_ms))));
+      200, serialize_scale(current, weight));
 }
 
 HttpResponse FirmwareApi::cancel_scale_calibration(std::uint64_t uptime_ms) {
@@ -554,10 +646,11 @@ HttpResponse FirmwareApi::cancel_scale_calibration(std::uint64_t uptime_ms) {
   scale_controller_->cancel_calibration();
   const auto current =
       scale_controller_->snapshot(static_cast<std::uint32_t>(uptime_ms));
+  const auto weight = extraction_controller_.weight_snapshot(
+      current, static_cast<std::uint32_t>(uptime_ms));
+  lock.unlock();
   return json_response(
-      200, serialize_scale(
-               current, extraction_controller_.weight_snapshot(
-                            current, static_cast<std::uint32_t>(uptime_ms))));
+      200, serialize_scale(current, weight));
 }
 
 HttpResponse FirmwareApi::acknowledge_scale_warning(
@@ -573,10 +666,11 @@ HttpResponse FirmwareApi::acknowledge_scale_warning(
   extraction_controller_.acknowledge_scale_warning();
   const auto current =
       scale_controller_->snapshot(static_cast<std::uint32_t>(uptime_ms));
+  const auto weight = extraction_controller_.weight_snapshot(
+      current, static_cast<std::uint32_t>(uptime_ms));
+  lock.unlock();
   return json_response(
-      200, serialize_scale(
-               current, extraction_controller_.weight_snapshot(
-                            current, static_cast<std::uint32_t>(uptime_ms))));
+      200, serialize_scale(current, weight));
 }
 
 HttpResponse FirmwareApi::replace_profiles(const std::string& body,
@@ -585,43 +679,45 @@ HttpResponse FirmwareApi::replace_profiles(const std::string& body,
   if (!parse_profiles(body, replacement)) {
     return error_response(400, "malformed_request", kMalformedMessage);
   }
+  bool cooldown_active = false;
+  bool extraction_active = false;
+  control::CooldownSnapshot cooldown{};
+  control::ExtractionSnapshot extraction{};
   {
     ScopedApiLock lock(synchronization_, ApiDomain::kExtraction);
     if (!lock.locked()) {
       return error_response(500, "internal_error",
                             "Extraction control synchronization failed.");
     }
-    if (cooldown_controller_.active()) {
-      return cooldown_conflict(
-          cooldown_controller_.snapshot(
-              static_cast<std::uint32_t>(uptime_ms)),
-          "Profiles cannot be replaced while cooldown is active.");
+    const auto now_ms = static_cast<std::uint32_t>(uptime_ms);
+    cooldown_active = cooldown_controller_.active();
+    extraction_active = extraction_controller_.active();
+    if (cooldown_active) cooldown = cooldown_controller_.snapshot(now_ms);
+    if (extraction_active) {
+      extraction = extraction_controller_.snapshot(now_ms);
     }
-    if (extraction_controller_.update(
-            static_cast<std::uint32_t>(uptime_ms)) ==
-        control::ExtractionUpdateResult::kOutputFailure) {
-      controller_.latch_fault(control::FaultCode::kInternalError);
-      return error_response(500, "internal_error",
-                            "The pump off command could not be confirmed.");
-    }
-    if (extraction_controller_.active()) {
-      return extraction_conflict(
-          extraction_controller_.snapshot(
-              static_cast<std::uint32_t>(uptime_ms)),
-          "Profiles cannot be replaced while extraction is active.");
-    }
+  }
+  if (cooldown_active) {
+    return cooldown_conflict(
+        cooldown, "Profiles cannot be replaced while cooldown is active.");
+  }
+  if (extraction_active) {
+    return extraction_conflict(
+        extraction, "Profiles cannot be replaced while extraction is active.");
   }
   if (!profile_storage_.save(replacement)) {
     return error_response(500, "persistence_failure",
                           "The complete profile set could not be persisted.");
   }
+  bool adopted = false;
   {
     ScopedApiLock lock(synchronization_, ApiDomain::kExtraction);
-    if (!lock.locked() ||
-        !extraction_controller_.adopt_persisted_profiles(replacement)) {
-      return error_response(500, "internal_error",
-                            "Persisted profiles could not be acknowledged.");
-    }
+    adopted = lock.locked() &&
+              extraction_controller_.adopt_persisted_profiles(replacement);
+  }
+  if (!adopted) {
+    return error_response(500, "internal_error",
+                          "Persisted profiles could not be acknowledged.");
   }
   return json_response(200, serialize_profiles(replacement));
 }
@@ -655,36 +751,39 @@ HttpResponse FirmwareApi::start_extraction(const std::string& body,
       extraction_controller_.replay_status(key, selection, requested_weight);
   if (cooldown_controller_.active()) {
     if (replay_before_update == control::ExtractionReplayStatus::kMatch) {
+      const auto snapshot = extraction_controller_.snapshot(now_ms);
+      lock.unlock();
       return json_response(
-          200, serialize_extraction(extraction_controller_.snapshot(now_ms)));
+          200, serialize_extraction(snapshot));
     }
     if (replay_before_update == control::ExtractionReplayStatus::kMismatch) {
+      lock.unlock();
       return error_response(
           409, "idempotency_mismatch",
           "The idempotency key was already used with a different selection.");
     }
+    const auto cooldown = cooldown_controller_.snapshot(now_ms);
+    lock.unlock();
     return cooldown_conflict(
-        cooldown_controller_.snapshot(now_ms),
+        cooldown,
         "Extraction cannot start while cooldown is active.");
-  }
-  if (extraction_controller_.update(
-          now_ms,
-          scale_controller_ == nullptr ? nullptr : &scale_snapshot) ==
-      control::ExtractionUpdateResult::kOutputFailure) {
-    controller_.latch_fault(control::FaultCode::kInternalError);
   }
   switch (extraction_controller_.replay_status(
       key, selection, requested_weight)) {
-    case control::ExtractionReplayStatus::kMatch:
-      return json_response(
-          200, serialize_extraction(extraction_controller_.snapshot(now_ms)));
+    case control::ExtractionReplayStatus::kMatch: {
+      const auto snapshot = extraction_controller_.snapshot(now_ms);
+      lock.unlock();
+      return json_response(200, serialize_extraction(snapshot));
+    }
     case control::ExtractionReplayStatus::kMismatch:
+      lock.unlock();
       return error_response(
           409, "idempotency_mismatch",
           "The idempotency key was already used with a different selection.");
     case control::ExtractionReplayStatus::kNone: break;
   }
   if (controller_.mode() != control::ControlMode::kBrew) {
+    lock.unlock();
     return error_response(
         409, "brew_mode_required",
         "Extraction can start only while Brew mode is acknowledged.");
@@ -692,6 +791,10 @@ HttpResponse FirmwareApi::start_extraction(const std::string& body,
   const auto result = extraction_controller_.start(
       key, selection, now_ms, requested_weight, requested_scale);
   const auto snapshot = extraction_controller_.snapshot(now_ms);
+  if (result == control::StartExtractionResult::kOutputFailure) {
+    controller_.latch_fault(control::FaultCode::kInternalError);
+  }
+  lock.unlock();
   switch (result) {
     case control::StartExtractionResult::kStarted:
     case control::StartExtractionResult::kReplay:
@@ -709,7 +812,6 @@ HttpResponse FirmwareApi::start_extraction(const std::string& body,
     case control::StartExtractionResult::kInvalidRequest:
       return error_response(400, "malformed_request", kMalformedMessage);
     case control::StartExtractionResult::kOutputFailure:
-      controller_.latch_fault(control::FaultCode::kInternalError);
       return error_response(500, "internal_error",
                             "The pump command could not be started safely.");
     case control::StartExtractionResult::kScaleNotCalibrated:
@@ -737,16 +839,19 @@ HttpResponse FirmwareApi::stop_extraction(std::uint64_t uptime_ms) {
                           "Extraction control synchronization failed.");
   }
   if (cooldown_controller_.active()) {
+    lock.unlock();
     return json_response(200, serialize_extraction({}));
   }
   if (!extraction_controller_.stop(static_cast<std::uint32_t>(uptime_ms))) {
     controller_.latch_fault(control::FaultCode::kInternalError);
+    lock.unlock();
     return error_response(500, "internal_error",
                           "The pump off command could not be completed.");
   }
-  return json_response(
-      200, serialize_extraction(extraction_controller_.snapshot(
-               static_cast<std::uint32_t>(uptime_ms))));
+  const auto snapshot = extraction_controller_.snapshot(
+      static_cast<std::uint32_t>(uptime_ms));
+  lock.unlock();
+  return json_response(200, serialize_extraction(snapshot));
 }
 
 HttpResponse FirmwareApi::start_cooldown(const std::string& body,
@@ -761,15 +866,11 @@ HttpResponse FirmwareApi::start_cooldown(const std::string& body,
                           "Workflow control synchronization failed.");
   }
   const auto now_ms = static_cast<std::uint32_t>(uptime_ms);
-  if (cooldown_controller_.active()) {
-    cooldown_controller_.update(
-        current_cooldown_input(controller_, extraction_controller_), now_ms);
-  } else {
-    extraction_controller_.update(now_ms);
-  }
   const auto result = cooldown_controller_.start(
       key, current_cooldown_input(controller_, extraction_controller_), now_ms);
   const auto cooldown = cooldown_controller_.snapshot(now_ms);
+  const auto extraction = extraction_controller_.snapshot(now_ms);
+  lock.unlock();
   switch (result) {
     case control::StartCooldownResult::kStarted:
     case control::StartCooldownResult::kReplay:
@@ -779,7 +880,7 @@ HttpResponse FirmwareApi::start_cooldown(const std::string& body,
                                "A different cooldown is already active.");
     case control::StartCooldownResult::kExtractionActive:
       return extraction_conflict(
-          extraction_controller_.snapshot(now_ms),
+          extraction,
           "Cooldown cannot start while extraction is active.");
     case control::StartCooldownResult::kSensorUnavailable:
       return error_response(
@@ -812,6 +913,7 @@ HttpResponse FirmwareApi::stop_cooldown(std::uint64_t uptime_ms) {
   const auto now_ms = static_cast<std::uint32_t>(uptime_ms);
   const auto result = cooldown_controller_.stop(now_ms);
   const auto cooldown = cooldown_controller_.snapshot(now_ms);
+  lock.unlock();
   if (result == control::CooldownUpdateResult::kFailed) {
     return error_response(500, "internal_error",
                           "The cooldown off commands could not be completed.");

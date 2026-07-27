@@ -1,7 +1,6 @@
 import type {
   CompensationState,
   ExtractionSelection,
-  ExtractionState,
   MachineState,
   MachineStateV2,
   ProfileSlotId,
@@ -247,9 +246,7 @@ export function DashboardScreen({
     client,
     deviceId: selectedDevice.deviceId,
     extraction,
-    fastPolling:
-      dashboardPage === "scale" ||
-      scaleStateIsWeighted(extractionStartMutation, extraction),
+    scalePageVisible: dashboardPage === "scale",
   });
   const clearTemperatureHistory = temperatureHistory.clear;
   const dashboardScrollView = useRef<ScrollView>(null);
@@ -1186,13 +1183,6 @@ export function DashboardScreen({
         </View>
     </View>
   );
-}
-
-function scaleStateIsWeighted(
-  mutation: DashboardMutationState,
-  extraction: ExtractionState | null,
-): boolean {
-  return mutation.status === "pending" || extraction?.status === "running";
 }
 
 function WeightModeCard({

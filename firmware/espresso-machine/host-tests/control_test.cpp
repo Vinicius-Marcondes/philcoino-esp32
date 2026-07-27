@@ -179,6 +179,40 @@ ThermocoupleReading reading(float boiler_c) {
   return ok(boiler_c);
 }
 
+bool persist_targets(TemperatureController& controller, TargetStorage& storage,
+                     const TemperatureTargets& targets,
+                     std::uint32_t now_ms) {
+  const auto current = controller.targets();
+  if (targets.brew_c == current.brew_c &&
+      targets.steam_c == current.steam_c) {
+    return true;
+  }
+  if (!controller.prepare_target_update(targets, now_ms)) {
+    return false;
+  }
+  if (!storage.save(targets)) {
+    controller.rollback_target_update(now_ms);
+    return false;
+  }
+  return controller.adopt_persisted_targets(targets, now_ms);
+}
+
+bool persist_brew_target(TemperatureController& controller,
+                         TargetStorage& storage, std::int32_t brew_c,
+                         std::uint32_t now_ms) {
+  auto targets = controller.targets();
+  targets.brew_c = brew_c;
+  return persist_targets(controller, storage, targets, now_ms);
+}
+
+bool persist_steam_target(TemperatureController& controller,
+                          TargetStorage& storage, std::int32_t steam_c,
+                          std::uint32_t now_ms) {
+  auto targets = controller.targets();
+  targets.steam_c = steam_c;
+  return persist_targets(controller, storage, targets, now_ms);
+}
+
 ThermocoupleReading open_boiler() {
   ThermocoupleReading value{};
   value.status = ThermocoupleStatus::kOpenCircuit;
@@ -363,9 +397,6 @@ void test_steam_offset_is_applied_once_for_cutoff_readiness_and_snapshot() {
   auto snapshot = harness.controller.update(reading(115.0F), 0);
   assert(snapshot.mode == ControlMode::kSteam);
   assert(snapshot.boiler_temperature.temperature_c == 120.0F);
-  const auto oled_temperature = display_temperature(snapshot);
-  assert(oled_temperature.valid);
-  assert(oled_temperature.value_c == 120.0F);
   assert(snapshot.status == ControlStatus::kHeating);
   assert(!snapshot.heater_enabled);
   assert(!harness.output.level);
@@ -446,14 +477,12 @@ void test_mode_changes_recompute_effective_temperature_and_reset_steam_state() {
   auto snapshot = harness.controller.update(reading(92.0F), 0);
   assert(snapshot.mode == ControlMode::kBrew);
   assert(snapshot.boiler_temperature.temperature_c == 92.0F);
-  assert(display_temperature(snapshot).value_c == 92.0F);
 
   assert(harness.controller.set_mode(ControlMode::kSteam, 1000));
   snapshot = harness.controller.snapshot(1000);
   assert(snapshot.mode == ControlMode::kSteam);
   assert(snapshot.status == ControlStatus::kHeating);
   assert(snapshot.boiler_temperature.temperature_c == 97.0F);
-  assert(display_temperature(snapshot).value_c == 97.0F);
   assert(!snapshot.steam_timeout.active);
   assert(!snapshot.heater_enabled);
 
@@ -462,7 +491,6 @@ void test_mode_changes_recompute_effective_temperature_and_reset_steam_state() {
   assert(snapshot.mode == ControlMode::kBrew);
   assert(snapshot.status == ControlStatus::kHeating);
   assert(snapshot.boiler_temperature.temperature_c == 92.0F);
-  assert(display_temperature(snapshot).value_c == 92.0F);
   assert(!snapshot.steam_timeout.active);
   assert(!snapshot.heater_enabled);
 }
@@ -475,7 +503,7 @@ void test_target_updates_validate_and_persist_before_state_change() {
   ControllerHarness harness(state.targets);
   state.heater_level = &harness.output.level;
 
-  assert(!harness.controller.update_brew_target(84, storage, 0));
+  assert(!persist_brew_target(harness.controller, storage, 84, 0));
   assert(harness.controller.targets().brew_c == 93);
   assert(state.save_count == 0);
 
@@ -483,7 +511,7 @@ void test_target_updates_validate_and_persist_before_state_change() {
   auto snapshot = harness.controller.update(reading(80.0F), 0);
   assert(snapshot.heater_enabled);
   assert(harness.output.level);
-  assert(!harness.controller.update_steam_target(116, storage, 0));
+  assert(!persist_steam_target(harness.controller, storage, 116, 0));
   assert(harness.controller.targets().steam_c == 115);
   assert(state.targets.steam_c == 115);
   assert(!harness.output.level);
@@ -491,7 +519,7 @@ void test_target_updates_validate_and_persist_before_state_change() {
   assert(harness.safety_lease.disarm_count == 2);
 
   state.fail_save = false;
-  assert(harness.controller.update_steam_target(116, storage, 0));
+  assert(persist_steam_target(harness.controller, storage, 116, 0));
   assert(harness.controller.targets().steam_c == 116);
   assert(state.targets.steam_c == 116);
   assert(state.save_count == 1);
@@ -506,12 +534,13 @@ void test_noop_and_inactive_target_updates_preserve_warmup_deadline() {
 
   auto snapshot = harness.controller.update(reading(80.0F), 0);
   assert(snapshot.heater_enabled);
-  assert(harness.controller.update_brew_target(93, storage, 1000));
+  assert(persist_brew_target(harness.controller, storage, 93, 1000));
   assert(state.save_count == 0);
   assert(harness.output.level);
 
-  assert(harness.controller.update_steam_target(
-      116, storage, philcoino::config::kHeatingTimeoutMs / 2U));
+  assert(persist_steam_target(
+      harness.controller, storage, 116,
+      philcoino::config::kHeatingTimeoutMs / 2U));
   assert(state.save_count == 1);
   assert(harness.controller.targets().steam_c == 116);
   snapshot = harness.controller.update(
@@ -590,8 +619,9 @@ void test_active_target_change_does_not_extend_running_warmup_deadline() {
 
   auto snapshot = harness.controller.update(reading(80.0F), 0);
   assert(snapshot.heater_enabled);
-  assert(harness.controller.update_brew_target(
-      94, storage, philcoino::config::kHeatingTimeoutMs / 2U));
+  assert(persist_brew_target(
+      harness.controller, storage, 94,
+      philcoino::config::kHeatingTimeoutMs / 2U));
   assert(harness.controller.targets().brew_c == 94);
 
   snapshot = harness.controller.update(
@@ -1213,29 +1243,21 @@ void test_profile_phases_exact_deadlines_and_delayed_completion() {
 
 void test_profile_snapshot_export_and_empty_slot_rules() {
   ExtractionHarness harness;
-  FakeProfileBackend backend;
-  ProfileStorage storage(backend);
   auto replacement = default_extraction_profiles();
   replacement[0].main_extraction_seconds = 20U;
-  assert(harness.controller.replace_profiles(replacement, storage) ==
-         ReplaceProfilesResult::kReplaced);
-  assert(backend.save_count == 1);
+  assert(harness.controller.adopt_persisted_profiles(replacement));
   assert(harness.controller.start(
              kStartKey, {ExtractionSelectionKind::kProfile, 0}, 0) ==
          StartExtractionResult::kStarted);
 
   auto later = replacement;
   later[0].main_extraction_seconds = 10U;
-  assert(harness.controller.replace_profiles(later, storage) ==
-         ReplaceProfilesResult::kActive);
-  assert(backend.save_count == 1);
+  assert(!harness.controller.adopt_persisted_profiles(later));
   assert(harness.controller.update(10000) == ExtractionUpdateResult::kOk);
   assert(harness.controller.snapshot(10000).remaining_ms == 10000U);
   assert(harness.controller.stop());
 
-  backend.fail_save = true;
-  assert(harness.controller.replace_profiles(later, storage) ==
-         ReplaceProfilesResult::kPersistenceFailure);
+  assert(harness.controller.adopt_persisted_profiles(replacement));
   assert(harness.controller.profiles()[0].main_extraction_seconds == 20U);
   assert(harness.controller.start(
              kOtherStartKey, {ExtractionSelectionKind::kProfile, 2}, 0) ==
@@ -1298,7 +1320,7 @@ void test_pump_output_failures_end_extraction_off() {
 void test_scale_filter_calibration_timeout_and_saturation() {
   FakeScaleCalibrationBackend backend;
   ScaleCalibrationStorage storage(backend);
-  ScaleController scale({}, false, storage);
+  ScaleController scale({}, false);
   for (std::int32_t index = 0; index < 10; ++index) {
     scale.update({Hx711Status::kOk, 100000 + index}, index * 10U);
   }
@@ -1311,14 +1333,30 @@ void test_scale_filter_calibration_timeout_and_saturation() {
   for (std::int32_t index = 0; index < 10; ++index) {
     scale.update({Hx711Status::kOk, 200000 + index}, 200U + index * 10U);
   }
-  assert(scale.complete_calibration(1000, false, 300) ==
+  ScaleCalibrationTransaction transaction{};
+  assert(scale.prepare_calibration_completion(
+             1000, false, 300, transaction) ==
          ScaleCalibrationResult::kOk);
+  assert(storage.save(transaction.candidate));
+  assert(scale.adopt_persisted_calibration(transaction));
   assert(backend.save_count == 1);
   snapshot = scale.snapshot(300);
   assert(snapshot.calibration_status == ScaleCalibrationStatus::kCalibrated);
   assert(snapshot.gross_weight_available);
   assert(snapshot.gross_weight_decigrams >= 999 &&
          snapshot.gross_weight_decigrams <= 1001);
+
+  const auto accepted_weight = snapshot.gross_weight_decigrams;
+  for (std::int32_t index = 0; index < 5; ++index) {
+    scale.update({Hx711Status::kNotReady,
+                  std::numeric_limits<std::int32_t>::max()},
+                 301U + static_cast<std::uint32_t>(index));
+  }
+  snapshot = scale.snapshot(305);
+  assert(snapshot.availability == ScaleAvailability::kReady);
+  assert(snapshot.stable);
+  assert(snapshot.gross_weight_available);
+  assert(snapshot.gross_weight_decigrams == accepted_weight);
 
   scale.update({Hx711Status::kSaturated, 0}, 301);
   assert(scale.snapshot(301).availability == ScaleAvailability::kUnavailable);
@@ -1327,13 +1365,24 @@ void test_scale_filter_calibration_timeout_and_saturation() {
   }
   assert(scale.snapshot(500).availability == ScaleAvailability::kReady);
   assert(scale.snapshot(1300).availability == ScaleAvailability::kUnavailable);
+
+  ScaleController rollover_scale({}, false);
+  for (std::int32_t index = 0; index < 10; ++index) {
+    rollover_scale.update(
+        {Hx711Status::kOk, 300000 + index},
+        0xFFFFFF00U + static_cast<std::uint32_t>(index * 10));
+  }
+  assert(rollover_scale.snapshot(0x00000050U).availability ==
+         ScaleAvailability::kReady);
+  assert(rollover_scale.snapshot(0x00000350U).availability ==
+         ScaleAvailability::kUnavailable);
 }
 
 void test_scale_recalibrates_after_the_retained_baseline_moves_out_of_range() {
   FakeScaleCalibrationBackend backend;
   ScaleCalibrationStorage storage(backend);
   const ScaleCalibration retained{100000, 200000, 1000};
-  ScaleController scale(retained, true, storage);
+  ScaleController scale(retained, true);
 
   for (std::int32_t index = 0; index < 10; ++index) {
     scale.update({Hx711Status::kOk, 2000000 + index * 75}, index * 10U);
@@ -1353,11 +1402,71 @@ void test_scale_recalibrates_after_the_retained_baseline_moves_out_of_range() {
     scale.update({Hx711Status::kOk, 2100000 + index * 75},
                  200U + index * 10U);
   }
-  assert(scale.complete_calibration(1000, false, 300) ==
+  ScaleCalibrationTransaction transaction{};
+  assert(scale.prepare_calibration_completion(
+             1000, false, 300, transaction) ==
          ScaleCalibrationResult::kOk);
+  assert(storage.save(transaction.candidate));
+  assert(scale.adopt_persisted_calibration(transaction));
   snapshot = scale.snapshot(300);
   assert(snapshot.calibration_status == ScaleCalibrationStatus::kCalibrated);
   assert(snapshot.availability == ScaleAvailability::kUnstable);
+  assert(snapshot.gross_weight_available);
+  assert(snapshot.gross_weight_decigrams >= 999 &&
+         snapshot.gross_weight_decigrams <= 1001);
+}
+
+void test_scale_calibration_transaction_retry_and_adoption_guard() {
+  FakeScaleCalibrationBackend backend;
+  backend.saved = {100000, 200000, 1000};
+  backend.present = true;
+  ScaleCalibrationStorage storage(backend);
+  ScaleController scale(backend.saved, true);
+
+  for (std::int32_t index = 0; index < 10; ++index) {
+    scale.update({Hx711Status::kOk, 100000 + index}, index * 10U);
+  }
+  assert(scale.start_calibration(false, 100U) ==
+         ScaleCalibrationResult::kOk);
+  for (std::int32_t index = 0; index < 10; ++index) {
+    scale.update({Hx711Status::kOk, 300000 + index}, 200U + index * 10U);
+  }
+
+  ScaleCalibrationTransaction failed{};
+  assert(scale.prepare_calibration_completion(1000, false, 300U, failed) ==
+         ScaleCalibrationResult::kOk);
+  backend.fail_save = true;
+  assert(!storage.save(failed.candidate));
+  assert(scale.calibration_persistence_failed(failed.token));
+  scale.cancel_calibration();
+  auto snapshot = scale.snapshot(300U);
+  assert(snapshot.calibration_status == ScaleCalibrationStatus::kCalibrated);
+  assert(snapshot.gross_weight_available);
+  assert(snapshot.gross_weight_decigrams > 1900);
+
+  backend.fail_save = false;
+  assert(scale.start_calibration(false, 310U) ==
+         ScaleCalibrationResult::kOk);
+  for (std::int32_t index = 0; index < 10; ++index) {
+    scale.update({Hx711Status::kOk, 400000 + index}, 320U + index * 10U);
+  }
+  ScaleCalibrationTransaction pending{};
+  assert(scale.prepare_calibration_completion(1000, false, 420U, pending) ==
+         ScaleCalibrationResult::kOk);
+  assert(storage.save(pending.candidate));
+  scale.cancel_calibration();
+  assert(scale.snapshot(420U).calibration_status ==
+         ScaleCalibrationStatus::kCalibrating);
+  assert(scale.start_calibration(false, 420U) ==
+         ScaleCalibrationResult::kAdoptionPending);
+
+  auto mismatch = pending;
+  ++mismatch.candidate.reference_raw;
+  assert(!scale.adopt_persisted_calibration(mismatch));
+  assert(!scale.calibration_persistence_failed(pending.token + 1U));
+  assert(scale.adopt_persisted_calibration(pending));
+  snapshot = scale.snapshot(420U);
+  assert(snapshot.calibration_status == ScaleCalibrationStatus::kCalibrated);
   assert(snapshot.gross_weight_available);
   assert(snapshot.gross_weight_decigrams >= 999 &&
          snapshot.gross_weight_decigrams <= 1001);
@@ -1492,7 +1601,8 @@ void test_cooldown_replay_conflict_target_snapshot_and_threshold() {
   memory.targets = {93, 115};
   MemoryBackend backend(memory);
   TargetStorage storage(backend);
-  assert(harness.temperature.controller.update_brew_target(95, storage, 9500));
+  assert(persist_brew_target(
+      harness.temperature.controller, storage, 95, 9500));
   assert(harness.cooldown.snapshot(9500).brew_target_c == 93);
   assert(harness.cooldown.update(cooldown_input(93.01F), 10000) ==
          CooldownUpdateResult::kOk);
@@ -1724,6 +1834,7 @@ int main() {
   test_pump_output_failures_end_extraction_off();
   test_scale_filter_calibration_timeout_and_saturation();
   test_scale_recalibrates_after_the_retained_baseline_moves_out_of_range();
+  test_scale_calibration_transaction_retry_and_adoption_guard();
   test_weighted_extraction_tare_cutoff_fallback_and_acknowledgement();
   test_cooldown_start_orders_outputs_and_preserves_permission();
   test_shared_pump_snapshots_keep_workflow_ownership();

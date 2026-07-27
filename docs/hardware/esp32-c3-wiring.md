@@ -6,10 +6,8 @@ Status: DRAFT — NOT ELECTRICALLY OR MAINS-SAFETY APPROVED
 
 | Module | Signal | ESP32-C3 connection |
 | --- | --- | --- |
-| OLED 128×32 I2C | VCC | 3V3 |
-| OLED 128×32 I2C | GND | GND |
-| OLED 128×32 I2C (`0x3C`) | SDA | GPIO8 |
-| OLED 128×32 I2C (`0x3C`) | SCL | GPIO9 |
+| Unassigned | — | GPIO8 |
+| Unassigned | — | GPIO9 |
 | Boiler MAX6675 | VCC | 3V3 |
 | Boiler MAX6675 | GND | GND |
 | Boiler MAX6675 | SCK | GPIO4 |
@@ -41,11 +39,15 @@ power. If discovery, HTTP polling, or reconnects become worse, raise this value
 before changing sensor or heater control behavior. This setting does not replace
 antenna placement, supply decoupling, or low-voltage noise checks.
 
-The API and OLED expose one boiler temperature. Brew and steam modes apply different targets and safety limits to that same measurement. The MAX6675 supports a 3.0 V through 5.5 V supply, has 0.25°C resolution, detects an open thermocouple, and requires as much as 220 ms for a conversion. The converter should have the datasheet-recommended 0.1 µF ceramic bypass capacitor close to its supply pin. Firmware treats open-thermocouple indications as a latched `sensor_failure`.
+The API exposes one boiler temperature. Brew and steam modes apply different targets and safety limits to that same measurement. The MAX6675 supports a 3.0 V through 5.5 V supply, has 0.25°C resolution, detects an open thermocouple, and requires as much as 220 ms for a conversion. The converter should have the datasheet-recommended 0.1 µF ceramic bypass capacitor close to its supply pin. Firmware treats open-thermocouple indications as a latched `sensor_failure`.
 
-### OLED pins
+### Unassigned GPIO8/GPIO9
 
-GPIO8 and GPIO9 are ESP32-C3 strapping pins sampled during reset. GPIO9 must be high for normal SPI boot. Typical I2C pull-ups hold both lines high, which may work, but the exact OLED board, pull-ups, boot button, and ESP32-C3 Super Mini schematic must be checked and reset/power-cycle tested. Using non-strapping GPIOs for I2C is preferable if the final board exposes suitable alternatives.
+GPIO8 and GPIO9 are not assigned by current firmware or approved wiring.
+Historically they were proposed for an SSD1306 I2C display, but both are
+ESP32-C3 strapping pins sampled during reset and GPIO9 must be high for normal
+SPI boot. PERF-010 removed that disabled implementation and did not reassign
+either pin. Any future use requires a separate reviewed hardware task.
 
 ### SSR output
 
@@ -93,9 +95,13 @@ power, and automatic tare cannot establish that a cup is present.
 
 Exact mounting, thermal lag, measurement error, and over-temperature limits still require validation on the physical boiler against an independent instrument.
 
-### Display
+### Historical display decision
 
-The 128×32 I2C display uses an SSD1306 controller at address `0x3C` on GPIO8/GPIO9. The owner confirmed that the breakout includes I2C pull-up resistors. No dedicated reset pin is configured. The 128×32 initialization sequence remains part of the later display-driver task.
+An earlier design proposed a 128×32 SSD1306 display at address `0x3C` on
+GPIO8/GPIO9, and the owner reported pull-ups on that breakout. The feature was
+disabled before PERF-010 removed its firmware implementation and I2C
+dependency. This record explains the abandoned pin choice; it is not current
+wiring guidance or approval to reconnect the display.
 
 ### Low-voltage power
 
@@ -106,7 +112,6 @@ The manufacturer's application guidance identifies a 1 A/250 VAC slow-blow input
 ## Information required before approval
 
 - Exact ESP32-C3 Super Mini vendor or schematic.
-- Reset and power-cycle verification of the OLED pull-ups on the GPIO8/GPIO9 strapping pins.
 - FOTEK SSR-40 DA terminal verification, reliable 3.3 V drive test, current derating, mounting, and heat sink.
 - Pump SSR identity/rating, original series-switch wiring, reliable 3.3 V drive, and reset/power-cycle GPIO10 behavior with the mains load disconnected.
 - HX711/load-cell wire mapping, GPIO0/GPIO1 reset and power-cycle behavior, data-ready cadence, repeatability, drift, disconnection/saturation response, and calibration checks with all mains loads disconnected.

@@ -300,21 +300,20 @@ idf.py build
 Configure Wi-Fi SSID, Wi-Fi password, and bearer token through `idf.py menuconfig` under `PhilcoINO`. Values belong only in generated, ignored `sdkconfig`; never put them in source, defaults, logs, screenshots, tests, or documentation.
 
 Current source permanently uses one boiler-base thermocouple on
-GPIO4/GPIO5/GPIO7 for both control modes and has OLED support enabled
-(`kOledEnabled = true`). Firmware validates the raw sample, reports it unchanged
+GPIO4/GPIO5/GPIO7 for both control modes. Firmware validates the raw sample, reports it unchanged
 in Brew, and applies the compile-time `kSteamTemperatureOffsetC = 5` correction
-once in Steam before control, safety, API, and OLED use. Manual/main extraction
+once in Steam before control, safety, and API use. Manual/main extraction
 adds a separate compile-time `+2°C` bias only to the private heater-duty target;
 pre-infusion uses `0°C`. Cooldown uses the validated Brew-effective sample,
 fixed 45-second pump cutoff, and fixed five-second stabilization. None of these
-values is configurable through NVS, HTTP, mDNS, simulator controls, OLED, or
+values is configurable through NVS, HTTP, mDNS, simulator controls, or
 mobile. Check [Safety](SAFETY.md), the tracker, and hardware documents before
 any device test. The owner accepted the configuration tested on 2026-07-16;
 that acceptance does not authorize a different setup or unattended use.
 
 ### Low-voltage only
 
-Repository development does not authorize mains power. With heater and pump loads disconnected, supervised checks may validate boot, the single boiler sensor against an independent instrument, open-probe behavior, display output, network discovery, and the heater/pump control GPIO inactive levels. Record physical evidence in the tracker/side notes only after the responsible human confirms it.
+Repository development does not authorize mains power. With heater and pump loads disconnected, supervised checks may validate boot, the single boiler sensor against an independent instrument, open-probe behavior, network discovery, and the heater/pump control GPIO inactive levels. Record physical evidence in the tracker/side notes only after the responsible human confirms it.
 
 ## Verification matrix
 
@@ -382,4 +381,4 @@ This is intentional until acknowledgement. A timeout, cancellation, invalid resp
 
 ### Firmware does not boot control
 
-Startup fails off when SSR, station MAC, NVS, MAX6675 setup, enabled OLED, initial sensor/render, or synchronization setup fails. Inspect logs without exposing credentials and resolve the owning hardware/adapter boundary. Do not bypass a failure merely to energize the heater.
+Startup fails off when SSR, station MAC, NVS, MAX6675 setup, initial sensor sampling, or synchronization setup fails. Inspect logs without exposing credentials and resolve the owning hardware/adapter boundary. Do not bypass a failure merely to energize the heater.

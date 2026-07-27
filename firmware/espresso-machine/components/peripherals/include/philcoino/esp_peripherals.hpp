@@ -6,6 +6,7 @@
 #include "driver/gptimer.h"
 #include "esp_attr.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "philcoino/peripherals.hpp"
 
 namespace philcoino::peripherals {
@@ -34,6 +35,18 @@ class EspHx711Transport final : public Hx711Transport {
   Hx711Reading read() override;
 
  private:
+  bool initialized_{false};
+};
+
+class EspHx711ReadyWaiter final : public Hx711ReadyWaiter {
+ public:
+  bool initialize_for_current_task();
+  bool wait(std::uint32_t timeout_ms) override;
+
+ private:
+  static void IRAM_ATTR on_ready(void* context);
+
+  TaskHandle_t task_{nullptr};
   bool initialized_{false};
 };
 
@@ -101,22 +114,6 @@ class EspGptimerSafetyLease final : public SsrSafetyLease {
   std::uint32_t off_level_;
   mutable portMUX_TYPE trip_lock_ = portMUX_INITIALIZER_UNLOCKED;
   bool tripped_{false};
-  bool initialized_{false};
-};
-
-class EspOledTransport final : public OledTransport {
- public:
-  bool initialize();
-  bool write_command(const std::uint8_t* bytes,
-                     std::size_t length) override;
-  bool write_data(const std::uint8_t* bytes, std::size_t length) override;
-
- private:
-  bool write(std::uint8_t control, const std::uint8_t* bytes,
-             std::size_t length);
-
-  void* bus_{nullptr};
-  void* device_{nullptr};
   bool initialized_{false};
 };
 

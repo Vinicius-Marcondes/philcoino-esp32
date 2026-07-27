@@ -68,22 +68,37 @@ class ScaleMemoryBackend final : public ScaleCalibrationBackend {
     return BackendLoadResult::kOk;
   }
   bool save(const ScaleCalibration& calibration) override {
+    assert(lock_held == nullptr || !*lock_held);
+    ++save_count;
+    if (fail_save) return false;
     saved = calibration;
     return true;
   }
   ScaleCalibration saved{0, 100000, 1000};
+  const bool* lock_held{nullptr};
+  bool fail_save{false};
+  int save_count{0};
 };
 
 class FakeApiSynchronization final : public ApiSynchronization {
  public:
   bool lock(ApiDomain) override {
+    assert(!held);
     ++lock_count;
-    return !fail_lock && lock_count != fail_on_lock;
+    if (fail_lock || lock_count == fail_on_lock) return false;
+    held = true;
+    return true;
   }
-  void unlock(ApiDomain) override {}
+  void unlock(ApiDomain) override {
+    assert(held);
+    held = false;
+    ++unlock_count;
+  }
   bool fail_lock{false};
   int fail_on_lock{0};
   int lock_count{0};
+  int unlock_count{0};
+  bool held{false};
 };
 
 class FakeDigitalOutput final : public DigitalOutput {
@@ -141,12 +156,13 @@ struct ApiHarness {
         extraction(profile_backend.saved, pump),
         cooldown(controller, pump),
         scale_storage(scale_backend),
-        scale(scale_backend.saved, true, scale_storage),
+        scale(scale_backend.saved, true),
         api({"philcoino-0102AF", "PhilcoINO", "ESP32-C3 Super Mini", "0.2.0"},
             "test-secret", controller, storage, extraction, cooldown,
-            profile_storage, synchronization, &history, &scale) {
+            profile_storage, scale_storage, synchronization, &history, &scale) {
     assert(ssr.initialize());
     assert(pump.initialize());
+    scale_backend.lock_held = &synchronization.held;
     controller.update(ok(87.5F), 1000);
     for (std::int32_t index = 0; index < 10; ++index) {
       scale.update({Hx711Status::kOk, 80000}, 1000U + index);
@@ -156,7 +172,9 @@ struct ApiHarness {
   HttpResponse request(HttpMethod method, const char* path,
                        const char* authorization = nullptr,
                        const char* body = "", std::uint64_t now_ms = 184220) {
-    return api.handle(method, path, authorization, body, now_ms);
+    auto response = api.handle(method, path, authorization, body, now_ms);
+    assert(!synchronization.held);
+    return response;
   }
 
   MemoryState memory{};
@@ -672,6 +690,8 @@ void test_api_v2_cooldown_and_compensation_contract() {
              "{\"idempotencyKey\":\"start-01J2COMPSTATE1\",\"selection\":{\"kind\":\"manual\"}}",
              2000)
              .status == 200);
+  compensation.controller.set_extraction_phase(
+      compensation.extraction.snapshot(2000U).phase, 2000U);
   response = compensation.request(HttpMethod::kGet, "/api/v2/state",
                                   authorization, "", 2000);
   assert(response.body.find(
@@ -1169,6 +1189,71 @@ void test_bounded_history_contract() {
                400, "malformed_request");
 }
 
+void test_api_v2_state_reads_are_observational() {
+  const char* authorization = "Bearer test-secret";
+  ApiHarness extraction;
+  auto response = extraction.request(
+      HttpMethod::kPost, "/api/v2/extractions/start", authorization,
+      "{\"idempotencyKey\":\"observational-manual-1\",\"selection\":{\"kind\":\"manual\"}}",
+      1000U);
+  assert(response.status == 200);
+  assert(!extraction.controller.extraction_compensation_active());
+
+  const auto first = extraction.request(
+      HttpMethod::kGet, "/api/v2/state", authorization, "", 5000U);
+  const auto repeated = extraction.request(
+      HttpMethod::kGet, "/api/v2/state", authorization, "", 5000U);
+  assert(first.status == 200);
+  assert(first.body == repeated.body);
+  assert(first.body.find("\"phase\":\"manual\"") != std::string::npos);
+  assert(first.body.find("\"pumpCommand\":\"running\"") != std::string::npos);
+  assert(!extraction.controller.extraction_compensation_active());
+
+  assert(extraction.extraction.update(5000U) ==
+         ExtractionUpdateResult::kOk);
+  extraction.controller.set_extraction_phase(
+      extraction.extraction.snapshot(5000U).phase, 5000U);
+  assert(extraction.controller.extraction_compensation_active());
+  response = extraction.request(
+      HttpMethod::kPost, "/api/v2/extractions/stop", authorization, "",
+      5100U);
+  assert(response.status == 200);
+  extraction.controller.update(ok(96.0F), 5200U);
+  response = extraction.request(
+      HttpMethod::kPost, "/api/v2/cooldowns/start", authorization,
+      "{\"idempotencyKey\":\"observational-handoff-1\"}", 5200U);
+  assert(response.status == 200);
+  extraction.request(HttpMethod::kGet, "/api/v2/state", authorization, "",
+                     5300U);
+  assert(extraction.controller.extraction_compensation_active());
+  extraction.controller.set_extraction_phase(ExtractionPhase::kIdle, 5300U);
+  assert(!extraction.controller.extraction_compensation_active());
+
+  ApiHarness cooldown;
+  cooldown.controller.update(ok(96.0F), 2000U);
+  response = cooldown.request(
+      HttpMethod::kPost, "/api/v2/cooldowns/start", authorization,
+      "{\"idempotencyKey\":\"observational-cooldown-1\"}", 2000U);
+  assert(response.status == 200);
+  const auto before_deadline = cooldown.request(
+      HttpMethod::kGet, "/api/v2/state", authorization, "", 48000U);
+  const auto repeated_deadline = cooldown.request(
+      HttpMethod::kGet, "/api/v2/state", authorization, "", 48000U);
+  assert(before_deadline.body == repeated_deadline.body);
+  assert(before_deadline.body.find("\"status\":\"pumping\"") !=
+         std::string::npos);
+  assert(cooldown.pump.command() == PumpCommand::kRunning);
+
+  assert(cooldown.cooldown.update(
+             {true, false, false, 96.0F}, 48000U) ==
+         CooldownUpdateResult::kOk);
+  const auto advanced = cooldown.request(
+      HttpMethod::kGet, "/api/v2/state", authorization, "", 48000U);
+  assert(advanced.body.find("\"status\":\"stabilizing\"") !=
+         std::string::npos);
+  assert(cooldown.pump.command() == PumpCommand::kOff);
+}
+
 void test_scale_api_and_weighted_start_contract() {
   ApiHarness harness;
   const char* authorization = "Bearer test-secret";
@@ -1191,6 +1276,9 @@ void test_scale_api_and_weighted_start_contract() {
   for (std::int32_t index = 0; index < 10; ++index) {
     harness.scale.update({Hx711Status::kOk, 113000}, 2000U + index);
   }
+  const auto scale = harness.scale.snapshot(2010U);
+  assert(harness.extraction.update(2010U, &scale) ==
+         ExtractionUpdateResult::kCompleted);
   response = harness.request(HttpMethod::kGet, "/api/v2/state",
                              authorization, "", 2010);
   assert(response.status == 200);
@@ -1217,6 +1305,71 @@ void test_scale_api_and_weighted_start_contract() {
   assert(response.status == 200);
   assert(response.body.find("\"calibrationStatus\":\"calibrated\"") !=
          std::string::npos);
+  assert(calibration.scale_backend.save_count == 1);
+
+  ApiHarness retry_calibration;
+  response = retry_calibration.request(
+      HttpMethod::kPost, "/api/v2/scale/calibration/start", authorization,
+      "", 1100);
+  assert(response.status == 200);
+  for (std::int32_t index = 0; index < 10; ++index) {
+    retry_calibration.scale.update({Hx711Status::kOk, 90000}, 1200U + index);
+  }
+  retry_calibration.scale_backend.fail_save = true;
+  expect_error(
+      retry_calibration.request(
+          HttpMethod::kPost, "/api/v2/scale/calibration/complete",
+          authorization, "{\"referenceWeightDecigrams\":1000}", 1300),
+      500, "persistence_failure");
+  assert(retry_calibration.scale_backend.save_count == 1);
+  retry_calibration.scale_backend.fail_save = false;
+  response = retry_calibration.request(
+      HttpMethod::kPost, "/api/v2/scale/calibration/complete", authorization,
+      "{\"referenceWeightDecigrams\":1000}", 1310);
+  assert(response.status == 200);
+  assert(retry_calibration.scale_backend.save_count == 2);
+
+  ApiHarness adoption_retry;
+  response = adoption_retry.request(
+      HttpMethod::kPost, "/api/v2/scale/calibration/start", authorization,
+      "", 1100);
+  assert(response.status == 200);
+  for (std::int32_t index = 0; index < 10; ++index) {
+    adoption_retry.scale.update({Hx711Status::kOk, 90000}, 1200U + index);
+  }
+  adoption_retry.synchronization.fail_on_lock =
+      adoption_retry.synchronization.lock_count + 2;
+  expect_error(
+      adoption_retry.request(
+          HttpMethod::kPost, "/api/v2/scale/calibration/complete",
+          authorization, "{\"referenceWeightDecigrams\":1000}", 1300),
+      500, "internal_error");
+  assert(adoption_retry.scale_backend.save_count == 1);
+  response = adoption_retry.request(
+      HttpMethod::kPost, "/api/v2/scale/calibration/cancel", authorization,
+      "", 1310);
+  assert(response.status == 200);
+  assert(response.body.find("\"calibrationStatus\":\"calibrating\"") !=
+         std::string::npos);
+  expect_error(
+      adoption_retry.request(
+          HttpMethod::kPost, "/api/v2/scale/calibration/start",
+          authorization, "", 1310),
+      409, "calibration_in_progress");
+  expect_error(
+      adoption_retry.request(
+          HttpMethod::kPost, "/api/v2/extractions/start", authorization,
+          "{\"idempotencyKey\":\"pending-adoption-weighted\",\"selection\":{\"kind\":\"profile\",\"profileId\":\"profile-2\"},\"weightControl\":{\"targetWeightDecigrams\":350,\"compensationDecigrams\":20}}",
+          1310),
+      409, "scale_not_calibrated");
+  assert(adoption_retry.pump.command() == PumpCommand::kOff);
+  response = adoption_retry.request(
+      HttpMethod::kPost, "/api/v2/scale/calibration/complete", authorization,
+      "{\"referenceWeightDecigrams\":1000}", 1320);
+  assert(response.status == 200);
+  assert(response.body.find("\"calibrationStatus\":\"calibrated\"") !=
+         std::string::npos);
+  assert(adoption_retry.scale_backend.save_count == 2);
 
   ApiHarness stale_calibration;
   for (std::int32_t index = 0; index < 10; ++index) {
@@ -1278,6 +1431,7 @@ int main(int argc, char** argv) {
   test_over_temperature_dismissal_endpoint_is_guarded();
   test_malformed_and_domain_failures_do_not_bypass_validation();
   test_api_v2_profiles_and_extraction_contract();
+  test_api_v2_state_reads_are_observational();
   test_api_v2_rejects_malformed_nested_shapes_and_lock_failure();
   test_target_adoption_lock_failure_retains_the_heater_inhibit();
   test_workflow_mode_coordination_is_authoritative();

@@ -6,14 +6,18 @@
 
 namespace philcoino::config {
 
-inline constexpr char kFirmwareVersion[] = "0.3.3";
+inline constexpr char kFirmwareVersion[] = "0.3.4";
 inline constexpr char kFriendlyName[] = "PhilcoINO";
 inline constexpr char kDeviceModel[] = "ESP32-C3 Super Mini";
 inline constexpr char kDeviceIdPrefix[] = "philcoino-";
 inline constexpr bool kWifiEnabled = true;
+#ifdef CONFIG_PHILCOINO_PERFORMANCE_DIAGNOSTICS
+inline constexpr bool kPerformanceDiagnosticsEnabled = true;
+#else
+inline constexpr bool kPerformanceDiagnosticsEnabled = false;
+#endif
 // ESP-IDF uses quarter-dBm units; 44 limits station TX power to 11 dBm.
 inline constexpr std::int8_t kWifiMaximumTxPowerQuarterDbm = 44;
-inline constexpr bool kOledEnabled = false;
 // Logs every successful MAX6675 frame and can make the serial monitor noisy.
 // Sensor transport failures remain logged when this diagnostic is disabled.
 inline constexpr bool kTemperatureReadingLoggingEnabled = false;
@@ -44,12 +48,6 @@ inline constexpr float kBrewRecoveryTriggerDropC = 1.0F;
 inline constexpr float kSteamRecoveryTriggerDropC = 3.0F;
 inline constexpr float kBrewRecoveryHeatRampBandC = 4.0F;
 inline constexpr float kSteamRecoveryHeatRampBandC = 6.0F;
-
-inline constexpr std::uint8_t kOledI2cAddress = 0x3C;
-inline constexpr std::int32_t kOledSdaGpio = 8;
-inline constexpr std::int32_t kOledSclGpio = 9;
-inline constexpr std::int32_t kOledWidth = 128;
-inline constexpr std::int32_t kOledHeight = 32;
 
 inline constexpr std::int32_t kBoilerThermocoupleClockGpio = 4;
 inline constexpr std::int32_t kBoilerThermocoupleDataGpio = 5;

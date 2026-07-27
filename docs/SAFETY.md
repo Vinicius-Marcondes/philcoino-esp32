@@ -11,7 +11,7 @@ Philcoino é um controller experimental para máquina de espresso que trabalha p
 - O firmware usa permanentemente uma leitura de thermocouple na base da boiler para brew e steam. Isso mantém um único ponto de falha de controle e não oferece cross-check independente entre sensores.
 - A PRD-003 implementa uma correção fixa e owner-selected de `+5°C` apenas em
   Steam, depois da validação da leitura raw. O valor corrigido orienta control,
-  limits, API e OLED. O owner aceitou o valor para a configuração testada em
+  limits e API. O owner aceitou o valor para a configuração testada em
   STEAM-004; os registros brutos de instrumentos/medições não estão no repo.
 - O software da PRD-004 adiciona bias fixo de `+2°C` somente ao cálculo de duty
   durante Manual/main e um workflow de comando de cooldown do firmware com
@@ -19,7 +19,9 @@ Philcoino é um controller experimental para máquina de espresso que trabalha p
   THERM-010 e THERM-011 foram aceitas pelo owner em 2026-07-16 após testes de
   todas as features e checks dos controles de energia com equipamento técnico.
   A evidência é owner-reported e limitada à configuração testada.
-- O source atual do firmware habilita o OLED (`kOledEnabled = true`), enquanto o tracker registra um estado temporário com OLED desabilitado. Trate isso como uma divergência não resolvida entre documentação e configuração, não como um estado de hardware aprovado.
+- A implementação OLED/SSD1306 anteriormente desabilitada foi removida em
+  PERF-010. GPIO8 e GPIO9 permanecem sem atribuição; isso não aprova novo
+  hardware nem altera a aceitação física histórica.
 - A aceitação de 2026-07-16 permanece limitada à configuração então testada.
   As novas gates Human de histórico/predição passiva (HIST-007/PRD-012),
   incluindo runtime do firmware `0.3.3`, continuam pendentes; findings de
@@ -47,6 +49,9 @@ O firmware controla o temperature-control loop e não depende da conectividade d
 - amostra o HX711 fora do loop crítico e só inicia uma extração por peso após
   calibração, disponibilidade, estabilidade e tara automática; falha de tara
   mantém a pump desligada;
+- acorda a task da balança por uma notificação coalescente da borda de
+  data-ready; a ISR não faz clock, filtro, log ou publicação, e o timeout de
+  750 ms mantém a detecção bounded de uma balança desconectada;
 - em falha da balança durante a extração, abandona o corte por peso e usa o
   deadline monotônico original do perfil, preservando o cutoff independente de
   60 segundos e bloqueando novo Start por peso até acknowledgement;
@@ -60,14 +65,14 @@ O firmware controla o temperature-control loop e não depende da conectividade d
   recente de comandos e previsões lineares de 5/10/20 segundos. A correção
   hipotética é registrada, mas nunca altera o comando do heater nesta versão;
 - usa uma safety lease GPTimer de 1500 ms para o comando do heater e um único
-  mutex de workflow bounded, mantendo NVS, display e transmissão HTTP fora
+  mutex de workflow bounded, mantendo NVS e transmissão HTTP fora
   desse boundary;
 - inicializa hardware crítico em ordem fail-off.
 
 Esses itens são intenções de design e comportamentos de software cobertos por testes, não prova de desenergização física ou segurança térmica.
 
-A concordância entre control, API e OLED demonstra somente consistência de
-software. Ela não comprova que `+5°C` representa a diferença física da boiler,
+A concordância entre control e API demonstra somente consistência de software.
+Ela não comprova que `+5°C` representa a diferença física da boiler,
 que `+2°C` melhora a extração ou que um comando de cooldown produz fluxo ou
 resfriamento. Também não substitui medição independente, cutoff térmico ou
 revisão energizada.

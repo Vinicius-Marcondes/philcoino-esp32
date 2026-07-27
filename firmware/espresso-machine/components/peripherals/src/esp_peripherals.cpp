@@ -10,12 +10,15 @@
 #error "PhilcoINO requires CONFIG_GPIO_CTRL_FUNC_IN_IRAM for the heater lease"
 #endif
 
+#if !CONFIG_FREERTOS_IN_IRAM
+#error "PhilcoINO requires CONFIG_FREERTOS_IN_IRAM for cache-safe HX711 notification"
+#endif
+
 #include <algorithm>
 #include <array>
 #include <cinttypes>
 
 #include "driver/gpio.h"
-#include "driver/i2c_master.h"
 #include "esp_err.h"
 #include "esp_log.h"
 #include "esp_rom_sys.h"
@@ -49,10 +52,6 @@ bool initialize_nvs_flash() {
     result = nvs_flash_init();
   }
   return result == ESP_OK;
-}
-
-i2c_master_dev_handle_t as_i2c_device(void* handle) {
-  return static_cast<i2c_master_dev_handle_t>(handle);
 }
 
 [[maybe_unused]] const char* frame_status(std::uint16_t frame) {
@@ -254,6 +253,42 @@ Hx711Reading EspHx711Transport::read() {
     raw |= 0xFF000000U;
   }
   return {Hx711Status::kOk, static_cast<std::int32_t>(raw)};
+}
+
+bool EspHx711ReadyWaiter::initialize_for_current_task() {
+  if (initialized_) return true;
+  task_ = xTaskGetCurrentTaskHandle();
+  if (task_ == nullptr) return false;
+  const auto install_result = gpio_install_isr_service(ESP_INTR_FLAG_IRAM);
+  if (install_result != ESP_OK) {
+    task_ = nullptr;
+    return false;
+  }
+  const auto data_gpio = static_cast<gpio_num_t>(config::kScaleDataGpio);
+  if (gpio_set_intr_type(data_gpio, GPIO_INTR_NEGEDGE) != ESP_OK ||
+      gpio_isr_handler_add(data_gpio, &EspHx711ReadyWaiter::on_ready, this) !=
+          ESP_OK ||
+      gpio_intr_enable(data_gpio) != ESP_OK) {
+    gpio_isr_handler_remove(data_gpio);
+    task_ = nullptr;
+    return false;
+  }
+  initialized_ = true;
+  return true;
+}
+
+bool EspHx711ReadyWaiter::wait(std::uint32_t timeout_ms) {
+  if (!initialized_) return false;
+  return ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(timeout_ms)) > 0U;
+}
+
+void EspHx711ReadyWaiter::on_ready(void* context) {
+  auto* waiter = static_cast<EspHx711ReadyWaiter*>(context);
+  BaseType_t higher_priority_task_woken = pdFALSE;
+  vTaskNotifyGiveFromISR(waiter->task_, &higher_priority_task_woken);
+  if (higher_priority_task_woken == pdTRUE) {
+    portYIELD_FROM_ISR();
+  }
 }
 
 bool EspNvsTargetBackend::initialize() {
@@ -504,59 +539,6 @@ void EspGptimerSafetyLease::fail_off_from_isr() {
   portENTER_CRITICAL_ISR(&trip_lock_);
   tripped_ = true;
   portEXIT_CRITICAL_ISR(&trip_lock_);
-}
-
-bool EspOledTransport::initialize() {
-  i2c_master_bus_config_t bus_config{};
-  bus_config.i2c_port = I2C_NUM_0;
-  bus_config.sda_io_num = static_cast<gpio_num_t>(config::kOledSdaGpio);
-  bus_config.scl_io_num = static_cast<gpio_num_t>(config::kOledSclGpio);
-  bus_config.clk_source = I2C_CLK_SRC_DEFAULT;
-  bus_config.glitch_ignore_cnt = 7;
-  bus_config.flags.enable_internal_pullup = false;
-  i2c_master_bus_handle_t bus = nullptr;
-  if (i2c_new_master_bus(&bus_config, &bus) != ESP_OK) {
-    return false;
-  }
-
-  i2c_device_config_t device_config{};
-  device_config.dev_addr_length = I2C_ADDR_BIT_LEN_7;
-  device_config.device_address = config::kOledI2cAddress;
-  device_config.scl_speed_hz = 400000;
-  i2c_master_dev_handle_t device = nullptr;
-  if (i2c_master_bus_add_device(bus, &device_config, &device) != ESP_OK) {
-    return false;
-  }
-  bus_ = bus;
-  device_ = device;
-  initialized_ = true;
-  return true;
-}
-
-bool EspOledTransport::write_command(const std::uint8_t* bytes,
-                                     std::size_t length) {
-  return write(0x00, bytes, length);
-}
-
-bool EspOledTransport::write_data(const std::uint8_t* bytes,
-                                  std::size_t length) {
-  return write(0x40, bytes, length);
-}
-
-bool EspOledTransport::write(std::uint8_t control, const std::uint8_t* bytes,
-                             std::size_t length) {
-  constexpr std::size_t kMaximumPayload = Ssd1306Display::kBufferSize;
-  if (!initialized_ || bytes == nullptr || length == 0 ||
-      length > kMaximumPayload) {
-    return false;
-  }
-  std::array<std::uint8_t, kMaximumPayload + 1> packet{};
-  packet[0] = control;
-  for (std::size_t index = 0; index < length; ++index) {
-    packet[index + 1] = bytes[index];
-  }
-  return i2c_master_transmit(as_i2c_device(device_), packet.data(), length + 1,
-                             100) == ESP_OK;
 }
 
 void EspOutputCriticalSection::enter() { portENTER_CRITICAL(&lock_); }

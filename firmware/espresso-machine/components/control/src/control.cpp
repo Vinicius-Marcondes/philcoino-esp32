@@ -29,15 +29,6 @@ bool over_temperature(float active_temperature_c, ControlMode mode) {
 
 }  // namespace
 
-peripherals::DisplayTemperature display_temperature(
-    const ControlSnapshot& snapshot) {
-  return {
-      snapshot.boiler_temperature.status ==
-          peripherals::ThermocoupleStatus::kOk,
-      snapshot.boiler_temperature.temperature_c,
-  };
-}
-
 const char* fault_code_name(FaultCode code) {
   switch (code) {
     case FaultCode::kSensorFailure: return "sensor_failure";
@@ -219,22 +210,6 @@ bool TemperatureController::set_heater_enabled(bool enabled,
   return true;
 }
 
-bool TemperatureController::update_targets(
-    const peripherals::TemperatureTargets& targets,
-    peripherals::TargetStorage& storage, std::uint32_t now_ms) {
-  if (targets.brew_c == targets_.brew_c && targets.steam_c == targets_.steam_c) {
-    return true;
-  }
-  if (!prepare_target_update(targets, now_ms)) {
-    return false;
-  }
-  if (!storage.save(targets)) {
-    rollback_target_update(now_ms);
-    return false;
-  }
-  return adopt_persisted_targets(targets, now_ms);
-}
-
 bool TemperatureController::prepare_target_update(
     const peripherals::TemperatureTargets& targets, std::uint32_t now_ms) {
   if (target_update_in_progress_ ||
@@ -308,22 +283,6 @@ bool TemperatureController::rollback_target_update(std::uint32_t now_ms) {
   reset_heater_control_window(now_ms);
   target_update_in_progress_ = false;
   return true;
-}
-
-bool TemperatureController::update_brew_target(
-    std::int32_t brew_c, peripherals::TargetStorage& storage,
-    std::uint32_t now_ms) {
-  auto targets = targets_;
-  targets.brew_c = brew_c;
-  return update_targets(targets, storage, now_ms);
-}
-
-bool TemperatureController::update_steam_target(
-    std::int32_t steam_c, peripherals::TargetStorage& storage,
-    std::uint32_t now_ms) {
-  auto targets = targets_;
-  targets.steam_c = steam_c;
-  return update_targets(targets, storage, now_ms);
 }
 
 bool TemperatureController::dismiss_over_temperature(std::uint32_t now_ms) {
@@ -727,10 +686,8 @@ bool weight_control_is_valid(const WeightControl& control) {
 
 ScaleController::ScaleController(
     peripherals::ScaleCalibration calibration,
-    bool calibrated,
-    peripherals::ScaleCalibrationStorage& storage)
+    bool calibrated)
     : calibration_(calibration),
-      storage_(storage),
       calibrated_(calibrated &&
                   peripherals::scale_calibration_is_valid(calibration)) {}
 
@@ -743,6 +700,7 @@ void ScaleController::update(peripherals::Hx711Reading reading,
     last_valid_ms_ = now_ms;
     has_valid_sample_ = true;
     transport_failed_ = false;
+    refresh_cached_derived_state();
     return;
   }
   if (reading.status == peripherals::Hx711Status::kTransportError ||
@@ -766,8 +724,8 @@ ScaleSnapshot ScaleController::snapshot(std::uint32_t now_ms) const {
           : value.stable ? ScaleAvailability::kReady
                          : ScaleAvailability::kUnstable;
   if (calibrated_ && !calibration_in_progress_ && current_available) {
-    value.gross_weight_available = peripherals::scale_raw_to_decigrams(
-        calibration_, median_raw(), value.gross_weight_decigrams);
+    value.gross_weight_available = cached_gross_weight_available_;
+    value.gross_weight_decigrams = cached_gross_weight_decigrams_;
     if (!value.gross_weight_available) {
       value.availability = ScaleAvailability::kUnavailable;
       value.stable = false;
@@ -781,6 +739,9 @@ ScaleCalibrationResult ScaleController::start_calibration(
   if (workflow_active) {
     return ScaleCalibrationResult::kWorkflowActive;
   }
+  if (calibration_adoption_pending_) {
+    return ScaleCalibrationResult::kAdoptionPending;
+  }
   if (!available(now_ms)) {
     return ScaleCalibrationResult::kUnavailable;
   }
@@ -792,12 +753,20 @@ ScaleCalibrationResult ScaleController::start_calibration(
   return ScaleCalibrationResult::kOk;
 }
 
-ScaleCalibrationResult ScaleController::complete_calibration(
+ScaleCalibrationResult ScaleController::prepare_calibration_completion(
     std::int32_t reference_decigrams,
     bool workflow_active,
-    std::uint32_t now_ms) {
+    std::uint32_t now_ms,
+    ScaleCalibrationTransaction& transaction) {
   if (workflow_active) {
     return ScaleCalibrationResult::kWorkflowActive;
+  }
+  if (calibration_adoption_pending_) {
+    if (pending_calibration_.reference_decigrams != reference_decigrams) {
+      return ScaleCalibrationResult::kAdoptionPending;
+    }
+    transaction = {pending_calibration_, pending_calibration_token_};
+    return ScaleCalibrationResult::kOk;
   }
   if (!calibration_in_progress_) {
     return ScaleCalibrationResult::kNotStarted;
@@ -819,17 +788,55 @@ ScaleCalibrationResult ScaleController::complete_calibration(
   if (!peripherals::scale_calibration_is_valid(candidate)) {
     return ScaleCalibrationResult::kInvalidReference;
   }
-  if (!storage_.save(candidate)) {
-    return ScaleCalibrationResult::kPersistenceFailure;
+  pending_calibration_ = candidate;
+  pending_calibration_token_ = next_calibration_token_++;
+  if (next_calibration_token_ == 0U) {
+    next_calibration_token_ = 1U;
   }
-  calibration_ = candidate;
-  calibrated_ = true;
-  calibration_in_progress_ = false;
+  calibration_adoption_pending_ = true;
+  transaction = {pending_calibration_, pending_calibration_token_};
   return ScaleCalibrationResult::kOk;
 }
 
-void ScaleController::cancel_calibration() {
+bool ScaleController::calibration_persistence_failed(std::uint32_t token) {
+  if (!calibration_adoption_pending_ ||
+      token != pending_calibration_token_) {
+    return false;
+  }
+  calibration_adoption_pending_ = false;
+  pending_calibration_ = {};
+  pending_calibration_token_ = 0U;
+  return true;
+}
+
+bool ScaleController::adopt_persisted_calibration(
+    const ScaleCalibrationTransaction& transaction) {
+  if (!calibration_adoption_pending_ ||
+      transaction.token != pending_calibration_token_ ||
+      !calibrations_equal(transaction.candidate, pending_calibration_)) {
+    return false;
+  }
+  calibration_ = pending_calibration_;
+  calibrated_ = true;
   calibration_in_progress_ = false;
+  calibration_adoption_pending_ = false;
+  pending_calibration_ = {};
+  pending_calibration_token_ = 0U;
+  refresh_cached_derived_state();
+  return true;
+}
+
+void ScaleController::cancel_calibration() {
+  if (calibration_adoption_pending_) return;
+  calibration_in_progress_ = false;
+}
+
+bool ScaleController::calibrations_equal(
+    const peripherals::ScaleCalibration& left,
+    const peripherals::ScaleCalibration& right) {
+  return left.zero_raw == right.zero_raw &&
+         left.reference_raw == right.reference_raw &&
+         left.reference_decigrams == right.reference_decigrams;
 }
 
 bool ScaleController::available(std::uint32_t now_ms) const {
@@ -839,35 +846,16 @@ bool ScaleController::available(std::uint32_t now_ms) const {
 }
 
 bool ScaleController::stable() const {
-  if (sample_count_ < samples_.size()) {
-    return false;
-  }
-  const auto range = std::minmax_element(samples_.begin(), samples_.end());
-  const auto spread =
-      static_cast<std::int64_t>(*range.second) -
-      static_cast<std::int64_t>(*range.first);
-  return spread <= stable_raw_spread_limit();
+  return sample_count_ == samples_.size() &&
+         cached_raw_spread_ <= stable_raw_spread_limit();
 }
 
 bool ScaleController::stable_for_calibration() const {
-  if (sample_count_ < samples_.size()) {
-    return false;
-  }
-  const auto range = std::minmax_element(samples_.begin(), samples_.end());
-  const auto spread =
-      static_cast<std::int64_t>(*range.second) -
-      static_cast<std::int64_t>(*range.first);
-  return spread <= 1000;
+  return sample_count_ == samples_.size() && cached_raw_spread_ <= 1000;
 }
 
 std::int32_t ScaleController::median_raw() const {
-  if (sample_count_ == 0U) {
-    return 0;
-  }
-  std::array<std::int32_t, 10> sorted{};
-  std::copy_n(samples_.begin(), sample_count_, sorted.begin());
-  std::sort(sorted.begin(), sorted.begin() + sample_count_);
-  return sorted[sample_count_ / 2U];
+  return cached_median_raw_;
 }
 
 std::int32_t ScaleController::stable_raw_spread_limit() const {
@@ -881,6 +869,30 @@ std::int32_t ScaleController::stable_raw_spread_limit() const {
       raw_span * config::kScaleStableSpreadDecigrams /
       calibration_.reference_decigrams;
   return static_cast<std::int32_t>(std::max(1LL, scaled));
+}
+
+void ScaleController::refresh_cached_derived_state() {
+  if (sample_count_ == 0U) {
+    cached_median_raw_ = 0;
+    cached_raw_spread_ = 0;
+    cached_gross_weight_available_ = false;
+    cached_gross_weight_decigrams_ = 0;
+    return;
+  }
+  std::array<std::int32_t, 10> sorted{};
+  std::copy_n(samples_.begin(), sample_count_, sorted.begin());
+  std::sort(sorted.begin(), sorted.begin() + sample_count_);
+  cached_median_raw_ = sorted[sample_count_ / 2U];
+  cached_raw_spread_ =
+      static_cast<std::int64_t>(sorted[sample_count_ - 1U]) -
+      static_cast<std::int64_t>(sorted[0]);
+  cached_gross_weight_available_ =
+      calibrated_ && peripherals::scale_raw_to_decigrams(
+                         calibration_, cached_median_raw_,
+                         cached_gross_weight_decigrams_);
+  if (!cached_gross_weight_available_) {
+    cached_gross_weight_decigrams_ = 0;
+  }
 }
 
 ExtractionController::ExtractionController(
@@ -979,22 +991,6 @@ WeightExtractionSnapshot ExtractionController::weight_snapshot(
   }
   value.settled = terminal_weight_settled_;
   return value;
-}
-
-ReplaceProfilesResult ExtractionController::replace_profiles(
-    const peripherals::ExtractionProfiles& profiles,
-    peripherals::ProfileStorage& storage) {
-  if (active_) {
-    return ReplaceProfilesResult::kActive;
-  }
-  if (!peripherals::extraction_profiles_are_valid(profiles)) {
-    return ReplaceProfilesResult::kInvalidProfiles;
-  }
-  if (!storage.save(profiles)) {
-    return ReplaceProfilesResult::kPersistenceFailure;
-  }
-  profiles_ = profiles;
-  return ReplaceProfilesResult::kReplaced;
 }
 
 bool ExtractionController::adopt_persisted_profiles(

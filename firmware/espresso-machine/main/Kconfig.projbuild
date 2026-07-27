@@ -19,4 +19,12 @@ menu "PhilcoINO"
         help
             Stored only in the generated, ignored sdkconfig file. Never log it.
 
+    config PHILCOINO_PERFORMANCE_DIAGNOSTICS
+        bool "Enable bounded performance diagnostics"
+        default n
+        help
+            Enables fixed-allocation runtime counters and cold-path summary
+            logging for supervised performance measurement. Adds no public API
+            and remains disabled in normal builds.
+
 endmenu

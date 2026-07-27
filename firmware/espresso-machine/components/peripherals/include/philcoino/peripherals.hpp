@@ -76,6 +76,24 @@ class Hx711 {
   Hx711Transport& transport_;
 };
 
+class Hx711ReadyWaiter {
+ public:
+  virtual ~Hx711ReadyWaiter() = default;
+  virtual bool wait(std::uint32_t timeout_ms) = 0;
+};
+
+class Hx711EventDrivenAcquisition {
+ public:
+  Hx711EventDrivenAcquisition(Hx711& hx711, Hx711ReadyWaiter& waiter);
+
+  Hx711Reading acquire(std::uint32_t timeout_ms);
+
+ private:
+  Hx711& hx711_;
+  Hx711ReadyWaiter& waiter_;
+  bool initial_read_pending_{true};
+};
+
 struct ScaleCalibration {
   std::int32_t zero_raw{0};
   std::int32_t reference_raw{0};
@@ -248,66 +266,6 @@ class FailOffPump {
   std::atomic<PumpCommand> command_{PumpCommand::kOff};
   std::atomic<bool> output_state_unknown_{true};
   std::atomic<bool> emergency_inhibited_{false};
-};
-
-enum class DisplayMode { kUnknown, kBrew, kSteam };
-enum class DisplayStatus { kBoot, kHeating, kCooling, kReady, kFault };
-enum class DisplayWifiStatus { kOff, kConnecting, kConnected, kRetrying, kFailed };
-enum class DisplayCooldownStatus { kIdle, kPumping, kStabilizing };
-
-struct DisplayTemperature {
-  bool valid{false};
-  float value_c{0.0F};
-};
-
-struct DisplaySnapshot {
-  DisplayTemperature boiler{};
-  TemperatureTargets targets{};
-  DisplayMode mode{DisplayMode::kUnknown};
-  DisplayStatus status{DisplayStatus::kBoot};
-  bool heater_enabled{false};
-  DisplayWifiStatus wifi_status{DisplayWifiStatus::kOff};
-  bool extraction_active{false};
-  bool compensation_active{false};
-  DisplayCooldownStatus cooldown_status{DisplayCooldownStatus::kIdle};
-  PumpCommand pump_command{PumpCommand::kOff};
-  const char* extraction_phase{"IDLE"};
-};
-
-void format_display_temperature_line(char* output, std::size_t length,
-                                     const DisplayTemperature& temperature,
-                                     std::int32_t target);
-void format_display_workflow_line(char* output, std::size_t length,
-                                  const DisplaySnapshot& snapshot);
-
-class OledTransport {
- public:
-  virtual ~OledTransport() = default;
-  virtual bool write_command(const std::uint8_t* bytes,
-                             std::size_t length) = 0;
-  virtual bool write_data(const std::uint8_t* bytes,
-                          std::size_t length) = 0;
-};
-
-class Ssd1306Display {
- public:
-  static constexpr std::size_t kWidth = 128;
-  static constexpr std::size_t kHeight = 32;
-  static constexpr std::size_t kBufferSize = kWidth * kHeight / 8;
-
-  explicit Ssd1306Display(OledTransport& transport);
-
-  bool initialize();
-  bool render(const DisplaySnapshot& snapshot);
-
- private:
-  using Framebuffer = std::array<std::uint8_t, kBufferSize>;
-
-  static void draw_text(Framebuffer& buffer, std::size_t page,
-                        const char* text);
-
-  OledTransport& transport_;
-  bool initialized_{false};
 };
 
 }  // namespace philcoino::peripherals
