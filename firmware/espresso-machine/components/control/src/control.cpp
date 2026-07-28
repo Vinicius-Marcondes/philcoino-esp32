@@ -726,6 +726,8 @@ void TemperatureController::reset_delivered_command_tracking(
 }
 
 void TemperatureController::account_delivered_command(std::uint32_t now_ms) {
+  constexpr std::uint32_t kDeliveredDutyBucketMs = 1000U;
+
   if (!delivered_tracking_initialized_) {
     reset_delivered_command_tracking(now_ms);
     return;
@@ -744,7 +746,8 @@ void TemperatureController::account_delivered_command(std::uint32_t now_ms) {
         static_cast<std::uint32_t>(cursor_ms -
                                    delivered_bucket_started_ms_);
     const auto bucket_remaining_ms =
-        1000U - std::min(bucket_elapsed_ms, 1000U);
+        kDeliveredDutyBucketMs -
+        std::min(bucket_elapsed_ms, kDeliveredDutyBucketMs);
     const auto step_ms = std::min(remaining, bucket_remaining_ms);
     if (last_heater_command_active_) {
       delivered_command_on_ms_ += step_ms;
@@ -752,10 +755,12 @@ void TemperatureController::account_delivered_command(std::uint32_t now_ms) {
     cursor_ms += step_ms;
     remaining -= step_ms;
     if (static_cast<std::uint32_t>(
-            cursor_ms - delivered_bucket_started_ms_) >= 1000U) {
+            cursor_ms - delivered_bucket_started_ms_) >=
+        kDeliveredDutyBucketMs) {
       delivered_command_duty_1s_ =
-          static_cast<float>(delivered_command_on_ms_) / 1000.0F;
-      delivered_bucket_started_ms_ += 1000U;
+          static_cast<float>(delivered_command_on_ms_) /
+          static_cast<float>(kDeliveredDutyBucketMs);
+      delivered_bucket_started_ms_ += kDeliveredDutyBucketMs;
       delivered_command_on_ms_ = 0U;
     }
   }
