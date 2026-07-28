@@ -30,6 +30,7 @@ import {
   type DeviceResponse,
   type ActiveCooldownState,
   type CompensationState,
+  type ControllerDiagnostics,
   type CooldownOutcome,
   type CooldownState,
   type Fault,
@@ -373,6 +374,15 @@ export class SimulatorMachine {
       nextCursor: { bootId: this.bootId, afterSequence: nextSequence },
       hasMore: latestSequence !== null && nextSequence < latestSequence,
       continuity,
+      controllerConfiguration: {
+        firmwareVersion: this.device.firmwareVersion,
+        selectedController: "legacy_curve",
+        piKp: 0.08,
+        piKi: 0.01,
+        filterAlpha: 0.25,
+        controllerIntervalMs: 500,
+        ssrWindowMs: 10_000,
+      },
       samples,
     });
   }
@@ -1120,6 +1130,9 @@ export class SimulatorMachine {
     const machine = this.getState();
     const extraction = this.getExtractionState();
     const cooldown = this.getCooldownState();
+    const pumpActive =
+      cooldown.status === "pumping" ||
+      (cooldown.status === "idle" && extraction.pumpCommand === "running");
     this.historySequence += 1;
     this.history.push(
       HistorySampleSchema.parse({
@@ -1131,16 +1144,82 @@ export class SimulatorMachine {
         activeMode: machine.activeMode,
         heaterEnabled: machine.heaterEnabled,
         heaterActive: machine.heaterActive,
-        pumpActive:
-          cooldown.status === "pumping" ||
-          (cooldown.status === "idle" && extraction.pumpCommand === "running"),
+        pumpActive,
         machineStatus: machine.status,
         faultCode: machine.fault?.code ?? null,
+        controllerDiagnostics: this.getControllerDiagnostics(
+          extraction,
+          cooldown,
+          pumpActive,
+        ),
       }),
     );
     if (this.history.length > HISTORY_RETENTION_SAMPLES) {
       this.history.splice(0, this.history.length - HISTORY_RETENTION_SAMPLES);
     }
+  }
+
+  private getControllerDiagnostics(
+    extraction: ExtractionState,
+    cooldown: CooldownState,
+    pumpActive: boolean,
+  ): ControllerDiagnostics {
+    // Simulator controls may inject deliberately impossible temperatures to
+    // exercise cooldown/fault UI. Keep diagnostic telemetry within the wire
+    // contract without changing the simulator's independently reported state.
+    const temperature = roundTemperature(
+      Math.max(-40, Math.min(160, this.boilerTemperatureC)),
+    );
+    const baseTarget = this.activeTarget();
+    const privateTarget = this.controlTarget();
+    const error = roundTemperature(privateTarget - temperature);
+    const proportionalContribution = roundTemperature(
+      Math.max(-16, Math.min(16, 0.08 * error)),
+    );
+    const piRequestedDuty = Math.max(
+      0,
+      Math.min(1, proportionalContribution),
+    );
+    const piSaturation =
+      proportionalContribution <= 0
+        ? "lower"
+        : proportionalContribution >= 1
+          ? "upper"
+          : "none";
+    const operatingMode =
+      this.fault !== null
+        ? "fault"
+        : cooldown.heaterInhibited
+          ? "inhibited"
+          : this.activeMode === "steam"
+            ? "steam"
+            : extraction.status === "running"
+              ? "brewing"
+              : this.terminalExtraction !== null &&
+                  Math.abs(temperature - privateTarget) > READY_BAND_C
+                ? "post_brew_recovery"
+                : machineOperatingMode(temperature, privateTarget);
+
+    return {
+      temperatureRawC: temperature,
+      temperatureFilteredC: temperature,
+      baseTargetC: baseTarget,
+      privateTargetC: privateTarget,
+      errorC: error,
+      selectedController: "legacy_curve",
+      legacyRequestedDuty: this.isHeaterActive() ? 1 : 0,
+      piRequestedDuty,
+      proportionalContribution,
+      integralContribution: 0,
+      integralState: 0,
+      piSaturation,
+      piAntiWindupActive: false,
+      heaterCommandActive: this.isHeaterActive(),
+      deliveredCommandDuty1s: this.isHeaterActive() ? 1 : 0,
+      pumpCommand: pumpActive ? "running" : "off",
+      extractionPhase: extraction.phase,
+      operatingMode,
+    };
   }
 
   private advanceExtraction(milliseconds: number): void {
@@ -1567,6 +1646,15 @@ function moveToward(current: number, target: number, maximumDelta: number): numb
     return Math.min(target, current + maximumDelta);
   }
   return Math.max(target, current - maximumDelta);
+}
+
+function machineOperatingMode(
+  temperatureC: number,
+  targetC: number,
+): "warmup" | "idle_stable" {
+  return Math.abs(temperatureC - targetC) <= READY_BAND_C
+    ? "idle_stable"
+    : "warmup";
 }
 
 function roundTemperature(value: number): number {

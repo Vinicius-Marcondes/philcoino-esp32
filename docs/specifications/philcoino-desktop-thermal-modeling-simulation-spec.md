@@ -1,4 +1,10 @@
 # PhilcoINO Thermal Modeling, Simulation, and Offline Tuning
+
+> **Preserved offline research as of PRD-016 (2026-07-28).** The desktop
+> analysis, raw captures, runs, predictor artifacts, and historical export
+> workflow remain available. Current firmware does not consume predictor
+> artifacts; legacy prediction-enriched CSV columns are accepted but ignored by
+> default for modeling inputs.
 ## Desktop Application Specification
 
 **Document status:** Prototype specification  

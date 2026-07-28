@@ -33,6 +33,15 @@ const historyPage: HistoryPage = {
   nextCursor: historyCursor,
   hasMore: false,
   continuity: "continuous",
+  controllerConfiguration: {
+    firmwareVersion: "0.4.0",
+    selectedController: "legacy_curve",
+    piKp: 0.08,
+    piKi: 0.01,
+    filterAlpha: 0.25,
+    controllerIntervalMs: 500,
+    ssrWindowMs: 10_000,
+  },
   samples: [],
 };
 const traceCursor: WeightedExtractionTraceCursor = {

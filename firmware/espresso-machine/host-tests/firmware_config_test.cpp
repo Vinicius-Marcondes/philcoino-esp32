@@ -10,7 +10,7 @@
 int main() {
   using namespace philcoino::config;
 
-  assert(std::string(kFirmwareVersion) == "0.3.4");
+  assert(std::string(kFirmwareVersion) == "0.4.0");
   const std::array<std::uint8_t, 6> mac{0xAA, 0xBB, 0xCC, 0x01, 0x02, 0xAF};
   assert(stable_device_id(mac) == std::string("philcoino-0102AF"));
 
@@ -23,11 +23,18 @@ int main() {
   static_assert(kSteamOverTemperatureC > kSteamTargetMaximumC);
   static_assert(kHeatingTimeoutMs == 600000U);
   static_assert(kSteamReadyTimeoutMs == 300000U);
+  static_assert(kTemperatureControllerIntervalMs == 500U);
   static_assert(kHeaterControlWindowMs == 10000U);
   static_assert(kMinimumHeaterPulseMs == 500U);
   static_assert(kMinimumHeaterPulseMs < kHeaterControlWindowMs);
   static_assert(kHeaterSafetyLeaseMs == 1500U);
   static_assert(kHeaterSafetyLeaseMs < kHeaterControlWindowMs);
+  static_assert(!kBrewPiControlEnabled);
+  static_assert(kBrewPiKp >= 0.0F && kBrewPiKp <= 16.0F);
+  static_assert(kBrewPiKi >= 0.0F && kBrewPiKi <= 16.0F);
+  static_assert(kBrewPiFilterAlpha > 0.0F &&
+                kBrewPiFilterAlpha <= 1.0F);
+  static_assert(kBrewPiIntegralMinimum < kBrewPiIntegralMaximum);
   static_assert(kCooldownPumpLimitMs == 45000U);
   static_assert(kCooldownStabilizationMs == 5000U);
   static_assert(kWifiMaximumTxPowerQuarterDbm == 44);

@@ -17,6 +17,55 @@ def test_ingests_aliases_accepts_missing_scale_and_warns_on_boolean_duty(synthet
     assert dataset.quality["warnings"]
 
 
+def test_minimum_current_export_and_legacy_prediction_columns_are_non_authoritative(
+    tmp_path,
+    config,
+):
+    path = tmp_path / "current-and-legacy.csv"
+    rows = 40
+    frame = pd.DataFrame({
+        "recorded_at_utc": pd.date_range(
+            "2026-01-01T00:00:00Z",
+            periods=rows,
+            freq="1s",
+        ),
+        "boiler_temperature_c": [89 + 0.1 * index for index in range(rows)],
+        "active_target_c": [93] * rows,
+        "heater_active": [1] * 20 + [0] * 20,
+        "pump_active": [0] * rows,
+        "active_mode": ["brew"] * rows,
+        "machine_status": ["heating"] * rows,
+        "fault_code": [""] * rows,
+        # Retained historical columns are accepted but cannot silently own
+        # current modeling features.
+        "temperature_filtered_c": [120] * rows,
+        "temperature_slope_c_per_s": [9] * rows,
+        "heat_5s": [5] * rows,
+        "heat_15s": [15] * rows,
+        "heat_30s": [30] * rows,
+        "pump_5s": [0] * rows,
+        "pump_15s": [0] * rows,
+        "baseline_heater_duty": [1] * rows,
+        "prediction_operating_mode": ["brewing"] * rows,
+        "prediction_usable": [True] * rows,
+        "prediction_feature_schema_version": [1] * rows,
+    })
+    frame.to_csv(path, index=False)
+
+    dataset = load_dataset([path], config)
+    default_features = recreate_features(dataset.frame, config)
+    legacy_opt_in = recreate_features(
+        dataset.frame,
+        config,
+        prefer_logged=True,
+    )
+
+    assert len(dataset.frame) == rows
+    assert set(default_features["feature_source"]) == {"reconstructed"}
+    assert legacy_opt_in.iloc[-1]["feature_source"] == "logged_firmware"
+    assert default_features.iloc[-1]["temperature_filtered_c"] != 120
+
+
 def test_split_on_timestamp_gap_and_large_uptime_reset(tmp_path, config):
     path = tmp_path / "gaps.csv"
     pd.DataFrame({
@@ -185,7 +234,7 @@ def test_usable_schema_matching_firmware_features_take_precedence(synthetic_csvs
     frame.loc[index, "logged_prediction_feature_schema_version"] = 1
 
     reconstructed = recreate_features(frame, config, prefer_logged=False)
-    preferred = recreate_features(frame, config)
+    preferred = recreate_features(frame, config, prefer_logged=True)
 
     assert not reconstructed.loc[index, "feature_valid"]
     assert preferred.loc[index, "feature_valid"]
@@ -196,7 +245,7 @@ def test_usable_schema_matching_firmware_features_take_precedence(synthetic_csvs
     )
     assert preferred.loc[index, "operating_mode_name"] == "brewing"
     frame.loc[index, "logged_prediction_feature_schema_version"] = 999
-    mismatched = recreate_features(frame, config)
+    mismatched = recreate_features(frame, config, prefer_logged=True)
     assert mismatched.loc[index, "feature_source"] == "reconstructed"
     assert not mismatched.loc[index, "feature_valid"]
 

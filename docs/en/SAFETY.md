@@ -23,9 +23,11 @@ Philcoino is an experimental, mains-adjacent espresso-machine controller. The re
   GPIO8 and GPIO9 remain unassigned; this neither approves new hardware nor
   changes historical physical acceptance.
 - The 2026-07-16 acceptance remains limited to the configuration tested then.
-  New history/passive-prediction Human gates (HIST-007/PRD-012), including
-  firmware `0.3.3` runtime checks, remain pending; architecture, firmware, and
-  security findings remain engineering work.
+  PRD-012 prediction is now preserved only as historical/offline research.
+  PRD-016 active Brew PI target/thermal/SSR A/B checks remain pending; the
+  default-off selector and host evidence do not extend prior physical
+  acceptance. Architecture, firmware, and security findings remain engineering
+  work.
 
 See the [codebase review](../../CODEBASE_REVIEW_REPORT.md), [tracker](../TRACKER.md), and [side notes](../side-notes.md) for the detailed evidence.
 
@@ -53,14 +55,23 @@ Firmware owns the temperature-control loop and does not rely on app connectivity
 - records up to 600 observational snapshots in RAM and exposes pages of at
   most 8; history supplies no input to heater, pump, readiness, timeout,
   fault, or mutation decisions;
-- calculates filtered temperature, slope, recent command activity, and linear
-  5/10/20-second forecasts in strictly passive mode. Hypothetical correction is
-  logged but never alters the heater command in this version;
+- calculates bounded Brew PI and legacy requested-duty diagnostics at the
+  fixed 500 ms interval; the default build keeps PI shadow-only, while an
+  explicitly enabled build selects PI only for Brew through the unchanged
+  ten-second command window;
 - uses a 1500 ms GPTimer heater-command safety lease and one bounded workflow
   mutex, with NVS and HTTP transmission outside that boundary;
 - starts critical hardware in a fail-off order.
 
 These are design intentions and tested software behaviors, not proof of physical de-energization or thermal safety.
+
+The PI selector is build-time only, defaults off, and does not weaken sensor
+validation, heater permission, cooldown inhibit, fault latching, over-
+temperature limits, the 1,500 ms safety lease, output-failure handling, or the
+independent physical cutoff requirement. Kp, Ki, EMA alpha, and integral bounds
+are compile-time candidates, not physically accepted tuning. History values
+report requested/command state; `deliveredCommandDuty1s` is a firmware command
+fraction, not measured SSR current or power.
 
 Agreement between control and API establishes only software consistency.
 It does not prove that `+5°C` represents the physical boiler gradient, that

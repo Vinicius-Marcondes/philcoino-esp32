@@ -23,9 +23,13 @@ The phone discovers and authenticates one machine, displays live state, and subm
 - Strict API v1/v2 runtime validation and explicit offline, unauthorized, not-found, timeout, and protocol-error states.
 - Completion-driven one-second dashboard polling while the screen/app is active.
 - Current-day SQLite history with automatic backfill from up to ten minutes of
-  ESP32 RAM history and horizontally paged 30-second Live windows.
+  ESP32 RAM history, controller diagnostics, and horizontally paged 30-second
+  Live windows.
 - Firmware-acknowledged brew/steam targets, active mode, heater permission, and over-temperature dismissal.
 - ESP32-C3 control, NVS target persistence, MAX6675 sampling, HTTP/mDNS networking, and host-testable policy boundaries.
+- A default-off compile-time selector that keeps the legacy Brew curve
+  authoritative while comparing bounded PI in shadow; active-PI builds still
+  require a target build and supervised physical A/B acceptance.
 - Deterministic Bun/Hono simulator for mobile and contract development.
 - Manual plus four local profile slots, explicit whole-set export, and
   firmware-acknowledged pre-infusion/soak/main extraction, Stop, and 60-second

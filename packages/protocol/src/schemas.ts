@@ -14,7 +14,6 @@ export const COOLDOWN_MAX_DURATION_MS =
   COOLDOWN_PUMP_LIMIT_MS + COOLDOWN_STABILIZATION_MS;
 export const PROFILE_NAME_MAX_LENGTH = 12;
 export const HISTORY_PAGE_SIZE = 8;
-export const HISTORY_COMPATIBILITY_PAGE_SIZE = 60;
 export const HISTORY_RETENTION_SAMPLES = 600;
 export const WEIGHTED_TRACE_PAGE_SIZE = 16;
 export const WEIGHTED_TRACE_RETENTION_SAMPLES = 320;
@@ -743,6 +742,70 @@ export const HistoryCursorSchema = z.strictObject({
   afterSequence: HistorySequenceSchema,
 });
 
+export const SelectedControllerSchema = z.enum(["legacy_curve", "pi"]);
+export const ControllerSaturationSchema = z.enum(["none", "lower", "upper"]);
+export const ControllerOperatingModeSchema = z.enum([
+  "warmup",
+  "idle_stable",
+  "brewing",
+  "post_brew_recovery",
+  "steam",
+  "inhibited",
+  "fault",
+]);
+export const ControllerConfigurationSchema = z.strictObject({
+  firmwareVersion: DeviceResponseSchema.shape.firmwareVersion,
+  selectedController: SelectedControllerSchema,
+  piKp: z.number().finite().min(0).max(16),
+  piKi: z.number().finite().min(0).max(16),
+  filterAlpha: z.number().finite().gt(0).max(1),
+  controllerIntervalMs: z.literal(500),
+  ssrWindowMs: z.literal(10_000),
+});
+export const ControllerDiagnosticsSchema = z
+  .strictObject({
+    temperatureRawC: z.number().finite().min(-40).max(160),
+    temperatureFilteredC: z.number().finite().min(-40).max(160),
+    baseTargetC: z.number().finite().min(0).max(120),
+    privateTargetC: z.number().finite().min(0).max(120),
+    errorC: z.number().finite().min(-200).max(200),
+    selectedController: SelectedControllerSchema,
+    legacyRequestedDuty: z.number().finite().min(0).max(1),
+    piRequestedDuty: z.number().finite().min(0).max(1),
+    proportionalContribution: z.number().finite().min(-16).max(16),
+    integralContribution: z.number().finite().min(-16).max(16),
+    integralState: z.number().finite().min(-10_000).max(10_000),
+    piSaturation: ControllerSaturationSchema,
+    piAntiWindupActive: z.boolean(),
+    heaterCommandActive: z.boolean(),
+    deliveredCommandDuty1s: z.number().finite().min(0).max(1),
+    pumpCommand: PumpCommandSchema,
+    extractionPhase: ExtractionPhaseSchema,
+    operatingMode: ControllerOperatingModeSchema,
+  })
+  .superRefine((diagnostics, context) => {
+    const expectedError =
+      diagnostics.privateTargetC - diagnostics.temperatureFilteredC;
+    if (Math.abs(diagnostics.errorC - expectedError) > 0.011) {
+      context.addIssue({
+        code: "custom",
+        path: ["errorC"],
+        message:
+          "Controller error must equal the private target minus filtered temperature.",
+      });
+    }
+    if (
+      diagnostics.piAntiWindupActive &&
+      diagnostics.piSaturation === "none"
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["piAntiWindupActive"],
+        message: "PI anti-windup requires a saturated PI output.",
+      });
+    }
+  });
+
 const historySampleShape = {
   sequence: HistorySequenceSchema,
   uptimeMs: z.number().int().nonnegative().safe(),
@@ -753,117 +816,51 @@ const historySampleShape = {
   heaterEnabled: z.boolean(),
   heaterActive: z.boolean(),
   pumpActive: z.boolean(),
-  predictiveTemperature: z
-    .strictObject({
-      temperatureRawC: z.number().finite(),
-      temperatureFilteredC: z.number().finite(),
-      activeTargetC: z.number().finite(),
-      temperatureSlopeCPerS: z.number().finite(),
-      temperatureAccelerationCPerS2: z.number().finite(),
-      baselineHeaterDuty: z.number().finite().min(0).max(1),
-      heaterCommandDuty: z.number().finite().min(0).max(1),
-      commandedHeaterDuty1s: z.number().finite().min(0).max(1),
-      heat5s: z.number().finite().min(0).max(5),
-      heat15s: z.number().finite().min(0).max(15),
-      heat30s: z.number().finite().min(0).max(30),
-      pump5s: z.number().finite().min(0).max(5),
-      pump15s: z.number().finite().min(0).max(15),
-      predictedTemperature5sC: z.number().finite().nullable(),
-      predictedTemperature10sC: z.number().finite().nullable(),
-      predictedTemperature20sC: z.number().finite().nullable(),
-      predictedPeakC: z.number().finite().nullable(),
-      hypotheticalCorrectionDuty: z.number().finite().min(0).max(1).nullable(),
-      hypotheticalHeaterDuty: z.number().finite().min(0).max(1).nullable(),
-      operatingMode: z.enum([
-        "warmup",
-        "idle_stable",
-        "brewing",
-        "post_brew_recovery",
-        "fault",
-      ]),
-      runMode: z.enum(["disabled", "passive"]),
-      usable: z.boolean(),
-      fallbackReason: z.enum([
-        "none",
-        "model_invalid",
-        "history_immature",
-        "sensor_invalid",
-        "timing_invalid",
-        "slope_implausible",
-        "input_out_of_bounds",
-        "prediction_non_finite",
-        "prediction_implausible",
-        "controller_fault",
-      ]),
-      modelVersion: z.number().int().nonnegative().safe(),
-      featureSchemaVersion: z.number().int().nonnegative().safe(),
-      trainingDataHash: z.number().int().nonnegative().max(0xffff_ffff),
-    })
-    .superRefine((prediction, context) => {
-      const values = [
-        prediction.predictedTemperature5sC,
-        prediction.predictedTemperature10sC,
-        prediction.predictedTemperature20sC,
-        prediction.predictedPeakC,
-        prediction.hypotheticalCorrectionDuty,
-        prediction.hypotheticalHeaterDuty,
-      ];
-      if (prediction.usable !== (prediction.fallbackReason === "none")) {
-        context.addIssue({
-          code: "custom",
-          path: ["usable"],
-          message: "Usable prediction diagnostics must use the none fallback reason.",
-        });
-      }
-      if (values.some((value) => (prediction.usable ? value === null : value !== null))) {
-        context.addIssue({
-          code: "custom",
-          path: ["predictedPeakC"],
-          message: "Prediction and correction values must be present only when usable.",
-        });
-      }
-      if (
-        prediction.hypotheticalHeaterDuty !== null &&
-        prediction.hypotheticalHeaterDuty > prediction.baselineHeaterDuty
-      ) {
-        context.addIssue({
-          code: "custom",
-          path: ["hypotheticalHeaterDuty"],
-          message: "Passive prediction may only reduce the baseline heater duty.",
-        });
-      }
-    })
-    .optional(),
+  controllerDiagnostics: ControllerDiagnosticsSchema,
 };
 
-export const PredictiveTemperatureDiagnosticsSchema =
-  historySampleShape.predictiveTemperature.unwrap();
-
-export const MachineStateWithPredictionV2Schema = z
-  .strictObject({
-    ...machineStateV2Shape,
-    predictiveTemperature: PredictiveTemperatureDiagnosticsSchema.nullable(),
-  })
-  .superRefine(refineMachineStateV2);
-
-export const HistorySampleSchema = z.discriminatedUnion("machineStatus", [
-  z.strictObject({
-    ...historySampleShape,
-    machineStatus: z.literal("heating"),
-    faultCode: z.null(),
-  }),
-  z.strictObject({
-    ...historySampleShape,
-    machineStatus: z.literal("ready"),
-    faultCode: z.null(),
-  }),
-  z.strictObject({
-    ...historySampleShape,
-    machineStatus: z.literal("fault"),
-    heaterActive: z.literal(false),
-    faultCode: FaultCodeSchema,
-  }),
-]);
+export const HistorySampleSchema = z
+  .discriminatedUnion("machineStatus", [
+    z.strictObject({
+      ...historySampleShape,
+      machineStatus: z.literal("heating"),
+      faultCode: z.null(),
+    }),
+    z.strictObject({
+      ...historySampleShape,
+      machineStatus: z.literal("ready"),
+      faultCode: z.null(),
+    }),
+    z.strictObject({
+      ...historySampleShape,
+      machineStatus: z.literal("fault"),
+      heaterActive: z.literal(false),
+      faultCode: FaultCodeSchema,
+    }),
+  ])
+  .superRefine((sample, context) => {
+    if (
+      sample.controllerDiagnostics.heaterCommandActive !== sample.heaterActive
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["controllerDiagnostics", "heaterCommandActive"],
+        message:
+          "Controller heater command must match the acknowledged history command.",
+      });
+    }
+    if (
+      (sample.controllerDiagnostics.pumpCommand === "running") !==
+      sample.pumpActive
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["controllerDiagnostics", "pumpCommand"],
+        message:
+          "Controller pump command must match the acknowledged history command.",
+      });
+    }
+  });
 
 export const HistoryPageSchema = z
   .strictObject({
@@ -875,9 +872,8 @@ export const HistoryPageSchema = z
     nextCursor: HistoryCursorSchema,
     hasMore: z.boolean(),
     continuity: HistoryContinuitySchema,
-    samples: z
-      .array(HistorySampleSchema)
-      .max(HISTORY_COMPATIBILITY_PAGE_SIZE),
+    controllerConfiguration: ControllerConfigurationSchema,
+    samples: z.array(HistorySampleSchema).max(HISTORY_PAGE_SIZE),
   })
   .superRefine((page, context) => {
     if (page.nextCursor.bootId !== page.bootId) {
@@ -910,6 +906,19 @@ export const HistoryPageSchema = z
         path: ["nextCursor", "afterSequence"],
         message: "The next cursor must acknowledge the last returned sample.",
       });
+    }
+    for (const [index, sample] of page.samples.entries()) {
+      if (
+        sample.controllerDiagnostics.selectedController !==
+        page.controllerConfiguration.selectedController
+      ) {
+        context.addIssue({
+          code: "custom",
+          path: ["samples", index, "controllerDiagnostics", "selectedController"],
+          message:
+            "Every sample must identify the page's compile-time Brew controller.",
+        });
+      }
     }
   });
 
@@ -1064,15 +1073,22 @@ export type IdleCooldownState = z.infer<typeof IdleCooldownStateSchema>;
 export type ActiveCooldownState = z.infer<typeof ActiveCooldownStateSchema>;
 export type CooldownState = z.infer<typeof CooldownStateSchema>;
 export type MachineStateV2 = z.infer<typeof MachineStateV2Schema>;
-export type MachineStateWithPredictionV2 = z.infer<
-  typeof MachineStateWithPredictionV2Schema
->;
 export type HistoryBootId = z.infer<typeof HistoryBootIdSchema>;
 export type HistorySequence = z.infer<typeof HistorySequenceSchema>;
 export type HistoryContinuity = z.infer<typeof HistoryContinuitySchema>;
 export type HistoryCursor = z.infer<typeof HistoryCursorSchema>;
-export type PredictiveTemperatureDiagnostics = z.infer<
-  typeof PredictiveTemperatureDiagnosticsSchema
+export type SelectedController = z.infer<typeof SelectedControllerSchema>;
+export type ControllerSaturation = z.infer<
+  typeof ControllerSaturationSchema
+>;
+export type ControllerOperatingMode = z.infer<
+  typeof ControllerOperatingModeSchema
+>;
+export type ControllerConfiguration = z.infer<
+  typeof ControllerConfigurationSchema
+>;
+export type ControllerDiagnostics = z.infer<
+  typeof ControllerDiagnosticsSchema
 >;
 export type HistorySample = z.infer<typeof HistorySampleSchema>;
 export type HistoryPage = z.infer<typeof HistoryPageSchema>;

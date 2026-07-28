@@ -8,7 +8,6 @@ import {
   HeaterSettingsRequestSchema,
   HeaterSettingsResponseSchema,
   HistoryCursorSchema,
-  MachineStateWithPredictionV2Schema,
   ModeRequestSchema,
   ModeResponseSchema,
   ProfileSetSchema,
@@ -192,12 +191,7 @@ export function createSimulator(
 
   app.get("/api/v2/state", (c) => {
     const query = new URL(c.req.url).searchParams;
-    const include = query.getAll("include");
-    if (
-      [...query.keys()].some((key) => key !== "include") ||
-      include.length > 1 ||
-      (include.length === 1 && include[0] !== "prediction")
-    ) {
+    if ([...query.keys()].length > 0) {
       return contractV2Error(
         c,
         400,
@@ -205,16 +199,7 @@ export function createSimulator(
         "The state query is malformed.",
       );
     }
-    const state = machine.getStateV2();
-    if (include.length === 0) {
-      return c.json(state);
-    }
-    return c.json(
-      MachineStateWithPredictionV2Schema.parse({
-        ...state,
-        predictiveTemperature: null,
-      }),
-    );
+    return c.json(machine.getStateV2());
   });
 
   app.get("/api/v2/history", (c) => {

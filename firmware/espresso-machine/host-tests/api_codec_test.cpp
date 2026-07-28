@@ -173,8 +173,7 @@ void test_authoritative_route_matrix() {
                                "/api/v2/cooldowns/stop"));
   assert(request_requires_auth(HttpMethod::kGet, "/api/v2/scale"));
   assert(request_requires_auth(HttpMethod::kGet, "/api/v2/scale/trace"));
-  assert(find_api_route(HttpMethod::kGet,
-                        "/api/v2/state?include=prediction") ==
+  assert(find_api_route(HttpMethod::kGet, "/api/v2/state?ignored=true") ==
          find_api_route(HttpMethod::kGet, "/api/v2/state"));
   assert(find_api_route(HttpMethod::kPost, "/healthz") == nullptr);
   assert(find_api_route(HttpMethod::kGet, "/unknown") == nullptr);

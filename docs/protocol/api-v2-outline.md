@@ -15,15 +15,12 @@ v2 adds no raw-temperature or offset field.
 ## Authenticated endpoints
 
 - `GET /api/v2/state` returns one acknowledged
-  machine/extraction/compensation/cooldown snapshot.
-- `GET /api/v2/state?include=prediction` returns the same snapshot plus required
-  nullable `predictiveTemperature` diagnostics. Firmware `0.3.3` populates the
-  object; the deterministic simulator returns `null`. Omitting the query keeps
-  the original strict response shape unchanged.
+  machine/extraction/compensation/cooldown snapshot. The endpoint is queryless;
+  prediction opt-in requests are rejected as malformed.
 - `GET /api/v2/history` returns up to eight ascending RAM-retained samples with
-  boot/sequence continuity metadata and optional passive prediction diagnostics.
-  Consumers accept up to sixty samples to preserve compatibility with older
-  firmware page sizes.
+  boot/sequence continuity metadata, one strict controller/build configuration,
+  and required per-sample controller diagnostics. The prior sixty-sample and
+  prediction-enriched page variants are intentionally unsupported.
 - `GET /api/v2/profiles` returns all four ordered custom slots.
 - `PUT /api/v2/profiles` atomically persists and acknowledges the complete set
   only while extraction and cooldown are idle.
@@ -57,9 +54,8 @@ strict contract. No cursor begins at the oldest retained sample. A matching
 cursor is `continuous`, an evicted cursor is `truncated`, and a different boot
 ID is `reset`; `initial` identifies the no-cursor start. Each page includes the
 current boot ID, capture uptime, available sequence bounds, next durable cursor,
-`hasMore`, and complete graph command/status/fault context. New firmware adds a
-strict `predictiveTemperature` object to each sample; the property remains
-optional so older firmware pages continue to parse.
+`hasMore`, the selected controller plus compile-time gains/filter/window, and
+complete graph command/status/fault/controller context.
 
 Scale-trace cursors require exactly one `extractionId`, `bootId`, and
 `afterSequence`. Pages contain at most sixteen ordered 250 ms observation
@@ -127,13 +123,17 @@ copy a bounded page under their own guard and serialize after release; history
 never supplies input to temperature, heater, pump, readiness, timeout, fault,
 or mutation decisions.
 
-Predictive fields report filtered temperature, slope/acceleration, recent
-heater/pump command activity, 5/10/20-second linear predictions, peak, and a
-hypothetical correction. They are passive diagnostics only. Heater and pump
-values remain command-derived and are not physical feedback. The mobile app
-requests them with its live one-second state poll, persists the object as
-nullable data, and appends its fields to CSV exports. Retained history is used
-to recover detected gaps, not to populate ordinary uninterrupted live rows.
+Controller diagnostics report raw/filtered temperature, base/private target,
+PI error and contributions, PI/legacy requested duty, integral state,
+saturation/anti-windup state, selected authority, delivered one-second command
+fraction, acknowledged heater/pump commands, extraction phase, and operating
+mode. Page configuration reports firmware version, selected controller,
+compile-time Kp/Ki/filter alpha, the 500 ms controller interval, and ten-second
+SSR window. Heater and pump values remain command-derived and are not physical
+feedback. The mobile app stores these diagnostics only on recovered firmware
+history rows; foreground-only rows keep them nullable. CSV exports use the new
+controller columns and contain no prediction/model fields. Retained history is
+used to recover detected gaps, not as control-loop feedback.
 
 ## Command-state boundary
 

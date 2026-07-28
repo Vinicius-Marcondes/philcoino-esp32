@@ -57,6 +57,15 @@ describe("DeviceApiClient", () => {
         bootId: "0123456789abcdef0123456789abcdef",
       },
       oldestSequence: 1,
+      controllerConfiguration: {
+        controllerIntervalMs: 500,
+        filterAlpha: 0.25,
+        firmwareVersion: "0.4.0",
+        piKi: 0.01,
+        piKp: 0.08,
+        selectedController: "legacy_curve",
+        ssrWindowMs: 10_000,
+      },
       samples: [],
     };
     const client = new DeviceApiClient({
@@ -102,7 +111,7 @@ describe("DeviceApiClient", () => {
     expect(requestedUrl).toBe("http://127.0.0.1:3000/api/v2/scale/trace");
   });
 
-  test("requests prediction diagnostics with the live state poll", async () => {
+  test("requests only the strict queryless v2 state", async () => {
     const simulator = createSimulator();
     const request = simulator.app.request.bind(simulator.app);
     let requestedUrl = "";
@@ -122,54 +131,10 @@ describe("DeviceApiClient", () => {
       token: DEFAULT_SIMULATOR_TOKEN,
     });
 
-    await expect(client.getLiveStateV2()).resolves.toMatchObject({
-      predictiveTemperature: null,
+    await expect(client.getStateV2()).resolves.toMatchObject({
+      machine: { status: "heating" },
     });
-    expect(requestedUrl).toBe(
-      "http://127.0.0.1:3000/api/v2/state?include=prediction",
-    );
-  });
-
-  test("falls back once and remembers firmware without enriched live state", async () => {
-    const simulator = createSimulator();
-    const request = simulator.app.request.bind(simulator.app);
-    const requestedUrls: string[] = [];
-    const client = new DeviceApiClient({
-      address: "http://127.0.0.1:3000",
-      fetch: (url, init) => {
-        requestedUrls.push(url);
-        if (url.endsWith("/api/v2/state?include=prediction")) {
-          return Promise.resolve(new Response("Not found", { status: 404 }));
-        }
-        return Promise.resolve(
-          request(url, {
-            body: init.body,
-            headers: init.headers,
-            method: init.method,
-            signal: init.signal,
-          }),
-        );
-      },
-      token: DEFAULT_SIMULATOR_TOKEN,
-    });
-
-    await expect(client.getLiveStateV2()).resolves.toMatchObject({
-      predictiveTemperature: null,
-    });
-    await expect(client.getLiveStateV2()).resolves.toMatchObject({
-      predictiveTemperature: null,
-    });
-    client.resetLiveStateCapabilities();
-    await expect(client.getLiveStateV2()).resolves.toMatchObject({
-      predictiveTemperature: null,
-    });
-    expect(requestedUrls).toEqual([
-      "http://127.0.0.1:3000/api/v2/state?include=prediction",
-      "http://127.0.0.1:3000/api/v2/state",
-      "http://127.0.0.1:3000/api/v2/state",
-      "http://127.0.0.1:3000/api/v2/state?include=prediction",
-      "http://127.0.0.1:3000/api/v2/state",
-    ]);
+    expect(requestedUrl).toBe("http://127.0.0.1:3000/api/v2/state");
   });
 
   test("rejects malformed history pages as protocol errors", async () => {

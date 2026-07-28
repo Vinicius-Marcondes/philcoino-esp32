@@ -38,7 +38,10 @@ Requests, success responses, and error bodies are validated against `@philcoino/
 
 Authenticated API v2 exposes the strict combined machine/extraction/
 compensation/cooldown snapshot, four-slot profiles, Brew-only extraction, and
-idempotent cooldown Start/Stop operations. Time remains manual:
+idempotent cooldown Start/Stop operations. The state endpoint is queryless;
+the removed prediction opt-in is rejected. History pages contain at most eight
+samples plus deterministic controller diagnostics for UI and export testing.
+Time remains manual:
 
 - compensation is active only for Manual and profile main extraction while
   heater permission and fault state allow it;
@@ -72,7 +75,8 @@ These controls are intentionally outside `/api/v1` and must not appear in firmwa
 Readiness requires three simulated seconds in the target band. The five-minute steam timeout begins at readiness and returns the model to brew. Time never advances in the background.
 
 Simulator temperature scenarios are API/UI evidence only. They do not validate
-the owner-selected `+5°C` firmware correction, physical calibration, or heater
-safety.
+the owner-selected `+5°C` firmware correction, firmware PI timing or tuning,
+physical calibration, or heater safety. Simulator controller diagnostics use
+bounded logical values and do not reproduce the firmware SSR loop.
 
 See [Development](../../docs/DEVELOPMENT.md), [Architecture](../../docs/ARCHITECTURE.md), and [Safety](../../docs/en/SAFETY.md).

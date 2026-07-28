@@ -216,9 +216,8 @@ transport outcome retains it for replay.
 Each validated foreground poll also appends a device-scoped temperature-history
 row to mobile SQLite. Rows include phone UTC capture time plus acknowledged
 firmware uptime, temperature, targets, mode, heater permission/command, pump
-command, status, fault context, and nullable passive prediction diagnostics.
-The poll uses `GET /api/v2/state?include=prediction`; a one-time HTTP 404
-capability fallback keeps older firmware usable through queryless API v2 state.
+command, status, and fault context. Polling uses only queryless
+`GET /api/v2/state`; there is no prediction capability probe or fallback.
 The repository retains only the current
 local calendar day; background/offline periods and firmware uptime resets remain
 explicit graph gaps. The Dashboard presents consecutive thirty-second Live
@@ -238,8 +237,7 @@ starts a separate abortable history recovery session; uninterrupted foreground
 polling never requests retained history. Recovery reads up to eight samples per
 authenticated `GET /api/v2/history` page and yields between pages so live
 polling and control traffic can interleave with backfill. Its
-parser accepts legacy sixty-sample pages while new firmware and the simulator
-emit no more than eight. The first
+strict parser accepts no more than eight samples. The first
 request/response midpoint anchors the page's firmware uptime to phone UTC for
 the batch. SQLite commits
 each page and its cursor atomically, identifies device rows by
@@ -250,12 +248,13 @@ the first new foreground row re-triggers it when the stored discontinuity is
 still present. CSV export waits for an already-running recovery but does not
 force an otherwise unnecessary full synchronization.
 
-Firmware owns a RAM-only 600-sample history ring. One fixed-size sample of at
-most 64 bytes is attempted per second after the current acknowledged control snapshot
+Firmware owns a RAM-only 600-sample history ring. One 40-byte fixed-size sample
+is attempted per second after the current acknowledged control snapshot
 and fail-off pump command are available. A delayed loop records only its actual
 current sample. The writer never waits: a history-specific atomic guard skips
 capture on contention, while a network reader copies at most eight samples
-before releasing the guard and serializing JSON. A random 128-bit boot ID and
+plus the current controller configuration before releasing the guard and
+serializing JSON within the 8 KiB response budget. A random 128-bit boot ID and
 increasing sequence distinguish reboot, continuous, reset, and truncated
 history without persisting anything to NVS.
 
@@ -264,10 +263,14 @@ page follows incoming samples only while the user remains at the latest offset;
 an older inspected window keeps its timestamp identity when live or recovered
 samples are inserted. Each visible page uses five adaptive Y-axis ticks derived
 from its boiler and target values, with padding and a minimum display range.
-Raw current-day CSV export remains available from Machine and appends passive
-prediction columns; older firmware and phone-originated rows leave them empty. Boot changes,
-uptime/timestamp discontinuities, sequence skips, and truncated starts split
-graph segments rather than drawing or interpolating unavailable intervals.
+Raw current-day CSV export remains available from Machine. Recovered device
+rows append controller/build/gain/filter/window, PI/legacy request,
+contribution, saturation, command, phase, and operating-mode columns.
+Foreground-only rows leave those nullable fields empty. SQLite schema v5
+rebuilds prior local history transactionally, preserving ordinary rows and
+provenance while discarding prediction JSON. Boot changes, uptime/timestamp
+discontinuities, sequence skips, and truncated starts split graph segments
+rather than drawing or interpolating unavailable intervals.
 
 ## Simulator runtime
 
@@ -338,8 +341,9 @@ ESP-IDF 6 `xTaskDelayUntil` API. Deadline-relative lateness is recorded in the
 bounded default-off diagnostics without hot-path logging. If work overruns more
 than one period, elapsed deadline slots are skipped on the same fixed grid so
 the MAX6675 is not immediately reread during scheduler catch-up. Task priority,
-temperature policy, history cadence, passive prediction, and the independent
-1,500 ms heater lease remain unchanged.
+history cadence, and the independent 1,500 ms heater lease remain unchanged.
+PRD-016 replaces passive prediction with a bounded Brew PI candidate while
+retaining the same owner and schedule.
 
 Temperature, extraction, and cooldown share one non-recursive 50 ms workflow
 mutex; the legacy API domain labels intentionally alias that boundary, so there
@@ -395,19 +399,25 @@ correction.
 3. applies the active-mode over-temperature limit and steam return timeout;
 4. requires ±1°C stability for three seconds before `ready`;
 5. tracks active-temperature heating demand toward a ten-minute timeout;
-6. computes SSR duty and recovery inside a ten-second window;
-7. calculates filtered temperature, slope, recent command activity, and fixed
-   linear 5/10/20-second predictions after thirty seconds of valid history;
-8. records the prediction and hypothetical duty reduction without applying it;
-9. returns the same active effective value to API consumers.
+6. calculates both the legacy nonlinear requested duty and a fixed-gain PI
+   candidate from a bounded EMA-filtered Brew error;
+7. selects exactly one Brew requested-duty authority at compile time and routes
+   it through the existing ten-second SSR window and minimum-pulse policy;
+8. records strict controller configuration, PI/legacy requested duty,
+   contribution/state/saturation, and acknowledged command context;
+9. returns the same active effective value to ordinary API consumers.
 
-The primary heater controller remains the existing nonlinear duty curve; it is
-not a PID. The prediction monitor runs in passive mode only. Its fixed-size
-history belongs to control policy and is distinct from the observational API
-history. Invalid configuration, checksum, timing, sensor state, bounds, slope,
-or prediction disables diagnostics with a specific fallback reason. No
-prediction value participates in the SSR command, readiness, timeout, or fault
-path in this release.
+`CONFIG_PHILCOINO_BREW_PI_CONTROL` defaults off. In that build the legacy curve
+remains authoritative and the PI result is shadow-only; arbitrary shadow output
+cannot change commands, readiness, faults, timeouts, extraction, cooldown, or
+persistence. When explicitly enabled, PI owns requested duty only in Brew.
+Steam always retains the legacy curve and fixed `+5°C` correction. The PI uses
+the fixed 500 ms interval, Kp `0.08`, Ki `0.01`, EMA alpha `0.25`, bounded
+integral state, and conditional anti-windup. Invalid readings/timing, mode or
+target changes, phase changes, inhibition, permission, faults, safety-lease
+trips, and output failures reset/freeze or dominate PI as appropriate.
+Changing authority or constants requires a new build and does not become
+accepted control without pinned-target and supervised physical A/B evidence.
 
 Mode and target changes reset readiness, steam timing, demand tracking, recovery state, and the heater window. Targets are saved before becoming controller state. Steam timeout starts on first readiness and returns to brew after five minutes.
 

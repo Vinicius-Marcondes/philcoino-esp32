@@ -1,4 +1,10 @@
 # PhilcoINO Predictive Temperature Control
+
+> **Historical/deferred as of PRD-016 (2026-07-28).** This specification is
+> preserved as research context and is not implemented by current firmware.
+> Prediction runtime, wire payloads, and mobile consumers were removed. Any
+> future integration requires a separately approved PRD and must not bypass the
+> current Brew PI selector or existing safety boundaries.
 ## Firmware Specification
 
 **Document status:** Prototype specification  

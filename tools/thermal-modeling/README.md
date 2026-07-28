@@ -4,6 +4,11 @@ Offline Python 3.12+ analysis, model training, counterfactual simulation, tuning
 and firmware-candidate export for PhilcoINO CSV history. The firmware remains the
 runtime and safety authority. This tool never flashes a device or edits firmware.
 
+The predictive workflow is preserved as historical/offline research under
+PRD-012. Current firmware does not contain or consume its predictor artifacts;
+PRD-016 uses a compile-time-selected Brew PI controller instead. Any future
+predictor integration requires a separately approved contract and firmware task.
+
 ## Install
 
 After obtaining approval to install dependencies, create a local environment:
@@ -48,11 +53,13 @@ legacy aliases. Timestamp, temperature, active target, heater command/state,
 pump state, mode/status, and fault state are required. Scale, weight, flow,
 pressure, and yield fields are ignored and never required.
 
-When a row contains complete, schema-matching firmware diagnostics and
-`prediction_usable=true`, those firmware-authored feature values take precedence.
-Other rows use the causal Python reconstruction. The quality report records both
-feature-source counts and parity differences from an independent reconstruction,
-so interleaved live/backfilled samples cannot silently replace firmware behavior.
+Legacy prediction-enriched CSVs remain accepted, but their prediction/model
+columns are ignored by default for modeling inputs. Features are causally
+reconstructed from the minimum timestamp, temperature, target, heater
+command/state, pump state, mode/status, and fault columns. Historical callers
+may explicitly request logged feature precedence for reproduction only. The
+quality report still records parity differences, so old data remains auditable
+without silently replacing reconstructed behavior.
 
 Actual delivered/one-second heater duty is preferred. Boolean `heater_active`
 is accepted but produces a visible quality warning and reduces confidence in
@@ -124,6 +131,6 @@ pytest tools/thermal-modeling/tests
 The committed `tests/fixtures/golden_history.csv` is synthetic. Tests generate
 three chronological sessions from it, exercise all CLI workflows, and compile a
 small independent C++ runner to reproduce Python float32 predictions from the
-generated header. Synthetic and simulated evidence does not establish thermal,
+  generated historical header. Synthetic and simulated evidence does not establish thermal,
 SSR, wiring, pump-flow, or mains safety. Real-data validation remains pending
 until sufficient independent, fault-free PhilcoINO exports are supplied.

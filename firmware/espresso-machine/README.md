@@ -10,7 +10,8 @@ ESP-IDF C++ firmware for the ESP32-C3 Super Mini. It owns sensor sampling, persi
 - `components/firmware_config`: identity, pins, target/safety constants, timeouts, and diagnostic flags.
 - `components/peripherals`: pure MAX6675/HX711, NVS target/profile/calibration, and independent fail-off heater/pump command policies plus ESP-IDF adapters.
 - `components/control`: pure temperature controller, readiness, duty windows,
-  timeouts, fault latching, and passive fixed-coefficient temperature prediction.
+  timeouts, fault latching, a default-off Brew PI selector, and strict
+  controller diagnostics.
 - `components/networking`: bounded JSON syntax, typed machine/workflow codecs,
   compact 600-sample RAM history, response serializers, authoritative
   route/access metadata, API orchestration, and ESP-IDF Wi-Fi/HTTP/mDNS adapters.
@@ -54,17 +55,27 @@ bun run firmware/espresso-machine/host-tests/validate_contract.ts \
 
 The suite covers identity/configuration, MAX6675 decoding, target/profile
 persistence policy, fail-off heater/pump command behavior,
-control transitions/timeouts/faults, filtering/slope/command histories, passive
-prediction and output-trace equivalence, the bounded history ring and cursor codec,
+control transitions/timeouts/faults, bounded PI/legacy authority isolation, the
+bounded history ring and cursor codec,
 bearer/API parsing, and contract response captures. It does not exercise
 ESP-IDF scheduling, physical sensors, GPIO, SSRs, or thermal behavior.
 
-Firmware `0.3.4` emits at most eight enriched history samples per response,
-keeps the serialized body within an 8 KiB host-tested transport budget, and
-supports opt-in live diagnostics at
-`GET /api/v2/state?include=prediction`. Queryless API v2 state is unchanged,
-and clients continue to accept legacy firmware pages containing up to sixty
-samples.
+Firmware `0.4.0` emits at most eight controller-diagnostic history samples per
+response and keeps the serialized body within an 8 KiB host-tested transport
+budget. `/api/v2/state` is queryless; the removed prediction opt-in is an
+intentional matched API break. History includes build/controller configuration,
+raw/filtered temperature, base/private targets, PI and legacy requested duty,
+PI contribution/state/saturation, and acknowledged heater/pump command context.
+These are software command observations, not physical feedback.
+
+`CONFIG_PHILCOINO_BREW_PI_CONTROL` defaults off. Disabled builds preserve the
+legacy Brew curve as authority while calculating bounded PI shadow diagnostics;
+enabled builds give PI requested-duty authority only in Brew through the same
+ten-second SSR window and fail-off owner. Steam always retains the legacy curve
+and fixed `+5°C` correction. Kp, Ki, EMA alpha, and the 500 ms controller
+interval are compile-time constants. Enabling or tuning PI requires a pinned
+target build plus supervised instrumented physical A/B review; host tests do
+not authorize it.
 
 For deterministic malformed-input coverage under AddressSanitizer and
 UndefinedBehaviorSanitizer:

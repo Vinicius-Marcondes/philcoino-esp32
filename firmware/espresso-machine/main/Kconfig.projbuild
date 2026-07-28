@@ -27,4 +27,14 @@ menu "PhilcoINO"
             logging for supervised performance measurement. Adds no public API
             and remains disabled in normal builds.
 
+    config PHILCOINO_BREW_PI_CONTROL
+        bool "Use PI as Brew heater-duty authority"
+        default n
+        help
+            Disabled keeps the legacy nonlinear Brew curve authoritative while
+            PI runs in shadow diagnostics. Enabled makes PI the Brew requested-
+            duty authority through the existing ten-second SSR window. Steam,
+            faults, timeouts, cooldown, permission, lease, and fail-off
+            ownership remain unchanged.
+
 endmenu

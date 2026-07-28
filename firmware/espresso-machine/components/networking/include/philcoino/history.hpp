@@ -23,28 +23,17 @@ struct HistorySample {
   std::uint16_t flags{0};
   std::int16_t temperature_raw_quarters_c{0};
   std::int16_t temperature_filtered_quarters_c{0};
-  std::int16_t temperature_slope_hundredths_c_per_s{0};
-  std::int16_t temperature_acceleration_hundredths_c_per_s2{0};
-  std::uint16_t baseline_heater_duty_thousandths{0};
-  std::uint16_t commanded_heater_duty_1s_thousandths{0};
-  std::uint16_t heat_5s_hundredths{0};
-  std::uint16_t heat_15s_hundredths{0};
-  std::uint16_t heat_30s_hundredths{0};
-  std::uint16_t pump_5s_hundredths{0};
-  std::uint16_t pump_15s_hundredths{0};
-  std::int16_t predicted_5s_quarters_c{0};
-  std::int16_t predicted_10s_quarters_c{0};
-  std::int16_t predicted_20s_quarters_c{0};
-  std::int16_t predicted_peak_quarters_c{0};
-  std::uint16_t hypothetical_correction_duty_thousandths{0};
-  std::uint16_t hypothetical_heater_duty_thousandths{0};
-  std::uint16_t prediction_flags{0};
-  std::uint16_t feature_schema_version{0};
-  std::uint32_t model_version{0};
-  std::uint32_t training_data_hash{0};
+  std::int16_t private_target_quarters_c{0};
+  std::uint16_t legacy_requested_duty_thousandths{0};
+  std::uint16_t pi_requested_duty_thousandths{0};
+  std::int16_t proportional_contribution_thousandths{0};
+  std::int16_t integral_contribution_thousandths{0};
+  std::int16_t integral_state_tenths{0};
+  std::uint16_t delivered_command_duty_1s_thousandths{0};
+  std::uint16_t controller_flags{0};
 };
 
-static_assert(sizeof(HistorySample) <= 64U);
+static_assert(sizeof(HistorySample) <= 48U);
 
 enum class HistoryContinuity { kInitial, kContinuous, kTruncated, kReset };
 
@@ -94,6 +83,7 @@ static_assert(sizeof(HistoryPage) <= 2U * 1024U);
 
 bool parse_history_cursor(const std::string& query, HistoryCursor& cursor);
 std::string serialize_history_page(const std::string& device_id,
+                                   const std::string& firmware_version,
                                    const HistoryPage& page);
 
 }  // namespace philcoino::networking

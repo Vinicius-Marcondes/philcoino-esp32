@@ -4,7 +4,8 @@ import type {
   MachineState,
   MachineStatus,
   Mode,
-  PredictiveTemperatureDiagnostics,
+  ControllerConfiguration,
+  ControllerDiagnostics,
 } from "@philcoino/protocol";
 
 export const LIVE_HISTORY_WINDOW_MS = 30 * 1_000;
@@ -24,7 +25,8 @@ export interface TemperatureHistorySample {
   heaterEnabled: boolean;
   machineStatus: MachineStatus;
   pumpActive: boolean | null;
-  predictiveTemperature: PredictiveTemperatureDiagnostics | null;
+  controllerConfiguration: ControllerConfiguration | null;
+  controllerDiagnostics: ControllerDiagnostics | null;
   recordedAtMs: number;
   sourceBootId: string | null;
   sourceSequence: number | null;
@@ -54,7 +56,6 @@ export function createTemperatureHistorySample(
   snapshot: MachineState,
   extraction: ExtractionState,
   recordedAtMs = Date.now(),
-  predictiveTemperature: PredictiveTemperatureDiagnostics | null = null,
 ): TemperatureHistorySample {
   return {
     activeMode: snapshot.activeMode,
@@ -70,7 +71,8 @@ export function createTemperatureHistorySample(
     heaterEnabled: snapshot.heaterEnabled,
     machineStatus: snapshot.status,
     pumpActive: extraction.pumpCommand === "running",
-    predictiveTemperature,
+    controllerConfiguration: null,
+    controllerDiagnostics: null,
     recordedAtMs,
     sourceBootId: null,
     sourceSequence: null,

@@ -7,6 +7,12 @@ networking, main-task ownership, and host tests
 **Target:** ESP32-C3 Super Mini / ESP-IDF 6.0.2  
 **Decision:** **REQUEST CHANGES — not production-safe or unattended-use ready**
 
+> **Current-state note (2026-07-28):** PRD-016 removed passive prediction and
+> added a default-off Brew PI selector. This historical review has not been
+> rerun and none of its findings are closed by PRD-016 host tests. Target,
+> instrumented thermal, output, and independent-cutoff evidence remains
+> separate and pending.
+
 ## Method and validation
 
 One specialist agent reviewed the firmware independently. The primary reviewer

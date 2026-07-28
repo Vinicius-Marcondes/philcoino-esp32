@@ -10,6 +10,15 @@
   },
   "hasMore": false,
   "continuity": "initial",
+  "controllerConfiguration": {
+    "firmwareVersion": "0.4.0",
+    "selectedController": "legacy_curve",
+    "piKp": 0.08,
+    "piKi": 0.01,
+    "filterAlpha": 0.25,
+    "controllerIntervalMs": 500,
+    "ssrWindowMs": 10000
+  },
   "samples": [
     {
       "sequence": 1,
@@ -23,33 +32,25 @@
       "pumpActive": false,
       "machineStatus": "heating",
       "faultCode": null,
-      "predictiveTemperature": {
+      "controllerDiagnostics": {
         "temperatureRawC": 92.75,
         "temperatureFilteredC": 92.5,
-        "activeTargetC": 93,
-        "temperatureSlopeCPerS": 0.08,
-        "temperatureAccelerationCPerS2": -0.01,
-        "baselineHeaterDuty": 0.2,
-        "heaterCommandDuty": 1,
-        "commandedHeaterDuty1s": 0.5,
-        "heat5s": 2.5,
-        "heat15s": 8,
-        "heat30s": 18,
-        "pump5s": 0,
-        "pump15s": 0,
-        "predictedTemperature5sC": null,
-        "predictedTemperature10sC": null,
-        "predictedTemperature20sC": null,
-        "predictedPeakC": null,
-        "hypotheticalCorrectionDuty": null,
-        "hypotheticalHeaterDuty": null,
-        "operatingMode": "warmup",
-        "runMode": "passive",
-        "usable": false,
-        "fallbackReason": "history_immature",
-        "modelVersion": 1,
-        "featureSchemaVersion": 1,
-        "trainingDataHash": 1347571540
+        "baseTargetC": 93,
+        "privateTargetC": 93,
+        "errorC": 0.5,
+        "selectedController": "legacy_curve",
+        "legacyRequestedDuty": 0.2,
+        "piRequestedDuty": 0.08,
+        "proportionalContribution": 0.04,
+        "integralContribution": 0.04,
+        "integralState": 4,
+        "piSaturation": "none",
+        "piAntiWindupActive": false,
+        "heaterCommandActive": true,
+        "deliveredCommandDuty1s": 0.5,
+        "pumpCommand": "off",
+        "extractionPhase": "idle",
+        "operatingMode": "warmup"
       }
     },
     {
@@ -63,7 +64,27 @@
       "heaterActive": false,
       "pumpActive": false,
       "machineStatus": "ready",
-      "faultCode": null
+      "faultCode": null,
+      "controllerDiagnostics": {
+        "temperatureRawC": 93,
+        "temperatureFilteredC": 92.9,
+        "baseTargetC": 93,
+        "privateTargetC": 93,
+        "errorC": 0.1,
+        "selectedController": "legacy_curve",
+        "legacyRequestedDuty": 0,
+        "piRequestedDuty": 0.02,
+        "proportionalContribution": 0.008,
+        "integralContribution": 0.012,
+        "integralState": 1.2,
+        "piSaturation": "none",
+        "piAntiWindupActive": false,
+        "heaterCommandActive": false,
+        "deliveredCommandDuty1s": 0.5,
+        "pumpCommand": "off",
+        "extractionPhase": "idle",
+        "operatingMode": "idle_stable"
+      }
     }
   ]
 }

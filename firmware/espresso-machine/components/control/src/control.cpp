@@ -10,6 +10,9 @@
 namespace philcoino::control {
 namespace {
 
+static_assert(config::kTemperatureControllerIntervalMs ==
+              peripherals::kMax6675SampleIntervalMs);
+
 bool elapsed(std::uint32_t now_ms, std::uint32_t since_ms,
              std::uint32_t duration_ms) {
   return static_cast<std::uint32_t>(now_ms - since_ms) >= duration_ms;
@@ -53,13 +56,37 @@ const char* fault_message(FaultCode code) {
   return "Temperature control entered a safe fault state.";
 }
 
+const char* extraction_phase_name(ExtractionPhase phase) {
+  switch (phase) {
+    case ExtractionPhase::kIdle: return "idle";
+    case ExtractionPhase::kManual: return "manual";
+    case ExtractionPhase::kPreInfusion: return "pre-infusion";
+    case ExtractionPhase::kSoak: return "soak";
+    case ExtractionPhase::kMainExtraction: return "main-extraction";
+  }
+  return "idle";
+}
+
+const char* controller_operating_mode_name(ControllerOperatingMode mode) {
+  switch (mode) {
+    case ControllerOperatingMode::kWarmup: return "warmup";
+    case ControllerOperatingMode::kIdleStable: return "idle_stable";
+    case ControllerOperatingMode::kBrewing: return "brewing";
+    case ControllerOperatingMode::kPostBrewRecovery:
+      return "post_brew_recovery";
+    case ControllerOperatingMode::kSteam: return "steam";
+    case ControllerOperatingMode::kInhibited: return "inhibited";
+    case ControllerOperatingMode::kFault: return "fault";
+  }
+  return "fault";
+}
+
 TemperatureController::TemperatureController(
     peripherals::TemperatureTargets targets, peripherals::FailOffSsr& heater,
-    const config::TemperaturePredictionConfig& prediction_configuration)
+    BrewPiConfig pi_configuration)
     : heater_(heater),
       targets_(targets),
-      prediction_monitor_(prediction_configuration),
-      prediction_diagnostics_(prediction_monitor_.diagnostics()) {
+      brew_pi_(pi_configuration) {
   if (!peripherals::targets_are_valid(targets_)) {
     targets_ = {};
     latch_fault(FaultCode::kInternalError);
@@ -121,6 +148,7 @@ void TemperatureController::set_extraction_phase(ExtractionPhase phase,
     last_pump_running_ms_ = now_ms;
   }
   extraction_phase_ = phase;
+  brew_pi_.reset();
   reset_heater_control_window(now_ms);
 }
 
@@ -164,8 +192,7 @@ bool TemperatureController::set_mode(ControlMode mode, std::uint32_t now_ms) {
     return true;
   }
   mode_ = mode;
-  prediction_monitor_.reset();
-  prediction_diagnostics_ = prediction_monitor_.diagnostics();
+  brew_pi_.reset();
   post_brew_recovery_active_ = false;
   reset_readiness(now_ms);
   reset_heater_control_window(now_ms);
@@ -254,8 +281,7 @@ bool TemperatureController::adopt_persisted_targets(
       readiness_achieved_ = false;
     }
     reset_recovery_heat();
-    prediction_monitor_.reset();
-    prediction_diagnostics_ = prediction_monitor_.diagnostics();
+    brew_pi_.reset();
     post_brew_recovery_active_ = false;
   }
   pending_active_target_change_ = false;
@@ -292,6 +318,7 @@ bool TemperatureController::dismiss_over_temperature(std::uint32_t now_ms) {
     return false;
   }
   fault_latched_ = false;
+  brew_pi_.reset();
   reset_readiness(now_ms);
   reset_heater_control_window(now_ms);
   warmup_deadline_active_ = false;
@@ -309,6 +336,7 @@ ControlSnapshot TemperatureController::update(
 ControlSnapshot TemperatureController::update(
     const peripherals::ThermocoupleReading& reading,
     peripherals::PumpCommand pump_command, std::uint32_t now_ms) {
+  account_delivered_command(now_ms);
   raw_boiler_temperature_ = reading;
   if (pump_command == peripherals::PumpCommand::kRunning) {
     last_pump_running_ms_ = now_ms;
@@ -316,19 +344,22 @@ ControlSnapshot TemperatureController::update(
 
   if (heater_.safety_cutoff_tripped()) {
     latch_fault(FaultCode::kInternalError);
-    update_prediction(pump_command, now_ms, 0.0F);
+    update_controller_diagnostics(pump_command, now_ms, true);
+    last_heater_command_active_ = heater_.is_enabled();
     return snapshot(now_ms);
   }
 
   if (fault_latched_) {
     status_ = ControlStatus::kFault;
     heater_.force_off();
-    update_prediction(pump_command, now_ms, 0.0F);
+    update_controller_diagnostics(pump_command, now_ms, true);
+    last_heater_command_active_ = heater_.is_enabled();
     return snapshot(now_ms);
   }
 
   if (!validate_readings(now_ms)) {
-    update_prediction(pump_command, now_ms, 0.0F);
+    update_controller_diagnostics(pump_command, now_ms, true);
+    last_heater_command_active_ = heater_.is_enabled();
     return snapshot(now_ms);
   }
 
@@ -360,7 +391,8 @@ ControlSnapshot TemperatureController::update(
     if (recovery_deadline_active_ &&
         elapsed(now_ms, recovery_started_ms_, config::kHeatingTimeoutMs)) {
       latch_fault(FaultCode::kHeatingTimeout);
-      update_prediction(pump_command, now_ms, 0.0F);
+      update_controller_diagnostics(pump_command, now_ms, true);
+      last_heater_command_active_ = heater_.is_enabled();
       return snapshot(now_ms);
     }
   } else {
@@ -371,25 +403,26 @@ ControlSnapshot TemperatureController::update(
     if (warmup_deadline_active_ &&
         elapsed(now_ms, warmup_started_ms_, config::kHeatingTimeoutMs)) {
       latch_fault(FaultCode::kHeatingTimeout);
-      update_prediction(pump_command, now_ms, 0.0F);
+      update_controller_diagnostics(pump_command, now_ms, true);
+      last_heater_command_active_ = heater_.is_enabled();
       return snapshot(now_ms);
     }
   }
 
   update_recovery_heat();
-  update_prediction(pump_command, now_ms, baseline_heater_duty());
   if (post_brew_recovery_active_ &&
       elapsed(now_ms, last_pump_running_ms_, 60U * 1000U) &&
-      active_temperature_in_ready_band() &&
-      std::fabs(prediction_diagnostics_.features
-                    .temperature_slope_c_per_s) <=
-          config::kTemperaturePredictionConfig
-              .recovery_stable_slope_c_per_s) {
+      active_temperature_in_ready_band()) {
     post_brew_recovery_active_ = false;
   }
-  if (!update_heater(now_ms)) {
+  update_controller_diagnostics(pump_command, now_ms, false);
+  if (!update_heater(now_ms, requested_heater_duty_)) {
     latch_fault(FaultCode::kInternalError);
+    update_controller_diagnostics(pump_command, now_ms, true);
   }
+  last_heater_command_active_ = heater_.is_enabled();
+  controller_diagnostics_.heater_command_active =
+      last_heater_command_active_;
 
   return snapshot(now_ms);
 }
@@ -409,7 +442,35 @@ ControlSnapshot TemperatureController::snapshot(std::uint32_t now_ms) const {
   value.fault_active = fault_latched_;
   value.fault = {fault_code_, fault_message(fault_code_)};
   value.steam_timeout = steam_timeout_snapshot(now_ms);
-  value.prediction = prediction_diagnostics_;
+  value.controller = controller_diagnostics_;
+  value.controller.temperature_raw_c =
+      boiler_reading_ok() ? raw_boiler_temperature_.temperature_c : 0.0F;
+  if (mode_ == ControlMode::kSteam || !boiler_reading_ok() ||
+      !brew_pi_.diagnostics().valid) {
+    value.controller.temperature_filtered_c =
+        boiler_reading_ok() ? active_temperature() : 0.0F;
+    value.controller.pi_requested_duty = 0.0F;
+    value.controller.proportional_contribution = 0.0F;
+    value.controller.integral_contribution = 0.0F;
+    value.controller.integral_state = 0.0F;
+    value.controller.pi_saturation = PiSaturation::kNone;
+    value.controller.pi_anti_windup_active = false;
+  }
+  value.controller.base_target_c = static_cast<float>(active_target());
+  value.controller.private_target_c =
+      static_cast<float>(heater_duty_target());
+  value.controller.error_c =
+      value.controller.private_target_c -
+      value.controller.temperature_filtered_c;
+  value.controller.selected_controller =
+      config::kBrewPiControlEnabled ? SelectedController::kPi
+                                    : SelectedController::kLegacyCurve;
+  value.controller.legacy_requested_duty = baseline_heater_duty();
+  value.controller.heater_command_active = value.heater_enabled;
+  value.controller.delivered_command_duty_1s =
+      delivered_command_duty_1s_;
+  value.controller.extraction_phase = extraction_phase_;
+  value.controller.operating_mode = controller_operating_mode();
   return value;
 }
 
@@ -419,6 +480,7 @@ void TemperatureController::latch_fault(FaultCode code) {
   status_ = ControlStatus::kFault;
   warmup_deadline_active_ = false;
   recovery_deadline_active_ = false;
+  brew_pi_.reset();
   heater_.force_off();
 }
 
@@ -538,6 +600,20 @@ std::uint32_t TemperatureController::heater_pulse_ms() const {
   return pulse_ms;
 }
 
+std::uint32_t TemperatureController::duty_pulse_ms(
+    float requested_duty) const {
+  if (!std::isfinite(requested_duty) || requested_duty <= 0.0F) {
+    return 0U;
+  }
+  const float bounded_duty = std::clamp(requested_duty, 0.0F, 1.0F);
+  auto pulse_ms = static_cast<std::uint32_t>(
+      static_cast<float>(config::kHeaterControlWindowMs) * bounded_duty);
+  if (pulse_ms < config::kMinimumHeaterPulseMs) {
+    pulse_ms = config::kMinimumHeaterPulseMs;
+  }
+  return std::min(pulse_ms, config::kHeaterControlWindowMs);
+}
+
 float TemperatureController::baseline_heater_duty() const {
   if (fault_latched_ || target_update_in_progress_ || cooldown_inhibited_ ||
       !heater_enabled_permission_ || !boiler_reading_ok() ||
@@ -548,38 +624,142 @@ float TemperatureController::baseline_heater_duty() const {
          static_cast<float>(config::kHeaterControlWindowMs);
 }
 
-PredictionOperatingMode TemperatureController::prediction_operating_mode()
+ControllerOperatingMode TemperatureController::controller_operating_mode()
     const {
   if (fault_latched_ || !boiler_reading_ok()) {
-    return PredictionOperatingMode::kFault;
+    return ControllerOperatingMode::kFault;
+  }
+  if (mode_ == ControlMode::kSteam) {
+    return ControllerOperatingMode::kSteam;
+  }
+  if (target_update_in_progress_ || cooldown_inhibited_ ||
+      !heater_enabled_permission_) {
+    return ControllerOperatingMode::kInhibited;
   }
   if (extraction_phase_ != ExtractionPhase::kIdle) {
-    return PredictionOperatingMode::kBrewing;
+    return ControllerOperatingMode::kBrewing;
   }
-  if (post_brew_recovery_active_ || cooldown_inhibited_) {
-    return PredictionOperatingMode::kPostBrewRecovery;
+  if (post_brew_recovery_active_) {
+    return ControllerOperatingMode::kPostBrewRecovery;
   }
-  return readiness_achieved_ ? PredictionOperatingMode::kIdleStable
-                             : PredictionOperatingMode::kWarmup;
+  return readiness_achieved_ ? ControllerOperatingMode::kIdleStable
+                             : ControllerOperatingMode::kWarmup;
 }
 
-void TemperatureController::update_prediction(
+void TemperatureController::update_controller_diagnostics(
     peripherals::PumpCommand pump_command, std::uint32_t now_ms,
-    float baseline_duty) {
-  prediction_diagnostics_ = prediction_monitor_.update({
-      boiler_reading_ok(),
-      fault_latched_,
-      raw_boiler_temperature_.temperature_c,
-      mode_ == ControlMode::kSteam
-          ? static_cast<float>(config::kSteamTemperatureOffsetC)
-          : 0.0F,
-      static_cast<float>(active_target()),
-      baseline_duty,
-      heater_.is_enabled(),
-      pump_command == peripherals::PumpCommand::kRunning,
-      prediction_operating_mode(),
-      now_ms,
-  });
+    bool reset_pi) {
+  if (reset_pi || mode_ != ControlMode::kBrew) {
+    brew_pi_.reset();
+  }
+
+  const bool sensor_valid = boiler_reading_ok();
+  const float raw_temperature_c =
+      sensor_valid ? raw_boiler_temperature_.temperature_c : 0.0F;
+  const float control_temperature_c =
+      sensor_valid ? active_temperature() : 0.0F;
+  const float base_target_c = static_cast<float>(active_target());
+  const float private_target_c = static_cast<float>(heater_duty_target());
+  const bool inhibited =
+      fault_latched_ || target_update_in_progress_ || cooldown_inhibited_ ||
+      !heater_enabled_permission_ || heater_.safety_cutoff_tripped();
+
+  BrewPiDiagnostics pi{};
+  if (mode_ == ControlMode::kBrew && !reset_pi) {
+    pi = brew_pi_.update({
+        sensor_valid,
+        inhibited,
+        control_temperature_c,
+        private_target_c,
+        now_ms,
+    });
+  }
+
+  ControllerDiagnostics diagnostics{};
+  diagnostics.temperature_raw_c = raw_temperature_c;
+  diagnostics.temperature_filtered_c =
+      mode_ == ControlMode::kBrew && pi.valid
+          ? pi.filtered_temperature_c
+          : control_temperature_c;
+  diagnostics.base_target_c = base_target_c;
+  diagnostics.private_target_c = private_target_c;
+  diagnostics.error_c =
+      private_target_c - diagnostics.temperature_filtered_c;
+  diagnostics.selected_controller =
+      config::kBrewPiControlEnabled ? SelectedController::kPi
+                                    : SelectedController::kLegacyCurve;
+  diagnostics.legacy_requested_duty = baseline_heater_duty();
+  diagnostics.pi_requested_duty = pi.valid ? pi.requested_duty : 0.0F;
+  diagnostics.proportional_contribution =
+      pi.valid ? pi.proportional_contribution : 0.0F;
+  diagnostics.integral_contribution =
+      pi.valid ? pi.integral_contribution : 0.0F;
+  diagnostics.integral_state = pi.valid ? pi.integral_state : 0.0F;
+  diagnostics.pi_saturation =
+      pi.valid ? pi.saturation : PiSaturation::kNone;
+  diagnostics.pi_anti_windup_active =
+      pi.valid && pi.anti_windup_active;
+  diagnostics.heater_command_active = heater_.is_enabled();
+  diagnostics.delivered_command_duty_1s = delivered_command_duty_1s_;
+  diagnostics.pump_command = pump_command;
+  diagnostics.extraction_phase = extraction_phase_;
+  diagnostics.operating_mode = controller_operating_mode();
+  controller_diagnostics_ = diagnostics;
+
+  requested_heater_duty_ =
+      mode_ == ControlMode::kBrew && config::kBrewPiControlEnabled
+          ? diagnostics.pi_requested_duty
+          : diagnostics.legacy_requested_duty;
+  if (inhibited || !sensor_valid) {
+    requested_heater_duty_ = 0.0F;
+  }
+}
+
+void TemperatureController::reset_delivered_command_tracking(
+    std::uint32_t now_ms) {
+  delivered_tracking_initialized_ = true;
+  last_heater_command_active_ = heater_.is_enabled();
+  delivered_bucket_started_ms_ = now_ms;
+  delivered_last_sample_ms_ = now_ms;
+  delivered_command_on_ms_ = 0U;
+  delivered_command_duty_1s_ = 0.0F;
+}
+
+void TemperatureController::account_delivered_command(std::uint32_t now_ms) {
+  if (!delivered_tracking_initialized_) {
+    reset_delivered_command_tracking(now_ms);
+    return;
+  }
+
+  auto remaining =
+      static_cast<std::uint32_t>(now_ms - delivered_last_sample_ms_);
+  if (remaining > 2U * config::kTemperatureControllerIntervalMs) {
+    reset_delivered_command_tracking(now_ms);
+    return;
+  }
+
+  auto cursor_ms = delivered_last_sample_ms_;
+  while (remaining > 0U) {
+    const auto bucket_elapsed_ms =
+        static_cast<std::uint32_t>(cursor_ms -
+                                   delivered_bucket_started_ms_);
+    const auto bucket_remaining_ms =
+        1000U - std::min(bucket_elapsed_ms, 1000U);
+    const auto step_ms = std::min(remaining, bucket_remaining_ms);
+    if (last_heater_command_active_) {
+      delivered_command_on_ms_ += step_ms;
+    }
+    cursor_ms += step_ms;
+    remaining -= step_ms;
+    if (static_cast<std::uint32_t>(
+            cursor_ms - delivered_bucket_started_ms_) >= 1000U) {
+      delivered_command_duty_1s_ =
+          static_cast<float>(delivered_command_on_ms_) / 1000.0F;
+      delivered_bucket_started_ms_ += 1000U;
+      delivered_command_on_ms_ = 0U;
+    }
+  }
+  delivered_last_sample_ms_ = now_ms;
 }
 
 void TemperatureController::reset_heater_control_window(std::uint32_t now_ms) {
@@ -593,8 +773,7 @@ void TemperatureController::reset_readiness(std::uint32_t now_ms) {
 
 void TemperatureController::return_to_brew(std::uint32_t now_ms) {
   mode_ = ControlMode::kBrew;
-  prediction_monitor_.reset();
-  prediction_diagnostics_ = prediction_monitor_.diagnostics();
+  brew_pi_.reset();
   post_brew_recovery_active_ = false;
   steam_timeout_active_ = false;
   reset_readiness(now_ms);
@@ -632,7 +811,8 @@ bool TemperatureController::update_readiness(std::uint32_t now_ms) {
   return elapsed(now_ms, ready_band_since_ms_, config::kReadyStabilityMs);
 }
 
-bool TemperatureController::update_heater(std::uint32_t now_ms) {
+bool TemperatureController::update_heater(std::uint32_t now_ms,
+                                          float requested_duty) {
   if (fault_latched_) {
     return heater_.force_off();
   }
@@ -659,7 +839,11 @@ bool TemperatureController::update_heater(std::uint32_t now_ms) {
   }
   const auto window_elapsed_ms =
       static_cast<std::uint32_t>(now_ms - heater_control_window_started_ms_);
-  return heater_.set_enabled(window_elapsed_ms < heater_pulse_ms());
+  const auto pulse_ms =
+      mode_ == ControlMode::kBrew && config::kBrewPiControlEnabled
+          ? duty_pulse_ms(requested_duty)
+          : heater_pulse_ms();
+  return heater_.set_enabled(window_elapsed_ms < pulse_ms);
 }
 
 SteamTimeoutSnapshot TemperatureController::steam_timeout_snapshot(

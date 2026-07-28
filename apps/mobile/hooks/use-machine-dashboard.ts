@@ -5,7 +5,6 @@ import type {
   ExtractionState,
   MachineState,
   Mode,
-  PredictiveTemperatureDiagnostics,
   TemperatureSettingsRequest,
   ProfileSet,
   WeightControl,
@@ -64,7 +63,6 @@ export interface MachineDashboardState {
   profileMutation: DashboardMutationState;
   profileStorageError: string | null;
   profileWritePending: boolean;
-  predictiveTemperature: PredictiveTemperatureDiagnostics | null;
   profilesSynchronized: boolean;
   cancelProfileImport: () => void;
   confirmProfileImport: () => void;
@@ -126,8 +124,6 @@ export function useMachineDashboard(
     null,
   );
   const [profileWritePending, setProfileWritePending] = useState(false);
-  const [predictiveTemperature, setPredictiveTemperature] =
-    useState<PredictiveTemperatureDiagnostics | null>(null);
   const [temperatureMutation, setTemperatureMutation] =
     useState<DashboardMutationState>(idleMutationState);
   const mutationSession = useRef<DashboardMutationSession | null>(null);
@@ -161,9 +157,6 @@ export function useMachineDashboard(
           setExtraction(nextSnapshot?.extraction ?? null);
           setCompensation(nextSnapshot?.compensation ?? null);
           setCooldown(nextSnapshot?.cooldown ?? null);
-          setPredictiveTemperature(
-            nextSnapshot?.predictiveTemperature ?? null,
-          );
           if (nextSnapshot !== null) {
             setSnapshotRevision((current) => current + 1);
           }
@@ -195,7 +188,6 @@ export function useMachineDashboard(
           setExtraction(null);
           setCompensation(null);
           setCooldown(null);
-          setPredictiveTemperature(null);
           setConnection(nextConnection);
           profiles?.handleConnectionLost();
         },
@@ -430,7 +422,6 @@ export function useMachineDashboard(
     profileMutation,
     profileStorageError,
     profileWritePending,
-    predictiveTemperature,
     profilesSynchronized:
       machineProfileError === null &&
       profileSetsEqual(mobileProfiles, machineProfiles),

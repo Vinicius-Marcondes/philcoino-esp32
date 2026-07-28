@@ -176,22 +176,22 @@ curl http://localhost:3000/api/v2/history \
   -H 'Authorization: Bearer philcoino-dev-token'
 ```
 
-The mobile live poll uses the opt-in state shape:
+The mobile live poll uses only the strict queryless state shape:
 
 ```bash
-curl 'http://localhost:3000/api/v2/state?include=prediction' \
+curl 'http://localhost:3000/api/v2/state' \
   -H 'Authorization: Bearer philcoino-dev-token'
 ```
 
-The simulator returns `predictiveTemperature: null` because it does not model
-the firmware predictor. Queryless `/api/v2/state` remains unchanged.
+Any state query parameter, including the removed prediction opt-in, is rejected
+as malformed.
 
 Use the returned `nextCursor.bootId` and `nextCursor.afterSequence` together for
-the next page. Current pages contain at most eight samples; consumers accept
-legacy sixty-sample pages. Power-cycle changes the boot ID and clears retained
-history. Firmware pages may also contain the
-optional `predictiveTemperature` object; the simulator deliberately omits it
-because it does not reproduce the ESP32 filter, command history, or predictor.
+the next page. Strict pages contain at most eight samples, one controller/build
+configuration, and per-sample controller diagnostics. Power-cycle changes the
+boot ID and clears retained history. Simulator diagnostics are deterministic
+logical values for contract/UI testing; they do not reproduce firmware PI
+timing, SSR delivery, or physical temperature response.
 
 The simulator treats `boilerTemperatureC` as the already-effective logical
 control temperature in either mode. It does not add the firmware Steam offset,
@@ -230,7 +230,10 @@ The OpenAPI file is JSON-compatible YAML, so the project validator parses it wit
 
 The Python 3.12+ tool in `tools/thermal-modeling` consumes exported CSV files and
 produces analysis, predictor, plant-model, simulation, and candidate firmware
-artifacts. It never edits or flashes firmware. Create an isolated environment,
+artifacts. This is preserved historical/offline research; current firmware does
+not consume predictor artifacts. Minimum non-predictive exports are supported,
+and legacy prediction columns are accepted but ignored by default for modeling
+inputs. It never edits or flashes firmware. Create an isolated environment,
 install the declared project dependencies, and run its tests:
 
 ```bash
@@ -265,10 +268,11 @@ bun run firmware/espresso-machine/host-tests/validate_contract.ts \
 Use a temporary build directory outside the repository to avoid generated output in the worktree.
 
 The generated capture set includes unchanged API v1 and queryless API v2 state
-responses, opt-in live prediction state, plus strict API v2 extraction,
+responses plus strict API v2 extraction,
 compensation, cooldown Start/replay/conflict/Stop/terminal,
-history, eligibility errors, and failed terminal state. Capture validation proves only
-that independent C++ serialization matches the wire schemas.
+controller-diagnostic history, eligibility errors, and failed terminal state.
+Capture validation proves only that independent C++ serialization matches the
+wire schemas.
 
 Run the pure API codec/property targets and deterministic mutation campaign
 under AddressSanitizer and UndefinedBehaviorSanitizer with:
@@ -310,6 +314,16 @@ values is configurable through NVS, HTTP, mDNS, simulator controls, or
 mobile. Check [Safety](SAFETY.md), the tracker, and hardware documents before
 any device test. The owner accepted the configuration tested on 2026-07-16;
 that acceptance does not authorize a different setup or unattended use.
+
+The `CONFIG_PHILCOINO_BREW_PI_CONTROL` Kconfig selector defaults off. Disabled
+builds keep the legacy Brew curve authoritative and run PI only as a bounded
+shadow calculation; enabled builds select PI requested duty only for Brew.
+Both use the same ten-second SSR window, minimum pulse, permission, inhibit,
+fault, lease, and fail-off path. Steam always uses the legacy curve. The host
+matrix builds authority tests in both modes, but changing the target selector
+through `idf.py menuconfig` creates a different physical-test configuration.
+Do not enable it for connected heater work without the supervised PRD-016 A/B
+procedure and independent over-temperature protection.
 
 ### Low-voltage only
 
