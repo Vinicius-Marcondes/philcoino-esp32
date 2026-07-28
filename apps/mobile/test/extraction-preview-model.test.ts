@@ -248,7 +248,6 @@ describe("extraction design preview model", () => {
     ).text();
 
     expect(source).toContain("type DashboardPage,");
-    expect(source).toContain('view="quick"');
     expect(source).toContain('view="profiles"');
     expect(source).toContain('accessibilityRole="tablist"');
     expect(source).toContain('accessibilityRole="tab"');
@@ -286,27 +285,26 @@ describe("extraction design preview model", () => {
     const machineStatus = source.indexOf("<MachineStatus");
     const boilerTemperature = source.indexOf("<TemperatureCard", machineStatus);
     const telemetryGraph = source.indexOf(
-      "<ExtractionTelemetryChart",
+      "<TemperatureHistoryChart",
       boilerTemperature,
     );
-    const extraction = source.indexOf("<ExtractionPreview", telemetryGraph);
+    const extraction = source.indexOf("<ExtractionConsoleEntry", telemetryGraph);
     const cooldown = source.indexOf("<ThermalWorkflowPreview", extraction);
     expect(machineStatus).toBeGreaterThan(-1);
     expect(boilerTemperature).toBeGreaterThan(machineStatus);
     expect(telemetryGraph).toBeGreaterThan(boilerTemperature);
     expect(extraction).toBeGreaterThan(telemetryGraph);
     expect(cooldown).toBeGreaterThan(extraction);
-    expect(source.slice(telemetryGraph, extraction)).not.toContain(
-      "<WeightModeCard",
-    );
-    expect(source).toContain('mode="temperature-history"');
-    expect(source).toContain('mode="weighted-trace"');
+    // The Dashboard graph is temperature-only and every extraction control now
+    // lives on the console, so neither may appear in the Dashboard layout.
+    expect(source).toContain("bands={1}");
+    expect(source).not.toContain('mode="temperature-history"');
+    expect(source).not.toContain('mode="weighted-trace"');
+    expect(source).not.toContain('view="quick"');
+    expect(source).not.toContain("quickControlPanel={");
+    expect(source).not.toContain("<WeightModeCard");
     expect(source).toContain("scale={null}");
     expect(source).not.toContain("function TemperatureCurve");
-    expect(source).toContain("quickControlPanel={");
-    expect(source.indexOf("<WeightModeCard", extraction)).toBeGreaterThan(
-      extraction,
-    );
     expect(source).toContain("<MachineStatus\n                          compact\n                          disabled=");
     expect(source).toContain("faultMutation={faultMutation}\n                          fillHeight");
     expect(source).toContain("<ThermalWorkflowStatus\n                          compact\n                          fillHeight");

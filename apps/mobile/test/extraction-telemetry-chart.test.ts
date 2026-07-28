@@ -1,57 +1,46 @@
 import { describe, expect, test } from "bun:test";
 
-describe("extraction telemetry chart presentation", () => {
-  test("uses one stable surface for temperature history and weighted traces", async () => {
-    const source = await Bun.file(
-      new URL(
-        "../components/extraction-telemetry-chart.tsx",
-        import.meta.url,
-      ),
-    ).text();
+const source = await Bun.file(
+  new URL("../components/extraction-telemetry-chart.tsx", import.meta.url),
+).text();
 
-    expect(source).toContain('mode: "temperature-history"');
-    expect(source).toContain('mode: "weighted-trace"');
+describe("weighted extraction trace chart", () => {
+  test("draws its chrome from the shared telemetry surface", () => {
+    expect(source).toContain('from "@/components/telemetry-surface"');
     expect(source).toContain("<TelemetrySurface");
-    expect(source).toContain("function TemperatureHistoryChart");
-    expect(source).toContain("function WeightedTraceChart");
-    expect(source).toContain("const height = compact ? 250 : 330");
-    expect(source).toContain("<SharedGrid");
+    expect(source).toContain("<TelemetryGrid");
+    expect(source).not.toContain("function TelemetrySurface(");
+    expect(source).not.toContain("function SharedGrid(");
   });
 
-  test("keeps unavailable history telemetry explicit instead of synthesizing it", async () => {
-    const source = await Bun.file(
-      new URL(
-        "../components/extraction-telemetry-chart.tsx",
-        import.meta.url,
-      ),
-    ).text();
+  test("takes its geometry and height from the shared telemetry modules", () => {
+    expect(source).toContain("weightedTracePlot({");
+    expect(source).toContain("telemetryChartHeight(variant, compact)");
+    expect(source).not.toContain("function baseGeometry(");
+    expect(source).not.toContain("function weightedTraceGeometry(");
+  });
 
+  test("plots weight, flow, cutoff, phases and the inspection cursor", () => {
+    expect(source).toContain("plot.weightPaths");
+    expect(source).toContain("plot.flowAreas");
+    expect(source).toContain("plot.cutoffY");
+    expect(source).toContain("plot.phaseBoundaries");
+    expect(source).toContain("plot.settlingX");
+    expect(source).toContain("onResponderMove");
+  });
+
+  test("labels missing weight and flow instead of synthesizing values", () => {
+    expect(source).toContain('translate("scale.telemetryWeightUnavailable")');
+    expect(source).toContain('translate("scale.telemetryFlowUnavailable")');
+    // Formatting lives in src/telemetry/telemetry-readouts.ts, which is unit
+    // tested for the "—" fallbacks; the chart must route through it.
     expect(source).toContain(
-      "scale?.netWeightDecigrams ?? scale?.grossWeightDecigrams ?? null",
+      "formatWeightReadout(latest?.netWeightDecigrams ?? null)",
     );
-    expect(source).toContain('translate("scale.telemetryTraceUnavailable")');
     expect(source).toContain(
-      'translate("scale.telemetryWeightTraceUnavailable")',
+      "formatFlowReadout(latest?.derivedFlowGPerS ?? null)",
     );
-    expect(source).toContain("value: \"—\"");
     expect(source).not.toContain("derivedFlowGPerS: 0");
-  });
-
-  test("retains paged history follow, inspection, gaps, and activity context", async () => {
-    const source = await Bun.file(
-      new URL(
-        "../components/extraction-telemetry-chart.tsx",
-        import.meta.url,
-      ),
-    ).text();
-
-    expect(source).toContain("temperatureHistoryWindows(history)");
-    expect(source).toContain("isLatestHistoryPageOffset(");
-    expect(source).toContain("isTemperatureHistoryGap(");
-    expect(source).toContain("pagingEnabled");
-    expect(source).toContain("scrollToEnd({ animated: false })");
-    expect(source).toContain("onInspect(nearest.recordedAtMs)");
-    expect(source).toContain("heaterRects");
-    expect(source).toContain("pumpRects");
+    expect(source).not.toContain("netWeightDecigrams: 0");
   });
 });

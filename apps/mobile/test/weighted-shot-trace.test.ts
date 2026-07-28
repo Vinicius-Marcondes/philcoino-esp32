@@ -70,6 +70,49 @@ describe("weighted shot trace", () => {
       "500,1500,93,93,1.0,2.00,main-extraction,running,continuous",
     );
   });
+
+  test("discards a retained trace when the device reuses the same identity", async () => {
+    const repository = new InMemoryShotHistoryRepository();
+    await repository.commitTracePage(
+      "machine-1",
+      page("terminal", [
+        sample(1, 0, 0),
+        sample(2, 250, 5),
+        sample(3, 500, 10),
+        sample(4, 750, 15),
+        sample(5, 1_000, 20),
+      ]),
+    );
+
+    const restarted = page("running", [
+      { ...sample(1, 0, 0), uptimeMs: 500_000 },
+      { ...sample(2, 250, 4), uptimeMs: 500_250 },
+    ]);
+    const stored = await repository.commitTracePage("machine-1", restarted);
+    expect(stored.samples.map((value) => value.sequence)).toEqual([1, 2]);
+    expect(stored.samples.map((value) => value.uptimeMs)).toEqual([
+      500_000, 500_250,
+    ]);
+  });
+
+  test("trims sequences above the device high-water mark but keeps overwritten history", async () => {
+    const repository = new InMemoryShotHistoryRepository();
+    await repository.commitTracePage(
+      "machine-1",
+      page("running", [sample(1, 0, 0), sample(2, 250, 5), sample(3, 500, 10)]),
+    );
+
+    const truncated: WeightedExtractionTracePage = {
+      ...page("running", [sample(2, 250, 5)], 1),
+      continuity: "truncated",
+      latestSequence: 2,
+      oldestSequence: 2,
+    };
+    const stored = await repository.commitTracePage("machine-1", truncated);
+    // Sequence 1 left the device ring but stays durable; sequence 3 cannot
+    // belong to this trace because the device never reached it.
+    expect(stored.samples.map((value) => value.sequence)).toEqual([1, 2]);
+  });
 });
 
 function sample(

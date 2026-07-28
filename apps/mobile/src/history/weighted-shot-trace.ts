@@ -28,10 +28,15 @@ export function mergeTracePage(
   const sameTrace =
     previous?.deviceId === deviceId &&
     previous.extractionId === page.extractionId &&
-    previous.bootId === page.bootId;
+    previous.bootId === page.bootId &&
+    !supersedesRetainedTrace(previous, page);
   const samples = new Map<number, WeightedExtractionTraceSample>();
   if (sameTrace) {
-    for (const sample of previous.samples) samples.set(sample.sequence, sample);
+    for (const sample of previous.samples) {
+      if (sample.sequence <= page.latestSequence) {
+        samples.set(sample.sequence, sample);
+      }
+    }
   }
   for (const sample of page.samples) samples.set(sample.sequence, sample);
   const ordered = [...samples.values()].sort(
@@ -52,6 +57,19 @@ export function mergeTracePage(
     extractionId: page.extractionId,
     samples: deriveBeverageFlow(ordered),
   };
+}
+
+function supersedesRetainedTrace(
+  previous: StoredWeightedShotTrace,
+  page: WeightedExtractionTracePage,
+): boolean {
+  const retained = new Map(
+    previous.samples.map((sample) => [sample.sequence, sample.uptimeMs]),
+  );
+  return page.samples.some((sample) => {
+    const uptimeMs = retained.get(sample.sequence);
+    return uptimeMs !== undefined && uptimeMs !== sample.uptimeMs;
+  });
 }
 
 export function deriveBeverageFlow(
