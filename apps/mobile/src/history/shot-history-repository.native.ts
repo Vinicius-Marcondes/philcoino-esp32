@@ -65,6 +65,7 @@ class SQLiteShotHistoryRepository implements ShotHistoryRepository {
     const database = await this.database();
     const previous = await this.loadTrace(deviceId, page.extractionId);
     const trace = mergeTracePage(previous, deviceId, page);
+    const retainedSequence = trace.samples.at(-1)?.sequence ?? 0;
     await database.withTransactionAsync(async () => {
       await database.runAsync(
         `INSERT OR REPLACE INTO weighted_shot_traces
@@ -74,6 +75,15 @@ class SQLiteShotHistoryRepository implements ShotHistoryRepository {
         trace.extractionId,
         trace.bootId,
         trace.completeness,
+      );
+      await database.runAsync(
+        `DELETE FROM weighted_shot_trace_samples
+         WHERE device_id = ? AND extraction_id = ?
+           AND (boot_id != ? OR sequence > ?)`,
+        trace.deviceId,
+        trace.extractionId,
+        trace.bootId,
+        retainedSequence,
       );
       for (const sample of trace.samples) {
         await database.runAsync(
@@ -103,7 +113,9 @@ class SQLiteShotHistoryRepository implements ShotHistoryRepository {
       `SELECT h.*, t.completeness AS trace_completeness,
               (SELECT COUNT(*) FROM weighted_shot_trace_samples s
                WHERE s.device_id = h.device_id
-                 AND s.extraction_id = h.extraction_id) AS trace_sample_count
+                 AND s.extraction_id = h.extraction_id
+                 AND (t.boot_id IS NULL OR s.boot_id = t.boot_id))
+                AS trace_sample_count
        FROM weighted_shot_history h
        LEFT JOIN weighted_shot_traces t
          ON t.device_id = h.device_id
@@ -174,15 +186,17 @@ class SQLiteShotHistoryRepository implements ShotHistoryRepository {
       extractionId,
     );
     if (metadata === null) return null;
+    const bootId = String(metadata.boot_id);
     const rows = await database.getAllAsync<Record<string, unknown>>(
       `SELECT * FROM weighted_shot_trace_samples
-       WHERE device_id = ? AND extraction_id = ?
+       WHERE device_id = ? AND extraction_id = ? AND boot_id = ?
        ORDER BY sequence`,
       deviceId,
       extractionId,
+      bootId,
     );
     return {
-      bootId: String(metadata.boot_id),
+      bootId,
       completeness: String(metadata.completeness) as TraceCompleteness,
       deviceId,
       extractionId,
@@ -260,6 +274,10 @@ class SQLiteShotHistoryRepository implements ShotHistoryRepository {
       );
       CREATE INDEX IF NOT EXISTS weighted_shot_trace_lookup
         ON weighted_shot_trace_samples(device_id, extraction_id, sequence);
+      DELETE FROM weighted_shot_trace_samples
+       WHERE (device_id, extraction_id, boot_id) NOT IN (
+         SELECT device_id, extraction_id, boot_id FROM weighted_shot_traces
+       );
     `);
     return database;
   }
