@@ -1,7 +1,47 @@
+# PRD-015 Tracker
+
+PRD Status: Active — Approved 2026-07-28
+Current Task: Mobile software complete — native visual and target review pending
+
+Implementation Boundary: Reduce the Dashboard graph to boiler temperature and
+target, and move extraction controls and the complete weighted telemetry plot to a
+new full-screen console, without changing firmware, protocol, persistence, or who
+owns control.
+
+PRD: `docs/prds/PRD-015/PRD-015.md`
+
+## Compatibility and Safety Boundary
+
+- Mobile presentation only. No firmware, protocol, simulator, or stored-data change.
+- Firmware remains authoritative for temperature, scale validity, extraction,
+  heater/pump commands, faults, timeouts, and persisted targets.
+- Extraction mutations keep acknowledged-only feedback, profile-synchronization
+  guards, and idempotency; the console never displays a requested value as live
+  state.
+- Weight and flow remain observation-only derived data and stay labelled
+  unavailable rather than synthesized.
+- Software evidence does not prove scale accuracy, water flow, pump operation,
+  de-energization, or energized mains safety.
+
+## Execution State
+
+| Area | Status | Evidence | Blocked Reason |
+| --- | --- | --- | --- |
+| Contract and simulator | Not applicable | No wire or simulator change in scope; protocol 138 tests and simulator 77 tests unchanged and passing | None |
+| Firmware | Not applicable | No firmware change in scope | None |
+| Mobile | Software complete | 235 tests; typecheck; lint; behavioral tests for plot geometry, readouts and console model | Native device visual review pending; web bundling unavailable because `expo-sqlite` cannot resolve its wasm worker asset |
+| Physical validation | Pending Human | Procedures remain bounded by safety docs | Connected low-voltage target and Human reviewer unavailable |
+
+---
+
 # PRD-014 Tracker
 
 PRD Status: Active — Approved 2026-07-26
 Current Task: Software implementation complete — Figma/Target/Human pending
+
+Superseded: the Dashboard-graph requirement (PRD-014 line 61) and the
+"Visually copying Gaggiuino" non-goal (line 29) are replaced by
+`docs/prds/PRD-015/PRD-015.md`. All other PRD-014 requirements remain in force.
 
 Implementation Boundary: Add observation-only weighted extraction telemetry,
 derived beverage mass flow, durable trace history, and responsive graph-first

@@ -10,13 +10,14 @@ Philcoino is a local-only espresso-machine monitoring and temperature-control sy
 
 - `apps/mobile`: Expo 54 / React Native application for one selected machine.
   - `app`: Expo Router entry point and root layout. Route files default-export screens; navigation concerns stay here.
-  - `components`: pairing, dashboard, machine controls, and reusable presentation. The large screen components currently combine orchestration and presentation, so trace their hooks and services before splitting them.
+  - `components`: pairing, the temperature-first Dashboard, the full-screen extraction console, machine controls, shared telemetry surfaces, and reusable presentation. The Dashboard keeps live boiler temperature and target; the console owns extraction controls and the complete weighted telemetry plot. Trace screen hooks, reducers, and services before splitting orchestration from presentation.
   - `hooks`: React lifecycle adapters. `use-machine-dashboard.ts` binds focus/AppState to polling and mutation sessions.
   - `src/discovery`: mDNS service parsing plus native and unsupported-platform adapters. TXT identity and resolved addresses are treated as untrusted input.
   - `src/pairing`: device inspection, bearer authentication, cached-address restore, identity re-checks, and rediscovery recovery.
   - `src/networking`: normalized local origins, the injected/fetch-backed API client, strict protocol parsing, timeout/cancellation ownership, error taxonomy, and debug client.
   - `src/storage`: strict single-device record and Expo SecureStore adapter; the record contains the device ID, last successful origin, and bearer token.
   - `src/dashboard`: completion-driven polling, serialized acknowledged mutations, connection mapping, and pure presentation helpers. Never display requested values as live state before a valid device response.
+  - `src/telemetry`: localization-free plot geometry, scale derivation, and readout formatting shared by the Dashboard temperature chart and extraction console. Preserve raw segments and real gaps; never synthesize unavailable weight or flow.
   - `test`: Bun tests for transport, persistence, discovery, pairing, polling, mutation races, simulator integration, debug mode, and view-model behavior.
   - `plugins/with-android-cleartext.js`: narrowly enables local HTTP in generated Android configuration; do not hand-edit generated native projects.
 - `packages/protocol`: API v1 contract shared across TypeScript consumers and independently reimplemented by firmware.
