@@ -20,50 +20,46 @@ import {
 } from "../../../tools/device-simulator/src/app.ts";
 
 const bootId = "0123456789abcdef0123456789abcdef";
-const predictiveTemperature: NonNullable<
-  HistoryPage["samples"][number]["predictiveTemperature"]
-> = {
-  activeTargetC: 93,
-  baselineHeaterDuty: 0.4,
-  commandedHeaterDuty1s: 0.5,
-  fallbackReason: "none",
-  featureSchemaVersion: 1,
-  heat15s: 5,
-  heat30s: 12,
-  heat5s: 2,
-  heaterCommandDuty: 1,
-  hypotheticalCorrectionDuty: 0.1,
-  hypotheticalHeaterDuty: 0.3,
-  modelVersion: 1,
+const controllerConfiguration: HistoryPage["controllerConfiguration"] = {
+  controllerIntervalMs: 500,
+  filterAlpha: 0.25,
+  firmwareVersion: "0.4.0",
+  piKi: 0.01,
+  piKp: 0.08,
+  selectedController: "legacy_curve",
+  ssrWindowMs: 10_000,
+};
+const controllerDiagnostics: HistoryPage["samples"][number]["controllerDiagnostics"] = {
+  baseTargetC: 93,
+  deliveredCommandDuty1s: 1,
+  errorC: 2,
+  extractionPhase: "idle",
+  heaterCommandActive: true,
+  integralContribution: 0,
+  integralState: 0,
+  legacyRequestedDuty: 1,
   operatingMode: "brewing",
-  predictedPeakC: 94,
-  predictedTemperature10sC: 93.8,
-  predictedTemperature20sC: 94,
-  predictedTemperature5sC: 93.5,
-  pump15s: 3,
-  pump5s: 2,
-  runMode: "passive",
-  temperatureAccelerationCPerS2: 0.01,
-  temperatureFilteredC: 92.5,
-  temperatureRawC: 92.75,
-  temperatureSlopeCPerS: 0.1,
-  trainingDataHash: 1347571540,
-  usable: true,
+  piAntiWindupActive: false,
+  piRequestedDuty: 0.16,
+  piSaturation: "none",
+  privateTargetC: 93,
+  proportionalContribution: 0.16,
+  pumpCommand: "off",
+  selectedController: "legacy_curve",
+  temperatureFilteredC: 91,
+  temperatureRawC: 91,
 };
 
 describe("temperature history synchronization", () => {
-  test("preserves passive prediction diagnostics while anchoring a page", () => {
-    const enriched = {
-      ...sample(1, 1_000),
-      predictiveTemperature,
-    };
+  test("preserves controller configuration and diagnostics while anchoring a page", () => {
     const [mapped] = mapHistoryPage(
-      page([enriched], 1, false, "initial"),
+      page([sample(1, 1_000)], 1, false, "initial"),
       "machine-1",
       10_000,
       1_000,
     );
-    expect(mapped?.predictiveTemperature).toEqual(predictiveTemperature);
+    expect(mapped?.controllerConfiguration).toEqual(controllerConfiguration);
+    expect(mapped?.controllerDiagnostics).toEqual(controllerDiagnostics);
   });
 
   test("anchors all pages to the first request midpoint and commits cursors durably", async () => {
@@ -328,6 +324,7 @@ function page(
     bootId,
     capturedAtUptimeMs: 5_000,
     continuity,
+    controllerConfiguration,
     deviceId: "machine-1",
     hasMore,
     latestSequence: 3,
@@ -347,6 +344,7 @@ function sample(sequence: number, uptimeMs: number): HistoryPage["samples"][numb
     heaterEnabled: true,
     machineStatus: "heating",
     pumpActive: false,
+    controllerDiagnostics,
     sequence,
     steamTargetC: 115,
     uptimeMs,

@@ -1,5 +1,5 @@
 import type {
-  MachineStateWithPredictionV2,
+  MachineStateV2,
   ProfileSet,
 } from "@philcoino/protocol";
 
@@ -14,10 +14,7 @@ export const DASHBOARD_POLL_INTERVAL_MS = 1_000;
 
 export interface DashboardStateClient {
   getProfiles(options?: { signal?: AbortSignal }): Promise<ProfileSet>;
-  getLiveStateV2(
-    options?: { signal?: AbortSignal },
-  ): Promise<MachineStateWithPredictionV2>;
-  resetLiveStateCapabilities?(): void;
+  getStateV2(options?: { signal?: AbortSignal }): Promise<MachineStateV2>;
 }
 
 interface PollingScheduler {
@@ -30,7 +27,7 @@ interface DashboardPollingSessionOptions {
   intervalMs?: number;
   onConnectionChange: (connection: ConnectionState) => void;
   onDeviceRestart?: () => void;
-  onSnapshotChange: (snapshot: MachineStateWithPredictionV2 | null) => void;
+  onSnapshotChange: (snapshot: MachineStateV2 | null) => void;
   scheduler?: PollingScheduler;
 }
 
@@ -46,7 +43,7 @@ export class DashboardPollingSession {
   private readonly onConnectionChange: (connection: ConnectionState) => void;
   private readonly onDeviceRestart: () => void;
   private readonly onSnapshotChange: (
-    snapshot: MachineStateWithPredictionV2 | null,
+    snapshot: MachineStateV2 | null,
   ) => void;
   private readonly scheduler: PollingScheduler;
 
@@ -122,7 +119,7 @@ export class DashboardPollingSession {
     this.activeController = controller;
 
     try {
-      const snapshot = await this.client.getLiveStateV2({
+      const snapshot = await this.client.getStateV2({
         signal: controller.signal,
       });
       if (!this.isCurrent(generation)) {
@@ -132,7 +129,6 @@ export class DashboardPollingSession {
         this.lastUptimeMs !== null &&
         snapshot.machine.uptimeMs < this.lastUptimeMs
       ) {
-        this.client.resetLiveStateCapabilities?.();
         this.onDeviceRestart();
       }
       this.lastUptimeMs = snapshot.machine.uptimeMs;
@@ -144,12 +140,6 @@ export class DashboardPollingSession {
       }
       const connection = connectionStateFromError(error);
       if (connection !== null) {
-        if (
-          connection.status === "offline" ||
-          connection.status === "not-found"
-        ) {
-          this.client.resetLiveStateCapabilities?.();
-        }
         this.onSnapshotChange(null);
         this.onConnectionChange(connection);
       }

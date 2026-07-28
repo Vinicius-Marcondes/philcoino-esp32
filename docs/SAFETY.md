@@ -23,9 +23,11 @@ Philcoino é um controller experimental para máquina de espresso que trabalha p
   PERF-010. GPIO8 e GPIO9 permanecem sem atribuição; isso não aprova novo
   hardware nem altera a aceitação física histórica.
 - A aceitação de 2026-07-16 permanece limitada à configuração então testada.
-  As novas gates Human de histórico/predição passiva (HIST-007/PRD-012),
-  incluindo runtime do firmware `0.3.3`, continuam pendentes; findings de
-  arquitetura, firmware e security continuam sendo trabalho de engenharia.
+  A predição da PRD-012 agora é preservada somente como pesquisa histórica/
+  offline. Os checks A/B de target, comportamento térmico e SSR para o PI Brew
+  ativo da PRD-016 continuam pendentes; o selector default-off e a evidência
+  host não ampliam a aceitação física anterior. Findings de arquitetura,
+  firmware e security continuam sendo trabalho de engenharia.
 - Em 2026-07-14, o owner aceitou a matriz funcional da pump no target após relatar discovery HTTP/mDNS, Manual/profiles, Stop/cutoff, continuidade sem app e boot sem retomada. Isso é evidência funcional reportada pelo owner; não inclui captures elétricos independentes, injeção de falha GPIO, timer-wrap no target nem aprovação energizada.
 
 Consulte [CODEBASE_REVIEW_REPORT.md](../CODEBASE_REVIEW_REPORT.md), [docs/TRACKER.md](TRACKER.md) e [docs/side-notes.md](side-notes.md) para as evidências detalhadas.
@@ -61,15 +63,24 @@ O firmware controla o temperature-control loop e não depende da conectividade d
 - registra até 600 snapshots observacionais em RAM e os expõe em páginas de no
   máximo 8; esse histórico não alimenta nenhuma decisão de heater, pump,
   readiness, timeout, fault ou mutation;
-- calcula em modo estritamente passivo temperatura filtrada, slope, atividade
-  recente de comandos e previsões lineares de 5/10/20 segundos. A correção
-  hipotética é registrada, mas nunca altera o comando do heater nesta versão;
+- calcula diagnósticos bounded de requested duty do PI Brew e da curva legacy
+  no intervalo fixo de 500 ms; o build default mantém PI somente em shadow,
+  enquanto um build explicitamente habilitado seleciona PI apenas em Brew pela
+  mesma janela de comando de dez segundos;
 - usa uma safety lease GPTimer de 1500 ms para o comando do heater e um único
   mutex de workflow bounded, mantendo NVS e transmissão HTTP fora
   desse boundary;
 - inicializa hardware crítico em ordem fail-off.
 
 Esses itens são intenções de design e comportamentos de software cobertos por testes, não prova de desenergização física ou segurança térmica.
+
+O selector PI existe somente em build time, começa desligado e não enfraquece
+validação do sensor, permissão do heater, inhibit de cooldown, latch de faults,
+limites de over-temperature, safety lease de 1500 ms, tratamento de falha da
+saída ou o requisito de cutoff físico independente. Kp, Ki, alpha do EMA e
+limites do integral são candidatos compile-time, não tuning fisicamente aceito.
+Valores de histórico descrevem requests/comandos; `deliveredCommandDuty1s` é
+fração de comando do firmware, não medição da corrente ou potência do SSR.
 
 A concordância entre control e API demonstra somente consistência de software.
 Ela não comprova que `+5°C` representa a diferença física da boiler,

@@ -31,7 +31,6 @@ using codec::serialize_extraction;
 using codec::serialize_health;
 using codec::serialize_heater_enabled;
 using codec::serialize_mode;
-using codec::serialize_prediction;
 using codec::serialize_profiles;
 using codec::serialize_scale;
 using codec::serialize_state;
@@ -255,7 +254,9 @@ HttpResponse FirmwareApi::history(const std::string& query,
     return error_response(400, "malformed_request",
                           "The history cursor is outside the current sequence.");
   }
-  return json_response(200, serialize_history_page(identity_.device_id, page));
+  return json_response(
+      200, serialize_history_page(identity_.device_id,
+                                  identity_.firmware_version, page));
 }
 
 HttpResponse FirmwareApi::state(std::uint64_t uptime_ms) const {
@@ -448,8 +449,7 @@ HttpResponse FirmwareApi::dismiss_over_temperature(std::uint64_t uptime_ms) {
 
 HttpResponse FirmwareApi::state_v2(const std::string& query,
                                    std::uint64_t uptime_ms) const {
-  const bool include_prediction = query == "include=prediction";
-  if (!query.empty() && !include_prediction) {
+  if (!query.empty()) {
     return error_response(400, "malformed_request",
                           "The state query is malformed.");
   }
@@ -474,12 +474,10 @@ HttpResponse FirmwareApi::state_v2(const std::string& query,
   const auto compensation =
       serialize_compensation(compensation_active, extraction);
   const auto serialized_cooldown = serialize_cooldown(cooldown);
-  const auto prediction =
-      include_prediction ? serialize_prediction(machine) : std::string{};
   std::string response;
   response.reserve(64U + serialized_machine.size() +
                    serialized_extraction.size() + compensation.size() +
-                   serialized_cooldown.size() + prediction.size());
+                   serialized_cooldown.size());
   response.append("{\"machine\":");
   response.append(serialized_machine);
   response.append(",\"extraction\":");
@@ -488,10 +486,6 @@ HttpResponse FirmwareApi::state_v2(const std::string& query,
   response.append(compensation);
   response.append(",\"cooldown\":");
   response.append(serialized_cooldown);
-  if (include_prediction) {
-    response.append(",\"predictiveTemperature\":");
-    response.append(prediction);
-  }
   response.push_back('}');
   return json_response(200, std::move(response));
 }

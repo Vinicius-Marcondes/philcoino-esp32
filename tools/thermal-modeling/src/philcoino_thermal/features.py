@@ -140,7 +140,7 @@ class IncrementalFirmwareFeatures:
 def recreate_features(
     frame: pd.DataFrame,
     config: ToolConfig,
-    prefer_logged: bool = True,
+    prefer_logged: bool = False,
 ) -> pd.DataFrame:
     sessions: list[pd.DataFrame] = []
     for _, group in frame.groupby("session_id", sort=False):

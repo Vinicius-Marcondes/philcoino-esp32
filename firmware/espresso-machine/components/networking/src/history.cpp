@@ -8,6 +8,8 @@
 #include <locale>
 #include <sstream>
 
+#include "philcoino/config.hpp"
+
 namespace philcoino::networking {
 namespace {
 
@@ -17,10 +19,11 @@ constexpr std::uint16_t kHeaterActive = 1U << 2U;
 constexpr std::uint16_t kPumpActive = 1U << 3U;
 constexpr unsigned kStatusShift = 4U;
 constexpr unsigned kFaultShift = 6U;
-constexpr std::uint16_t kPredictionUsable = 1U << 0U;
-constexpr std::uint16_t kPredictionPassive = 1U << 1U;
-constexpr unsigned kPredictionModeShift = 2U;
-constexpr unsigned kPredictionFallbackShift = 5U;
+constexpr std::uint16_t kSelectedPi = 1U << 0U;
+constexpr unsigned kPiSaturationShift = 1U;
+constexpr std::uint16_t kPiAntiWindup = 1U << 3U;
+constexpr unsigned kExtractionPhaseShift = 4U;
+constexpr unsigned kOperatingModeShift = 7U;
 
 std::int16_t signed_fixed(float value, float scale) {
   if (!std::isfinite(value)) return 0;
@@ -28,6 +31,12 @@ std::int16_t signed_fixed(float value, float scale) {
   return static_cast<std::int16_t>(std::clamp<long>(
       rounded, std::numeric_limits<std::int16_t>::min(),
       std::numeric_limits<std::int16_t>::max()));
+}
+
+std::int16_t bounded_signed_fixed(float value, float minimum, float maximum,
+                                  float scale) {
+  if (!std::isfinite(value)) return 0;
+  return signed_fixed(std::clamp(value, minimum, maximum), scale);
 }
 
 std::uint16_t unsigned_fixed(float value, float scale) {
@@ -100,94 +109,60 @@ const char* continuity_name(HistoryContinuity continuity) {
   return "reset";
 }
 
-void serialize_prediction(std::ostringstream& output,
-                          const HistorySample& sample,
-                          std::uint16_t machine_flags) {
-  const auto flags = sample.prediction_flags;
-  output << ",\"predictiveTemperature\":{"
+void serialize_controller_diagnostics(std::ostringstream& output,
+                                      const HistorySample& sample,
+                                      std::uint16_t machine_flags) {
+  const auto flags = sample.controller_flags;
+  const auto selected =
+      (flags & kSelectedPi) ? control::SelectedController::kPi
+                            : control::SelectedController::kLegacyCurve;
+  const auto saturation = static_cast<control::PiSaturation>(
+      (flags >> kPiSaturationShift) & 0x3U);
+  const auto extraction_phase = static_cast<control::ExtractionPhase>(
+      (flags >> kExtractionPhaseShift) & 0x7U);
+  const auto operating_mode = static_cast<control::ControllerOperatingMode>(
+      (flags >> kOperatingModeShift) & 0x7U);
+  output << ",\"controllerDiagnostics\":{"
          << "\"temperatureRawC\":"
          << signed_value(sample.temperature_raw_quarters_c, 4.0)
          << ",\"temperatureFilteredC\":"
          << signed_value(sample.temperature_filtered_quarters_c, 4.0)
-         << ",\"activeTargetC\":"
+         << ",\"baseTargetC\":"
          << ((machine_flags & kSteamMode)
                  ? static_cast<unsigned>(sample.steam_target_c)
                  : static_cast<unsigned>(sample.brew_target_c))
-         << ",\"temperatureSlopeCPerS\":"
-         << signed_value(sample.temperature_slope_hundredths_c_per_s, 100.0)
-         << ",\"temperatureAccelerationCPerS2\":"
-         << signed_value(
-                sample.temperature_acceleration_hundredths_c_per_s2, 100.0)
-         << ",\"baselineHeaterDuty\":"
-         << unsigned_value(sample.baseline_heater_duty_thousandths, 1000.0)
-         << ",\"heaterCommandDuty\":"
-         << ((machine_flags & kHeaterActive) ? 1 : 0)
-         << ",\"commandedHeaterDuty1s\":"
-         << unsigned_value(sample.commanded_heater_duty_1s_thousandths,
-                           1000.0)
-         << ",\"heat5s\":"
-         << unsigned_value(sample.heat_5s_hundredths, 100.0)
-         << ",\"heat15s\":"
-         << unsigned_value(sample.heat_15s_hundredths, 100.0)
-         << ",\"heat30s\":"
-         << unsigned_value(sample.heat_30s_hundredths, 100.0)
-         << ",\"pump5s\":"
-         << unsigned_value(sample.pump_5s_hundredths, 100.0)
-         << ",\"pump15s\":"
-         << unsigned_value(sample.pump_15s_hundredths, 100.0)
-         << ",\"predictedTemperature5sC\":";
-  if (flags & kPredictionUsable) {
-    output << signed_value(sample.predicted_5s_quarters_c, 4.0);
-  } else {
-    output << "null";
-  }
-  output << ",\"predictedTemperature10sC\":";
-  if (flags & kPredictionUsable) {
-    output << signed_value(sample.predicted_10s_quarters_c, 4.0);
-  } else {
-    output << "null";
-  }
-  output << ",\"predictedTemperature20sC\":";
-  if (flags & kPredictionUsable) {
-    output << signed_value(sample.predicted_20s_quarters_c, 4.0);
-  } else {
-    output << "null";
-  }
-  output << ",\"predictedPeakC\":";
-  if (flags & kPredictionUsable) {
-    output << signed_value(sample.predicted_peak_quarters_c, 4.0);
-  } else {
-    output << "null";
-  }
-  output << ",\"hypotheticalCorrectionDuty\":";
-  if (flags & kPredictionUsable) {
-    output << unsigned_value(sample.hypothetical_correction_duty_thousandths,
-                             1000.0);
-  } else {
-    output << "null";
-  }
-  output << ",\"hypotheticalHeaterDuty\":";
-  if (flags & kPredictionUsable) {
-    output << unsigned_value(sample.hypothetical_heater_duty_thousandths,
-                             1000.0);
-  } else {
-    output << "null";
-  }
-  const auto operating_mode = static_cast<control::PredictionOperatingMode>(
-      (flags >> kPredictionModeShift) & 0x7U);
-  const auto fallback = static_cast<control::PredictionFallbackReason>(
-      (flags >> kPredictionFallbackShift) & 0xFU);
-  output << ",\"operatingMode\":\""
-         << control::prediction_operating_mode_name(operating_mode)
-         << "\",\"runMode\":\""
-         << ((flags & kPredictionPassive) ? "passive" : "disabled")
-         << "\",\"usable\":"
-         << ((flags & kPredictionUsable) ? "true" : "false")
-         << ",\"fallbackReason\":\""
-         << control::prediction_fallback_reason_name(fallback)
-         << "\",\"modelVersion\":" << sample.model_version
-         << ",\"featureSchemaVersion\":" << sample.feature_schema_version
-         << ",\"trainingDataHash\":" << sample.training_data_hash << '}';
+         << ",\"privateTargetC\":"
+         << signed_value(sample.private_target_quarters_c, 4.0)
+         << ",\"errorC\":"
+         << signed_value(sample.private_target_quarters_c, 4.0) -
+                signed_value(sample.temperature_filtered_quarters_c, 4.0)
+         << ",\"selectedController\":\""
+         << control::selected_controller_name(selected)
+         << "\",\"legacyRequestedDuty\":"
+         << unsigned_value(sample.legacy_requested_duty_thousandths, 1000.0)
+         << ",\"piRequestedDuty\":"
+         << unsigned_value(sample.pi_requested_duty_thousandths, 1000.0)
+         << ",\"proportionalContribution\":"
+         << signed_value(sample.proportional_contribution_thousandths, 1000.0)
+         << ",\"integralContribution\":"
+         << signed_value(sample.integral_contribution_thousandths, 1000.0)
+         << ",\"integralState\":"
+         << signed_value(sample.integral_state_tenths, 10.0)
+         << ",\"piSaturation\":\""
+         << control::pi_saturation_name(saturation)
+         << "\",\"piAntiWindupActive\":"
+         << ((flags & kPiAntiWindup) ? "true" : "false")
+         << ",\"heaterCommandActive\":"
+         << ((machine_flags & kHeaterActive) ? "true" : "false")
+         << ",\"deliveredCommandDuty1s\":"
+         << unsigned_value(
+                sample.delivered_command_duty_1s_thousandths, 1000.0)
+         << ",\"pumpCommand\":\""
+         << ((machine_flags & kPumpActive) ? "running" : "off")
+         << "\",\"extractionPhase\":\""
+         << control::extraction_phase_name(extraction_phase)
+         << "\",\"operatingMode\":\""
+         << control::controller_operating_mode_name(operating_mode) << "\"}";
 }
 
 class FlagGuard {
@@ -219,11 +194,9 @@ bool HistoryBuffer::record(std::uint64_t uptime_ms,
 
   HistorySample sample{};
   sample.uptime_ms = uptime_ms;
-  const auto quarters = std::lround(
-      static_cast<double>(snapshot.boiler_temperature.temperature_c) * 4.0);
-  sample.temperature_quarters_c = static_cast<std::int16_t>(std::clamp<long>(
-      quarters, std::numeric_limits<std::int16_t>::min(),
-      std::numeric_limits<std::int16_t>::max()));
+  sample.temperature_quarters_c =
+      bounded_signed_fixed(snapshot.boiler_temperature.temperature_c, -40.0F,
+                           160.0F, 4.0F);
   sample.brew_target_c = static_cast<std::uint8_t>(snapshot.targets.brew_c);
   sample.steam_target_c = static_cast<std::uint8_t>(snapshot.targets.steam_c);
   sample.flags =
@@ -234,55 +207,41 @@ bool HistoryBuffer::record(std::uint64_t uptime_ms,
       static_cast<std::uint16_t>(status_bits(snapshot.status) << kStatusShift) |
       static_cast<std::uint16_t>(
           fault_bits(snapshot.fault_active, snapshot.fault.code) << kFaultShift);
-  const auto& prediction = snapshot.prediction;
+  const auto& diagnostics = snapshot.controller;
   sample.temperature_raw_quarters_c =
-      signed_fixed(prediction.temperature_raw_c, 4.0F);
+      bounded_signed_fixed(diagnostics.temperature_raw_c, -40.0F, 160.0F,
+                           4.0F);
   sample.temperature_filtered_quarters_c =
-      signed_fixed(prediction.features.temperature_filtered_c, 4.0F);
-  sample.temperature_slope_hundredths_c_per_s =
-      signed_fixed(prediction.features.temperature_slope_c_per_s, 100.0F);
-  sample.temperature_acceleration_hundredths_c_per_s2 = signed_fixed(
-      prediction.features.temperature_acceleration_c_per_s2, 100.0F);
-  sample.baseline_heater_duty_thousandths =
-      unsigned_fixed(prediction.features.baseline_heater_duty, 1000.0F);
-  sample.commanded_heater_duty_1s_thousandths =
-      unsigned_fixed(prediction.commanded_heater_duty_1s, 1000.0F);
-  sample.heat_5s_hundredths =
-      unsigned_fixed(prediction.features.heat_5s, 100.0F);
-  sample.heat_15s_hundredths =
-      unsigned_fixed(prediction.features.heat_15s, 100.0F);
-  sample.heat_30s_hundredths =
-      unsigned_fixed(prediction.features.heat_30s, 100.0F);
-  sample.pump_5s_hundredths =
-      unsigned_fixed(prediction.features.pump_5s, 100.0F);
-  sample.pump_15s_hundredths =
-      unsigned_fixed(prediction.features.pump_15s, 100.0F);
-  sample.predicted_5s_quarters_c =
-      signed_fixed(prediction.predicted_temperature_5s_c, 4.0F);
-  sample.predicted_10s_quarters_c =
-      signed_fixed(prediction.predicted_temperature_10s_c, 4.0F);
-  sample.predicted_20s_quarters_c =
-      signed_fixed(prediction.predicted_temperature_20s_c, 4.0F);
-  sample.predicted_peak_quarters_c =
-      signed_fixed(prediction.predicted_peak_c, 4.0F);
-  sample.hypothetical_correction_duty_thousandths =
-      unsigned_fixed(prediction.hypothetical_correction_duty, 1000.0F);
-  sample.hypothetical_heater_duty_thousandths =
-      unsigned_fixed(prediction.hypothetical_heater_duty, 1000.0F);
-  sample.prediction_flags =
-      (prediction.usable ? kPredictionUsable : 0U) |
-      (prediction.run_mode == control::PredictionRunMode::kPassive
-           ? kPredictionPassive
+      bounded_signed_fixed(diagnostics.temperature_filtered_c, -40.0F,
+                           160.0F, 4.0F);
+  sample.private_target_quarters_c =
+      bounded_signed_fixed(diagnostics.private_target_c, 0.0F, 120.0F, 4.0F);
+  sample.legacy_requested_duty_thousandths =
+      unsigned_fixed(diagnostics.legacy_requested_duty, 1000.0F);
+  sample.pi_requested_duty_thousandths =
+      unsigned_fixed(diagnostics.pi_requested_duty, 1000.0F);
+  sample.proportional_contribution_thousandths =
+      bounded_signed_fixed(diagnostics.proportional_contribution, -16.0F,
+                           16.0F, 1000.0F);
+  sample.integral_contribution_thousandths =
+      bounded_signed_fixed(diagnostics.integral_contribution, -16.0F, 16.0F,
+                           1000.0F);
+  sample.integral_state_tenths =
+      bounded_signed_fixed(diagnostics.integral_state, -10000.0F, 10000.0F,
+                           10.0F);
+  sample.delivered_command_duty_1s_thousandths =
+      unsigned_fixed(diagnostics.delivered_command_duty_1s, 1000.0F);
+  sample.controller_flags =
+      (diagnostics.selected_controller == control::SelectedController::kPi
+           ? kSelectedPi
            : 0U) |
-      (static_cast<std::uint16_t>(prediction.features.operating_mode)
-       << kPredictionModeShift) |
-      (static_cast<std::uint16_t>(prediction.fallback_reason)
-       << kPredictionFallbackShift);
-  sample.feature_schema_version = static_cast<std::uint16_t>(
-      std::min<std::uint32_t>(prediction.feature_schema_version,
-                              std::numeric_limits<std::uint16_t>::max()));
-  sample.model_version = prediction.model_version;
-  sample.training_data_hash = prediction.training_data_hash;
+      (static_cast<std::uint16_t>(diagnostics.pi_saturation)
+       << kPiSaturationShift) |
+      (diagnostics.pi_anti_windup_active ? kPiAntiWindup : 0U) |
+      (static_cast<std::uint16_t>(diagnostics.extraction_phase)
+       << kExtractionPhaseShift) |
+      (static_cast<std::uint16_t>(diagnostics.operating_mode)
+       << kOperatingModeShift);
 
   const std::size_t index = (start_ + count_) % kHistoryCapacity;
   if (count_ == kHistoryCapacity) {
@@ -379,6 +338,7 @@ bool parse_history_cursor(const std::string& query, HistoryCursor& cursor) {
 }
 
 std::string serialize_history_page(const std::string& device_id,
+                                   const std::string& firmware_version,
                                    const HistoryPage& page) {
   std::ostringstream output;
   output.imbue(std::locale::classic());
@@ -393,7 +353,19 @@ std::string serialize_history_page(const std::string& device_id,
          << "\",\"afterSequence\":" << page.next_sequence
          << "},\"hasMore\":" << (page.has_more ? "true" : "false")
          << ",\"continuity\":\"" << continuity_name(page.continuity)
-         << "\",\"samples\":[";
+         << "\",\"controllerConfiguration\":{\"firmwareVersion\":\""
+         << firmware_version << "\",\"selectedController\":\""
+         << control::selected_controller_name(
+                config::kBrewPiControlEnabled
+                    ? control::SelectedController::kPi
+                    : control::SelectedController::kLegacyCurve)
+         << "\",\"piKp\":" << config::kBrewPiKp
+         << ",\"piKi\":" << config::kBrewPiKi
+         << ",\"filterAlpha\":" << config::kBrewPiFilterAlpha
+         << ",\"controllerIntervalMs\":"
+         << config::kTemperatureControllerIntervalMs
+         << ",\"ssrWindowMs\":" << config::kHeaterControlWindowMs
+         << "},\"samples\":[";
   for (std::size_t i = 0; i < page.sample_count; ++i) {
     if (i != 0U) output << ',';
     const auto& sample = page.samples[i];
@@ -412,7 +384,7 @@ std::string serialize_history_page(const std::string& device_id,
            << "\",\"faultCode\":";
     const auto* fault = fault_name(flags);
     if (fault == nullptr) output << "null"; else output << '\"' << fault << '\"';
-    serialize_prediction(output, sample, flags);
+    serialize_controller_diagnostics(output, sample, flags);
     output << '}';
   }
   output << "]}";

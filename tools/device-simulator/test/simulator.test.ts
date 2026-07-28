@@ -9,7 +9,6 @@ import {
   HealthResponseSchema,
   HistoryPageSchema,
   MachineStateSchema,
-  MachineStateWithPredictionV2Schema,
   MachineStateV2Schema,
   ModeResponseSchema,
   ProfileSetSchema,
@@ -90,27 +89,18 @@ describe("bearer authentication", () => {
   });
 });
 
-describe("API v2 live prediction diagnostics", () => {
-  it("preserves the queryless state shape and supports the opt-in shape", async () => {
-    let response = await simulator.app.request("/api/v2/state", {
+describe("API v2 state", () => {
+  it("returns the strict queryless state shape", async () => {
+    const response = await simulator.app.request("/api/v2/state", {
       headers: authorization,
     });
     const queryless = await response.json();
     expect(MachineStateV2Schema.parse(queryless)).toBeDefined();
-    expect(queryless).not.toHaveProperty("predictiveTemperature");
-
-    response = await simulator.app.request(
-      "/api/v2/state?include=prediction",
-      { headers: authorization },
-    );
-    expect(
-      MachineStateWithPredictionV2Schema.parse(await response.json())
-        .predictiveTemperature,
-    ).toBeNull();
   });
 
-  it("rejects unknown and duplicate state query parameters", async () => {
+  it("rejects every state query parameter, including the removed prediction opt-in", async () => {
     for (const query of [
+      "?include=prediction",
       "?include=unknown",
       "?unknown=prediction",
       "?include=prediction&include=prediction",
@@ -137,6 +127,22 @@ describe("API v2 history", () => {
     expect(first.continuity).toBe("initial");
     expect(first.samples).toHaveLength(8);
     expect(first.samples[0].uptimeMs).toBe(1_000);
+    expect(first.controllerConfiguration).toEqual({
+      firmwareVersion: "simulator-0.2.0",
+      selectedController: "legacy_curve",
+      piKp: 0.08,
+      piKi: 0.01,
+      filterAlpha: 0.25,
+      controllerIntervalMs: 500,
+      ssrWindowMs: 10_000,
+    });
+    expect(first.samples[0].controllerDiagnostics).toMatchObject({
+      selectedController: "legacy_curve",
+      temperatureRawC: first.samples[0].boilerTemperatureC,
+      temperatureFilteredC: first.samples[0].boilerTemperatureC,
+      heaterCommandActive: first.samples[0].heaterActive,
+      pumpCommand: first.samples[0].pumpActive ? "running" : "off",
+    });
     expect(first.hasMore).toBe(true);
 
     let page = first;

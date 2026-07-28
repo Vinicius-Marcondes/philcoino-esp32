@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type {
   MachineState,
-  MachineStateWithPredictionV2,
+  MachineStateV2,
   ProfileSet,
 } from "@philcoino/protocol";
 
@@ -33,7 +33,7 @@ const validState: MachineState = {
   steamTimeoutRemainingMs: null,
   uptimeMs: 184_220,
 };
-const validStateV2: MachineStateWithPredictionV2 = {
+const validStateV2: MachineStateV2 = {
   machine: validState,
   extraction: {
     status: "idle",
@@ -55,7 +55,6 @@ const validStateV2: MachineStateWithPredictionV2 = {
     heaterInhibited: false,
     outcome: null,
   },
-  predictiveTemperature: null,
 };
 const profiles: ProfileSet = {
   profiles: [
@@ -71,11 +70,11 @@ describe("DashboardPollingSession", () => {
     const scheduler = new FakeScheduler();
     let requests = 0;
     const connections: ConnectionState[] = [];
-    const snapshots: (MachineStateWithPredictionV2 | null)[] = [];
+    const snapshots: (MachineStateV2 | null)[] = [];
     const session = new DashboardPollingSession({
       client: {
         getProfiles: async () => profiles,
-        getLiveStateV2: async () => {
+        getStateV2: async () => {
           requests += 1;
           return validStateV2;
         },
@@ -105,10 +104,10 @@ describe("DashboardPollingSession", () => {
     let activeRequests = 0;
     let maximumActiveRequests = 0;
     let aborted = false;
-    const pending = deferred<MachineStateWithPredictionV2>();
+    const pending = deferred<MachineStateV2>();
     const client: DashboardStateClient = {
       getProfiles: async () => profiles,
-      getLiveStateV2: ({ signal } = {}) => {
+      getStateV2: ({ signal } = {}) => {
         requests += 1;
         activeRequests += 1;
         maximumActiveRequests = Math.max(maximumActiveRequests, activeRequests);
@@ -150,7 +149,7 @@ describe("DashboardPollingSession", () => {
     const session = new DashboardPollingSession({
       client: {
         getProfiles: async () => profiles,
-        getLiveStateV2: async () => ({
+        getStateV2: async () => ({
           ...validStateV2,
           machine: {
             ...validStateV2.machine,
@@ -179,11 +178,11 @@ describe("DashboardPollingSession", () => {
   test("pauses an active read and resumes immediately without clearing live state", async () => {
     const scheduler = new FakeScheduler();
     const connections: ConnectionState[] = [];
-    const snapshots: (MachineStateWithPredictionV2 | null)[] = [];
+    const snapshots: (MachineStateV2 | null)[] = [];
     let requests = 0;
     const client: DashboardStateClient = {
       getProfiles: async () => profiles,
-      getLiveStateV2: ({ signal } = {}) => {
+      getStateV2: ({ signal } = {}) => {
         requests += 1;
         if (requests === 1) {
           return new Promise((_resolve, reject) => {
@@ -222,12 +221,12 @@ describe("DashboardPollingSession", () => {
   test("clears the last snapshot and exposes a protocol error without stopping recovery", async () => {
     const scheduler = new FakeScheduler();
     const connections: ConnectionState[] = [];
-    const snapshots: (MachineStateWithPredictionV2 | null)[] = [];
+    const snapshots: (MachineStateV2 | null)[] = [];
     let request = 0;
     const session = new DashboardPollingSession({
       client: {
         getProfiles: async () => profiles,
-        getLiveStateV2: async () => {
+        getStateV2: async () => {
           request += 1;
           if (request === 1) {
             return validStateV2;
@@ -254,9 +253,9 @@ describe("DashboardPollingSession", () => {
   test("reads live and fault states through the authenticated simulator contract", async () => {
     const simulator = createSimulator();
     const scheduler = new FakeScheduler();
-    const snapshots: (MachineStateWithPredictionV2 | null)[] = [];
-    const firstSnapshot = deferred<MachineStateWithPredictionV2>();
-    const faultSnapshot = deferred<MachineStateWithPredictionV2>();
+    const snapshots: (MachineStateV2 | null)[] = [];
+    const firstSnapshot = deferred<MachineStateV2>();
+    const faultSnapshot = deferred<MachineStateV2>();
     const request = simulator.app.request.bind(simulator.app);
     const fetch: FetchImplementation = (url, init) =>
       Promise.resolve(

@@ -486,27 +486,16 @@ void test_api_v2_profiles_and_extraction_contract() {
   assert(response.status == 200);
   assert(response.body.find("\"machine\":") != std::string::npos);
   assert(response.body.find("\"status\":\"idle\"") != std::string::npos);
-  assert(response.body.find("\"predictiveTemperature\":") ==
+  assert(response.body.find("\"controllerDiagnostics\":") ==
          std::string::npos);
 
-  response = harness.request(HttpMethod::kGet,
-                             "/api/v2/state?include=prediction",
-                             authorization);
-  assert(response.status == 200);
-  assert(response.body.find("\"predictiveTemperature\":{") !=
-         std::string::npos);
-  assert(response.body.find("\"runMode\":\"passive\"") !=
-         std::string::npos);
-  assert(response.body.find("\"fallbackReason\":\"history_immature\"") !=
-         std::string::npos);
+  expect_error(harness.request(HttpMethod::kGet,
+                               "/api/v2/state?include=prediction",
+                               authorization),
+               400, "malformed_request");
   expect_error(harness.request(HttpMethod::kGet,
                                "/api/v2/state?include=unknown",
                                authorization),
-               400, "malformed_request");
-  expect_error(harness.request(
-                   HttpMethod::kGet,
-                   "/api/v2/state?include=prediction&include=prediction",
-                   authorization),
                400, "malformed_request");
 
   response = harness.request(HttpMethod::kPut, "/api/v2/profiles",
@@ -955,12 +944,6 @@ void capture_contract_payloads(const std::filesystem::path& directory) {
   write_capture(directory, "state-v2.json",
                 harness.request(HttpMethod::kGet, "/api/v2/state",
                                 authorization).body);
-  write_capture(directory, "state-prediction-v2.json",
-                harness
-                    .request(HttpMethod::kGet,
-                             "/api/v2/state?include=prediction",
-                             authorization)
-                    .body);
   harness.history.record(184000, harness.controller.snapshot(184000),
                          harness.pump.command());
   write_capture(directory, "history-v2.json",
@@ -1178,11 +1161,13 @@ void test_bounded_history_contract() {
   assert(response.body.find("\"oldestSequence\":6") != std::string::npos);
   assert(response.body.find("\"sequence\":6") != std::string::npos);
   assert(response.body.find("\"hasMore\":true") != std::string::npos);
-  assert(response.body.find("\"predictiveTemperature\":{") !=
+  assert(response.body.find("\"controllerConfiguration\":{") !=
          std::string::npos);
-  assert(response.body.find("\"runMode\":\"passive\"") !=
+  assert(response.body.find("\"selectedController\":\"legacy_curve\"") !=
          std::string::npos);
-  assert(response.body.find("\"fallbackReason\":\"history_immature\"") !=
+  assert(response.body.find("\"controllerDiagnostics\":{") !=
+         std::string::npos);
+  assert(response.body.find("\"predictedTemperature5sC\"") ==
          std::string::npos);
 
   response = harness.request(
@@ -1472,7 +1457,7 @@ void test_weighted_trace_is_bounded_paginated_and_observational() {
   expect_error(response, 400, "malformed_request");
 }
 
-void test_usable_prediction_history_page_stays_within_transport_budget() {
+void test_controller_diagnostics_history_page_stays_within_transport_budget() {
   ApiHarness harness;
   for (std::uint32_t now_ms = 1500U; now_ms <= 42000U; now_ms += 500U) {
     const float temperature_c =
@@ -1487,7 +1472,9 @@ void test_usable_prediction_history_page_stays_within_transport_budget() {
       "/api/v2/history?bootId=00112233445566778899aabbccddeeff&afterSequence=31",
       "Bearer test-secret", "", 42000U);
   assert(response.status == 200);
-  assert(response.body.find("\"usable\":true") != std::string::npos);
+  assert(response.body.find("\"controllerDiagnostics\":{") !=
+         std::string::npos);
+  assert(response.body.find("\"piRequestedDuty\":") != std::string::npos);
   assert(response.body.size() <= kMaximumSerializedHistoryPageBytes);
 }
 
@@ -1509,7 +1496,7 @@ int main(int argc, char** argv) {
   test_scale_api_and_weighted_start_contract();
   test_history_capture_deadline_does_not_accumulate_jitter();
   test_weighted_trace_is_bounded_paginated_and_observational();
-  test_usable_prediction_history_page_stays_within_transport_budget();
+  test_controller_diagnostics_history_page_stays_within_transport_budget();
   if (argc == 2) {
     capture_contract_payloads(argv[1]);
   }

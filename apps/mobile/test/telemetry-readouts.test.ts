@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { ScaleState } from "@philcoino/protocol";
 
+import type { TemperatureHistorySample } from "../src/history/temperature-history";
 import {
   currentScaleWeightDecigrams,
   formatElapsedReadout,
@@ -127,18 +128,19 @@ function scaleState(overrides: Partial<ScaleState>): ScaleState {
   };
 }
 
-function historySample() {
+function historySample(): TemperatureHistorySample {
   return {
     activeMode: "brew" as const,
     activeTargetC: 93,
     boilerTemperatureC: 92,
     brewTargetC: 93,
+    controllerConfiguration: null,
+    controllerDiagnostics: null,
     deviceId: "machine-1",
     faultCode: null,
     heaterActive: false,
     heaterEnabled: true,
     machineStatus: "ready" as const,
-    predictiveTemperature: null,
     pumpActive: false,
     recordedAtMs: 0,
     sourceBootId: null,

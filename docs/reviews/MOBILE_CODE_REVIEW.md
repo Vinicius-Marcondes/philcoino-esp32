@@ -5,6 +5,11 @@
 **Reviewed branch:** `codex/reorganize-mobile-screens`  
 **Decision:** **REQUEST CHANGES**
 
+> **Current-state note (2026-07-28):** PRD-016 removed prediction polling and
+> mobile prediction storage, migrated current-day history to controller
+> diagnostics, and retained queryless state polling. This historical review has
+> not been rerun and its security and failure-recovery findings remain open.
+
 ## Method and validation
 
 One specialist agent reviewed the native discovery, pairing, networking, storage,

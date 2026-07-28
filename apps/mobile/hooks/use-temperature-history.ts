@@ -1,7 +1,6 @@
 import type {
   ExtractionState,
   MachineState,
-  PredictiveTemperatureDiagnostics,
 } from "@philcoino/protocol";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AppState } from "react-native";
@@ -45,7 +44,6 @@ export function useTemperatureHistory(
   deviceId: string,
   snapshot: MachineState | null,
   extraction: ExtractionState | null,
-  predictiveTemperature: PredictiveTemperatureDiagnostics | null,
   snapshotRevision: number,
   freshness: DashboardFreshness,
   repository: TemperatureHistoryRepository,
@@ -231,7 +229,6 @@ export function useTemperatureHistory(
       snapshot,
       extraction,
       Date.now(),
-      predictiveTemperature,
     );
     const currentGeneration = generation.current;
     let recoveryRequired = false;
@@ -273,7 +270,6 @@ export function useTemperatureHistory(
     deviceId,
     extraction,
     freshness,
-    predictiveTemperature,
     repository,
     snapshot,
     snapshotRevision,

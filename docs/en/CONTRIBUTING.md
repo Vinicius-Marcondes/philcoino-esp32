@@ -62,6 +62,10 @@ Unknown properties are rejected. Do not weaken runtime validation to absorb drif
 - Clear live snapshots when the connection becomes unavailable; do not present cached values as current machine state.
 - Keep first-cause timeout versus caller-cancellation semantics.
 - Preserve deterministic manual time in the simulator. Do not claim the simulator models the firmware's real-time duty loop or safety response.
+- Keep `CONFIG_PHILCOINO_BREW_PI_CONTROL` build-time and default-off. Gain,
+  filter, anti-windup, or authority changes require host coverage in both modes
+  and a separate supervised physical gate; command diagnostics are not measured
+  SSR current or power.
 - Firmware failure paths must attempt to command the SSR off, but documentation must not equate a software command with confirmed physical de-energization.
 
 ## Validation

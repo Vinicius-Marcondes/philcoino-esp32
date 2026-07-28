@@ -1,13 +1,19 @@
 import { describe, expect, test } from "bun:test";
+import { Database } from "bun:sqlite";
 import type {
+  ControllerConfiguration,
+  ControllerDiagnostics,
   ExtractionState,
   MachineState,
-  PredictiveTemperatureDiagnostics,
 } from "@philcoino/protocol";
 
 import { temperatureHistoryToCsv } from "../src/history/temperature-history-csv";
 import { InMemoryTemperatureHistoryRepository } from "../src/history/temperature-history-repository";
 import { shareTemperatureHistoryCsv } from "../src/history/temperature-history-share-service";
+import {
+  rebuildTemperatureHistoryV5Sql,
+  TEMPERATURE_HISTORY_CURRENT_COLUMNS,
+} from "../src/history/temperature-history-schema";
 import {
   createTemperatureHistorySample,
   isLatestTemperatureHistoryWindow,
@@ -55,33 +61,35 @@ const pumpingExtraction: ExtractionState = {
   status: "running",
 };
 
-const prediction: PredictiveTemperatureDiagnostics = {
-  activeTargetC: 93,
-  baselineHeaterDuty: 0.4,
-  commandedHeaterDuty1s: 0.5,
-  fallbackReason: "none",
-  featureSchemaVersion: 1,
-  heat15s: 5,
-  heat30s: 12,
-  heat5s: 2,
-  heaterCommandDuty: 1,
-  hypotheticalCorrectionDuty: 0.1,
-  hypotheticalHeaterDuty: 0.3,
-  modelVersion: 1,
+const controllerConfiguration: ControllerConfiguration = {
+  controllerIntervalMs: 500,
+  filterAlpha: 0.25,
+  firmwareVersion: "0.4.0",
+  piKi: 0.01,
+  piKp: 0.08,
+  selectedController: "legacy_curve",
+  ssrWindowMs: 10_000,
+};
+
+const controllerDiagnostics: ControllerDiagnostics = {
+  baseTargetC: 93,
+  deliveredCommandDuty1s: 0.5,
+  errorC: 0.5,
+  extractionPhase: "manual",
+  heaterCommandActive: true,
+  integralContribution: 0.04,
+  integralState: 4,
+  legacyRequestedDuty: 0.4,
   operatingMode: "brewing",
-  predictedPeakC: 94,
-  predictedTemperature10sC: 93.8,
-  predictedTemperature20sC: 94,
-  predictedTemperature5sC: 93.5,
-  pump15s: 3,
-  pump5s: 2,
-  runMode: "passive",
-  temperatureAccelerationCPerS2: 0.01,
+  piAntiWindupActive: false,
+  piRequestedDuty: 0.08,
+  piSaturation: "none",
+  privateTargetC: 93,
+  proportionalContribution: 0.04,
+  pumpCommand: "running",
+  selectedController: "legacy_curve",
   temperatureFilteredC: 92.5,
   temperatureRawC: 92.75,
-  temperatureSlopeCPerS: 0.1,
-  trainingDataHash: 1347571540,
-  usable: true,
 };
 
 describe("temperature history", () => {
@@ -105,7 +113,8 @@ describe("temperature history", () => {
       heaterEnabled: true,
       machineStatus: "heating",
       pumpActive: true,
-      predictiveTemperature: null,
+      controllerConfiguration: null,
+      controllerDiagnostics: null,
       recordedAtMs,
       sourceBootId: null,
       sourceSequence: null,
@@ -115,20 +124,22 @@ describe("temperature history", () => {
     });
   });
 
-  test("stores live prediction diagnostics and exports their CSV fields", () => {
+  test("exports recovered controller configuration and command diagnostics", () => {
     const recordedAtMs = new Date(2026, 6, 18, 10, 31).getTime();
-    const live = createTemperatureHistorySample(
-      "machine-1",
-      machine,
-      pumpingExtraction,
-      recordedAtMs,
-      prediction,
-    );
+    const live = {
+      ...createTemperatureHistorySample(
+        "machine-1",
+        machine,
+        pumpingExtraction,
+        recordedAtMs,
+      ),
+      controllerConfiguration,
+      controllerDiagnostics,
+    };
 
-    expect(live.predictiveTemperature).toEqual(prediction);
     const csv = temperatureHistoryToCsv([live]);
     expect(csv).toContain(
-      ",92.75,92.5,93,0.1,0.01,0.4,1,0.5,2,5,12,2,3,93.5,93.8,94,94,0.1,0.3,brewing,passive,true,none,1,1,1347571540",
+      ",0.4.0,legacy_curve,0.08,0.01,0.25,500,10000,92.75,92.5,93,93,0.5,0.4,0.08,0.04,0.04,4,none,false,true,0.5,running,manual,brewing",
     );
   });
 
@@ -147,6 +158,79 @@ describe("temperature history", () => {
 
     await repository.clearDevice("machine-1");
     expect(await repository.loadToday("machine-1", today)).toEqual([]);
+  });
+
+  test("migrates v4 rows without retaining prediction storage", () => {
+    const database = new Database(":memory:");
+    try {
+      database.exec(`
+        CREATE TABLE temperature_history (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          device_id TEXT NOT NULL,
+          recorded_at_ms INTEGER NOT NULL,
+          uptime_ms INTEGER NOT NULL,
+          boiler_temperature_c REAL NOT NULL,
+          brew_target_c REAL NOT NULL,
+          steam_target_c REAL NOT NULL,
+          active_mode TEXT NOT NULL,
+          active_target_c REAL NOT NULL,
+          heater_enabled INTEGER NOT NULL,
+          heater_active INTEGER NOT NULL,
+          pump_active INTEGER,
+          machine_status TEXT NOT NULL,
+          fault_code TEXT,
+          predictive_temperature_json TEXT,
+          source_boot_id TEXT,
+          source_sequence INTEGER,
+          starts_after_history_gap INTEGER NOT NULL DEFAULT 0,
+          UNIQUE(device_id, recorded_at_ms)
+        );
+        INSERT INTO temperature_history (
+          device_id, recorded_at_ms, uptime_ms, boiler_temperature_c,
+          brew_target_c, steam_target_c, active_mode, active_target_c,
+          heater_enabled, heater_active, pump_active, machine_status,
+          fault_code, predictive_temperature_json, source_boot_id,
+          source_sequence, starts_after_history_gap
+        ) VALUES (
+          'machine-1', 1000, 500, 91.5, 93, 115, 'brew', 93,
+          1, 1, 0, 'heating', NULL, '{"predictedPeakC":99}',
+          '0123456789abcdef0123456789abcdef', 7, 1
+        );
+      `);
+
+      database.exec("BEGIN EXCLUSIVE");
+      database.exec(rebuildTemperatureHistoryV5Sql());
+      database.exec("COMMIT");
+
+      const columns = database
+        .query("PRAGMA table_info(temperature_history)")
+        .all() as Array<{ name: string }>;
+      expect(columns.map((column) => column.name)).toEqual(
+        [...TEMPERATURE_HISTORY_CURRENT_COLUMNS],
+      );
+      expect(
+        columns.some((column) => column.name.includes("predict")),
+      ).toBe(false);
+      expect(
+        database
+          .query(
+            `SELECT device_id, boiler_temperature_c, source_sequence,
+                    starts_after_history_gap, controller_configuration_json,
+                    controller_diagnostics_json
+             FROM temperature_history`,
+          )
+          .get(),
+      ).toEqual({
+        boiler_temperature_c: 91.5,
+        controller_configuration_json: null,
+        controller_diagnostics_json: null,
+        device_id: "machine-1",
+        source_sequence: 7,
+        starts_after_history_gap: 1,
+      });
+    } finally {
+      database.close();
+    }
   });
 
   test("replaces a retried device sequence even when its anchored timestamp changes", async () => {
@@ -332,13 +416,13 @@ describe("temperature history", () => {
     ]);
     const lines = csv.trimEnd().split("\r\n");
     expect(lines[0]).toBe(
-      "recorded_at_utc,device_id,machine_uptime_ms,boiler_temperature_c,brew_target_c,steam_target_c,active_mode,active_target_c,heater_enabled,heater_active,pump_active,machine_status,fault_code,temperature_raw_c,temperature_filtered_c,prediction_active_target_c,temperature_slope_c_per_s,temperature_acceleration_c_per_s2,baseline_heater_duty,heater_command_duty,commanded_heater_duty_1s,heat_5s,heat_15s,heat_30s,pump_5s,pump_15s,predicted_temperature_5s_c,predicted_temperature_10s_c,predicted_temperature_20s_c,predicted_peak_c,hypothetical_correction_duty,hypothetical_heater_duty,prediction_operating_mode,prediction_run_mode,prediction_usable,prediction_fallback_reason,prediction_model_version,prediction_feature_schema_version,prediction_training_data_hash",
+      "recorded_at_utc,device_id,machine_uptime_ms,boiler_temperature_c,brew_target_c,steam_target_c,active_mode,active_target_c,heater_enabled,heater_active,pump_active,machine_status,fault_code,controller_firmware_version,controller_selected,controller_pi_kp,controller_pi_ki,controller_filter_alpha,controller_interval_ms,ssr_window_ms,temperature_raw_c,temperature_filtered_c,controller_base_target_c,controller_private_target_c,controller_error_c,legacy_requested_duty,pi_requested_duty,pi_proportional_contribution,pi_integral_contribution,pi_integral_state,pi_saturation,pi_anti_windup_active,heater_command_active,delivered_command_duty_1s,pump_command,extraction_phase,controller_operating_mode",
     );
     expect(lines[1]).toContain("2026-07-18T13:00:00.000Z");
     expect(lines[1]).toContain('"\'=machine,1"');
     expect(lines[1]).toContain(",true,true,false,heating,");
     expect(lines[1]).toContain(",sensor_failure,");
-    expect(lines[1].split(",").slice(-26).every((cell) => cell === "")).toBe(
+    expect(lines[1].split(",").slice(-24).every((cell) => cell === "")).toBe(
       true,
     );
   });

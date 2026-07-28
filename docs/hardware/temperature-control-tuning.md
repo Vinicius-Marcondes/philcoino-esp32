@@ -2,12 +2,13 @@
 
 Status: DRAFT - LOW-VOLTAGE SOFTWARE TUNING ONLY
 
-This document explains the firmware temperature-control curve and the constants
-used to tune it. It does not approve mains wiring, energized testing, SSR
+This document explains the firmware legacy curve, Brew PI candidate, and the
+compile-time constants used to compare them. It does not approve mains wiring,
+energized testing, SSR
 mounting, or thermal safety. Hardware cutoff validation remains required before
 software behavior can be treated as safe.
 
-## Control model
+## Shared output model
 
 The ESP32 controls the heater through an SSR, so firmware cannot output partial
 power directly. It approximates a curve by turning the SSR on for part of a
@@ -128,9 +129,51 @@ This is a firmware fail-off boundary, not an independent thermal cutoff. It
 cannot interrupt current through an SSR that has failed with its output shorted,
 and it does not control GPIO20 before firmware initializes the pin.
 
-## Normal ramp
+## Brew PI selector
 
-Normal ramp mode is used for regular heat-up and stable temperature holding.
+`CONFIG_PHILCOINO_BREW_PI_CONTROL` is build-time only and defaults off.
+
+- Disabled: the legacy nonlinear curve remains Brew requested-duty authority;
+  the bounded PI calculation is diagnostic shadow state only.
+- Enabled: PI becomes requested-duty authority only in Brew.
+- Steam: always uses the legacy curve and fixed `+5°C` correction.
+
+Both Brew modes route their selected duty through the existing ten-second SSR
+window, minimum 500 ms pulse, heater permission, cooldown inhibit, fault,
+safety-lease, and fail-off output owner. The selector cannot be changed through
+HTTP, NVS, mobile, or the simulator.
+
+Current compile-time candidates are:
+
+```text
+controller interval = 500 ms
+Kp = 0.08 duty/°C
+Ki = 0.01 duty/(°C·s)
+EMA alpha = 0.25
+integral state bounds = -100..100 °C·s
+requested duty bounds = 0..1
+```
+
+PI error uses the private Brew target minus EMA-filtered temperature. Manual
+and profile main extraction retain the bounded `+2°C` private target; pre-
+infusion remains `0°C`, and soak/idle use the base target. Conditional anti-
+windup prevents integration farther into upper or lower saturation while
+allowing recovery out of saturation. Invalid readings/timing, mode/target/
+eligible-phase changes, permission, cooldown inhibition, faults, output
+failures, and dismissal/reset transitions freeze or reset PI under the firmware
+policy tests.
+
+These constants are software candidates. Host equality/authority tests prove
+deterministic selection and safety dominance only. Tuning or enabling PI for a
+connected heater requires the pinned ESP-IDF build, independent temperature and
+SSR/current instrumentation, independent over-temperature protection,
+supervised legacy-vs-PI A/B runs, and explicit Human acceptance. Never tune
+against mobile/simulator command telemetry as if it were physical feedback.
+
+## Legacy normal ramp
+
+Legacy normal ramp mode is used for regular heat-up and stable temperature
+holding when the selector is disabled, and always in Steam.
 The key constants are in
 `firmware/espresso-machine/components/firmware_config/include/philcoino/config.hpp`:
 
@@ -171,7 +214,7 @@ duty = (temperature_error / ramp_band)^2
 
 That makes it conservative near the target to reduce overshoot.
 
-## Recovery ramp
+## Legacy recovery ramp
 
 Recovery mode is used after the boiler drops meaningfully below target, such as
 during extraction when incoming water pulls heat out of the boiler.

@@ -62,6 +62,10 @@ Propriedades desconhecidas são rejeitadas. Não enfraqueça a validação em ru
 - Limpe snapshots reais quando a conexão ficar indisponível; não apresente valores em cache como estado atual da máquina.
 - Preserve a semântica de first cause entre timeout e cancellation solicitada pelo caller.
 - Preserve o tempo manual determinístico no simulador. Não afirme que o simulador representa o duty loop em tempo real ou a resposta de segurança do firmware.
+- Preserve `CONFIG_PHILCOINO_BREW_PI_CONTROL` como selector build-time
+  default-off. Mudanças de gains, filtro, anti-windup ou autoridade exigem
+  host coverage em ambos os modes e uma gate física supervisionada separada;
+  command diagnostics não são medição de corrente/potência do SSR.
 - Caminhos de falha do firmware devem tentar comandar o SSR para off, mas a documentação não deve equiparar um comando de software à desenergização física confirmada.
 
 ## Validação

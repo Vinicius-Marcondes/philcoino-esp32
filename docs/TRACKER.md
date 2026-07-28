@@ -1,3 +1,59 @@
+# PRD-016 Tracker
+
+PRD Status: Software Complete — Target/Physical A/B Pending
+Current Task: None — Awaiting pinned target environment and explicit Human authorization
+
+Implementation Boundary: Replace the Brew nonlinear curve with a
+compile-time-selected shadow/active PI policy, remove predictive runtime and
+public/mobile surfaces, preserve research assets, and keep every existing
+firmware safety and Steam boundary authoritative.
+
+## Summary
+
+Implement bounded Brew-only PI diagnostics and control ownership at the fixed
+500 ms schedule through the existing ten-second SSR window. Remove passive
+prediction from current firmware, protocol, simulator, mobile history, and new
+CSV exports as an intentional matched firmware/mobile API v2 break. Preserve
+desktop thermal modeling, raw captures, historical specifications, and PRD-012.
+
+PRD: `docs/prds/PRD-016/PRD-016.md`
+
+## Compatibility and Safety Boundary
+
+- API v1 and queryless API v2 ordinary behavior remain unchanged; prediction
+  query/payload compatibility is intentionally removed.
+- `CONFIG_PHILCOINO_BREW_PI_CONTROL` is build-time only: disabled keeps legacy
+  Brew authority with shadow PI; enabled gives PI Brew requested-duty authority.
+- Steam behavior, the fixed Brew Manual/main `+2°C` private target bias, the
+  ten-second SSR window, faults, timeouts, cooldown, permission, safety lease,
+  persistence, and fail-off ownership remain unchanged.
+- Diagnostics are firmware command/request observations, not measured SSR
+  current, heater power, pump flow, physical temperature safety, or proof of
+  de-energization.
+- No physical or energized A/B work is authorized by software implementation.
+
+## Git
+
+- Planned branch: `feature/PRD-016-brew-pi-control`
+- Base: `main`
+- Merge target: `main`
+
+## Execution State
+
+| Task | Review | Status | Evidence | Decision Log | Commit | Blocked Reason | Requested Decision |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| [BPI-001](prds/PRD-016/tasks/BPI-001.md) | Agent | Done | OpenAPI valid; protocol 138 tests/280 expectations; typecheck | Removed prediction opt-in/types and legacy 60-sample compatibility; strict controller config/diagnostics with eight-sample pages | Pending | None | None |
+| [BPI-002](prds/PRD-016/tasks/BPI-002.md) | Agent | Done | Native/sanitizer 10/10; 32 captures; HistorySample 40 B, ring 24,072 B, page 416 B | Removed all active prediction runtime/codec/history ownership; strict controller diagnostics | Pending | None | None |
+| [BPI-003](prds/PRD-016/tasks/BPI-003.md) | Agent | Done | Pure PI plus transition coverage in native/sanitizer 10/10 | Fixed 500 ms PI; EMA alpha 0.25; Kp 0.08/Ki 0.01 shadow candidates; bounded conditional anti-windup | Pending | None | None |
+| [BPI-004](prds/PRD-016/tasks/BPI-004.md) | Agent | Done | Separate legacy/active authority tests; native/sanitizer 10/10; 32 captures | Default-off legacy authority; active flag changes Brew only; Steam/window/fail-off retained | Pending | None | None |
+| [BPI-005](prds/PRD-016/tasks/BPI-005.md) | Agent | Done | Simulator 77 tests/556 expectations; typecheck | Removed state prediction opt-in; bounded deterministic legacy-controller history diagnostics | Pending | None | None |
+| [BPI-006](prds/PRD-016/tasks/BPI-006.md) | Agent | Done | Mobile 180 tests/1,188 expectations; typecheck; Expo lint; in-memory v4 migration | Queryless state polling; transactional v5 ordinary-row preservation; controller-only CSV | Pending | None | None |
+| [BPI-007](prds/PRD-016/tasks/BPI-007.md) | Agent | Done | Desktop 32 tests; preservation/current-claim searches | Legacy prediction CSV accepted but ignored by default; research preserved; current docs aligned to PI and pending physical gate | Pending | None | None |
+| [BPI-008](prds/PRD-016/tasks/BPI-008.md) | Agent | Software Complete — Target Pending | Protocol 138; simulator 77; mobile 180; desktop 32; native/sanitizer 10/10; 32 captures; exact resource report | All configured software passes; `idf.py` unavailable, so target stack/heap/flash/map/timing remain unmeasured | Pending | ESP-IDF 6.0.2 environment unavailable in configured shell | Run pinned legacy/PI target builds and map/size checks |
+| [BPI-009](prds/PRD-016/tasks/BPI-009.md) | Human | Software Complete — Target/Human Pending | Bounded preconditions, stop conditions, run record, metrics, thresholds, and decision template | No connected/energized work inferred from software; active PI remains unaccepted | Pending | Target builds, connected setup, independent instruments/cutoff, authorization, and Human reviewer unavailable | Explicitly authorize and supervise only after every precondition passes |
+
+---
+
 # PRD-015 Tracker
 
 PRD Status: Active — Approved 2026-07-28

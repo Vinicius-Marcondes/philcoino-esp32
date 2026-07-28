@@ -45,7 +45,7 @@ add_executable(
   control_test
   control_test.cpp
   ../components/control/src/control.cpp
-  ../components/control/src/prediction.cpp
+  ../components/control/src/brew_pi.cpp
   ../components/peripherals/src/peripherals.cpp
 )
 
@@ -62,21 +62,61 @@ target_compile_options(control_test PRIVATE -Wall -Wextra -Werror)
 add_test(NAME control_test COMMAND control_test)
 
 add_executable(
-  prediction_test
-  prediction_test.cpp
-  ../components/control/src/prediction.cpp
+  brew_pi_test
+  brew_pi_test.cpp
+  ../components/control/src/brew_pi.cpp
 )
 
 target_include_directories(
-  prediction_test
+  brew_pi_test
   PRIVATE
     ../components/control/include
     ../components/firmware_config/include
 )
-target_compile_features(prediction_test PRIVATE cxx_std_17)
-target_compile_options(prediction_test PRIVATE -Wall -Wextra -Werror)
+target_compile_features(brew_pi_test PRIVATE cxx_std_17)
+target_compile_options(brew_pi_test PRIVATE -Wall -Wextra -Werror)
 
-add_test(NAME prediction_test COMMAND prediction_test)
+add_test(NAME brew_pi_test COMMAND brew_pi_test)
+
+function(add_controller_authority_test target)
+  add_executable(
+    ${target}
+    controller_authority_test.cpp
+    ../components/control/src/control.cpp
+    ../components/control/src/brew_pi.cpp
+    ../components/peripherals/src/peripherals.cpp
+  )
+  target_include_directories(
+    ${target}
+    PRIVATE
+      ../components/control/include
+      ../components/peripherals/include
+      ../components/firmware_config/include
+  )
+  target_compile_features(${target} PRIVATE cxx_std_17)
+  target_compile_options(${target} PRIVATE -Wall -Wextra -Werror)
+  add_test(NAME ${target} COMMAND ${target})
+endfunction()
+
+add_controller_authority_test(controller_authority_legacy_test)
+add_controller_authority_test(controller_authority_pi_test)
+target_compile_definitions(
+  controller_authority_pi_test
+  PRIVATE CONFIG_PHILCOINO_BREW_PI_CONTROL=1
+)
+
+add_executable(resource_budget_test resource_budget_test.cpp)
+target_include_directories(
+  resource_budget_test
+  PRIVATE
+    ../components/networking/include
+    ../components/control/include
+    ../components/peripherals/include
+    ../components/firmware_config/include
+)
+target_compile_features(resource_budget_test PRIVATE cxx_std_17)
+target_compile_options(resource_budget_test PRIVATE -Wall -Wextra -Werror)
+add_test(NAME resource_budget_test COMMAND resource_budget_test)
 
 add_executable(
   firmware_api_test
@@ -90,7 +130,7 @@ add_executable(
   ../components/networking/src/history.cpp
   ../components/networking/src/weighted_trace.cpp
   ../components/control/src/control.cpp
-  ../components/control/src/prediction.cpp
+  ../components/control/src/brew_pi.cpp
   ../components/peripherals/src/peripherals.cpp
 )
 
@@ -116,7 +156,7 @@ set(
   ../components/networking/src/history.cpp
   ../components/networking/src/weighted_trace.cpp
   ../components/control/src/control.cpp
-  ../components/control/src/prediction.cpp
+  ../components/control/src/brew_pi.cpp
   ../components/peripherals/src/peripherals.cpp
 )
 

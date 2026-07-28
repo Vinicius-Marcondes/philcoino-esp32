@@ -328,6 +328,10 @@ gates remain pending.
 
 ## PRD-012 Passive predictive temperature control
 
+> Historical note: PRD-016 superseded this current-runtime path on 2026-07-28.
+> The text below records the implementation and regressions as they existed at
+> the time; it is not a claim about current firmware, API, or mobile behavior.
+
 The first predictive-temperature firmware release is intentionally passive.
 It filters the raw boiler reading, calculates a three-second slope and
 diagnostic acceleration, integrates recent heater/pump command activity, and
@@ -373,3 +377,32 @@ after a detected gap, waits for an already-running recovery before export, and
 uses stable clock-aligned graph-page identities so incoming samples do not
 reset an older inspected page. Native/target confirmation of this build remains
 HIST-007 work.
+
+## PRD-016 Brew PI controller and prediction removal
+
+Status: SOFTWARE COMPLETE — TARGET/PHYSICAL A/B PENDING
+
+PRD-016 intentionally breaks the prediction-enriched API v2/mobile history
+surface as one matched firmware/mobile change. Current firmware has no
+predictor runtime or model artifact dependency, `/api/v2/state` is queryless,
+history pages are strictly limited to eight samples with controller
+configuration/diagnostics, and SQLite migration discards old prediction JSON
+while retaining ordinary current-day rows and source provenance. Historical
+PRD-012, specifications, raw CSVs, modeling runs, and the offline tool remain
+available.
+
+`CONFIG_PHILCOINO_BREW_PI_CONTROL` defaults off. The default build keeps the
+legacy Brew curve authoritative and calculates PI only as shadow diagnostics.
+An enabled build selects PI requested duty only for Brew and still uses the
+same ten-second SSR window, permission, cooldown inhibit, fault, lease,
+minimum-pulse, and fail-off paths. Steam remains legacy. Host authority tests
+cover both selectors and show that arbitrary shadow output cannot affect
+commands or ordinary state.
+
+Current candidate constants are Kp `0.08`, Ki `0.01`, EMA alpha `0.25`, a
+500 ms exact update interval, and bounded conditional anti-windup. They are not
+physically accepted tuning. The native/sanitizer matrix, strict captures, and
+resource evidence prove software behavior only. A pinned ESP-IDF build plus
+supervised instrumented legacy-vs-PI A/B runs with an independent thermometer,
+SSR/current observation, and independent over-temperature protection remain
+required. No energized test was performed or authorized by this software task.

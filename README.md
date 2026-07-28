@@ -23,9 +23,13 @@ O celular descobre e autentica uma máquina, exibe o estado em tempo real e envi
 - Validação estrita das APIs v1/v2 em runtime e estados explícitos para offline, unauthorized, not found, timeout e protocol error.
 - Polling do dashboard a cada segundo, orientado à conclusão, enquanto a tela e o app estão ativos.
 - Histórico atual em SQLite com backfill automático de até dez minutos do
-  buffer RAM do ESP32 e Live paginado em janelas horizontais de 30 s.
+  buffer RAM do ESP32, diagnósticos de controller e Live paginado em janelas
+  horizontais de 30 s.
 - Targets de brew/steam, active mode, permissão do heater e dismissal de over-temperature confirmados pelo firmware.
 - Controle pelo ESP32-C3, persistência dos targets em NVS, amostragem MAX6675, rede HTTP/mDNS e policy boundaries testáveis no host.
+- Selector compile-time default-off que mantém a curva Brew legacy como
+  autoridade e permite comparar um PI bounded em shadow; builds PI ativos
+  continuam pendentes de target build e A/B físico supervisionado.
 - Simulador determinístico Bun/Hono para desenvolvimento mobile e do contrato.
 - Profiles locais Manual + quatro slots, importação revisada do ESP32, export
   completo e extração reconhecida pelo firmware com pre-infusion, soak, main,

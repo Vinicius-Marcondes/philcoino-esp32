@@ -28,7 +28,9 @@ from .simulator import compare_simulations
 def prepare(inputs: list[Path], config: ToolConfig) -> tuple[Dataset, pd.DataFrame]:
     dataset = load_dataset(inputs, config)
     reconstructed = recreate_features(dataset.frame, config, prefer_logged=False)
-    featured = recreate_features(dataset.frame, config, prefer_logged=True)
+    # Historical firmware prediction columns remain readable for parity
+    # reporting, but never replace independently reconstructed modeling inputs.
+    featured = reconstructed
     logged_usable = (
         featured["logged_prediction_usable"]
         .astype("string")
