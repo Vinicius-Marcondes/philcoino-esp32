@@ -10,7 +10,7 @@
 int main() {
   using namespace philcoino::config;
 
-  assert(std::string(kFirmwareVersion) == "0.3.4");
+  assert(std::string(kFirmwareVersion) == "0.3.5");
   const std::array<std::uint8_t, 6> mac{0xAA, 0xBB, 0xCC, 0x01, 0x02, 0xAF};
   assert(stable_device_id(mac) == std::string("philcoino-0102AF"));
 

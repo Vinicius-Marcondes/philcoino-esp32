@@ -59,7 +59,7 @@ prediction and output-trace equivalence, the bounded history ring and cursor cod
 bearer/API parsing, and contract response captures. It does not exercise
 ESP-IDF scheduling, physical sensors, GPIO, SSRs, or thermal behavior.
 
-Firmware `0.3.4` emits at most eight enriched history samples per response,
+Firmware `0.3.5` emits at most eight enriched history samples per response,
 keeps the serialized body within an 8 KiB host-tested transport budget, and
 supports opt-in live diagnostics at
 `GET /api/v2/state?include=prediction`. Queryless API v2 state is unchanged,

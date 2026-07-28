@@ -2,14 +2,14 @@
   "expo": {
     "name": "philcoino",
     "slug": "philcoino",
-    "version": "1.0.1",
+    "version": "1.0.2",
     "orientation": "default",
     "icon": "./assets/images/philcoino-icon.png",
     "scheme": "philcoino",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
-      "buildNumber": "10",
+      "buildNumber": "11",
       "bundleIdentifier": "dev.viniciuslab.philcoino",
       "supportsTablet": true,
       "infoPlist": {
@@ -40,7 +40,7 @@
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
       "package": "dev.viniciuslab.philcoino",
-      "versionCode": 10,
+      "versionCode": 11,
       "permissions": [
         "android.permission.INTERNET",
         "android.permission.ACCESS_NETWORK_STATE",
