@@ -16,11 +16,19 @@ int main() {
 
   static_assert(kBrewTargetMinimumC < kBrewTargetMaximumC);
   static_assert(kSteamTargetMinimumC <= kSteamTargetMaximumC);
-  static_assert(kSteamTemperatureOffsetC == 5);
+  static_assert(kTemperatureCalibrationReferenceC == 100);
+  static_assert(kTemperatureCalibrationCandidateMinimumC == 90);
+  static_assert(kTemperatureCalibrationCandidateMaximumC == 120);
+  static_assert(kTemperatureCalibrationOffsetMinimumC == -20);
+  static_assert(kTemperatureCalibrationOffsetMaximumC == 10);
+  static_assert(kTemperatureCalibrationSessionLeaseMs == 15000U);
   static_assert(kPreInfusionHeaterDutyOffsetC == 0);
   static_assert(kExtractionHeaterDutyOffsetC == 2);
   static_assert(kBrewOverTemperatureC > kBrewTargetMaximumC);
-  static_assert(kSteamOverTemperatureC > kSteamTargetMaximumC);
+  static_assert(kSteamTargetMaximumC == 135);
+  static_assert(kSteamOverTemperatureC >= kSteamTargetMaximumC);
+  static_assert(kSteamOverTemperatureC == 135);
+  static_assert(kRawBoilerOverTemperatureC == 135);
   static_assert(kHeatingTimeoutMs == 600000U);
   static_assert(kSteamReadyTimeoutMs == 300000U);
   static_assert(kTemperatureControllerIntervalMs == 500U);

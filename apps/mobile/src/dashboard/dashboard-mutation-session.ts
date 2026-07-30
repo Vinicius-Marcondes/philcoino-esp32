@@ -562,6 +562,8 @@ function localizedRejectionMessage(
       return translate("mutation.rejections.unauthorized");
     case undefined:
       return translate("mutation.rejected");
+    default:
+      return translate("mutation.rejected");
   }
 }
 

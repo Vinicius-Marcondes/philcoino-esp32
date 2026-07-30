@@ -21,7 +21,14 @@ import {
   ScaleTraceResponseSchema,
   STEAM_TARGET_MAX_C,
   STEAM_TARGET_MIN_C,
+  STEAM_OVER_TEMPERATURE_C,
   STEAM_TIMEOUT_MS,
+  RAW_BOILER_OVER_TEMPERATURE_C,
+  TEMPERATURE_CALIBRATION_CANDIDATE_MAX_C,
+  TEMPERATURE_CALIBRATION_CANDIDATE_MIN_C,
+  TEMPERATURE_CALIBRATION_REFERENCE_C,
+  TEMPERATURE_CALIBRATION_SESSION_LEASE_MS,
+  TemperatureCalibrationStateSchema,
   TemperatureSettingsResponseSchema,
   WEIGHTED_TRACE_PAGE_SIZE,
   WEIGHTED_TRACE_RETENTION_SAMPLES,
@@ -46,6 +53,8 @@ import {
   type OverTemperatureDismissResponse,
   type TemperatureSettingsRequest,
   type TemperatureSettingsResponse,
+  type TemperatureCalibrationSafeTargetBounds,
+  type TemperatureCalibrationState,
   type ExtractionProfile,
   type ExtractionOutcome,
   type ExtractionSelection,
@@ -64,11 +73,11 @@ import {
 const AMBIENT_TEMPERATURE_C = 24;
 const HEATING_RATE_C_PER_SECOND = 20;
 const COOLING_RATE_C_PER_SECOND = 2;
+const COOLDOWN_RATE_C_PER_SECOND = 0.5;
 const READY_BAND_C = 1;
 const READY_HOLD_MS = 3_000;
 const MAX_SIMULATION_STEP_MS = 100;
 const BREW_OVER_TEMPERATURE_C = 98;
-const STEAM_OVER_TEMPERATURE_C = 130;
 const MANUAL_EXTRACTION_CUTOFF_MS = 60_000;
 const WEIGHT_EXTRACTION_CUTOFF_MS = 60_000;
 const SCALE_SETTLING_TIMEOUT_MS = 10_000;
@@ -100,7 +109,7 @@ const DEFAULT_PROFILE_SET: ProfileSet = ProfileSetSchema.parse({
 
 const FAULT_MESSAGES: Record<FaultCode, string> = {
   sensor_failure: "A simulated thermocouple is unavailable.",
-  over_temperature: "A simulated over-temperature limit was reached.",
+  over_temperature: "A simulated over-temperature cap was exceeded.",
   heating_timeout: "The simulated machine did not heat before its deadline.",
   internal_error: "A simulated internal control failure occurred.",
 };
@@ -232,6 +241,33 @@ interface CooldownRecord {
   outcome: CooldownOutcome | null;
 }
 
+interface ActiveTemperatureCalibration {
+  calibrationId: string;
+  candidateRawTargetC: number;
+  lastActivityUptimeMs: number;
+  advisoryStableMs: number;
+}
+
+export type TemperatureCalibrationOperationResult =
+  | { ok: true; state: TemperatureCalibrationState }
+  | {
+      ok: false;
+      reason:
+        | "active"
+        | "inactive"
+        | "session-mismatch"
+        | "expired"
+        | "machine-faulted"
+        | "sensor-unavailable"
+        | "heater-disabled"
+        | "steam-mode"
+        | "extraction-active"
+        | "cooldown-active"
+        | "scale-calibration-active"
+        | "unsafe-target"
+        | "persistence";
+    };
+
 export class SimulatorMachine {
   private bootCounter = 1;
   private bootId = simulatorBootId(this.bootCounter);
@@ -243,9 +279,17 @@ export class SimulatorMachine {
   private readonly device: DeviceResponse;
 
   private activeMode: Mode = "brew";
-  private boilerTemperatureC = AMBIENT_TEMPERATURE_C;
+  private boilerTemperatureRawC = AMBIENT_TEMPERATURE_C;
   private brewTargetC: number;
   private steamTargetC: number;
+  private savedTemperatureOffsetC = 0;
+  private temperatureCalibrationRecordPresent = false;
+  private temperatureCalibrationStorageCorrupt = false;
+  private activeTemperatureCalibration: ActiveTemperatureCalibration | null =
+    null;
+  private expiredTemperatureCalibrationId: string | null = null;
+  private temperatureCalibrationCounter = 0;
+  private failNextTemperatureCalibrationSave = false;
   private heaterEnabled = true;
   private fault: Fault | null = null;
   private readyElapsedMs = 0;
@@ -318,7 +362,7 @@ export class SimulatorMachine {
     return MachineStateSchema.parse({
       status,
       activeMode: this.activeMode,
-      boilerTemperatureC: roundTemperature(this.boilerTemperatureC),
+      boilerTemperatureC: roundTemperature(this.effectiveTemperature()),
       brewTargetC: this.brewTargetC,
       steamTargetC: this.steamTargetC,
       heaterEnabled: this.heaterEnabled,
@@ -336,6 +380,179 @@ export class SimulatorMachine {
       compensation: this.getCompensationState(),
       cooldown: this.getCooldownState(),
     });
+  }
+
+  getTemperatureCalibration(
+    calibrationId?: string,
+  ): TemperatureCalibrationOperationResult {
+    if (this.expireTemperatureCalibration()) {
+      return { ok: false, reason: "expired" };
+    }
+    if (this.activeTemperatureCalibration !== null) {
+      if (
+        calibrationId === undefined ||
+        calibrationId !==
+          this.activeTemperatureCalibration.calibrationId
+      ) {
+        return { ok: false, reason: "session-mismatch" };
+      }
+      this.activeTemperatureCalibration.lastActivityUptimeMs =
+        this.uptimeMs;
+    } else if (calibrationId !== undefined) {
+      return {
+        ok: false,
+        reason:
+          calibrationId === this.expiredTemperatureCalibrationId
+            ? "expired"
+            : "inactive",
+      };
+    }
+    return { ok: true, state: this.temperatureCalibrationState() };
+  }
+
+  startTemperatureCalibration(): TemperatureCalibrationOperationResult {
+    this.expireTemperatureCalibration();
+    if (this.activeTemperatureCalibration !== null) {
+      return { ok: false, reason: "active" };
+    }
+    if (this.fault !== null) {
+      return {
+        ok: false,
+        reason:
+          this.fault.code === "sensor_failure"
+            ? "sensor-unavailable"
+            : "machine-faulted",
+      };
+    }
+    if (!this.heaterEnabled) {
+      return { ok: false, reason: "heater-disabled" };
+    }
+    if (this.activeMode === "steam") {
+      return { ok: false, reason: "steam-mode" };
+    }
+    if (this.activeExtraction !== null) {
+      return { ok: false, reason: "extraction-active" };
+    }
+    if (this.isCooldownActive()) {
+      return { ok: false, reason: "cooldown-active" };
+    }
+    if (this.scaleCalibrationInProgress) {
+      return { ok: false, reason: "scale-calibration-active" };
+    }
+    const candidate =
+      TEMPERATURE_CALIBRATION_REFERENCE_C -
+      this.savedTemperatureOffsetC;
+    if (
+      candidate < TEMPERATURE_CALIBRATION_CANDIDATE_MIN_C ||
+      candidate > TEMPERATURE_CALIBRATION_CANDIDATE_MAX_C
+    ) {
+      this.injectFault("internal_error");
+      return { ok: false, reason: "machine-faulted" };
+    }
+    this.temperatureCalibrationCounter += 1;
+    this.activeTemperatureCalibration = {
+      calibrationId: `temp-cal-sim-${this.temperatureCalibrationCounter
+        .toString(16)
+        .padStart(8, "0")}`,
+      candidateRawTargetC: candidate,
+      lastActivityUptimeMs: this.uptimeMs,
+      advisoryStableMs: 0,
+    };
+    this.expiredTemperatureCalibrationId = null;
+    this.activeMode = "brew";
+    this.readyElapsedMs = 0;
+    this.steamTimeoutRemainingMs = null;
+    return { ok: true, state: this.temperatureCalibrationState() };
+  }
+
+  updateTemperatureCalibrationCandidate(
+    calibrationId: string,
+    candidateRawTargetC: number,
+  ): TemperatureCalibrationOperationResult {
+    const session = this.renewTemperatureCalibration(calibrationId);
+    if (!session.ok) {
+      return session;
+    }
+    if (
+      candidateRawTargetC < TEMPERATURE_CALIBRATION_CANDIDATE_MIN_C ||
+      candidateRawTargetC > TEMPERATURE_CALIBRATION_CANDIDATE_MAX_C
+    ) {
+      return { ok: false, reason: "session-mismatch" };
+    }
+    if (
+      candidateRawTargetC !==
+      this.activeTemperatureCalibration!.candidateRawTargetC
+    ) {
+      this.activeTemperatureCalibration!.candidateRawTargetC =
+        candidateRawTargetC;
+      this.activeTemperatureCalibration!.advisoryStableMs = 0;
+      this.readyElapsedMs = 0;
+    }
+    return { ok: true, state: this.temperatureCalibrationState() };
+  }
+
+  saveTemperatureCalibration(
+    calibrationId: string,
+  ): TemperatureCalibrationOperationResult {
+    const session = this.renewTemperatureCalibration(calibrationId);
+    if (!session.ok) {
+      return session;
+    }
+    const candidateOffset =
+      TEMPERATURE_CALIBRATION_REFERENCE_C -
+      this.activeTemperatureCalibration!.candidateRawTargetC;
+    if (!this.targetsAreReachable(candidateOffset)) {
+      return { ok: false, reason: "unsafe-target" };
+    }
+    if (this.failNextTemperatureCalibrationSave) {
+      this.failNextTemperatureCalibrationSave = false;
+      return { ok: false, reason: "persistence" };
+    }
+    this.savedTemperatureOffsetC = candidateOffset;
+    this.temperatureCalibrationRecordPresent = true;
+    this.activeTemperatureCalibration = null;
+    this.activeMode = "brew";
+    this.readyElapsedMs = 0;
+    return { ok: true, state: this.temperatureCalibrationState() };
+  }
+
+  cancelTemperatureCalibration(
+    calibrationId: string,
+  ): TemperatureCalibrationOperationResult {
+    const session = this.renewTemperatureCalibration(calibrationId);
+    if (!session.ok) {
+      return session;
+    }
+    this.restoreOrdinaryBrewControl();
+    return { ok: true, state: this.temperatureCalibrationState() };
+  }
+
+  abortTemperatureCalibrationForConflict(): boolean {
+    if (this.activeTemperatureCalibration === null) {
+      return false;
+    }
+    this.restoreOrdinaryBrewControl();
+    return true;
+  }
+
+  injectNextTemperatureCalibrationSaveFailure(): void {
+    this.failNextTemperatureCalibrationSave = true;
+  }
+
+  corruptTemperatureCalibrationStorage(): void {
+    this.temperatureCalibrationStorageCorrupt = true;
+  }
+
+  getRawTemperature(): {
+    boilerTemperatureRawC: number;
+    boilerTemperatureC: number;
+  } {
+    return {
+      boilerTemperatureRawC: roundTemperature(
+        this.boilerTemperatureRawC,
+      ),
+      boilerTemperatureC: roundTemperature(this.effectiveTemperature()),
+    };
   }
 
   getHistoryPage(cursor?: HistoryCursor): HistoryPage | null {
@@ -893,10 +1110,10 @@ export class SimulatorMachine {
     if (this.fault !== null) {
       return { ok: false, reason: "machine-faulted" };
     }
-    if (!Number.isFinite(this.boilerTemperatureC)) {
+    if (!Number.isFinite(this.boilerTemperatureRawC)) {
       return { ok: false, reason: "sensor-unavailable" };
     }
-    if (this.boilerTemperatureC <= this.brewTargetC) {
+    if (this.effectiveTemperature() <= this.brewTargetC) {
       return { ok: false, reason: "cooldown-not-required" };
     }
 
@@ -970,6 +1187,14 @@ export class SimulatorMachine {
     });
   }
 
+  temperatureTargetsAreSafe(request: TemperatureSettingsRequest): boolean {
+    return this.targetsAreReachable(
+      this.savedTemperatureOffsetC,
+      request.brewTargetC ?? this.brewTargetC,
+      request.steamTargetC ?? this.steamTargetC,
+    );
+  }
+
   setMode(mode: Mode): Mode {
     if (mode === this.activeMode) {
       return this.activeMode;
@@ -989,16 +1214,17 @@ export class SimulatorMachine {
     return HeaterSettingsResponseSchema.parse({ heaterEnabled });
   }
 
-  setTemperature(boilerTemperatureC: number): void {
-    this.boilerTemperatureC = boilerTemperatureC;
+  setTemperature(boilerTemperatureRawC: number): void {
+    this.boilerTemperatureRawC = boilerTemperatureRawC;
 
     if (
       this.cooldown?.status === "pumping" &&
-      boilerTemperatureC <= this.cooldown.brewTargetC
+      this.effectiveTemperature() <= this.cooldown.brewTargetC
     ) {
       this.enterCooldownStabilization("target-reached");
     }
 
+    this.evaluateTemperatureSafety();
     if (!this.isActiveTemperatureReady()) {
       this.readyElapsedMs = 0;
     }
@@ -1011,6 +1237,7 @@ export class SimulatorMachine {
 
     this.fault = { code, message: FAULT_MESSAGES[code] };
     this.readyElapsedMs = 0;
+    this.restoreOrdinaryBrewControl();
     if (
       this.cooldown?.status === "pumping" ||
       this.cooldown?.status === "stabilizing"
@@ -1059,8 +1286,14 @@ export class SimulatorMachine {
 
   powerCycle(): void {
     this.failNextProfileSave = false;
+    this.failNextTemperatureCalibrationSave = false;
     this.failNextOutputCommands.clear();
     this.resetVolatileState();
+    if (this.temperatureCalibrationStorageCorrupt) {
+      this.savedTemperatureOffsetC = 0;
+      this.temperatureCalibrationRecordPresent = false;
+      this.injectFault("internal_error");
+    }
   }
 
   reset(): void {
@@ -1069,6 +1302,10 @@ export class SimulatorMachine {
     this.profiles = cloneProfileSet(DEFAULT_PROFILE_SET);
     this.scaleCalibrated = false;
     this.failNextProfileSave = false;
+    this.savedTemperatureOffsetC = 0;
+    this.temperatureCalibrationRecordPresent = false;
+    this.temperatureCalibrationStorageCorrupt = false;
+    this.failNextTemperatureCalibrationSave = false;
     this.failNextOutputCommands.clear();
     this.resetVolatileState();
   }
@@ -1078,10 +1315,12 @@ export class SimulatorMachine {
     const seconds = milliseconds / 1_000;
 
     if (this.fault || this.isCooldownActive()) {
-      this.boilerTemperatureC = moveToward(
-        this.boilerTemperatureC,
+      this.boilerTemperatureRawC = moveToward(
+        this.boilerTemperatureRawC,
         AMBIENT_TEMPERATURE_C,
-        COOLING_RATE_C_PER_SECOND * seconds,
+        (this.fault
+          ? COOLING_RATE_C_PER_SECOND
+          : COOLDOWN_RATE_C_PER_SECOND) * seconds,
       );
     } else if (this.heaterEnabled) {
       this.advanceTemperature(seconds);
@@ -1090,18 +1329,33 @@ export class SimulatorMachine {
     }
 
     this.uptimeMs += milliseconds;
+    this.expireTemperatureCalibration();
+    this.evaluateTemperatureSafety();
     this.advanceExtraction(milliseconds);
     this.advanceScaleSettling(milliseconds);
     this.captureWeightedTraceIfDue();
     this.advanceCooldown(milliseconds);
 
-    if (!this.fault && this.isActiveTemperatureReady()) {
+    if (
+      !this.fault &&
+      this.activeTemperatureCalibration === null &&
+      this.isActiveTemperatureReady()
+    ) {
       this.readyElapsedMs = Math.min(
         READY_HOLD_MS,
         this.readyElapsedMs + milliseconds,
       );
     } else {
       this.readyElapsedMs = 0;
+    }
+
+    if (this.activeTemperatureCalibration !== null) {
+      if (this.isCalibrationTemperatureStable()) {
+        this.activeTemperatureCalibration.advisoryStableMs +=
+          milliseconds;
+      } else {
+        this.activeTemperatureCalibration.advisoryStableMs = 0;
+      }
     }
 
     if (
@@ -1167,8 +1421,11 @@ export class SimulatorMachine {
     // Simulator controls may inject deliberately impossible temperatures to
     // exercise cooldown/fault UI. Keep diagnostic telemetry within the wire
     // contract without changing the simulator's independently reported state.
+    const rawTemperature = roundTemperature(
+      Math.max(-40, Math.min(160, this.boilerTemperatureRawC)),
+    );
     const temperature = roundTemperature(
-      Math.max(-40, Math.min(160, this.boilerTemperatureC)),
+      Math.max(-60, Math.min(170, this.effectiveTemperature())),
     );
     const baseTarget = this.activeTarget();
     const privateTarget = this.controlTarget();
@@ -1201,7 +1458,7 @@ export class SimulatorMachine {
                 : machineOperatingMode(temperature, privateTarget);
 
     return {
-      temperatureRawC: temperature,
+      temperatureRawC: rawTemperature,
       temperatureFilteredC: temperature,
       baseTargetC: baseTarget,
       privateTargetC: privateTarget,
@@ -1397,7 +1654,7 @@ export class SimulatorMachine {
           : (this.terminalExtraction?.elapsedMs ?? 0) + settlingElapsedMs,
       ),
       phase,
-      boilerTemperatureC: roundTemperature(this.boilerTemperatureC),
+      boilerTemperatureC: roundTemperature(this.effectiveTemperature()),
       activeTargetC: this.brewTargetC,
       netWeightDecigrams,
       scaleAvailability: availability,
@@ -1440,7 +1697,7 @@ export class SimulatorMachine {
         cooldown.pumpElapsedMs + milliseconds,
       );
       const outcome =
-        this.boilerTemperatureC <= cooldown.brewTargetC
+        this.effectiveTemperature() <= cooldown.brewTargetC
           ? "target-reached"
           : cooldown.pumpElapsedMs >= COOLDOWN_PUMP_LIMIT_MS
             ? "cutoff"
@@ -1463,26 +1720,29 @@ export class SimulatorMachine {
   }
 
   private advanceTemperature(seconds: number): void {
-    const target = this.controlTarget();
-    this.boilerTemperatureC = moveToward(
-      this.boilerTemperatureC,
+    const target = this.rawControlTarget();
+    this.boilerTemperatureRawC = moveToward(
+      this.boilerTemperatureRawC,
       target,
-      (this.boilerTemperatureC < target
+      (this.boilerTemperatureRawC < target
         ? HEATING_RATE_C_PER_SECOND
         : COOLING_RATE_C_PER_SECOND) * seconds,
     );
   }
 
   private coolTemperature(seconds: number): void {
-    this.boilerTemperatureC = moveToward(
-      this.boilerTemperatureC,
+    this.boilerTemperatureRawC = moveToward(
+      this.boilerTemperatureRawC,
       AMBIENT_TEMPERATURE_C,
       COOLING_RATE_C_PER_SECOND * seconds,
     );
   }
 
   private isActiveTemperatureReady(): boolean {
-    return Math.abs(this.boilerTemperatureC - this.activeTarget()) <= READY_BAND_C;
+    return (
+      Math.abs(this.effectiveTemperature() - this.activeTarget()) <=
+      READY_BAND_C
+    );
   }
 
   private isHeaterActive(): boolean {
@@ -1490,11 +1750,14 @@ export class SimulatorMachine {
       return false;
     }
 
-    return this.boilerTemperatureC < this.controlTarget();
+    return this.boilerTemperatureRawC < this.rawControlTarget();
   }
 
   private activeTemperatureBackAtTarget(): boolean {
-    return this.boilerTemperatureC <= this.activeTarget();
+    return (
+      this.effectiveTemperature() <= this.activeTarget() &&
+      this.boilerTemperatureRawC <= RAW_BOILER_OVER_TEMPERATURE_C
+    );
   }
 
   private activeTarget(): number {
@@ -1508,12 +1771,165 @@ export class SimulatorMachine {
     return Math.min(this.brewTargetC + 2, BREW_OVER_TEMPERATURE_C - 1);
   }
 
+  private rawControlTarget(): number {
+    return (
+      this.activeTemperatureCalibration?.candidateRawTargetC ??
+      this.controlTarget() - this.savedTemperatureOffsetC
+    );
+  }
+
   private activeModeOverTemperature(): boolean {
-    const limit =
-      this.activeMode === "brew"
-        ? BREW_OVER_TEMPERATURE_C
-        : STEAM_OVER_TEMPERATURE_C;
-    return this.boilerTemperatureC >= limit;
+    const usesSteamCap =
+      this.activeTemperatureCalibration !== null ||
+      this.isCooldownActive() ||
+      this.activeMode === "steam";
+    const effectiveOverTemperature = usesSteamCap
+      ? this.effectiveTemperature() > STEAM_OVER_TEMPERATURE_C
+      : this.effectiveTemperature() >= BREW_OVER_TEMPERATURE_C;
+    return (
+      this.boilerTemperatureRawC > RAW_BOILER_OVER_TEMPERATURE_C ||
+      effectiveOverTemperature
+    );
+  }
+
+  private effectiveTemperature(): number {
+    return this.boilerTemperatureRawC + this.savedTemperatureOffsetC;
+  }
+
+  private safeTargetBounds(
+    offsetC: number,
+  ): TemperatureCalibrationSafeTargetBounds {
+    const maximumEffectiveTargetC =
+      RAW_BOILER_OVER_TEMPERATURE_C + offsetC;
+    return {
+      brewMinimumC: BREW_TARGET_MIN_C,
+      brewMaximumC: Math.min(
+        BREW_TARGET_MAX_C,
+        maximumEffectiveTargetC,
+      ),
+      steamMinimumC: STEAM_TARGET_MIN_C,
+      steamMaximumC: Math.min(
+        STEAM_TARGET_MAX_C,
+        maximumEffectiveTargetC,
+      ),
+    };
+  }
+
+  private targetsAreReachable(
+    offsetC: number,
+    brewTargetC = this.brewTargetC,
+    steamTargetC = this.steamTargetC,
+  ): boolean {
+    return (
+      brewTargetC - offsetC <= RAW_BOILER_OVER_TEMPERATURE_C &&
+      steamTargetC - offsetC <= RAW_BOILER_OVER_TEMPERATURE_C
+    );
+  }
+
+  private temperatureCalibrationState(): TemperatureCalibrationState {
+    const temperatureAvailable =
+      this.fault?.code !== "sensor_failure";
+    const common = {
+      savedOffsetC: this.savedTemperatureOffsetC,
+      boilerTemperatureRawC: temperatureAvailable
+        ? roundTemperature(this.boilerTemperatureRawC)
+        : null,
+      boilerTemperatureC: temperatureAvailable
+        ? roundTemperature(this.effectiveTemperature())
+        : null,
+      heaterActive: this.isHeaterActive(),
+      ready:
+        this.activeTemperatureCalibration !== null &&
+        this.activeTemperatureCalibration.advisoryStableMs >=
+          READY_HOLD_MS,
+      safeTargetBounds: this.safeTargetBounds(
+        this.savedTemperatureOffsetC,
+      ),
+    };
+    const active = this.activeTemperatureCalibration;
+    if (active !== null) {
+      const offsetPreviewC =
+        TEMPERATURE_CALIBRATION_REFERENCE_C -
+        active.candidateRawTargetC;
+      return TemperatureCalibrationStateSchema.parse({
+        status: "calibrating",
+        ...common,
+        calibrationId: active.calibrationId,
+        candidateRawTargetC: active.candidateRawTargetC,
+        offsetPreviewC,
+        advisoryStableMs: active.advisoryStableMs,
+        sessionLeaseRemainingMs: Math.max(
+          0,
+          TEMPERATURE_CALIBRATION_SESSION_LEASE_MS -
+            (this.uptimeMs - active.lastActivityUptimeMs),
+        ),
+        previewSafeTargetBounds: this.safeTargetBounds(offsetPreviewC),
+      });
+    }
+    return TemperatureCalibrationStateSchema.parse({
+      status: this.temperatureCalibrationRecordPresent
+        ? "calibrated"
+        : "uncalibrated",
+      ...common,
+    });
+  }
+
+  private renewTemperatureCalibration(
+    calibrationId: string,
+  ): TemperatureCalibrationOperationResult {
+    const expired = this.expireTemperatureCalibration();
+    const active = this.activeTemperatureCalibration;
+    if (active === null) {
+      return {
+        ok: false,
+        reason:
+          expired || calibrationId === this.expiredTemperatureCalibrationId
+            ? "expired"
+            : "inactive",
+      };
+    }
+    if (calibrationId !== active.calibrationId) {
+      return { ok: false, reason: "session-mismatch" };
+    }
+    active.lastActivityUptimeMs = this.uptimeMs;
+    return { ok: true, state: this.temperatureCalibrationState() };
+  }
+
+  private expireTemperatureCalibration(): boolean {
+    const active = this.activeTemperatureCalibration;
+    if (
+      active === null ||
+      this.uptimeMs - active.lastActivityUptimeMs <
+        TEMPERATURE_CALIBRATION_SESSION_LEASE_MS
+    ) {
+      return false;
+    }
+    this.expiredTemperatureCalibrationId = active.calibrationId;
+    this.restoreOrdinaryBrewControl();
+    return true;
+  }
+
+  private restoreOrdinaryBrewControl(): void {
+    this.activeTemperatureCalibration = null;
+    this.activeMode = "brew";
+    this.readyElapsedMs = 0;
+    this.steamTimeoutRemainingMs = null;
+  }
+
+  private isCalibrationTemperatureStable(): boolean {
+    const active = this.activeTemperatureCalibration;
+    return (
+      active !== null &&
+      Math.abs(
+        this.boilerTemperatureRawC - active.candidateRawTargetC,
+      ) <= READY_BAND_C
+    );
+  }
+
+  private evaluateTemperatureSafety(): void {
+    if (this.fault === null && this.activeModeOverTemperature()) {
+      this.injectFault("over_temperature");
+    }
   }
 
   private resetVolatileState(): void {
@@ -1523,7 +1939,7 @@ export class SimulatorMachine {
     this.lastHistorySecond = 0;
     this.history = [];
     this.activeMode = "brew";
-    this.boilerTemperatureC = AMBIENT_TEMPERATURE_C;
+    this.boilerTemperatureRawC = AMBIENT_TEMPERATURE_C;
     this.heaterEnabled = true;
     this.fault = null;
     this.readyElapsedMs = 0;
@@ -1538,6 +1954,8 @@ export class SimulatorMachine {
     this.extractionCounter = 0;
     this.cooldown = null;
     this.cooldownCounter = 0;
+    this.activeTemperatureCalibration = null;
+    this.expiredTemperatureCalibrationId = null;
   }
 
   private isCooldownActive(): boolean {

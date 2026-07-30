@@ -82,7 +82,7 @@ void test_build_flag_selects_only_brew_duty_authority() {
       brew.controller.update(reading(100.0F), PumpCommand::kOff, 2000U);
   assert(steam.mode == ControlMode::kSteam);
   assert(steam.heater_enabled);
-  assert(std::fabs(steam.boiler_temperature.temperature_c - 105.0F) <
+  assert(std::fabs(steam.boiler_temperature.temperature_c - 100.0F) <
          0.0001F);
 }
 

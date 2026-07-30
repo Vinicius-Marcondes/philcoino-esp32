@@ -198,6 +198,147 @@
         }
       }
     },
+    "/api/v2/temperature-calibration": {
+      "get": {
+        "operationId": "getTemperatureCalibration",
+        "summary": "Read temperature-calibration state and optionally renew its lease",
+        "description": "Omit calibrationId while no calibration is active. While calibrating, the opaque active calibrationId is required and a matching request renews the 15-second inactivity lease.",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          {
+            "name": "calibrationId",
+            "in": "query",
+            "required": false,
+            "schema": { "$ref": "#/components/schemas/TemperatureCalibrationSessionId" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Current firmware-authoritative calibration state.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/TemperatureCalibrationState" }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/V2BadRequest" },
+          "401": { "$ref": "#/components/responses/V2Unauthorized" },
+          "409": { "$ref": "#/components/responses/V2Conflict" },
+          "500": { "$ref": "#/components/responses/V2InternalError" }
+        }
+      }
+    },
+    "/api/v2/temperature-calibration/start": {
+      "post": {
+        "operationId": "startTemperatureCalibration",
+        "summary": "Start a firmware-owned raw-temperature calibration session",
+        "description": "Starts at raw 100 degrees Celsius when uncalibrated or at the raw boiling point implied by the saved offset when recalibrating. The operation never commands the pump or steam valve.",
+        "security": [{ "bearerAuth": [] }],
+        "responses": {
+          "200": {
+            "description": "The acknowledged active calibration session.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ActiveTemperatureCalibrationState" }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/V2Unauthorized" },
+          "409": { "$ref": "#/components/responses/V2Conflict" },
+          "500": { "$ref": "#/components/responses/V2InternalError" }
+        }
+      }
+    },
+    "/api/v2/temperature-calibration/candidate": {
+      "put": {
+        "operationId": "updateTemperatureCalibrationCandidate",
+        "summary": "Update the active raw calibration target",
+        "description": "Changes the whole-degree raw target and resets advisory stability without changing the saved offset.",
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/UpdateTemperatureCalibrationCandidateRequest" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The acknowledged active calibration state.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ActiveTemperatureCalibrationState" }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/V2BadRequest" },
+          "401": { "$ref": "#/components/responses/V2Unauthorized" },
+          "409": { "$ref": "#/components/responses/V2Conflict" },
+          "500": { "$ref": "#/components/responses/V2InternalError" }
+        }
+      }
+    },
+    "/api/v2/temperature-calibration/save": {
+      "post": {
+        "operationId": "saveTemperatureCalibration",
+        "summary": "Persist the active candidate as logical 100 degrees Celsius",
+        "description": "Persists offset = 100 - candidateRawTargetC. The previous offset and all temperature targets remain unchanged if persistence or raw-ceiling reachability validation fails.",
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/TemperatureCalibrationSessionRequest" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The acknowledged persisted calibrated state.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/CalibratedTemperatureCalibrationState" }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/V2BadRequest" },
+          "401": { "$ref": "#/components/responses/V2Unauthorized" },
+          "409": { "$ref": "#/components/responses/V2Conflict" },
+          "500": { "$ref": "#/components/responses/V2InternalError" }
+        }
+      }
+    },
+    "/api/v2/temperature-calibration/cancel": {
+      "post": {
+        "operationId": "cancelTemperatureCalibration",
+        "summary": "Cancel the active calibration and restore ordinary Brew control",
+        "description": "Discards the candidate without changing the saved offset or persisted Brew and Steam targets.",
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/TemperatureCalibrationSessionRequest" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The acknowledged uncalibrated or calibrated state after cancellation.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/TemperatureCalibrationState" }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/V2BadRequest" },
+          "401": { "$ref": "#/components/responses/V2Unauthorized" },
+          "409": { "$ref": "#/components/responses/V2Conflict" },
+          "500": { "$ref": "#/components/responses/V2InternalError" }
+        }
+      }
+    },
     "/api/v2/history": {
       "get": {
         "operationId": "getTemperatureHistory",
@@ -661,6 +802,7 @@
           "malformed_request",
           "unauthorized",
           "temperature_out_of_range",
+          "temperature_target_unsafe",
           "sensor_unavailable",
           "persistence_failure",
           "internal_error"
@@ -674,7 +816,7 @@
       "SteamTarget": {
         "type": "integer",
         "minimum": 110,
-        "maximum": 120
+        "maximum": 135
       },
       "HealthResponse": {
         "type": "object",
@@ -743,7 +885,7 @@
           "activeMode": { "$ref": "#/components/schemas/Mode" },
           "boilerTemperatureC": {
             "type": "number",
-            "description": "The firmware-authoritative active effective control temperature. For a valid thermocouple sample, Brew mode reports the raw boiler-base reading and Steam mode reports that raw reading plus the firmware-configured Steam offset (currently +5 degrees Celsius). A mode change can therefore change this value by 5 degrees Celsius without a new physical sensor reading."
+            "description": "The firmware-authoritative effective control temperature in both Brew and Steam. After raw thermocouple validation, firmware adds the one persisted signed global temperature-calibration offset exactly once. With no saved calibration the offset is zero."
           },
           "brewTargetC": { "$ref": "#/components/schemas/BrewTarget" },
           "steamTargetC": { "$ref": "#/components/schemas/SteamTarget" },
@@ -837,6 +979,269 @@
         },
         "examples": [
           { "brewTargetC": 93, "steamTargetC": 115 }
+        ]
+      },
+      "TemperatureCalibrationSessionId": {
+        "type": "string",
+        "minLength": 16,
+        "maxLength": 64,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$"
+      },
+      "TemperatureCalibrationCandidateRawTarget": {
+        "type": "integer",
+        "minimum": 90,
+        "maximum": 120,
+        "multipleOf": 1
+      },
+      "TemperatureCalibrationOffset": {
+        "type": "integer",
+        "minimum": -20,
+        "maximum": 10,
+        "multipleOf": 1
+      },
+      "TemperatureCalibrationSafeTargetBounds": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "brewMinimumC",
+          "brewMaximumC",
+          "steamMinimumC",
+          "steamMaximumC"
+        ],
+        "properties": {
+          "brewMinimumC": { "const": 85 },
+          "brewMaximumC": { "$ref": "#/components/schemas/BrewTarget" },
+          "steamMinimumC": { "const": 110 },
+          "steamMaximumC": { "$ref": "#/components/schemas/SteamTarget" }
+        },
+        "description": "Offset-adjusted whole-degree target bounds whose maxima do not exceed the independent raw 135 degrees Celsius cap."
+      },
+      "UncalibratedTemperatureCalibrationState": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "status",
+          "savedOffsetC",
+          "boilerTemperatureRawC",
+          "boilerTemperatureC",
+          "heaterActive",
+          "ready",
+          "safeTargetBounds"
+        ],
+        "properties": {
+          "status": { "const": "uncalibrated" },
+          "savedOffsetC": { "const": 0 },
+          "boilerTemperatureRawC": {
+            "oneOf": [
+              { "type": "number", "minimum": -40, "maximum": 160 },
+              { "type": "null" }
+            ]
+          },
+          "boilerTemperatureC": {
+            "oneOf": [
+              { "type": "number", "minimum": -60, "maximum": 170 },
+              { "type": "null" }
+            ]
+          },
+          "heaterActive": { "type": "boolean" },
+          "ready": { "type": "boolean" },
+          "safeTargetBounds": { "$ref": "#/components/schemas/TemperatureCalibrationSafeTargetBounds" }
+        },
+        "examples": [
+          {
+            "status": "uncalibrated",
+            "savedOffsetC": 0,
+            "boilerTemperatureRawC": 24.5,
+            "boilerTemperatureC": 24.5,
+            "heaterActive": false,
+            "ready": false,
+            "safeTargetBounds": {
+              "brewMinimumC": 85,
+              "brewMaximumC": 95,
+              "steamMinimumC": 110,
+              "steamMaximumC": 135
+            }
+          }
+        ]
+      },
+      "ActiveTemperatureCalibrationState": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "status",
+          "savedOffsetC",
+          "boilerTemperatureRawC",
+          "boilerTemperatureC",
+          "heaterActive",
+          "ready",
+          "safeTargetBounds",
+          "calibrationId",
+          "candidateRawTargetC",
+          "offsetPreviewC",
+          "advisoryStableMs",
+          "sessionLeaseRemainingMs",
+          "previewSafeTargetBounds"
+        ],
+        "properties": {
+          "status": { "const": "calibrating" },
+          "savedOffsetC": { "$ref": "#/components/schemas/TemperatureCalibrationOffset" },
+          "boilerTemperatureRawC": {
+            "oneOf": [
+              { "type": "number", "minimum": -40, "maximum": 160 },
+              { "type": "null" }
+            ]
+          },
+          "boilerTemperatureC": {
+            "oneOf": [
+              { "type": "number", "minimum": -60, "maximum": 170 },
+              { "type": "null" }
+            ]
+          },
+          "heaterActive": { "type": "boolean" },
+          "ready": { "type": "boolean" },
+          "safeTargetBounds": { "$ref": "#/components/schemas/TemperatureCalibrationSafeTargetBounds" },
+          "calibrationId": { "$ref": "#/components/schemas/TemperatureCalibrationSessionId" },
+          "candidateRawTargetC": { "$ref": "#/components/schemas/TemperatureCalibrationCandidateRawTarget" },
+          "offsetPreviewC": {
+            "$ref": "#/components/schemas/TemperatureCalibrationOffset",
+            "description": "Exactly 100 - candidateRawTargetC."
+          },
+          "advisoryStableMs": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Continuous time at the candidate band for user guidance only; never a Save gate."
+          },
+          "sessionLeaseRemainingMs": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 15000
+          },
+          "previewSafeTargetBounds": { "$ref": "#/components/schemas/TemperatureCalibrationSafeTargetBounds" }
+        },
+        "examples": [
+          {
+            "status": "calibrating",
+            "savedOffsetC": 0,
+            "boilerTemperatureRawC": 99.7,
+            "boilerTemperatureC": 99.7,
+            "heaterActive": false,
+            "ready": true,
+            "safeTargetBounds": {
+              "brewMinimumC": 85,
+              "brewMaximumC": 95,
+              "steamMinimumC": 110,
+              "steamMaximumC": 135
+            },
+            "calibrationId": "temp-cal-01J2ABCDEF",
+            "candidateRawTargetC": 100,
+            "offsetPreviewC": 0,
+            "advisoryStableMs": 42000,
+            "sessionLeaseRemainingMs": 15000,
+            "previewSafeTargetBounds": {
+              "brewMinimumC": 85,
+              "brewMaximumC": 95,
+              "steamMinimumC": 110,
+              "steamMaximumC": 135
+            }
+          }
+        ]
+      },
+      "CalibratedTemperatureCalibrationState": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "status",
+          "savedOffsetC",
+          "boilerTemperatureRawC",
+          "boilerTemperatureC",
+          "heaterActive",
+          "ready",
+          "safeTargetBounds"
+        ],
+        "properties": {
+          "status": { "const": "calibrated" },
+          "savedOffsetC": { "$ref": "#/components/schemas/TemperatureCalibrationOffset" },
+          "boilerTemperatureRawC": {
+            "oneOf": [
+              { "type": "number", "minimum": -40, "maximum": 160 },
+              { "type": "null" }
+            ]
+          },
+          "boilerTemperatureC": {
+            "oneOf": [
+              { "type": "number", "minimum": -60, "maximum": 170 },
+              { "type": "null" }
+            ]
+          },
+          "heaterActive": { "type": "boolean" },
+          "ready": { "type": "boolean" },
+          "safeTargetBounds": { "$ref": "#/components/schemas/TemperatureCalibrationSafeTargetBounds" }
+        },
+        "examples": [
+          {
+            "status": "calibrated",
+            "savedOffsetC": -8,
+            "boilerTemperatureRawC": 108,
+            "boilerTemperatureC": 100,
+            "heaterActive": false,
+            "ready": true,
+            "safeTargetBounds": {
+              "brewMinimumC": 85,
+              "brewMaximumC": 95,
+              "steamMinimumC": 110,
+              "steamMaximumC": 127
+            }
+          }
+        ]
+      },
+      "TemperatureCalibrationState": {
+        "oneOf": [
+          { "$ref": "#/components/schemas/UncalibratedTemperatureCalibrationState" },
+          { "$ref": "#/components/schemas/ActiveTemperatureCalibrationState" },
+          { "$ref": "#/components/schemas/CalibratedTemperatureCalibrationState" }
+        ],
+        "discriminator": { "propertyName": "status" },
+        "examples": [
+          {
+            "status": "calibrated",
+            "savedOffsetC": -8,
+            "boilerTemperatureRawC": 108,
+            "boilerTemperatureC": 100,
+            "heaterActive": false,
+            "ready": true,
+            "safeTargetBounds": {
+              "brewMinimumC": 85,
+              "brewMaximumC": 95,
+              "steamMinimumC": 110,
+              "steamMaximumC": 127
+            }
+          }
+        ]
+      },
+      "UpdateTemperatureCalibrationCandidateRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["calibrationId", "candidateRawTargetC"],
+        "properties": {
+          "calibrationId": { "$ref": "#/components/schemas/TemperatureCalibrationSessionId" },
+          "candidateRawTargetC": { "$ref": "#/components/schemas/TemperatureCalibrationCandidateRawTarget" }
+        },
+        "examples": [
+          {
+            "calibrationId": "temp-cal-01J2ABCDEF",
+            "candidateRawTargetC": 108
+          }
+        ]
+      },
+      "TemperatureCalibrationSessionRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["calibrationId"],
+        "properties": {
+          "calibrationId": { "$ref": "#/components/schemas/TemperatureCalibrationSessionId" }
+        },
+        "examples": [
+          { "calibrationId": "temp-cal-01J2ABCDEF" }
         ]
       },
       "ModeRequest": {
@@ -1579,10 +1984,10 @@
         "additionalProperties": false,
         "required": ["temperatureRawC", "temperatureFilteredC", "baseTargetC", "privateTargetC", "errorC", "selectedController", "legacyRequestedDuty", "piRequestedDuty", "proportionalContribution", "integralContribution", "integralState", "piSaturation", "piAntiWindupActive", "heaterCommandActive", "deliveredCommandDuty1s", "pumpCommand", "extractionPhase", "operatingMode"],
         "properties": {
-          "temperatureRawC": { "type": "number", "minimum": -40, "maximum": 160, "description": "Validated thermocouple reading before the Steam offset." },
-          "temperatureFilteredC": { "type": "number", "minimum": -40, "maximum": 160, "description": "Controller-owned filtered active temperature. Steam includes its existing fixed offset exactly once." },
-          "baseTargetC": { "type": "number", "minimum": 0, "maximum": 120, "description": "Persisted active-mode target used by readiness, limits, and public state." },
-          "privateTargetC": { "type": "number", "minimum": 0, "maximum": 120, "description": "Private duty target after the fixed Brew extraction bias; it never mutates persisted/public targets." },
+          "temperatureRawC": { "type": "number", "minimum": -40, "maximum": 160, "description": "Validated thermocouple reading before the persisted global temperature-calibration offset." },
+          "temperatureFilteredC": { "type": "number", "minimum": -40, "maximum": 160, "description": "Controller-owned filtered effective temperature after applying the persisted global offset exactly once in Brew or Steam." },
+          "baseTargetC": { "type": "number", "minimum": 0, "maximum": 135, "description": "Persisted active-mode target used by readiness, limits, and public state." },
+          "privateTargetC": { "type": "number", "minimum": 0, "maximum": 135, "description": "Private duty target after the fixed Brew extraction bias; it never mutates persisted/public targets." },
           "errorC": { "type": "number", "minimum": -200, "maximum": 200, "description": "privateTargetC minus temperatureFilteredC." },
           "selectedController": { "type": "string", "enum": ["legacy_curve", "pi"], "description": "Compile-time Brew requested-duty authority for the build." },
           "legacyRequestedDuty": { "type": "number", "minimum": 0, "maximum": 1 },
@@ -2035,6 +2440,12 @@
           "scale_unavailable",
           "scale_warning_unacknowledged",
           "calibration_in_progress",
+          "heater_disabled",
+          "temperature_calibration_active",
+          "temperature_calibration_inactive",
+          "temperature_calibration_session_mismatch",
+          "temperature_calibration_expired",
+          "temperature_target_unsafe",
           "persistence_failure",
           "internal_error"
         ]
@@ -2083,6 +2494,12 @@
             "error": {
               "code": "machine_faulted",
               "message": "Cooldown cannot start while a machine fault is latched."
+            }
+          },
+          {
+            "error": {
+              "code": "temperature_target_unsafe",
+              "message": "The requested effective target would exceed the raw temperature ceiling."
             }
           }
         ]

@@ -32,6 +32,10 @@ namespace {
 constexpr char kThermocoupleLogTag[] = "max6675";
 constexpr char kNvsNamespace[] = "targets";
 constexpr char kTargetsKey[] = "values";
+constexpr char kTemperatureCalibrationNvsNamespace[] = "temp_cal";
+constexpr char kTemperatureCalibrationKey[] = "offset";
+constexpr std::int32_t kTemperatureCalibrationBlobMagic = 0x5443414C;
+constexpr std::int32_t kTemperatureCalibrationBlobVersion = 1;
 constexpr char kProfileNvsNamespace[] = "profiles";
 constexpr char kProfilesKey[] = "set";
 constexpr char kScaleNvsNamespace[] = "scale";
@@ -326,6 +330,55 @@ bool EspNvsTargetBackend::save(const TemperatureTargets& targets) {
   const std::array<std::int32_t, 2> stored{targets.brew_c, targets.steam_c};
   return initialized_ && nvs_set_blob(handle_, kTargetsKey, stored.data(),
                                       sizeof(stored)) == ESP_OK &&
+         nvs_commit(handle_) == ESP_OK;
+}
+
+bool EspNvsTemperatureCalibrationBackend::initialize() {
+  if (!initialize_nvs_flash()) {
+    return false;
+  }
+  nvs_handle_t handle = 0;
+  if (nvs_open(kTemperatureCalibrationNvsNamespace, NVS_READWRITE, &handle) !=
+      ESP_OK) {
+    return false;
+  }
+  handle_ = handle;
+  initialized_ = true;
+  return true;
+}
+
+BackendLoadResult EspNvsTemperatureCalibrationBackend::load(
+    TemperatureCalibration& calibration) {
+  if (!initialized_) {
+    return BackendLoadResult::kError;
+  }
+  std::array<std::int32_t, 3> stored{};
+  std::size_t stored_size = sizeof(stored);
+  const auto result = nvs_get_blob(handle_, kTemperatureCalibrationKey,
+                                   stored.data(), &stored_size);
+  if (result == ESP_ERR_NVS_NOT_FOUND) {
+    return BackendLoadResult::kNotFound;
+  }
+  if (result != ESP_OK || stored_size != sizeof(stored) ||
+      stored[0] != kTemperatureCalibrationBlobMagic ||
+      stored[1] != kTemperatureCalibrationBlobVersion) {
+    return BackendLoadResult::kError;
+  }
+  calibration = {stored[2], true};
+  return BackendLoadResult::kOk;
+}
+
+bool EspNvsTemperatureCalibrationBackend::save(
+    const TemperatureCalibration& calibration) {
+  const std::array<std::int32_t, 3> stored{
+      kTemperatureCalibrationBlobMagic,
+      kTemperatureCalibrationBlobVersion,
+      calibration.offset_c,
+  };
+  return initialized_ && calibration.calibrated &&
+         temperature_calibration_is_valid(calibration) &&
+         nvs_set_blob(handle_, kTemperatureCalibrationKey, stored.data(),
+                      sizeof(stored)) == ESP_OK &&
          nvs_commit(handle_) == ESP_OK;
 }
 

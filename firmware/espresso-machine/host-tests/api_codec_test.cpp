@@ -60,9 +60,9 @@ void test_machine_request_codecs() {
   const TemperatureTargets current{93, 115};
   TemperatureTargets updated{};
   bool constraint = false;
-  assert(parse_temperatures(" { \"steamTargetC\" : 120, \"brewTargetC\" : 85 } ",
+  assert(parse_temperatures(" { \"steamTargetC\" : 135, \"brewTargetC\" : 85 } ",
                             current, updated, constraint));
-  assert(!constraint && updated.brew_c == 85 && updated.steam_c == 120);
+  assert(!constraint && updated.brew_c == 85 && updated.steam_c == 135);
 
   constraint = false;
   assert(parse_temperatures("{\"brewTargetC\":85.5}", current, updated,
@@ -84,6 +84,59 @@ void test_machine_request_codecs() {
   assert(parse_heater_enabled("{\"heaterEnabled\":true}", enabled) &&
          enabled);
   assert(!parse_heater_enabled("{\"heaterEnabled\":1}", enabled));
+
+  bool calibration_id_supplied = false;
+  std::string calibration_id;
+  assert(parse_temperature_calibration_query(
+      "", calibration_id_supplied, calibration_id));
+  assert(!calibration_id_supplied && calibration_id.empty());
+  assert(parse_temperature_calibration_query(
+      "calibrationId=temp-cal-01J2ABCDEF",
+      calibration_id_supplied, calibration_id));
+  assert(calibration_id_supplied &&
+         calibration_id == "temp-cal-01J2ABCDEF");
+  assert(!parse_temperature_calibration_query(
+      "other=temp-cal-01J2ABCDEF",
+      calibration_id_supplied, calibration_id));
+
+  std::int32_t candidate_raw_target_c = 0;
+  assert(parse_temperature_calibration_candidate(
+      "{\"calibrationId\":\"temp-cal-01J2ABCDEF\",\"candidateRawTargetC\":108}",
+      calibration_id, candidate_raw_target_c));
+  assert(calibration_id == "temp-cal-01J2ABCDEF" &&
+         candidate_raw_target_c == 108);
+  assert(!parse_temperature_calibration_candidate(
+      "{\"calibrationId\":\"short\",\"candidateRawTargetC\":108}",
+      calibration_id, candidate_raw_target_c));
+  assert(!parse_temperature_calibration_candidate(
+      "{\"calibrationId\":\"temp-cal-01J2ABCDEF\",\"candidateRawTargetC\":108.5}",
+      calibration_id, candidate_raw_target_c));
+  assert(parse_temperature_calibration_session(
+      "{\"calibrationId\":\"temp-cal-01J2ABCDEF\"}", calibration_id));
+  assert(!parse_temperature_calibration_session(
+      "{\"calibrationId\":\"temp-cal-01J2ABCDEF\",\"extra\":true}",
+      calibration_id));
+
+  TemperatureCalibrationSnapshot calibration{};
+  calibration.status = TemperatureCalibrationStatus::kCalibrating;
+  calibration.saved_offset_c = 0;
+  calibration.temperature_available = true;
+  calibration.raw_temperature_c = 108.0F;
+  calibration.effective_temperature_c = 108.0F;
+  calibration.calibration_id = "temp-cal-01J2ABCDEF";
+  calibration.candidate_raw_target_c = 108;
+  calibration.offset_preview_c = -8;
+  calibration.advisory_stable_ms = 42000;
+  calibration.session_lease_remaining_ms = 15000;
+  calibration.safe_target_bounds = {85, 95, 110, 135};
+  calibration.preview_safe_target_bounds = {85, 95, 110, 127};
+  const auto serialized = serialize_temperature_calibration(calibration);
+  assert(serialized.find("\"status\":\"calibrating\"") !=
+         std::string::npos);
+  assert(serialized.find("\"candidateRawTargetC\":108") !=
+         std::string::npos);
+  assert(serialized.find("\"offsetPreviewC\":-8") !=
+         std::string::npos);
 }
 
 void test_workflow_codecs() {
@@ -156,7 +209,7 @@ void test_workflow_codecs() {
 }
 
 void test_authoritative_route_matrix() {
-  assert(kApiRoutes.size() == 21U);
+  assert(kApiRoutes.size() == 26U);
   std::size_t protected_count = 0;
   for (std::size_t index = 0; index < kApiRoutes.size(); ++index) {
     const auto& route = kApiRoutes[index];
@@ -167,12 +220,14 @@ void test_authoritative_route_matrix() {
              std::string(route.path) != kApiRoutes[other].path);
     }
   }
-  assert(protected_count == 19U);
+  assert(protected_count == 24U);
   assert(!request_requires_auth(HttpMethod::kGet, "/healthz"));
   assert(request_requires_auth(HttpMethod::kPost,
                                "/api/v2/cooldowns/stop"));
   assert(request_requires_auth(HttpMethod::kGet, "/api/v2/scale"));
   assert(request_requires_auth(HttpMethod::kGet, "/api/v2/scale/trace"));
+  assert(request_requires_auth(
+      HttpMethod::kPost, "/api/v2/temperature-calibration/save"));
   assert(find_api_route(HttpMethod::kGet, "/api/v2/state?ignored=true") ==
          find_api_route(HttpMethod::kGet, "/api/v2/state"));
   assert(find_api_route(HttpMethod::kPost, "/healthz") == nullptr);

@@ -58,6 +58,8 @@ class FirmwareApi {
   FirmwareApi(DeviceIdentity identity, std::string bearer_token,
               control::TemperatureController& controller,
               peripherals::TargetStorage& target_storage,
+              peripherals::TemperatureCalibrationStorage&
+                  temperature_calibration_storage,
               control::ExtractionController& extraction_controller,
               control::CooldownController& cooldown_controller,
               peripherals::ProfileStorage& profile_storage,
@@ -87,6 +89,15 @@ class FirmwareApi {
   HttpResponse update_heater(const std::string& body,
                              std::uint64_t uptime_ms);
   HttpResponse dismiss_over_temperature(std::uint64_t uptime_ms);
+  HttpResponse temperature_calibration(const std::string& query,
+                                       std::uint64_t uptime_ms);
+  HttpResponse start_temperature_calibration(std::uint64_t uptime_ms);
+  HttpResponse update_temperature_calibration_candidate(
+      const std::string& body, std::uint64_t uptime_ms);
+  HttpResponse save_temperature_calibration(const std::string& body,
+                                            std::uint64_t uptime_ms);
+  HttpResponse cancel_temperature_calibration(const std::string& body,
+                                              std::uint64_t uptime_ms);
   HttpResponse state_v2(const std::string& query,
                         std::uint64_t uptime_ms) const;
   HttpResponse history(const std::string& query,
@@ -113,6 +124,8 @@ class FirmwareApi {
   std::string bearer_token_;
   control::TemperatureController& controller_;
   peripherals::TargetStorage& target_storage_;
+  peripherals::TemperatureCalibrationStorage&
+      temperature_calibration_storage_;
   control::ExtractionController& extraction_controller_;
   control::CooldownController& cooldown_controller_;
   peripherals::ProfileStorage& profile_storage_;
@@ -121,6 +134,7 @@ class FirmwareApi {
   HistoryBuffer* history_;
   control::ScaleController* scale_controller_;
   WeightedTraceBuffer* weighted_trace_;
+  std::uint32_t temperature_calibration_sequence_{0};
 };
 
 }  // namespace philcoino::networking

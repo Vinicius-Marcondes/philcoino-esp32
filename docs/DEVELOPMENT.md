@@ -210,7 +210,8 @@ The simulator stores the injected raw temperature and applies the one persisted
 signed global offset exactly once to produce effective
 `boilerTemperatureC` in either mode. It implements the raw-target calibration
 workflow, persistence failures, corrupt-record startup fault, offset-adjusted
-target reachability, and independent raw/effective `135°C` fault boundaries.
+target reachability, inclusive raw/effective `135°C` caps, and faults strictly
+above either cap.
 It does not model separate boiler-base and upper-boiler temperatures or
 validate a user-observed physical boiling point.
 
@@ -322,7 +323,7 @@ Configure Wi-Fi SSID, Wi-Fi password, and bearer token through `idf.py menuconfi
 
 Current source permanently uses one boiler-base thermocouple on
 GPIO4/GPIO5/GPIO7 for both control modes. Firmware validates the raw sample,
-checks the independent raw `135°C` ceiling, and applies one persisted signed
+checks the independent raw `135°C` cap, and applies one persisted signed
 global offset exactly once before Brew and Steam control, readiness, safety,
 history, and API use. A missing calibration record is uncalibrated `0°C`;
 corrupt or unreadable calibration storage faults with heater command off.

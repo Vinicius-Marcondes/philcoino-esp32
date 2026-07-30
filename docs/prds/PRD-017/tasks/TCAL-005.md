@@ -56,7 +56,7 @@ presented as live state.
 
 ## Completion Evidence
 
-- Full mobile suite: 243 tests and 2,312 expectations passed.
+- Current full mobile suite: 252 tests and 2,438 expectations passed.
 - Focused session suite: 7 tests covering polling, serialization, races,
   lifecycle cancellation, disconnection, expiry, simulator integration, and
   malformed responses.
@@ -64,7 +64,8 @@ presented as live state.
 - Simulator-backed client coverage proves strict start, candidate, Save,
   reload, cancel, and expiry operations through the real injected transport.
 - Debug-device coverage proves the same strict acknowledged method surface
-  without direct component networking.
+  without direct component networking, including conflict cancellation and
+  rejection of later targets that are unreachable under the saved offset.
 
 ## Decision Log
 

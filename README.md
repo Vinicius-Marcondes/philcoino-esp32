@@ -26,6 +26,9 @@ O celular descobre e autentica uma máquina, exibe o estado em tempo real e envi
   buffer RAM do ESP32, diagnósticos de controller e Live paginado em janelas
   horizontais de 30 s.
 - Targets de brew/steam, active mode, permissão do heater e dismissal de over-temperature confirmados pelo firmware.
+- Calibração guiada em Machine com target raw de `90–120°C`, operação manual
+  da steam wand, Save explícito e um offset global persistido aplicado uma vez
+  em Brew e Steam.
 - Controle pelo ESP32-C3, persistência dos targets em NVS, amostragem MAX6675, rede HTTP/mDNS e policy boundaries testáveis no host.
 - Selector compile-time default-off que mantém a curva Brew legacy como
   autoridade e permite comparar um PI bounded em shadow; builds PI ativos
@@ -48,7 +51,7 @@ Expo mobile app
                     ESP32 firmware (authority)
              sensors -> control -> SSR command -> faults
                               |
-                         NVS targets
+                  NVS targets/calibration
 
 OpenAPI 3.1.1 contract
   -> strict Zod schemas (mobile + simulator)
@@ -129,12 +132,21 @@ A API v2 adiciona, sem remover v1:
 - `POST /api/v2/scale/calibration/complete`
 - `POST /api/v2/scale/calibration/cancel`
 - `POST /api/v2/scale/warnings/acknowledge`
+- `GET /api/v2/temperature-calibration`
+- `POST /api/v2/temperature-calibration/start`
+- `PUT /api/v2/temperature-calibration/candidate`
+- `POST /api/v2/temperature-calibration/save`
+- `POST /api/v2/temperature-calibration/cancel`
 
 Valores históricos e atuais `running`/`off` indicam somente comandos do
 firmware, não corrente, fluxo,
 posição do switch em série ou desenergização física confirmada.
 
 O simulador também disponibiliza controles `_simulator/*`, que ficam deliberadamente fora da API v1 e nunca devem ser implementados como endpoints do firmware de produção.
+
+O range Steam atual é `110–135°C`, inclusivo. `135°C` é o cap permitido para
+target e leitura; qualquer temperatura Steam effective ou raw acima de
+`135°C` causa latch de `over_temperature` e comando do heater off.
 
 ## Regras centrais de design
 

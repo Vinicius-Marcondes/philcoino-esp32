@@ -2,10 +2,10 @@
 
 Date: 2026-07-30
 
-Status: PASS for every configured software check; ESP-IDF target evidence
-unavailable; physical calibration and protection checks not performed.
+Status: PASS for every configured software check and the pinned ESP-IDF 6.0.2
+target build; physical calibration and protection checks not performed.
 
-## Implemented boundary through TCAL-007
+## Implemented boundary through TCAL-008
 
 - One signed calibration offset is persisted by firmware and applied exactly
   once to Brew and Steam temperatures.
@@ -14,10 +14,10 @@ unavailable; physical calibration and protection checks not performed.
 - Calibration controls an uncorrected raw target from `90–120°C`, starts at
   `100°C`, changes by whole degrees, uses advisory-only stability, and never
   commands the pump or detects steam.
-- Effective and raw Steam readings independently fault at `135°C`.
-- The current strict Steam target range remains `110–120°C`. Making `135°C` an
-  inclusive target is intentionally deferred to TCAL-008 because its raw and
-  effective trip boundaries must first move above the target.
+- Effective and raw Steam readings are independently permitted through
+  `135°C` and fault strictly above it.
+- The strict Steam target range is `110–135°C`, inclusive. Offset-adjusted
+  reachability still rejects targets whose implied raw value exceeds `135°C`.
 - Connected, energized, thermostat, SSR-current, and boiling-point acceptance
   remain Human-owned under TCAL-009.
 
@@ -41,6 +41,26 @@ that identifies the behavior being superseded.
 PRD-003 remains unchanged as an acceptance record but is marked historical and
 superseded by PRD-017 for current temperature semantics.
 
+## Completion audit corrections
+
+A requirement-by-requirement audit after the initial green matrix found and
+fixed four consistency gaps:
+
+- the mounted calibration modal now clears local Save-review and deferred-close
+  state whenever hidden, requiring fresh confirmation after reopening;
+- the mobile debug client now cancels active calibration before target, mode,
+  or heater-permission mutations and rejects later offset-unreachable targets;
+- unsafe-target wire copy now says the requested target would **exceed** the raw
+  ceiling, because exact equality is permitted by TCAL-008.
+- the Machine page now places the heater-permission switch before the control
+  cards and gives its landscape controls the full viewport width; Mode and
+  Targets share a wrapping row while Calibration occupies the next row instead
+  of overflowing horizontally.
+
+The dedicated native iOS/Android, maximum-text-size, and assistive-technology
+checklist remains unexecuted. The owner approved the revised responsive UI, but
+that approval is not represented as platform-specific accessibility evidence.
+
 ## Contract and TypeScript workspaces
 
 From the repository root:
@@ -51,14 +71,14 @@ bun run typecheck:protocol
 bun run test:protocol
 ```
 
-PASS — OpenAPI 3.1.1 valid; protocol typecheck; 157 tests / 336 expectations.
+PASS — OpenAPI 3.1.1 valid; protocol typecheck; 157 tests / 337 expectations.
 
 ```text
 bun run typecheck:simulator
 bun run test:simulator
 ```
 
-PASS — simulator typecheck; 92 tests / 731 expectations.
+PASS — simulator typecheck; 92 tests / 741 expectations.
 
 From `apps/mobile`:
 
@@ -68,10 +88,15 @@ bun run typecheck
 bun run lint
 ```
 
-PASS — 250 tests / 2,424 expectations; typecheck; Expo lint. This includes the
+PASS — 252 tests / 2,438 expectations; typecheck; Expo lint. This includes the
 approved responsive calibration modal in portrait and both landscape
 directions, acknowledged session behavior, lifecycle cancellation, manual
-steam-wand guidance, whole-degree adjustment, and offset formatting.
+steam-wand guidance, whole-degree adjustment, offset formatting, and clearing
+local Save-confirmation state whenever the modal closes. It also covers the
+heater-first Machine layout and the full-width wrapping landscape control
+cards. Debug mode now also cancels calibration on conflicting dashboard
+mutations and rejects later offset-unreachable targets with the same
+acknowledged semantics as firmware.
 
 ## Firmware native, sanitizer, and captures
 
@@ -103,7 +128,7 @@ PASS — sanitizer 10/10 under the configured ASan/UBSan targets.
 The suites cover `108°C → −8°C`, `95°C → +5°C`, and `100°C → 0°C`;
 apply-once Brew/Steam behavior; missing, corrupt, failed, and restored
 persistence; recalibration and cancellation; session conflicts and expiry;
-unreachable targets; independent raw/effective `135°C` faults; and fail-off
+unreachable targets; exact-cap and above-cap raw/effective behavior; and fail-off
 sensor, permission, lease, output, timeout, and fault-dismissal paths.
 
 ## Available resource and timing evidence
@@ -139,23 +164,43 @@ scheduling latency.
 
 No host ceiling or configured check regressed after adding calibration.
 
-## Unavailable target evidence
+## Pinned target build and size evidence
 
-`idf.py --version` returned `command not found` in the configured shell. No
-package, CLI, SDK, or dependency was installed. Consequently the pinned
-ESP-IDF 6.0.2 target commands were not run:
+The owner provided the existing activation script:
 
 ```text
+source /Users/vinicius/.espressif/tools/activate_idf_v6.0.2.sh
 cd firmware/espresso-machine
-idf.py set-target esp32c3
+idf.py --version
 idf.py build
+idf.py size
 ```
 
-Flash/map size, target RAM and heap deltas, real task high-water marks, NVS
-partition headroom, HTTP stack use, mutex latency, control-loop deadline
-jitter, watchdog behavior, and real safety-lease timing remain unmeasured.
-Source stack allocations and host object sizes are not substituted for this
-target evidence.
+PASS — `ESP-IDF v6.0.2`, target `esp32c3`.
+
+```text
+Application binary: 0x11c730 bytes
+Smallest app partition: 0x180000 bytes
+App partition free: 0x638d0 bytes (26%)
+Flash code: 915092 bytes
+Flash data: 152788 bytes
+DRAM: 157924 / 321296 bytes (49.15%)
+DRAM remaining: 163372 bytes
+RTC SLOW: 60 / 8192 bytes (0.73%)
+Total image size: 1164716 bytes
+Bootloader: 0x5260 bytes, 0x2da0 bytes (36%) free
+```
+
+The first sandboxed build attempt was blocked because the ESP-IDF component
+manager could not call the macOS process-list `sysctl`. Re-running the same
+build with the required host permission succeeded; no package, CLI, SDK, or
+dependency was installed.
+
+Runtime heap behavior, real task high-water marks, NVS partition headroom,
+HTTP stack use, mutex latency, control-loop deadline jitter, watchdog behavior,
+real safety-lease timing, and physical GPIO/SSR behavior remain unmeasured.
+Source stack allocations, a successful target link, and host object sizes do
+not substitute for connected runtime evidence.
 
 ## Compatibility and safety result
 
@@ -170,6 +215,6 @@ target evidence.
   not heater safety.
 - No connected, low-voltage, energized, boiling, thermostat-interruption,
   wiring, SSR-current, heater-power, or physical steam test was performed.
-- TCAL-008 requires a Human decision on replacement raw/effective fault
-  thresholds above an inclusive `135°C` target. TCAL-009 requires separate
-  explicit authorization and supervision for physical acceptance.
+- TCAL-008 keeps the `135°C` software cap inclusive and faults strictly above
+  it. TCAL-009 requires separate explicit authorization and supervision for
+  physical acceptance.

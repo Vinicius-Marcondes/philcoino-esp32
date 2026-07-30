@@ -1,5 +1,8 @@
 # PHIL-011 — Implement temperature settings and mode control
 
+> Historical task: TCAL-008 later supersedes the `110–120°C` Steam range with
+> an inclusive `110–135°C` range.
+
 Status: Todo
 Review Mode: Human
 

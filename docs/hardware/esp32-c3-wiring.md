@@ -57,9 +57,9 @@ Firmware must immediately de-energize the SSR after sensor failure, over-tempera
 
 The reported load is an 800 W boiler heater on 127 VAC, approximately 6.3 A at nominal voltage. The installed relay is a `FOTEK SSR-40 DA`. The manufacturer specification gives the standard model a 3–32 VDC control input and 24–380 VAC load output, making its output type and voltage range nominally compatible with this resistive heater. Reliable 3.3 V activation, unit authenticity, heat-sink sizing, mounting, and current derating still require verification before wiring approval.
 
-An SSR's common dangerous failure mode is an output short, which leaves the heater on regardless of the GPIO command. The machine's original over-temperature fuse or thermostat is planned to remain installed and reportedly interrupts heater power above approximately 120°C. It addresses the SSR-short failure only if its contacts or fuse element are physically in series with the heater load independently of the ESP32 and SSR control input.
+An SSR's common dangerous failure mode is an output short, which leaves the heater on regardless of the GPIO command. The machine's retained thermostat is owner-identified from a replacement listing as nominally `145°C`, 10 A, 250 V. It addresses the SSR-short failure only if its contacts are physically in series with the heater load independently of the ESP32 and SSR control input; the listing does not prove the installed part, tolerance, coupling, wiring, or interruption.
 
-Its exact part number, marked trip point, tolerance, reset behavior, electrical rating, placement, and wiring must be verified. A 120°C software target cannot be accepted against an approximately 120°C hardware cutoff without a validated safety margin for overshoot, measurement error, thermal lag, and component tolerance.
+Its exact part number, marked trip point, tolerance, reset behavior, electrical rating, placement, and wiring must be verified. The inclusive `135°C` software cap does not establish adequate physical margin against a nominal `145°C` thermostat without supervised measurements for overshoot, measurement error, thermal lag, component tolerance, and actual heater interruption.
 
 ### Pump output
 

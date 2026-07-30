@@ -51,13 +51,14 @@ whole-degree raw candidates from `90–120°C`, and reports advisory stability.
 The user manually opens the steam wand and decides when boiling is observed;
 software neither commands the pump/valve nor detects steam. Saving is rejected
 if NVS fails or if an existing effective target would require raw temperature
-at or above the independent `135°C` ceiling. Targets are never clamped or
+above the independent `135°C` cap. Targets are never clamped or
 rewritten as a calibration side effect.
 
-Raw ceiling validation is independent and occurs before correction. Effective
-Steam temperature reaching `135°C` or raw temperature reaching `135°C`
-independently latches `over_temperature` and commands the heater off. These are
-software command boundaries, not proof of physical de-energization.
+Raw-cap validation is independent and occurs before correction. Effective
+Steam and raw temperatures are permitted through exactly `135°C`; either
+reading strictly above that cap independently latches `over_temperature` and
+commands the heater off. These are software command boundaries, not proof of
+physical de-energization.
 
 Mapping a user-observed boiling point to logical `100°C` is a machine-specific
 rebasing convention. It is not a correction curve, altitude/pressure model,

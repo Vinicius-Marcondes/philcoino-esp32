@@ -73,6 +73,13 @@ struct MemoryState {
   TemperatureTargets targets{};
 };
 
+struct TemperatureCalibrationMemoryState {
+  bool present{false};
+  bool fail_load{false};
+  bool fail_save{false};
+  TemperatureCalibration calibration{};
+};
+
 struct ProfileMemoryState {
   bool present{false};
   bool fail_load{false};
@@ -134,6 +141,37 @@ class MemoryBackend final : public TargetBackend {
 
  private:
   MemoryState& state_;
+};
+
+class TemperatureCalibrationMemoryBackend final
+    : public TemperatureCalibrationBackend {
+ public:
+  explicit TemperatureCalibrationMemoryBackend(
+      TemperatureCalibrationMemoryState& state)
+      : state_(state) {}
+
+  BackendLoadResult load(TemperatureCalibration& calibration) override {
+    if (state_.fail_load) {
+      return BackendLoadResult::kError;
+    }
+    if (!state_.present) {
+      return BackendLoadResult::kNotFound;
+    }
+    calibration = state_.calibration;
+    return BackendLoadResult::kOk;
+  }
+
+  bool save(const TemperatureCalibration& calibration) override {
+    if (state_.fail_save) {
+      return false;
+    }
+    state_.calibration = calibration;
+    state_.present = true;
+    return true;
+  }
+
+ private:
+  TemperatureCalibrationMemoryState& state_;
 };
 
 enum class OutputEvent {
@@ -388,8 +426,8 @@ void test_target_storage() {
     assert(storage.load(targets) == TargetLoadResult::kInitializedDefaults);
     assert(targets.brew_c == 93);
     assert(targets.steam_c == 115);
-    assert(storage.save({95, 120}));
-    assert(!storage.save({84, 120}));
+    assert(storage.save({95, 135}));
+    assert(!storage.save({84, 135}));
   }
   {
     MemoryBackend restarted_backend(state);
@@ -397,7 +435,7 @@ void test_target_storage() {
     TemperatureTargets restored{};
     assert(restarted_storage.load(restored) == TargetLoadResult::kOk);
     assert(restored.brew_c == 95);
-    assert(restored.steam_c == 120);
+    assert(restored.steam_c == 135);
   }
 
   state.targets = {96, 115};
@@ -405,6 +443,60 @@ void test_target_storage() {
   TargetStorage corrupt_storage(corrupt_backend);
   TemperatureTargets corrupt{};
   assert(corrupt_storage.load(corrupt) == TargetLoadResult::kCorrupt);
+}
+
+void test_temperature_calibration_storage_and_conversion() {
+  TemperatureCalibrationMemoryState state;
+  TemperatureCalibrationMemoryBackend backend(state);
+  TemperatureCalibrationStorage storage(backend);
+  TemperatureCalibration calibration{99, true};
+
+  assert(storage.load(calibration) ==
+         TemperatureCalibrationLoadResult::kNotCalibrated);
+  assert(calibration.offset_c == 0);
+  assert(!calibration.calibrated);
+  assert(!state.present);
+
+  assert(storage.save({0, true}));
+  TemperatureCalibration restored{};
+  assert(storage.load(restored) == TemperatureCalibrationLoadResult::kOk);
+  assert(restored.offset_c == 0);
+  assert(restored.calibrated);
+
+  for (const auto value : std::array<TemperatureCalibration, 3>{
+           TemperatureCalibration{-8, true},
+           TemperatureCalibration{5, true},
+           TemperatureCalibration{0, true},
+       }) {
+    assert(storage.save(value));
+    assert(effective_temperature_c(
+               static_cast<float>(
+                   philcoino::config::kTemperatureCalibrationReferenceC -
+                   value.offset_c),
+               value) == 100.0F);
+  }
+
+  assert(!storage.save({-21, true}));
+  assert(!storage.save({11, true}));
+  assert(!storage.save({0, false}));
+
+  state.calibration = {-21, true};
+  assert(storage.load(restored) ==
+         TemperatureCalibrationLoadResult::kCorrupt);
+  state.fail_load = true;
+  assert(storage.load(restored) == TemperatureCalibrationLoadResult::kError);
+  state.fail_load = false;
+  state.fail_save = true;
+  assert(!storage.save({-8, true}));
+
+  assert(targets_are_reachable({95, 120}, {-8, true}));
+  assert(targets_are_reachable({95, 120}, {10, true}));
+  assert(targets_are_reachable({95, 115}, {-20, true}));
+  assert(!targets_are_reachable({95, 116}, {-20, true}));
+  assert(target_is_reachable(115, {-20, true}));
+  assert(!target_is_reachable(116, {-20, true}));
+  assert(target_is_reachable(135, {0, false}));
+  assert(!target_is_reachable(135, {-1, true}));
 }
 
 ExtractionProfile configured_profile(const char* name, std::uint8_t pre,
@@ -718,6 +810,7 @@ int main() {
   test_thermocouple();
   test_event_driven_hx711_acquisition();
   test_target_storage();
+  test_temperature_calibration_storage_and_conversion();
   test_profile_storage();
   test_fail_off_pump();
   test_fail_off_ssr();

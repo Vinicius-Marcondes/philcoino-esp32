@@ -2,6 +2,8 @@
 
 #include <cstddef>
 #include <cstring>
+#include <iomanip>
+#include <sstream>
 #include <utility>
 
 #include "philcoino/api_codec.hpp"
@@ -23,6 +25,9 @@ using codec::parse_mode;
 using codec::parse_profiles;
 using codec::parse_scale_calibration_complete;
 using codec::parse_start;
+using codec::parse_temperature_calibration_candidate;
+using codec::parse_temperature_calibration_query;
+using codec::parse_temperature_calibration_session;
 using codec::parse_temperatures;
 using codec::serialize_compensation;
 using codec::serialize_cooldown;
@@ -35,6 +40,7 @@ using codec::serialize_profiles;
 using codec::serialize_scale;
 using codec::serialize_state;
 using codec::serialize_targets;
+using codec::serialize_temperature_calibration;
 
 class ScopedApiLock {
  public:
@@ -81,6 +87,61 @@ bool ascii_case_equal(char left, char right) {
     right = static_cast<char>(right - 'A' + 'a');
   }
   return left == right;
+}
+
+HttpResponse temperature_calibration_error(
+    control::TemperatureCalibrationResult result) {
+  using Result = control::TemperatureCalibrationResult;
+  switch (result) {
+    case Result::kActive:
+      return error_response(409, "temperature_calibration_active",
+                            "A temperature calibration is already active.");
+    case Result::kInactive:
+      return error_response(409, "temperature_calibration_inactive",
+                            "No temperature calibration is active.");
+    case Result::kSessionMismatch:
+      return error_response(
+          409, "temperature_calibration_session_mismatch",
+          "The calibration session identifier does not own the active session.");
+    case Result::kExpired:
+      return error_response(409, "temperature_calibration_expired",
+                            "The temperature calibration session expired.");
+    case Result::kSensorUnavailable:
+      return error_response(
+          409, "sensor_unavailable",
+          "Temperature calibration requires a valid boiler sensor reading.");
+    case Result::kHeaterDisabled:
+      return error_response(
+          409, "heater_disabled",
+          "Enable heater permission before starting temperature calibration.");
+    case Result::kFault:
+      return error_response(
+          409, "machine_faulted",
+          "Temperature calibration cannot run while a fault is latched.");
+    case Result::kSteamMode:
+      return error_response(
+          409, "brew_mode_required",
+          "Return the machine to Brew before starting temperature calibration.");
+    case Result::kMutationConflict:
+      return error_response(
+          409, "calibration_in_progress",
+          "Another firmware-owned mutation prevents this calibration action.");
+    case Result::kUnsafeTarget:
+      return error_response(
+          409, "temperature_target_unsafe",
+          "The saved offset would require a raw Steam target above the cap.");
+    case Result::kOutputFailure:
+      return error_response(
+          500, "internal_error",
+          "The heater-off command failed during temperature calibration.");
+    case Result::kAdoptionPending:
+      return error_response(
+          500, "internal_error",
+          "Persisted temperature calibration could not be acknowledged.");
+    case Result::kOk: break;
+  }
+  return error_response(500, "internal_error",
+                        "Temperature calibration failed.");
 }
 
 }  // namespace
@@ -138,6 +199,8 @@ bool constant_time_bearer_matches(const char* authorization,
 FirmwareApi::FirmwareApi(DeviceIdentity identity, std::string bearer_token,
                          control::TemperatureController& controller,
                          peripherals::TargetStorage& target_storage,
+                         peripherals::TemperatureCalibrationStorage&
+                             temperature_calibration_storage,
                          control::ExtractionController& extraction_controller,
                          control::CooldownController& cooldown_controller,
                          peripherals::ProfileStorage& profile_storage,
@@ -151,6 +214,7 @@ FirmwareApi::FirmwareApi(DeviceIdentity identity, std::string bearer_token,
       bearer_token_(std::move(bearer_token)),
       controller_(controller),
       target_storage_(target_storage),
+      temperature_calibration_storage_(temperature_calibration_storage),
       extraction_controller_(extraction_controller),
       cooldown_controller_(cooldown_controller),
       profile_storage_(profile_storage),
@@ -191,6 +255,7 @@ HttpResponse FirmwareApi::handle_resolved(const ApiRouteDescriptor& route,
   if (route.id != ApiRouteId::kHistory &&
       route.id != ApiRouteId::kStateV2 &&
       route.id != ApiRouteId::kScaleTrace &&
+      route.id != ApiRouteId::kTemperatureCalibrationGet &&
       query_separator != std::string::npos) {
     return error_response(404, "internal_error",
                           "The requested endpoint does not exist.");
@@ -202,6 +267,16 @@ HttpResponse FirmwareApi::handle_resolved(const ApiRouteDescriptor& route,
     case ApiRouteId::kTemperatures:
       return update_temperatures(body, uptime_ms);
     case ApiRouteId::kStateV2: return state_v2(query, uptime_ms);
+    case ApiRouteId::kTemperatureCalibrationGet:
+      return temperature_calibration(query, uptime_ms);
+    case ApiRouteId::kTemperatureCalibrationStart:
+      return start_temperature_calibration(uptime_ms);
+    case ApiRouteId::kTemperatureCalibrationCandidate:
+      return update_temperature_calibration_candidate(body, uptime_ms);
+    case ApiRouteId::kTemperatureCalibrationSave:
+      return save_temperature_calibration(body, uptime_ms);
+    case ApiRouteId::kTemperatureCalibrationCancel:
+      return cancel_temperature_calibration(body, uptime_ms);
     case ApiRouteId::kHistory: return history(query, uptime_ms);
     case ApiRouteId::kScaleGet: return scale(uptime_ms);
     case ApiRouteId::kScaleTrace: return scale_trace(query, uptime_ms);
@@ -272,16 +347,242 @@ HttpResponse FirmwareApi::state(std::uint64_t uptime_ms) const {
   return json_response(200, serialize_state(snapshot, uptime_ms));
 }
 
-HttpResponse FirmwareApi::update_temperatures(const std::string& body,
-                                              std::uint64_t uptime_ms) {
-  peripherals::TemperatureTargets current{};
+HttpResponse FirmwareApi::temperature_calibration(
+    const std::string& query, std::uint64_t uptime_ms) {
+  bool calibration_id_supplied = false;
+  std::string calibration_id;
+  if (!parse_temperature_calibration_query(
+          query, calibration_id_supplied, calibration_id)) {
+    return error_response(400, "malformed_request",
+                          "The temperature calibration query is malformed.");
+  }
+
+  control::TemperatureCalibrationSnapshot snapshot{};
+  control::TemperatureCalibrationResult result{
+      control::TemperatureCalibrationResult::kOk};
   {
     ScopedApiLock lock(synchronization_, ApiDomain::kTemperature);
     if (!lock.locked()) {
       return error_response(500, "internal_error",
                             "Temperature control synchronization failed.");
     }
-    current = controller_.targets();
+    if (controller_.temperature_calibration_active()) {
+      result = calibration_id_supplied
+                   ? controller_.renew_temperature_calibration(
+                         calibration_id,
+                         static_cast<std::uint32_t>(uptime_ms))
+                   : control::TemperatureCalibrationResult::kSessionMismatch;
+    } else if (calibration_id_supplied) {
+      result = controller_.renew_temperature_calibration(
+          calibration_id, static_cast<std::uint32_t>(uptime_ms));
+    }
+    if (result == control::TemperatureCalibrationResult::kOk) {
+      snapshot = controller_.temperature_calibration_snapshot(
+          static_cast<std::uint32_t>(uptime_ms));
+    }
+  }
+  return result == control::TemperatureCalibrationResult::kOk
+             ? json_response(200,
+                             serialize_temperature_calibration(snapshot))
+             : temperature_calibration_error(result);
+}
+
+HttpResponse FirmwareApi::start_temperature_calibration(
+    std::uint64_t uptime_ms) {
+  control::TemperatureCalibrationSnapshot snapshot{};
+  control::TemperatureCalibrationResult result{
+      control::TemperatureCalibrationResult::kOk};
+  {
+    ScopedApiLock lock(synchronization_, ApiDomain::kTemperature);
+    if (!lock.locked()) {
+      return error_response(500, "internal_error",
+                            "Temperature control synchronization failed.");
+    }
+    if (extraction_controller_.active()) {
+      return error_response(
+          409, "extraction_active",
+          "Stop extraction before starting temperature calibration.");
+    }
+    if (cooldown_controller_.active()) {
+      return error_response(
+          409, "cooldown_active",
+          "Stop cooldown before starting temperature calibration.");
+    }
+    if (scale_controller_ != nullptr &&
+        scale_controller_->snapshot(
+            static_cast<std::uint32_t>(uptime_ms))
+                .calibration_status ==
+            control::ScaleCalibrationStatus::kCalibrating) {
+      return error_response(
+          409, "calibration_in_progress",
+          "Finish scale calibration before starting temperature calibration.");
+    }
+    std::ostringstream session;
+    session << "temp-cal-" << std::hex << std::setfill('0')
+            << std::setw(8)
+            << static_cast<std::uint32_t>(uptime_ms) << '-'
+            << std::setw(8) << ++temperature_calibration_sequence_;
+    result = controller_.start_temperature_calibration(
+        session.str(), static_cast<std::uint32_t>(uptime_ms));
+    if (result == control::TemperatureCalibrationResult::kOk) {
+      snapshot = controller_.temperature_calibration_snapshot(
+          static_cast<std::uint32_t>(uptime_ms));
+    }
+  }
+  return result == control::TemperatureCalibrationResult::kOk
+             ? json_response(200,
+                             serialize_temperature_calibration(snapshot))
+             : temperature_calibration_error(result);
+}
+
+HttpResponse FirmwareApi::update_temperature_calibration_candidate(
+    const std::string& body, std::uint64_t uptime_ms) {
+  std::string calibration_id;
+  std::int32_t candidate_raw_target_c = 0;
+  if (!parse_temperature_calibration_candidate(
+          body, calibration_id, candidate_raw_target_c)) {
+    return error_response(400, "malformed_request", kMalformedMessage);
+  }
+
+  control::TemperatureCalibrationSnapshot snapshot{};
+  control::TemperatureCalibrationResult result{
+      control::TemperatureCalibrationResult::kOk};
+  {
+    ScopedApiLock lock(synchronization_, ApiDomain::kTemperature);
+    if (!lock.locked()) {
+      return error_response(500, "internal_error",
+                            "Temperature control synchronization failed.");
+    }
+    result = controller_.update_temperature_calibration_candidate(
+        calibration_id, candidate_raw_target_c,
+        static_cast<std::uint32_t>(uptime_ms));
+    if (result == control::TemperatureCalibrationResult::kOk) {
+      snapshot = controller_.temperature_calibration_snapshot(
+          static_cast<std::uint32_t>(uptime_ms));
+    }
+  }
+  return result == control::TemperatureCalibrationResult::kOk
+             ? json_response(200,
+                             serialize_temperature_calibration(snapshot))
+             : temperature_calibration_error(result);
+}
+
+HttpResponse FirmwareApi::save_temperature_calibration(
+    const std::string& body, std::uint64_t uptime_ms) {
+  std::string calibration_id;
+  if (!parse_temperature_calibration_session(body, calibration_id)) {
+    return error_response(400, "malformed_request", kMalformedMessage);
+  }
+
+  peripherals::TemperatureCalibration candidate{};
+  control::TemperatureCalibrationResult result{
+      control::TemperatureCalibrationResult::kOk};
+  {
+    ScopedApiLock lock(synchronization_, ApiDomain::kTemperature);
+    if (!lock.locked()) {
+      return error_response(500, "internal_error",
+                            "Temperature control synchronization failed.");
+    }
+    result = controller_.prepare_temperature_calibration_save(
+        calibration_id, candidate,
+        static_cast<std::uint32_t>(uptime_ms));
+  }
+  if (result != control::TemperatureCalibrationResult::kOk) {
+    return temperature_calibration_error(result);
+  }
+
+  if (!temperature_calibration_storage_.save(candidate)) {
+    bool rolled_back = false;
+    {
+      ScopedApiLock lock(synchronization_, ApiDomain::kTemperature);
+      rolled_back =
+          lock.locked() &&
+          controller_.rollback_temperature_calibration_save(
+              calibration_id, static_cast<std::uint32_t>(uptime_ms)) ==
+              control::TemperatureCalibrationResult::kOk;
+    }
+    if (!rolled_back) {
+      return error_response(
+          500, "internal_error",
+          "Calibration persistence failed and rollback was not acknowledged.");
+    }
+    return error_response(
+        500, "persistence_failure",
+        "Temperature calibration could not be persisted.");
+  }
+
+  control::TemperatureCalibrationSnapshot snapshot{};
+  {
+    ScopedApiLock lock(synchronization_, ApiDomain::kTemperature);
+    if (!lock.locked()) {
+      return error_response(
+          500, "internal_error",
+          "Persisted temperature calibration could not be acknowledged.");
+    }
+    result = controller_.adopt_persisted_temperature_calibration(
+        calibration_id, candidate,
+        static_cast<std::uint32_t>(uptime_ms));
+    if (result == control::TemperatureCalibrationResult::kOk) {
+      snapshot = controller_.temperature_calibration_snapshot(
+          static_cast<std::uint32_t>(uptime_ms));
+    }
+  }
+  return result == control::TemperatureCalibrationResult::kOk
+             ? json_response(200,
+                             serialize_temperature_calibration(snapshot))
+             : temperature_calibration_error(result);
+}
+
+HttpResponse FirmwareApi::cancel_temperature_calibration(
+    const std::string& body, std::uint64_t uptime_ms) {
+  std::string calibration_id;
+  if (!parse_temperature_calibration_session(body, calibration_id)) {
+    return error_response(400, "malformed_request", kMalformedMessage);
+  }
+  control::TemperatureCalibrationSnapshot snapshot{};
+  control::TemperatureCalibrationResult result{
+      control::TemperatureCalibrationResult::kOk};
+  {
+    ScopedApiLock lock(synchronization_, ApiDomain::kTemperature);
+    if (!lock.locked()) {
+      return error_response(500, "internal_error",
+                            "Temperature control synchronization failed.");
+    }
+    result = controller_.cancel_temperature_calibration(
+        calibration_id, static_cast<std::uint32_t>(uptime_ms));
+    if (result == control::TemperatureCalibrationResult::kOk) {
+      snapshot = controller_.temperature_calibration_snapshot(
+          static_cast<std::uint32_t>(uptime_ms));
+    }
+  }
+  return result == control::TemperatureCalibrationResult::kOk
+             ? json_response(200,
+                             serialize_temperature_calibration(snapshot))
+             : temperature_calibration_error(result);
+}
+
+HttpResponse FirmwareApi::update_temperatures(const std::string& body,
+                                              std::uint64_t uptime_ms) {
+  peripherals::TemperatureTargets current{};
+  bool calibration_conflict = false;
+  {
+    ScopedApiLock lock(synchronization_, ApiDomain::kTemperature);
+    if (!lock.locked()) {
+      return error_response(500, "internal_error",
+                            "Temperature control synchronization failed.");
+    }
+    if (controller_.temperature_calibration_active()) {
+      controller_.abort_temperature_calibration(
+          static_cast<std::uint32_t>(uptime_ms));
+      calibration_conflict = true;
+    } else {
+      current = controller_.targets();
+    }
+  }
+  if (calibration_conflict) {
+    return error_response(
+        409, "temperature_calibration_active",
+        "Temperature calibration was cancelled before changing targets.");
   }
   peripherals::TemperatureTargets updated{};
   bool constraint_violation = false;
@@ -295,6 +596,7 @@ HttpResponse FirmwareApi::update_temperatures(const std::string& body,
   }
   bool no_change = false;
   bool revalidation_failed = false;
+  bool unsafe_target = false;
   bool prepare_failed = false;
   {
     ScopedApiLock lock(synchronization_, ApiDomain::kTemperature);
@@ -306,6 +608,8 @@ HttpResponse FirmwareApi::update_temperatures(const std::string& body,
     if (!parse_temperatures(body, current, updated, constraint_violation) ||
         constraint_violation) {
       revalidation_failed = true;
+    } else if (!controller_.targets_reachable(updated)) {
+      unsafe_target = true;
     } else {
       no_change = updated.brew_c == current.brew_c &&
                   updated.steam_c == current.steam_c;
@@ -317,6 +621,11 @@ HttpResponse FirmwareApi::update_temperatures(const std::string& body,
   }
   if (revalidation_failed) {
     return error_response(400, "malformed_request", kMalformedMessage);
+  }
+  if (unsafe_target) {
+    return error_response(
+        400, "temperature_target_unsafe",
+        "The requested effective target would exceed the raw temperature ceiling.");
   }
   if (prepare_failed) {
     return error_response(500, "internal_error",
@@ -362,7 +671,13 @@ HttpResponse FirmwareApi::update_mode(const std::string& body,
   if (!parse_mode(body, mode)) {
     return error_response(400, "malformed_request", kMalformedMessage);
   }
-  enum class Result { kOk, kFault, kWorkflowActive, kFailed };
+  enum class Result {
+    kOk,
+    kFault,
+    kWorkflowActive,
+    kCalibrationActive,
+    kFailed,
+  };
   Result result = Result::kOk;
   control::ControlMode acknowledged{};
   {
@@ -371,7 +686,11 @@ HttpResponse FirmwareApi::update_mode(const std::string& body,
       return error_response(500, "internal_error",
                             "Temperature control synchronization failed.");
     }
-    if (controller_.has_fault()) {
+    if (controller_.temperature_calibration_active()) {
+      controller_.abort_temperature_calibration(
+          static_cast<std::uint32_t>(uptime_ms));
+      result = Result::kCalibrationActive;
+    } else if (controller_.has_fault()) {
       result = Result::kFault;
     } else if (mode == control::ControlMode::kSteam &&
                (extraction_controller_.active() ||
@@ -394,6 +713,11 @@ HttpResponse FirmwareApi::update_mode(const std::string& body,
         409, "sensor_unavailable",
         "Steam mode is unavailable while extraction or cooldown is active.");
   }
+  if (result == Result::kCalibrationActive) {
+    return error_response(
+        409, "temperature_calibration_active",
+        "Temperature calibration was cancelled before changing mode.");
+  }
   if (result == Result::kFailed) {
     return error_response(500, "internal_error",
                           "The control mode could not be changed safely.");
@@ -409,15 +733,27 @@ HttpResponse FirmwareApi::update_heater(const std::string& body,
   }
   bool updated = false;
   bool acknowledged = false;
+  bool calibration_conflict = false;
   {
     ScopedApiLock lock(synchronization_, ApiDomain::kTemperature);
     if (!lock.locked()) {
       return error_response(500, "internal_error",
                             "Temperature control synchronization failed.");
     }
-    updated = controller_.set_heater_enabled(
-        enabled, static_cast<std::uint32_t>(uptime_ms));
-    acknowledged = controller_.heater_enabled_permission();
+    if (controller_.temperature_calibration_active()) {
+      controller_.abort_temperature_calibration(
+          static_cast<std::uint32_t>(uptime_ms));
+      calibration_conflict = true;
+    } else {
+      updated = controller_.set_heater_enabled(
+          enabled, static_cast<std::uint32_t>(uptime_ms));
+      acknowledged = controller_.heater_enabled_permission();
+    }
+  }
+  if (calibration_conflict) {
+    return error_response(
+        409, "temperature_calibration_active",
+        "Temperature calibration was cancelled before changing heater permission.");
   }
   if (!updated) {
     return error_response(500, "internal_error",
@@ -571,6 +907,14 @@ HttpResponse FirmwareApi::start_scale_calibration(std::uint64_t uptime_ms) {
   if (!lock.locked()) {
     return error_response(500, "internal_error",
                           "Scale synchronization failed.");
+  }
+  if (controller_.temperature_calibration_active()) {
+    controller_.abort_temperature_calibration(
+        static_cast<std::uint32_t>(uptime_ms));
+    lock.unlock();
+    return error_response(
+        409, "temperature_calibration_active",
+        "Temperature calibration was cancelled before starting scale calibration.");
   }
   const auto result = scale_controller_->start_calibration(
       extraction_controller_.active() || cooldown_controller_.active(),
@@ -777,6 +1121,13 @@ HttpResponse FirmwareApi::start_extraction(const std::string& body,
                           "Extraction control synchronization failed.");
   }
   const auto now_ms = static_cast<std::uint32_t>(uptime_ms);
+  if (controller_.temperature_calibration_active()) {
+    controller_.abort_temperature_calibration(now_ms);
+    lock.unlock();
+    return error_response(
+        409, "temperature_calibration_active",
+        "Temperature calibration was cancelled before starting extraction.");
+  }
   const control::WeightControl* requested_weight =
       weighted ? &weight_control : nullptr;
   control::ScaleSnapshot scale_snapshot{};
@@ -906,6 +1257,13 @@ HttpResponse FirmwareApi::start_cooldown(const std::string& body,
                           "Workflow control synchronization failed.");
   }
   const auto now_ms = static_cast<std::uint32_t>(uptime_ms);
+  if (controller_.temperature_calibration_active()) {
+    controller_.abort_temperature_calibration(now_ms);
+    lock.unlock();
+    return error_response(
+        409, "temperature_calibration_active",
+        "Temperature calibration was cancelled before starting cooldown.");
+  }
   const auto result = cooldown_controller_.start(
       key, current_cooldown_input(controller_, extraction_controller_), now_ms);
   const auto cooldown = cooldown_controller_.snapshot(now_ms);

@@ -1,11 +1,14 @@
 # Minimal invalid objects and protocol temperature fixtures
 {}
 {"brewTargetC":93}
-{"brewTargetC":85,"steamTargetC":120}
+{"brewTargetC":85,"steamTargetC":135}
 {"steamTargetC":115,"brewTargetC":93}
 # Machine request fixtures
 {"mode":"steam"}
 {"heaterEnabled":false}
+# Temperature calibration request fixtures
+{"calibrationId":"temp-cal-01J2ABCDEF"}
+{"calibrationId":"temp-cal-01J2ABCDEF","candidateRawTargetC":108}
 # Cooldown and extraction Start request fixtures
 {"idempotencyKey":"abcdefghijklmnop"}
 {"idempotencyKey":"abcdefghijklmnop","selection":{"kind":"manual"}}

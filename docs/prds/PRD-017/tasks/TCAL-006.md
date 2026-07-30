@@ -2,9 +2,9 @@
 
 Status: Done
 Review Mode: Human
-Human Review Needs: Review native navigation, safety copy, manual steam-wand
-instructions, confirmation clarity, accessibility, larger text, and portrait/
-landscape layouts on iOS and Android.
+Human Review Needs: The owner approved the revised responsive UI. Dedicated
+native iOS/Android, maximum-text-size, and assistive-technology passes remain
+unexecuted and are not inferred from that visual approval.
 
 ## Goal
 
@@ -55,8 +55,8 @@ temperature certainty.
   steam, calibrated-accuracy, or heater-de-energization claim.
 - [x] Navigation/background cancellation and all failure states are visible and
   cannot appear as saved success.
-- [x] Automated mobile checks pass and Human review accepts native iOS/Android,
-  larger-text, portrait, and landscape behavior.
+- [x] Automated mobile checks pass and the owner accepts the revised portrait/
+  landscape UI, instructions, and Save-confirmation flow.
 
 ## Verification Strategy
 
@@ -66,10 +66,10 @@ temperature certainty.
 
 ## Software Evidence
 
-- `bun test apps/mobile/test` — 250 tests, 2,416 expectations passed.
+- `bun test apps/mobile/test` — 252 tests, 2,438 expectations passed.
 - `bun run --filter @philcoino/mobile typecheck` — passed.
 - `bun run --filter @philcoino/mobile lint` — passed.
-- Focused calibration screen/session/localization checks — 21 tests, 633
+- Focused calibration screen/session/debug-client checks — 24 tests, 107
   expectations passed.
 - Native preflight environment audit — an existing iOS 26.4 simulator boots,
   but Expo Go is not installed; Android `adb` is unavailable. No package, app,
@@ -81,6 +81,13 @@ temperature certainty.
   derives layout from the modal's own live window dimensions, removes landscape
   column minimum-width overflow, and uses compact candidate, instruction,
   metric, bounds, and action styles.
+- A completion audit found and fixed retained local confirmation state: hiding
+  the mounted modal now clears both Save review and deferred-close state, so a
+  reopened session must enter a fresh confirmation flow.
+- A later Machine-page refinement moves the heater-permission switch above all
+  Machine controls. In landscape, the control area now uses the full viewport:
+  Mode and Targets wrap on the first row and Calibration uses a full-width
+  second row instead of extending beyond the right edge.
 
 ## Human Review Checklist
 

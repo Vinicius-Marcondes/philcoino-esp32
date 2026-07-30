@@ -1,5 +1,8 @@
 # TCAL-001 — Define the calibration API contract
 
+> TCAL-008 supersedes this task's original strict-below-`135°C` target-bound
+> wording: exact raw `135°C` is now reachable and values above it are rejected.
+
 Status: Done
 Review Mode: Agent
 Review Reason: OpenAPI validation, strict Zod schemas, fixtures, and drift tests
@@ -59,7 +62,7 @@ and transactional errors before implementing any runtime behavior.
 ## Completion Evidence
 
 - `bun run validate:openapi`: passed.
-- `bun run test`: 157 tests passed with 336 expectations.
+- `bun run test`: 157 tests passed with 337 expectations.
 - `bun run typecheck`: passed.
 - Added strict calibration state/request fixtures and rejection coverage for
   bounds, fractional candidates, unknown fields, session IDs, preview
@@ -74,7 +77,7 @@ and transactional errors before implementing any runtime behavior.
   `boilerTemperatureC` is redefined as the single-offset effective temperature
   in both modes.
 - Safe target bounds remain within the existing Brew/Steam product ranges and
-  expose only targets whose implied raw value stays below `135°C`.
+  expose only targets whose implied raw value is at or below `135°C`.
 
 ## Verification Strategy
 

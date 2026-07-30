@@ -51,9 +51,9 @@ describe("debug device mode", () => {
     await expect(
       client.updateTemperatureSettings({
         brewTargetC: 94,
-        steamTargetC: 116,
+        steamTargetC: 135,
       }),
-    ).resolves.toEqual({ brewTargetC: 94, steamTargetC: 116 });
+    ).resolves.toEqual({ brewTargetC: 94, steamTargetC: 135 });
     await expect(client.setMode({ mode: "steam" })).resolves.toEqual({
       mode: "steam",
     });
@@ -68,7 +68,7 @@ describe("debug device mode", () => {
       brewTargetC: 94,
       boilerTemperatureC: 0,
       heaterEnabled: false,
-      steamTargetC: 116,
+      steamTargetC: 135,
       steamTimeoutRemainingMs: 0,
       uptimeMs: 0,
     });
@@ -162,6 +162,100 @@ describe("debug device mode", () => {
       pumpCommand: "off",
     });
     await expect(client.stopCooldown()).resolves.toEqual(stopped);
+  });
+
+  test("provides strict acknowledged temperature calibration locally", async () => {
+    const client = createDebugDeviceApiClient();
+    let calibration = await client.getTemperatureCalibration();
+    expect(calibration).toMatchObject({
+      status: "uncalibrated",
+      savedOffsetC: 0,
+    });
+
+    calibration = await client.startTemperatureCalibration();
+    expect(calibration).toMatchObject({
+      status: "calibrating",
+      candidateRawTargetC: 100,
+    });
+    if (calibration.status !== "calibrating") {
+      throw new Error("Expected a debug calibration session.");
+    }
+    calibration = await client.updateTemperatureCalibrationCandidate({
+      calibrationId: calibration.calibrationId,
+      candidateRawTargetC: 108,
+    });
+    expect(calibration).toMatchObject({
+      status: "calibrating",
+      offsetPreviewC: -8,
+    });
+    if (calibration.status !== "calibrating") {
+      throw new Error("Expected an acknowledged debug candidate.");
+    }
+    await expect(
+      client.saveTemperatureCalibration({
+        calibrationId: calibration.calibrationId,
+      }),
+    ).resolves.toMatchObject({
+      status: "calibrated",
+      savedOffsetC: -8,
+    });
+
+    const unsafeTarget = await captureError(
+      client.updateTemperatureSettings({ steamTargetC: 128 }),
+    );
+    expect(unsafeTarget).toMatchObject({
+      kind: "http",
+      response: {
+        error: { code: "temperature_target_unsafe" },
+      },
+      status: 400,
+    });
+    await expect(client.getState()).resolves.toMatchObject({
+      steamTargetC: STEAM_TARGET_MIN_C,
+    });
+  });
+
+  test("cancels debug calibration before conflicting dashboard mutations", async () => {
+    const client = createDebugDeviceApiClient();
+
+    await client.startTemperatureCalibration();
+    let conflict = await captureError(
+      client.updateTemperatureSettings({ steamTargetC: 120 }),
+    );
+    expect(conflict).toMatchObject({
+      response: {
+        error: { code: "temperature_calibration_active" },
+      },
+      status: 409,
+    });
+    await expect(client.getTemperatureCalibration()).resolves.toMatchObject({
+      status: "uncalibrated",
+    });
+
+    await client.startTemperatureCalibration();
+    conflict = await captureError(client.setMode({ mode: "brew" }));
+    expect(conflict).toMatchObject({
+      response: {
+        error: { code: "temperature_calibration_active" },
+      },
+      status: 409,
+    });
+
+    await client.startTemperatureCalibration();
+    conflict = await captureError(
+      client.setHeaterEnabled({ heaterEnabled: false }),
+    );
+    expect(conflict).toMatchObject({
+      response: {
+        error: { code: "temperature_calibration_active" },
+      },
+      status: 409,
+    });
+    await expect(client.getState()).resolves.toMatchObject({
+      activeMode: "brew",
+      heaterEnabled: true,
+      steamTargetC: STEAM_TARGET_MIN_C,
+    });
   });
 });
 

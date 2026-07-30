@@ -63,7 +63,7 @@ Boundary rules:
 - public: `GET /healthz` and `GET /api/v1/device`;
 - authenticated: state and all mutations;
 - unknown request/response fields are rejected;
-- targets are whole numbers: brew 85–95°C, steam 110–120°C;
+- targets are whole numbers: brew 85–95°C, steam 110–135°C;
 - temperature calibration uses a raw whole-degree candidate from 90–120°C and
   one signed persisted offset from -20–10°C;
 - fault state requires a fault object and `heaterActive: false`;
@@ -308,7 +308,8 @@ The simulator stores one raw boiler temperature and derives
 `boilerTemperatureC = rawTemperatureC + temperatureOffsetC` exactly once for
 both modes. Its calibration transaction controls the raw candidate from
 90–120°C, persists `100 - candidate`, reports offset-adjusted target bounds,
-and enforces independent effective-Steam and raw `135°C` fault boundaries.
+and permits each independent effective-Steam and raw reading through `135°C`.
+Either reading strictly above that cap latches the simulated fault.
 These logical values do not model separate boiler-base/upper-boiler
 temperatures or provide physical calibration evidence.
 

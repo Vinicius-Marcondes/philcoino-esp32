@@ -17,9 +17,9 @@ Philcoino é um controller experimental para máquina de espresso que trabalha p
   energizada continuam pendentes.
 - O thermostat retido é identificado pelo owner/listing como nominalmente
   `145°C`, 10 A, 250 V. O listing não comprova tolerância, acoplamento, ligação
-  em série ou interrupção do heater instalado. A futura TCAL-008 para permitir
-  target Steam inclusivo de `135°C` exige novos limites raw/effective aprovados;
-  não está implementada nesta evidência.
+  em série ou interrupção do heater instalado. A TCAL-008 permite target Steam
+  inclusivo de `135°C`; isso é evidência de software e não valida o thermostat
+  nem autoriza operação energizada.
 - O software da PRD-004 adiciona bias fixo de `+2°C` somente ao cálculo de duty
   durante Manual/main e um workflow de comando de cooldown do firmware com
   cutoff da pump em 45 segundos e estabilização de cinco segundos. THERM-002,
@@ -46,8 +46,8 @@ O firmware controla o temperature-control loop e não depende da conectividade d
 - valida o status do MAX6675 e leituras finitas;
 - valida a leitura raw, aplica um único offset global persistido em Brew e
   Steam e usa a temperatura effective resultante para decisões e snapshots;
-- aplica limites independentes de `135°C` à temperatura Steam effective e à
-  leitura raw antes da correção; qualquer um causa latch de
+- permite temperatura Steam effective e leitura raw até `135°C`, inclusive,
+  antes da correção; qualquer uma estritamente acima do cap causa latch de
   `over_temperature` e comando do heater off;
 - aplica target e limites de over-temperature específicos de cada mode;
 - exige três segundos contínuos na ready band;

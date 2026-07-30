@@ -75,14 +75,10 @@ the steam wand and confirms the observed boiling point.
 
 Normal targets stay numerically unchanged. Firmware rejects a calibration Save
 or later target mutation if the effective target would require raw temperature
-at or above the independent `135°C` raw ceiling; it never clamps. Effective
-Steam temperature at `135°C` and raw temperature at `135°C` independently latch
-`over_temperature` and command the heater off.
-
-This current fault-at-`135°C` behavior means `135°C` is not a usable target.
-TCAL-008 separately tracks the owner-requested inclusive `135°C` Steam target
-and requires Human-approved raw/effective fault boundaries above it before the
-protocol or runtime limit changes.
+above the independent `135°C` raw cap; it never clamps. Steam target
+`135°C`, effective Steam `135°C`, and raw temperature `135°C` are permitted.
+A reading strictly above either effective or raw cap independently latches
+`over_temperature` and commands the heater off.
 
 History authentication is resolved before query parsing. A request either has
 no cursor or has exactly one `bootId` plus one `afterSequence`; unknown,

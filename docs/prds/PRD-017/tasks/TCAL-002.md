@@ -1,5 +1,9 @@
 # TCAL-002 — Persist and apply the global firmware offset
 
+> TCAL-008 supersedes this task's original fault-at-`135°C` equality:
+> `135°C` is now the inclusive raw/effective cap and values strictly above it
+> fault.
+
 Status: Done
 Review Mode: Agent
 Review Reason: Pure storage/control policies, host tests, sanitizer runs, and
@@ -23,7 +27,7 @@ temperature safety limits.
   diagnostics/history, snapshots, and normal over-temperature decisions.
 - Raise effective Steam over-temperature to `135°C` and add an independent
   raw `135°C` ceiling checked before correction.
-- Validate whether an effective target is reachable below the raw ceiling,
+- Validate whether an effective target is reachable at or below the raw ceiling,
   without mutating or clamping persisted targets.
 - Preserve Brew PI/legacy selection, extraction `+2°C` private duty bias,
   ten-second SSR window, safety lease, boot-off ordering, and fail-off owners.
@@ -51,8 +55,9 @@ temperature safety limits.
 - [x] `108°C/-8°C`, `95°C/+5°C`, and `100°C/0°C` produce effective `100°C`.
 - [x] Brew and Steam use the correction exactly once and no active firmware
   symbol or call path retains the fixed Steam-only `+5°C`.
-- [x] Effective Steam `135°C` and raw `135°C` independently latch
-  `over_temperature` and fail off.
+- [x] Exact effective Steam and raw readings of `135°C` are permitted; the
+  first representable value above either boundary independently latches
+  `over_temperature` and fails off.
 - [x] Offset-aware target reachability rejects unsafe requests without changing
   stored targets.
 - [x] Existing controller, workflow, permission, lease, output, and fault
@@ -62,7 +67,7 @@ temperature safety limits.
 
 - Native firmware host suite: 10/10 CTest targets passed.
 - Sanitizer firmware host suite: 10/10 CTest targets passed.
-- Firmware contract validation: 32 response captures passed.
+- Firmware contract validation: 35 response captures passed.
 - Pure tests cover missing, explicit zero, signed bounds, corrupt/read/save
   failures, the three required arithmetic examples, both controller builds,
   both modes, unsafe target rejection, and independent raw/effective limits.
@@ -73,8 +78,8 @@ temperature safety limits.
   distinguishes explicitly saved `0°C` from the missing-record default.
 - Raw validation and the independent raw ceiling run before the one global
   offset is used by effective-temperature consumers.
-- Safe target validation requires the implied raw target to remain strictly
-  below `135°C`; rejected targets are neither persisted nor clamped.
+- Safe target validation permits an implied raw target through exact `135°C`;
+  values above it are rejected and targets are neither persisted nor clamped.
 
 ## Verification Strategy
 

@@ -64,14 +64,15 @@ any physical acceptance.
 ## Evidence
 
 - `docs/prds/PRD-017/evidence/SOFTWARE-VERIFICATION.md`
-- OpenAPI valid; protocol typecheck and 157 tests / 336 expectations pass.
-- Simulator typecheck and 92 tests / 731 expectations pass.
-- Mobile typecheck, Expo lint, and 250 tests / 2,424 expectations pass.
+- OpenAPI valid; protocol typecheck and 157 tests / 337 expectations pass.
+- Simulator typecheck and 92 tests / 741 expectations pass.
+- Mobile typecheck, Expo lint, and 252 tests / 2,438 expectations pass.
 - Firmware native and sanitizer suites pass 10/10; 35 strict captures pass.
 - Host resource report: `HistorySample=40`, `HistoryBuffer=24072`,
   `HistoryPage=416`, `ControlSnapshot=128`, `BrewPiController=76`.
-- `idf.py` is unavailable; target flash, RAM, heap, stack, NVS headroom, mutex,
-  timing, watchdog, and real lease evidence remain explicitly unmeasured.
+- The pinned ESP-IDF 6.0.2 target build became available during TCAL-008 and
+  passes. Runtime heap, stack high-water, NVS headroom, mutex timing, watchdog,
+  and real lease evidence remain explicitly unmeasured.
 
 ## Decision
 

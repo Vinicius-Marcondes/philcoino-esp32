@@ -3,8 +3,17 @@ import { z } from "zod";
 export const BREW_TARGET_MIN_C = 85;
 export const BREW_TARGET_MAX_C = 95;
 export const STEAM_TARGET_MIN_C = 110;
-export const STEAM_TARGET_MAX_C = 120;
+export const STEAM_TARGET_MAX_C = 135;
 export const STEAM_TIMEOUT_MS = 300_000;
+export const TEMPERATURE_CALIBRATION_REFERENCE_C = 100;
+export const TEMPERATURE_CALIBRATION_CANDIDATE_MIN_C = 90;
+export const TEMPERATURE_CALIBRATION_CANDIDATE_MAX_C = 120;
+export const TEMPERATURE_CALIBRATION_STEP_C = 1;
+export const TEMPERATURE_CALIBRATION_OFFSET_MIN_C = -20;
+export const TEMPERATURE_CALIBRATION_OFFSET_MAX_C = 10;
+export const TEMPERATURE_CALIBRATION_SESSION_LEASE_MS = 15_000;
+export const STEAM_OVER_TEMPERATURE_C = 135;
+export const RAW_BOILER_OVER_TEMPERATURE_C = 135;
 export const EXTRACTION_MAX_DURATION_SECONDS = 60;
 export const EXTRACTION_MAX_DURATION_MS =
   EXTRACTION_MAX_DURATION_SECONDS * 1_000;
@@ -44,6 +53,7 @@ export const ErrorCodeSchema = z.enum([
   "malformed_request",
   "unauthorized",
   "temperature_out_of_range",
+  "temperature_target_unsafe",
   "sensor_unavailable",
   "persistence_failure",
   "internal_error",
@@ -132,6 +142,103 @@ export const TemperatureSettingsRequestSchema = z.union([
 export const TemperatureSettingsResponseSchema = z.strictObject({
   brewTargetC: BrewTargetSchema,
   steamTargetC: SteamTargetSchema,
+});
+
+export const TemperatureCalibrationSessionIdSchema = z
+  .string()
+  .min(16)
+  .max(64)
+  .regex(/^[A-Za-z0-9][A-Za-z0-9._~-]*$/);
+export const TemperatureCalibrationStatusSchema = z.enum([
+  "uncalibrated",
+  "calibrating",
+  "calibrated",
+]);
+export const TemperatureCalibrationCandidateRawTargetSchema = z
+  .number()
+  .int()
+  .min(TEMPERATURE_CALIBRATION_CANDIDATE_MIN_C)
+  .max(TEMPERATURE_CALIBRATION_CANDIDATE_MAX_C);
+export const TemperatureCalibrationOffsetSchema = z
+  .number()
+  .int()
+  .min(TEMPERATURE_CALIBRATION_OFFSET_MIN_C)
+  .max(TEMPERATURE_CALIBRATION_OFFSET_MAX_C);
+export const TemperatureCalibrationSafeTargetBoundsSchema = z
+  .strictObject({
+    brewMinimumC: z.literal(BREW_TARGET_MIN_C),
+    brewMaximumC: BrewTargetSchema,
+    steamMinimumC: z.literal(STEAM_TARGET_MIN_C),
+    steamMaximumC: SteamTargetSchema,
+  })
+  .refine(
+    (bounds) =>
+      bounds.brewMaximumC >= bounds.brewMinimumC &&
+      bounds.steamMaximumC >= bounds.steamMinimumC,
+    { message: "Safe target maxima must not be below their minima." },
+  );
+
+const temperatureCalibrationStateShape = {
+  savedOffsetC: TemperatureCalibrationOffsetSchema,
+  boilerTemperatureRawC: z.number().finite().min(-40).max(160).nullable(),
+  boilerTemperatureC: z.number().finite().min(-60).max(170).nullable(),
+  heaterActive: z.boolean(),
+  ready: z.boolean(),
+  safeTargetBounds: TemperatureCalibrationSafeTargetBoundsSchema,
+};
+
+export const UncalibratedTemperatureCalibrationStateSchema = z.strictObject({
+  status: z.literal("uncalibrated"),
+  ...temperatureCalibrationStateShape,
+  savedOffsetC: z.literal(0),
+});
+export const CalibratedTemperatureCalibrationStateSchema = z.strictObject({
+  status: z.literal("calibrated"),
+  ...temperatureCalibrationStateShape,
+});
+export const ActiveTemperatureCalibrationStateSchema = z
+  .strictObject({
+    status: z.literal("calibrating"),
+    ...temperatureCalibrationStateShape,
+    calibrationId: TemperatureCalibrationSessionIdSchema,
+    candidateRawTargetC: TemperatureCalibrationCandidateRawTargetSchema,
+    offsetPreviewC: TemperatureCalibrationOffsetSchema,
+    advisoryStableMs: z.number().int().nonnegative(),
+    sessionLeaseRemainingMs: z
+      .number()
+      .int()
+      .nonnegative()
+      .max(TEMPERATURE_CALIBRATION_SESSION_LEASE_MS),
+    previewSafeTargetBounds: TemperatureCalibrationSafeTargetBoundsSchema,
+  })
+  .superRefine((state, context) => {
+    if (
+      state.offsetPreviewC !==
+      TEMPERATURE_CALIBRATION_REFERENCE_C - state.candidateRawTargetC
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["offsetPreviewC"],
+        message:
+          "The offset preview must map the candidate raw target to 100°C.",
+      });
+    }
+  });
+export const TemperatureCalibrationStateSchema = z.discriminatedUnion(
+  "status",
+  [
+    UncalibratedTemperatureCalibrationStateSchema,
+    ActiveTemperatureCalibrationStateSchema,
+    CalibratedTemperatureCalibrationStateSchema,
+  ],
+);
+export const UpdateTemperatureCalibrationCandidateRequestSchema =
+  z.strictObject({
+    calibrationId: TemperatureCalibrationSessionIdSchema,
+    candidateRawTargetC: TemperatureCalibrationCandidateRawTargetSchema,
+  });
+export const TemperatureCalibrationSessionRequestSchema = z.strictObject({
+  calibrationId: TemperatureCalibrationSessionIdSchema,
 });
 
 export const OverTemperatureDismissResponseSchema = MachineStateSchema;
@@ -966,6 +1073,12 @@ export const ApiV2ErrorCodeSchema = z.enum([
   "scale_unavailable",
   "scale_warning_unacknowledged",
   "calibration_in_progress",
+  "heater_disabled",
+  "temperature_calibration_active",
+  "temperature_calibration_inactive",
+  "temperature_calibration_session_mismatch",
+  "temperature_calibration_expired",
+  "temperature_target_unsafe",
   "persistence_failure",
   "internal_error",
 ]);
@@ -1003,6 +1116,39 @@ export type TemperatureSettingsRequest = z.infer<
 >;
 export type TemperatureSettingsResponse = z.infer<
   typeof TemperatureSettingsResponseSchema
+>;
+export type TemperatureCalibrationSessionId = z.infer<
+  typeof TemperatureCalibrationSessionIdSchema
+>;
+export type TemperatureCalibrationStatus = z.infer<
+  typeof TemperatureCalibrationStatusSchema
+>;
+export type TemperatureCalibrationCandidateRawTarget = z.infer<
+  typeof TemperatureCalibrationCandidateRawTargetSchema
+>;
+export type TemperatureCalibrationOffset = z.infer<
+  typeof TemperatureCalibrationOffsetSchema
+>;
+export type TemperatureCalibrationSafeTargetBounds = z.infer<
+  typeof TemperatureCalibrationSafeTargetBoundsSchema
+>;
+export type UncalibratedTemperatureCalibrationState = z.infer<
+  typeof UncalibratedTemperatureCalibrationStateSchema
+>;
+export type ActiveTemperatureCalibrationState = z.infer<
+  typeof ActiveTemperatureCalibrationStateSchema
+>;
+export type CalibratedTemperatureCalibrationState = z.infer<
+  typeof CalibratedTemperatureCalibrationStateSchema
+>;
+export type TemperatureCalibrationState = z.infer<
+  typeof TemperatureCalibrationStateSchema
+>;
+export type UpdateTemperatureCalibrationCandidateRequest = z.infer<
+  typeof UpdateTemperatureCalibrationCandidateRequestSchema
+>;
+export type TemperatureCalibrationSessionRequest = z.infer<
+  typeof TemperatureCalibrationSessionRequestSchema
 >;
 export type OverTemperatureDismissResponse = z.infer<
   typeof OverTemperatureDismissResponseSchema

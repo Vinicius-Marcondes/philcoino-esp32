@@ -61,6 +61,18 @@ class EspNvsTargetBackend final : public TargetBackend {
   bool initialized_{false};
 };
 
+class EspNvsTemperatureCalibrationBackend final
+    : public TemperatureCalibrationBackend {
+ public:
+  bool initialize();
+  BackendLoadResult load(TemperatureCalibration& calibration) override;
+  bool save(const TemperatureCalibration& calibration) override;
+
+ private:
+  std::uint32_t handle_{0};
+  bool initialized_{false};
+};
+
 class EspNvsProfileBackend final : public ProfileBackend {
  public:
   bool initialize();

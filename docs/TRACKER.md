@@ -1,7 +1,7 @@
 # PRD-017 Tracker
 
-PRD Status: Software Complete Through TCAL-007 — TCAL-008/009 Pending
-Current Task: [TCAL-008](prds/PRD-017/tasks/TCAL-008.md) — Awaiting Human boundary decision
+PRD Status: Software Complete Through TCAL-008 — Physical Acceptance Pending
+Current Task: [TCAL-009](prds/PRD-017/tasks/TCAL-009.md) — Awaiting explicit Human authorization
 
 Implementation Boundary: Add a firmware-owned guided raw-temperature
 calibration that persists one signed global offset for Brew and Steam, while
@@ -23,8 +23,11 @@ PRD: `docs/prds/PRD-017/PRD-017.md`
   unchanged while `boilerTemperatureC` becomes effective in both modes.
 - Missing calibration uses `0°C`; corrupt/unreadable storage faults and keeps
   the heater off.
-- Effective Steam `135°C` and raw `135°C` independently latch
-  `over_temperature`; offsets and target mutations cannot bypass the raw ceiling.
+- Steam targets are strict whole degrees from `110–135°C`. Exact effective
+  Steam and raw readings of `135°C` are permitted; either reading strictly
+  above the cap independently latches `over_temperature`.
+- Offsets and target mutations cannot bypass the raw cap; unreachable values
+  are rejected without clamping.
 - Firmware owns calibration target, persistence, conflicts, inactivity expiry,
   normal control restoration, faults, timeouts, safety lease, and fail-off.
 - The app never commands the pump or steam valve and never presents requested
@@ -42,15 +45,15 @@ PRD: `docs/prds/PRD-017/PRD-017.md`
 
 | Task | Review | Status | Evidence | Decision Log | Commit | Blocked Reason | Requested Decision |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| [TCAL-001](prds/PRD-017/tasks/TCAL-001.md) | Agent | Done | OpenAPI valid; protocol 157 tests/336 expectations; typecheck | Strict additive v2 session transaction; one global effective-temperature meaning; 15-second inactivity lease | Pending | None | None |
-| [TCAL-002](prds/PRD-017/tasks/TCAL-002.md) | Agent | Done | Native/sanitizer 10/10; 32 captures | Dedicated versioned NVS calibration; one global offset; raw/effective 135°C fail-off; unreachable targets rejected | Pending | None | None |
+| [TCAL-001](prds/PRD-017/tasks/TCAL-001.md) | Agent | Done | OpenAPI valid; protocol 157 tests/337 expectations; typecheck | Strict additive v2 session transaction; one global effective-temperature meaning; 15-second inactivity lease | Pending | None | None |
+| [TCAL-002](prds/PRD-017/tasks/TCAL-002.md) | Agent | Done | Native/sanitizer 10/10; 35 captures | Dedicated versioned NVS calibration; one global offset; exact raw/effective 135°C allowed and strict-above fail-off; unreachable targets rejected | Pending | None | None |
 | [TCAL-003](prds/PRD-017/tasks/TCAL-003.md) | Agent | Done | Native/sanitizer 10/10; 35 captures | Firmware-owned raw-target session; 15-second inactivity lease; prepare/persist/adopt; conflicts cancel fail-off | Pending | None | None |
-| [TCAL-004](prds/PRD-017/tasks/TCAL-004.md) | Agent | Done | Simulator 92 tests/731 expectations; typecheck | Deterministic raw/effective model, strict session routes, persistence/reset/corruption, dual 135°C limits | Pending | None | None |
-| [TCAL-005](prds/PRD-017/tasks/TCAL-005.md) | Agent | Done | Mobile 243 tests/2,312 expectations; typecheck; Expo lint | Strict client + debug parity; serialized acknowledged session; lifecycle Cancel and lease fallback | Pending | None | None |
-| [TCAL-006](prds/PRD-017/tasks/TCAL-006.md) | Human | Done | Mobile 250 tests/2,424 expectations; typecheck; Expo lint; Human approved revised UI | Full-screen modal permits both landscape directions, reads its own live dimensions, and compacts narrow landscape columns; acknowledged-only flow and safety copy retained | Pending | None | None |
-| [TCAL-007](prds/PRD-017/tasks/TCAL-007.md) | Agent | Done | OpenAPI valid; protocol 157/336; simulator 92/731; mobile 250/2,424; native/sanitizer 10/10; 35 captures; exact host resource report | Current docs aligned; PRD-003 historical; all configured software passed; `idf.py` and physical evidence remain unavailable | Pending | None | None |
-| [TCAL-008](prds/PRD-017/tasks/TCAL-008.md) | Human | Todo | Pending | Inclusive 135°C target requires replacement raw/effective fault boundaries above the target; current fault-at-135°C behavior remains through TCAL-007 | Pending | Exact replacement boundaries not yet approved | Approve raw and effective trip thresholds before implementation |
-| [TCAL-009](prds/PRD-017/tasks/TCAL-009.md) | Human | Todo | Pending | Pending | Pending | None | None |
+| [TCAL-004](prds/PRD-017/tasks/TCAL-004.md) | Agent | Done | Simulator 92 tests/741 expectations; typecheck | Deterministic raw/effective model, strict session routes, persistence/reset/corruption, dual 135°C limits | Pending | None | None |
+| [TCAL-005](prds/PRD-017/tasks/TCAL-005.md) | Agent | Done | Mobile 252 tests/2,438 expectations; typecheck; Expo lint | Strict client + debug parity; serialized acknowledged session; lifecycle Cancel and lease fallback | Pending | None | None |
+| [TCAL-006](prds/PRD-017/tasks/TCAL-006.md) | Human | Done | Mobile 252 tests/2,438 expectations; typecheck; Expo lint; Human approved revised UI | Full-screen modal permits both landscape directions; Machine places heater permission first and wraps full-width landscape controls without clipping; acknowledged-only flow and safety copy retained | Pending | None | None |
+| [TCAL-007](prds/PRD-017/tasks/TCAL-007.md) | Agent | Done | OpenAPI valid; protocol 157/337; simulator 92/741; mobile 252/2,438; native/sanitizer 10/10; 35 captures; exact host report; pinned target build pass | Current docs aligned; PRD-003 historical; all configured software passed; connected runtime and physical evidence remain unavailable | Pending | None | None |
+| [TCAL-008](prds/PRD-017/tasks/TCAL-008.md) | Agent | Done | Protocol 157/337; simulator 92/741; mobile 252/2,438; native/sanitizer 10/10; 35 captures; ESP-IDF 6.0.2 build and size pass | Steam target and raw/effective cap are inclusive at 135°C; values strictly above fault; unreachable offset-dependent targets reject without clamp | Pending | None | None |
+| [TCAL-009](prds/PRD-017/tasks/TCAL-009.md) | Human | Prepared — Not Authorized or Executed | Software/build evidence and bounded acceptance worksheet ready; no connected or energized evidence | De-energized, heater-disconnected, calibration, lifecycle, and thermostat stages remain Human-owned; no physical acceptance inferred | Pending | Explicit authorization, supervision, instrumentation, installed thermostat/wiring evidence, and connected setup unavailable | Authorize only after reviewing every procedure precondition |
 
 ---
 

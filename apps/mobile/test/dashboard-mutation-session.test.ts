@@ -579,12 +579,12 @@ describe("DashboardMutationSession", () => {
 
     harness.session.updateTemperatureSettings({
       brewTargetC: 95,
-      steamTargetC: 120,
+      steamTargetC: 135,
     });
     await waitFor(() => harness.acknowledgedSettings.length === 1);
     expect(harness.acknowledgedSettings.at(-1)).toEqual({
       brewTargetC: 95,
-      steamTargetC: 120,
+      steamTargetC: 135,
     });
 
     harness.session.setHeaterEnabled(false);

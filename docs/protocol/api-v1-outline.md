@@ -128,11 +128,11 @@ The machine reports `ready` only after the measured control temperature remains 
 ## Temperature constraints
 
 - Brew target: 85°C through 95°C inclusive.
-- Steam target: 110°C through 120°C inclusive.
+- Steam target: 110°C through 135°C inclusive.
 - V1 target values use whole degrees Celsius.
 - Firmware rejects out-of-range, non-finite, or malformed values.
 - Firmware also rejects a range-valid target whose implied raw target would
-  reach or exceed the independent raw `135°C` ceiling under the saved offset;
+  exceed the independent raw `135°C` cap under the saved offset;
   it never clamps or rewrites the requested value.
 - The app sends changes only after an explicit user confirmation.
 - A temperature update is not successful until the firmware validates and persists it in ESP32 NVS.

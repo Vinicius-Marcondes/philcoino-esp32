@@ -1,0 +1,14 @@
+{
+  "status": "uncalibrated",
+  "savedOffsetC": 0,
+  "boilerTemperatureRawC": 24.5,
+  "boilerTemperatureC": 24.5,
+  "heaterActive": false,
+  "ready": false,
+  "safeTargetBounds": {
+    "brewMinimumC": 85,
+    "brewMaximumC": 95,
+    "steamMinimumC": 110,
+    "steamMaximumC": 135
+  }
+}

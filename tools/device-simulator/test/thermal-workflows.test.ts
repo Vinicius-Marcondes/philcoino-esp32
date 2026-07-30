@@ -97,8 +97,8 @@ describe("API v2 extraction thermal eligibility and compensation", () => {
 
 describe("API v2 deterministic cooldown", () => {
   it("switches to Brew, snapshots the target, and preserves disabled permission", async () => {
-    await setTemperature(110);
     await setMode("steam");
+    await setTemperature(110);
     await setHeaterEnabled(false);
     const cooldown = await startCooldown("cooldown-disabled-01");
     expect(cooldown).toMatchObject({
@@ -120,7 +120,8 @@ describe("API v2 deterministic cooldown", () => {
   });
 
   it("stops at the first target sample and stabilizes for exactly five seconds", async () => {
-    await setTemperature(1000);
+    await setMode("steam");
+    await setTemperature(120);
     await startCooldown("cooldown-target-001");
     await advance(1_234);
     await setTemperature(93.1);
@@ -153,7 +154,8 @@ describe("API v2 deterministic cooldown", () => {
   });
 
   it("cuts the pump command off at exactly 45 seconds", async () => {
-    await setTemperature(1000);
+    await setMode("steam");
+    await setTemperature(120);
     await startCooldown("cooldown-cutoff-001");
     await advance(44_999);
     expect((await getStateV2()).cooldown).toMatchObject({
@@ -179,7 +181,8 @@ describe("API v2 deterministic cooldown", () => {
   });
 
   it("makes Stop idempotent and preserves the stabilization deadline", async () => {
-    await setTemperature(1000);
+    await setMode("steam");
+    await setTemperature(120);
     await startCooldown("cooldown-stop-0001");
     await advance(12_345);
     const first = await stopCooldown();
@@ -199,7 +202,8 @@ describe("API v2 deterministic cooldown", () => {
   });
 
   it("replays active and terminal identity without restarting time", async () => {
-    await setTemperature(1000);
+    await setMode("steam");
+    await setTemperature(120);
     const first = await startCooldown("cooldown-replay-01");
     await advance(12_345);
     const replay = await startCooldown("cooldown-replay-01");
@@ -239,7 +243,8 @@ describe("API v2 deterministic cooldown", () => {
   });
 
   it("enforces workflow mutual exclusion for extraction, profiles, and Steam", async () => {
-    await setTemperature(1000);
+    await setMode("steam");
+    await setTemperature(120);
     await startCooldown("cooldown-conflict-1");
 
     let response = await simulator.app.request(
@@ -273,7 +278,8 @@ describe("API v2 deterministic cooldown", () => {
     await startExtraction("extract-before-cool-01", { kind: "manual" });
     await advance(1_000);
     await stopExtraction();
-    await setTemperature(1000);
+    await setMode("steam");
+    await setTemperature(120);
     const started = await startCooldown("cooldown-owner-isolation");
 
     let state = await getStateV2();
@@ -348,7 +354,8 @@ describe("API v2 deterministic cooldown", () => {
   });
 
   it("continues on manual time without a phone and never resumes after reset", async () => {
-    await setTemperature(1000);
+    await setMode("steam");
+    await setTemperature(120);
     await startCooldown("cooldown-disconnect-1");
     simulator.machine.advance(45_000);
     expect(simulator.machine.getCooldownState()).toMatchObject({
@@ -361,7 +368,8 @@ describe("API v2 deterministic cooldown", () => {
       outcome: "cutoff",
     });
 
-    await setTemperature(1000);
+    await setMode("steam");
+    await setTemperature(120);
     await startCooldown("cooldown-reset-0001");
     await simulator.app.request("/_simulator/power-cycle", { method: "POST" });
     expect((await getStateV2()).cooldown).toEqual({
@@ -377,7 +385,8 @@ describe("API v2 deterministic cooldown", () => {
   });
 
   it("aborts on sensor or output failure with off command state", async () => {
-    await setTemperature(1000);
+    await setMode("steam");
+    await setTemperature(120);
     await startCooldown("cooldown-sensor-abort");
     await control("PUT", "/_simulator/fault", { code: "sensor_failure" });
     expect(await getStateV2()).toMatchObject({
@@ -386,7 +395,8 @@ describe("API v2 deterministic cooldown", () => {
     });
 
     await simulator.app.request("/_simulator/power-cycle", { method: "POST" });
-    await setTemperature(1000);
+    await setMode("steam");
+    await setTemperature(120);
     await failNextOutput("heater-off");
     let response = await simulator.app.request(
       "/api/v2/cooldowns/start",
@@ -399,7 +409,8 @@ describe("API v2 deterministic cooldown", () => {
     });
 
     await simulator.app.request("/_simulator/power-cycle", { method: "POST" });
-    await setTemperature(1000);
+    await setMode("steam");
+    await setTemperature(120);
     await failNextOutput("pump-running");
     response = await simulator.app.request(
       "/api/v2/cooldowns/start",
@@ -413,7 +424,8 @@ describe("API v2 deterministic cooldown", () => {
     });
 
     await simulator.app.request("/_simulator/power-cycle", { method: "POST" });
-    await setTemperature(1000);
+    await setMode("steam");
+    await setTemperature(120);
     await startCooldown("cooldown-off-fail-1");
     await failNextOutput("pump-off");
     response = await simulator.app.request("/api/v2/cooldowns/stop", {

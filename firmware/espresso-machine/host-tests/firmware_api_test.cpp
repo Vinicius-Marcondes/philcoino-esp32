@@ -44,6 +44,39 @@ class MemoryBackend final : public TargetBackend {
   MemoryState& state_;
 };
 
+class TemperatureCalibrationMemoryBackend final
+    : public TemperatureCalibrationBackend {
+ public:
+  explicit TemperatureCalibrationMemoryBackend(
+      TemperatureCalibration calibration)
+      : saved(calibration), present(calibration.calibrated) {}
+
+  BackendLoadResult load(TemperatureCalibration& calibration) override {
+    if (!present) {
+      return BackendLoadResult::kNotFound;
+    }
+    calibration = saved;
+    return BackendLoadResult::kOk;
+  }
+
+  bool save(const TemperatureCalibration& calibration) override {
+    assert(lock_held == nullptr || !*lock_held);
+    ++save_count;
+    if (fail_save) {
+      return false;
+    }
+    saved = calibration;
+    present = true;
+    return true;
+  }
+
+  TemperatureCalibration saved{};
+  bool present{false};
+  bool fail_save{false};
+  int save_count{0};
+  const bool* lock_held{nullptr};
+};
+
 class ProfileMemoryBackend final : public ProfileBackend {
  public:
   BackendLoadResult load(ExtractionProfiles& profiles) override {
@@ -147,11 +180,15 @@ ThermocoupleReading ok(float temperature_c) {
 }
 
 struct ApiHarness {
-  ApiHarness()
-      : backend(memory),
+  explicit ApiHarness(TemperatureCalibration calibration = {},
+                      TemperatureTargets targets = {})
+      : memory{targets, false},
+        backend(memory),
         storage(backend),
+        temperature_calibration_backend(calibration),
+        temperature_calibration_storage(temperature_calibration_backend),
         ssr(output, safety_lease, ssr_critical_section),
-        controller(memory.targets, ssr),
+        controller(memory.targets, calibration, ssr),
         profile_storage(profile_backend),
         pump(pump_output, pump_critical_section),
         extraction(profile_backend.saved, pump),
@@ -159,12 +196,15 @@ struct ApiHarness {
         scale_storage(scale_backend),
         scale(scale_backend.saved, true),
         api({"philcoino-0102AF", "PhilcoINO", "ESP32-C3 Super Mini", "0.2.0"},
-            "test-secret", controller, storage, extraction, cooldown,
-            profile_storage, scale_storage, synchronization, &history, &scale,
-            &weighted_trace) {
+            "test-secret", controller, storage,
+            temperature_calibration_storage, extraction, cooldown,
+            profile_storage, scale_storage, synchronization, &history,
+            &scale, &weighted_trace) {
     assert(ssr.initialize());
     assert(pump.initialize());
     scale_backend.lock_held = &synchronization.held;
+    temperature_calibration_backend.lock_held =
+        &synchronization.held;
     controller.update(ok(87.5F), 1000);
     for (std::int32_t index = 0; index < 10; ++index) {
       scale.update({Hx711Status::kOk, 80000}, 1000U + index);
@@ -182,6 +222,9 @@ struct ApiHarness {
   MemoryState memory{};
   MemoryBackend backend;
   TargetStorage storage;
+  TemperatureCalibrationMemoryBackend
+      temperature_calibration_backend;
+  TemperatureCalibrationStorage temperature_calibration_storage;
   FakeDigitalOutput output{};
   FakeSafetyLease safety_lease;
   FakeOutputCriticalSection ssr_critical_section;
@@ -208,6 +251,18 @@ void expect_error(const HttpResponse& response, int status,
   assert(response.status == status);
   assert(response.body.find(std::string("\"code\":\"") + code + "\"") !=
          std::string::npos);
+}
+
+std::string json_string_field(const std::string& body,
+                              const char* field) {
+  const std::string prefix =
+      std::string("\"") + field + "\":\"";
+  const auto start = body.find(prefix);
+  assert(start != std::string::npos);
+  const auto value_start = start + prefix.size();
+  const auto end = body.find('"', value_start);
+  assert(end != std::string::npos);
+  return body.substr(value_start, end - value_start);
 }
 
 void write_capture(const std::filesystem::path& directory, const char* name,
@@ -267,6 +322,7 @@ void test_public_contract_and_authentication() {
            {HttpMethod::kPut, "/api/v1/mode"},
            {HttpMethod::kPut, "/api/v1/heater"},
            {HttpMethod::kPost, "/api/v1/faults/over-temperature/dismiss"},
+           {HttpMethod::kPost, "/api/v2/temperature-calibration/start"},
        }) {
     const auto missing = harness.request(request.first, request.second);
     expect_error(missing, 401, "unauthorized");
@@ -308,6 +364,22 @@ void test_state_and_mutations_delegate_to_control() {
   assert(harness.controller.targets().brew_c == 95);
   assert(harness.memory.targets.brew_c == 95);
 
+  response = harness.request(HttpMethod::kPatch,
+                             "/api/v1/settings/temperatures", authorization,
+                             "{\"steamTargetC\":134}");
+  assert(response.status == 200);
+  assert(response.body == "{\"brewTargetC\":95,\"steamTargetC\":134}");
+  assert(harness.controller.targets().steam_c == 134);
+  assert(harness.memory.targets.steam_c == 134);
+
+  response = harness.request(HttpMethod::kPatch,
+                             "/api/v1/settings/temperatures", authorization,
+                             "{\"steamTargetC\":135}");
+  assert(response.status == 200);
+  assert(response.body == "{\"brewTargetC\":95,\"steamTargetC\":135}");
+  assert(harness.controller.targets().steam_c == 135);
+  assert(harness.memory.targets.steam_c == 135);
+
   response = harness.request(HttpMethod::kPut, "/api/v1/mode", authorization,
                              "{\"mode\":\"steam\"}");
   assert(response.status == 200);
@@ -338,7 +410,7 @@ void test_state_and_mutations_delegate_to_control() {
 void test_effective_temperature_serializes_once_across_v1_v2_and_modes() {
   const char* authorization = "Bearer test-secret";
 
-  ApiHarness steam;
+  ApiHarness steam({5, true});
   assert(steam.controller.set_mode(ControlMode::kSteam, 2000));
   steam.controller.update(ok(115.0F), 2500);
   auto response = steam.request(HttpMethod::kGet, "/api/v1/state",
@@ -359,20 +431,20 @@ void test_effective_temperature_serializes_once_across_v1_v2_and_modes() {
   assert(response.body.find("\"boilerTemperatureC\":125") ==
          std::string::npos);
 
-  ApiHarness brew;
+  ApiHarness brew({5, true});
   brew.controller.update(ok(115.0F), 2500);
   response = brew.request(HttpMethod::kGet, "/api/v1/state", authorization,
                           "", 2500);
   assert(response.status == 200);
   assert(response.body.find("\"activeMode\":\"brew\"") !=
          std::string::npos);
-  assert(response.body.find("\"boilerTemperatureC\":115") !=
+  assert(response.body.find("\"boilerTemperatureC\":120") !=
          std::string::npos);
 
-  ApiHarness switching;
+  ApiHarness switching({5, true});
   response = switching.request(HttpMethod::kGet, "/api/v1/state",
                                authorization, "", 3000);
-  assert(response.body.find("\"boilerTemperatureC\":87.5") !=
+  assert(response.body.find("\"boilerTemperatureC\":92.5") !=
          std::string::npos);
   assert(switching.request(HttpMethod::kPut, "/api/v1/mode", authorization,
                            "{\"mode\":\"steam\"}", 3000)
@@ -388,7 +460,7 @@ void test_effective_temperature_serializes_once_across_v1_v2_and_modes() {
              .status == 200);
   response = switching.request(HttpMethod::kGet, "/api/v1/state",
                                authorization, "", 3000);
-  assert(response.body.find("\"boilerTemperatureC\":87.5") !=
+  assert(response.body.find("\"boilerTemperatureC\":92.5") !=
          std::string::npos);
 }
 
@@ -428,7 +500,7 @@ void test_malformed_and_domain_failures_do_not_bypass_validation() {
                  400, "malformed_request");
   }
   for (const char* body : {"{\"brewTargetC\":84}",
-                           "{\"steamTargetC\":121}",
+                           "{\"steamTargetC\":136}",
                            "{\"brewTargetC\":92.5}"}) {
     expect_error(harness.request(HttpMethod::kPatch,
                                  "/api/v1/settings/temperatures",
@@ -612,6 +684,265 @@ void test_target_adoption_lock_failure_retains_the_heater_inhibit() {
   const auto snapshot = harness.controller.update(ok(80.0F), 2001);
   assert(!snapshot.heater_enabled);
   assert(!harness.output.level);
+}
+
+void test_unsafe_target_is_rejected_without_persistence_or_clamping() {
+  ApiHarness harness({-20, true}, {93, 115});
+  const auto response = harness.request(
+      HttpMethod::kPatch, "/api/v1/settings/temperatures",
+      "Bearer test-secret", "{\"steamTargetC\":116}", 2000);
+
+  expect_error(response, 400, "temperature_target_unsafe");
+  assert(harness.controller.targets().steam_c == 115);
+  assert(harness.memory.targets.steam_c == 115);
+  assert(!harness.controller.target_update_in_progress());
+}
+
+void test_temperature_calibration_api_transaction_and_persistence() {
+  ApiHarness harness;
+  const char* authorization = "Bearer test-secret";
+
+  auto response = harness.request(
+      HttpMethod::kGet, "/api/v2/temperature-calibration",
+      authorization, "", 1500);
+  assert(response.status == 200);
+  assert(response.body.find("\"status\":\"uncalibrated\"") !=
+         std::string::npos);
+  assert(response.body.find("\"savedOffsetC\":0") !=
+         std::string::npos);
+
+  response = harness.request(
+      HttpMethod::kPost, "/api/v2/temperature-calibration/start",
+      authorization, "", 2000);
+  assert(response.status == 200);
+  assert(response.body.find("\"status\":\"calibrating\"") !=
+         std::string::npos);
+  assert(response.body.find("\"candidateRawTargetC\":100") !=
+         std::string::npos);
+  assert(response.body.find("\"sessionLeaseRemainingMs\":15000") !=
+         std::string::npos);
+  assert(harness.pump.command() == PumpCommand::kOff);
+  const auto calibration_id =
+      json_string_field(response.body, "calibrationId");
+
+  response = harness.request(
+      HttpMethod::kGet, "/api/v2/temperature-calibration",
+      authorization, "", 2001);
+  expect_error(response, 409,
+               "temperature_calibration_session_mismatch");
+
+  const std::string candidate =
+      std::string("{\"calibrationId\":\"") + calibration_id +
+      "\",\"candidateRawTargetC\":108}";
+  response = harness.request(
+      HttpMethod::kPut, "/api/v2/temperature-calibration/candidate",
+      authorization, candidate.c_str(), 2500);
+  assert(response.status == 200);
+  assert(response.body.find("\"candidateRawTargetC\":108") !=
+         std::string::npos);
+  assert(response.body.find("\"offsetPreviewC\":-8") !=
+         std::string::npos);
+  assert(harness.pump.command() == PumpCommand::kOff);
+
+  const std::string session =
+      std::string("{\"calibrationId\":\"") + calibration_id + "\"}";
+  response = harness.request(
+      HttpMethod::kPost, "/api/v2/temperature-calibration/save",
+      authorization, session.c_str(), 3000);
+  assert(response.status == 200);
+  assert(response.body.find("\"status\":\"calibrated\"") !=
+         std::string::npos);
+  assert(response.body.find("\"savedOffsetC\":-8") !=
+         std::string::npos);
+  assert(harness.temperature_calibration_backend.save_count == 1);
+  assert(harness.temperature_calibration_backend.saved.offset_c == -8);
+  assert(harness.controller.temperature_calibration().offset_c == -8);
+  assert(harness.controller.targets().brew_c == 93);
+  assert(harness.controller.targets().steam_c == 115);
+  assert(harness.controller.mode() == ControlMode::kBrew);
+  assert(harness.pump.command() == PumpCommand::kOff);
+}
+
+void test_temperature_calibration_api_failure_expiry_and_conflicts() {
+  const char* authorization = "Bearer test-secret";
+
+  ApiHarness persistence;
+  auto response = persistence.request(
+      HttpMethod::kPost, "/api/v2/temperature-calibration/start",
+      authorization, "", 2000);
+  const auto persistence_id =
+      json_string_field(response.body, "calibrationId");
+  const std::string positive_candidate =
+      std::string("{\"calibrationId\":\"") + persistence_id +
+      "\",\"candidateRawTargetC\":95}";
+  assert(persistence.request(
+             HttpMethod::kPut,
+             "/api/v2/temperature-calibration/candidate",
+             authorization, positive_candidate.c_str(), 2500)
+             .status == 200);
+  persistence.temperature_calibration_backend.fail_save = true;
+  const std::string persistence_session =
+      std::string("{\"calibrationId\":\"") + persistence_id + "\"}";
+  response = persistence.request(
+      HttpMethod::kPost, "/api/v2/temperature-calibration/save",
+      authorization, persistence_session.c_str(), 3000);
+  expect_error(response, 500, "persistence_failure");
+  assert(persistence.controller.temperature_calibration().offset_c == 0);
+  assert(persistence.controller.temperature_calibration_active());
+  assert(!persistence.output.level);
+
+  ApiHarness unsafe({}, {93, 135});
+  response = unsafe.request(
+      HttpMethod::kPost, "/api/v2/temperature-calibration/start",
+      authorization, "", 2000);
+  const auto unsafe_id = json_string_field(response.body, "calibrationId");
+  const std::string unsafe_candidate =
+      std::string("{\"calibrationId\":\"") + unsafe_id +
+      "\",\"candidateRawTargetC\":120}";
+  assert(unsafe.request(
+             HttpMethod::kPut,
+             "/api/v2/temperature-calibration/candidate",
+             authorization, unsafe_candidate.c_str(), 2500)
+             .status == 200);
+  const std::string unsafe_session =
+      std::string("{\"calibrationId\":\"") + unsafe_id + "\"}";
+  response = unsafe.request(
+      HttpMethod::kPost, "/api/v2/temperature-calibration/save",
+      authorization, unsafe_session.c_str(), 3000);
+  expect_error(response, 409, "temperature_target_unsafe");
+  assert(unsafe.temperature_calibration_backend.save_count == 0);
+  assert(unsafe.controller.targets().steam_c == 135);
+
+  ApiHarness expired;
+  response = expired.request(
+      HttpMethod::kPost, "/api/v2/temperature-calibration/start",
+      authorization, "", 1000);
+  const auto expired_id =
+      json_string_field(response.body, "calibrationId");
+  const std::string expired_path =
+      std::string("/api/v2/temperature-calibration?calibrationId=") +
+      expired_id;
+  response = expired.request(
+      HttpMethod::kGet, expired_path.c_str(), authorization, "",
+      1000 + philcoino::config::kTemperatureCalibrationSessionLeaseMs);
+  expect_error(response, 409, "temperature_calibration_expired");
+  assert(!expired.controller.temperature_calibration_active());
+  assert(expired.controller.mode() == ControlMode::kBrew);
+
+  ApiHarness target_conflict;
+  response = target_conflict.request(
+      HttpMethod::kPost, "/api/v2/temperature-calibration/start",
+      authorization, "", 2000);
+  assert(response.status == 200);
+  response = target_conflict.request(
+      HttpMethod::kPatch, "/api/v1/settings/temperatures",
+      authorization, "{\"brewTargetC\":94}", 2500);
+  expect_error(response, 409, "temperature_calibration_active");
+  assert(!target_conflict.controller.temperature_calibration_active());
+  assert(target_conflict.controller.targets().brew_c == 93);
+
+  ApiHarness extraction_conflict;
+  assert(extraction_conflict.request(
+             HttpMethod::kPost,
+             "/api/v2/temperature-calibration/start",
+             authorization, "", 2000)
+             .status == 200);
+  response = extraction_conflict.request(
+      HttpMethod::kPost, "/api/v2/extractions/start", authorization,
+      "{\"idempotencyKey\":\"start-after-temp-cal\",\"selection\":{\"kind\":\"manual\"}}",
+      2500);
+  expect_error(response, 409, "temperature_calibration_active");
+  assert(!extraction_conflict.extraction.active());
+  assert(extraction_conflict.pump.command() == PumpCommand::kOff);
+}
+
+void test_temperature_calibration_api_start_guards_and_session_ownership() {
+  const char* authorization = "Bearer test-secret";
+
+  ApiHarness active;
+  auto response = active.request(
+      HttpMethod::kPost, "/api/v2/temperature-calibration/start",
+      authorization, "", 2000);
+  assert(response.status == 200);
+  const auto active_id = json_string_field(response.body, "calibrationId");
+  response = active.request(
+      HttpMethod::kPost, "/api/v2/temperature-calibration/start",
+      authorization, "", 2001);
+  expect_error(response, 409, "temperature_calibration_active");
+  response = active.request(
+      HttpMethod::kPut, "/api/v2/temperature-calibration/candidate",
+      authorization,
+      "{\"calibrationId\":\"temp-cal-wrong-0000\",\"candidateRawTargetC\":101}",
+      2002);
+  expect_error(response, 409,
+               "temperature_calibration_session_mismatch");
+  const std::string active_session =
+      std::string("{\"calibrationId\":\"") + active_id + "\"}";
+  response = active.request(
+      HttpMethod::kPost, "/api/v2/temperature-calibration/cancel",
+      authorization, active_session.c_str(), 2003);
+  assert(response.status == 200);
+  assert(response.body.find("\"status\":\"uncalibrated\"") !=
+         std::string::npos);
+  response = active.request(
+      HttpMethod::kPost, "/api/v2/temperature-calibration/cancel",
+      authorization, active_session.c_str(), 2004);
+  expect_error(response, 409, "temperature_calibration_inactive");
+
+  ApiHarness disabled;
+  assert(disabled.controller.set_heater_enabled(false, 1500));
+  response = disabled.request(
+      HttpMethod::kPost, "/api/v2/temperature-calibration/start",
+      authorization, "", 2000);
+  expect_error(response, 409, "heater_disabled");
+
+  ApiHarness steam;
+  assert(steam.controller.set_mode(ControlMode::kSteam, 1500));
+  response = steam.request(
+      HttpMethod::kPost, "/api/v2/temperature-calibration/start",
+      authorization, "", 2000);
+  expect_error(response, 409, "brew_mode_required");
+
+  ApiHarness fault;
+  fault.controller.latch_fault(FaultCode::kSensorFailure);
+  response = fault.request(
+      HttpMethod::kPost, "/api/v2/temperature-calibration/start",
+      authorization, "", 2000);
+  expect_error(response, 409, "machine_faulted");
+
+  ApiHarness extracting;
+  assert(extracting.request(
+             HttpMethod::kPost, "/api/v2/extractions/start",
+             authorization,
+             "{\"idempotencyKey\":\"temp-cal-extract-1\",\"selection\":{\"kind\":\"manual\"}}",
+             2000)
+             .status == 200);
+  response = extracting.request(
+      HttpMethod::kPost, "/api/v2/temperature-calibration/start",
+      authorization, "", 2001);
+  expect_error(response, 409, "extraction_active");
+
+  ApiHarness cooling;
+  cooling.controller.update(ok(96.0F), 2000);
+  assert(cooling.request(
+             HttpMethod::kPost, "/api/v2/cooldowns/start",
+             authorization,
+             "{\"idempotencyKey\":\"temp-cal-cooldown\"}", 2000)
+             .status == 200);
+  response = cooling.request(
+      HttpMethod::kPost, "/api/v2/temperature-calibration/start",
+      authorization, "", 2001);
+  expect_error(response, 409, "cooldown_active");
+
+  ApiHarness scale_calibrating;
+  assert(scale_calibrating.request(
+             HttpMethod::kPost, "/api/v2/scale/calibration/start",
+             authorization, "", 1100)
+             .status == 200);
+  response = scale_calibrating.request(
+      HttpMethod::kPost, "/api/v2/temperature-calibration/start",
+      authorization, "", 1101);
+  expect_error(response, 409, "calibration_in_progress");
 }
 
 void test_workflow_mode_coordination_is_authoritative() {
@@ -944,6 +1275,37 @@ void capture_contract_payloads(const std::filesystem::path& directory) {
   write_capture(directory, "state-v2.json",
                 harness.request(HttpMethod::kGet, "/api/v2/state",
                                 authorization).body);
+  ApiHarness temperature_calibration;
+  write_capture(
+      directory, "temperature-calibration-uncalibrated-v2.json",
+      temperature_calibration
+          .request(HttpMethod::kGet,
+                   "/api/v2/temperature-calibration",
+                   authorization, "", 2000)
+          .body);
+  const auto calibration_started = temperature_calibration.request(
+      HttpMethod::kPost, "/api/v2/temperature-calibration/start",
+      authorization, "", 2000);
+  write_capture(directory, "temperature-calibration-active-v2.json",
+                calibration_started.body);
+  const auto calibration_id =
+      json_string_field(calibration_started.body, "calibrationId");
+  const std::string calibration_candidate =
+      std::string("{\"calibrationId\":\"") + calibration_id +
+      "\",\"candidateRawTargetC\":108}";
+  temperature_calibration.request(
+      HttpMethod::kPut,
+      "/api/v2/temperature-calibration/candidate",
+      authorization, calibration_candidate.c_str(), 2500);
+  const std::string calibration_session =
+      std::string("{\"calibrationId\":\"") + calibration_id + "\"}";
+  write_capture(
+      directory, "temperature-calibration-calibrated-v2.json",
+      temperature_calibration
+          .request(HttpMethod::kPost,
+                   "/api/v2/temperature-calibration/save",
+                   authorization, calibration_session.c_str(), 3000)
+          .body);
   harness.history.record(184000, harness.controller.snapshot(184000),
                          harness.pump.command());
   write_capture(directory, "history-v2.json",
@@ -1490,6 +1852,10 @@ int main(int argc, char** argv) {
   test_api_v2_state_reads_are_observational();
   test_api_v2_rejects_malformed_nested_shapes_and_lock_failure();
   test_target_adoption_lock_failure_retains_the_heater_inhibit();
+  test_unsafe_target_is_rejected_without_persistence_or_clamping();
+  test_temperature_calibration_api_transaction_and_persistence();
+  test_temperature_calibration_api_failure_expiry_and_conflicts();
+  test_temperature_calibration_api_start_guards_and_session_ownership();
   test_workflow_mode_coordination_is_authoritative();
   test_api_v2_cooldown_and_compensation_contract();
   test_bounded_history_contract();

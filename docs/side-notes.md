@@ -47,7 +47,7 @@ engineering risks rather than pending STEAM-004 Human work.
 
 ## PRD-017 guided temperature calibration
 
-Status: SOFTWARE IMPLEMENTED THROUGH TCAL-007 — PHYSICAL ACCEPTANCE PENDING
+Status: SOFTWARE IMPLEMENTED THROUGH TCAL-008 — PHYSICAL ACCEPTANCE PENDING
 
 The firmware-owned workflow controls a temporary uncorrected raw target, starts
 at `100°C`, accepts whole-degree candidates from `90–120°C`, and saves
@@ -62,11 +62,11 @@ protocol, mobile, host, sanitizer, and contract-capture checks are software
 evidence only. They cannot establish the local boiling point, sensor accuracy,
 repeatability, heater current interruption, or the installed thermostat path.
 
-Effective Steam and raw temperature currently have independent fault-at-
-`135°C` software boundaries. The owner separately requested TCAL-008 to make
-`135°C` an inclusive Steam target. That follow-up is not implemented in
-TCAL-007 and must first define Human-approved raw/effective trip boundaries
-above the target. TCAL-009 retains the separately authorized physical
+The Steam target range is `110–135°C`. Effective Steam and raw temperatures
+are each permitted through the inclusive `135°C` cap; either reading strictly
+above it independently latches `over_temperature` and commands the heater off.
+Offset-dependent targets whose implied raw value exceeds `135°C` remain
+rejected without clamping. TCAL-009 retains the separately authorized physical
 acceptance.
 
 ## PRD-011 HX711 scale validation

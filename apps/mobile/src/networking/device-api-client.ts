@@ -25,6 +25,9 @@ import {
   StopCooldownResponseSchema,
   TemperatureSettingsRequestSchema,
   TemperatureSettingsResponseSchema,
+  TemperatureCalibrationSessionRequestSchema,
+  TemperatureCalibrationStateSchema,
+  UpdateTemperatureCalibrationCandidateRequestSchema,
   type DeviceResponse,
   type HeaterSettingsRequest,
   type HeaterSettingsResponse,
@@ -49,6 +52,9 @@ import {
   type StopCooldownResponse,
   type TemperatureSettingsRequest,
   type TemperatureSettingsResponse,
+  type TemperatureCalibrationSessionRequest,
+  type TemperatureCalibrationState,
+  type UpdateTemperatureCalibrationCandidateRequest,
 } from "@philcoino/protocol";
 
 import { ApiClientError } from "./api-client-error";
@@ -332,6 +338,80 @@ export class DeviceApiClient {
     );
   }
 
+  getTemperatureCalibration(
+    calibrationId?: string,
+    options: RequestOptions = {},
+  ): Promise<TemperatureCalibrationState> {
+    const query =
+      calibrationId === undefined
+        ? ""
+        : `?calibrationId=${encodeURIComponent(calibrationId)}`;
+    return this.request(
+      `/api/v2/temperature-calibration${query}`,
+      TemperatureCalibrationStateSchema,
+      { authenticated: true, errorVersion: "v2" },
+      options,
+    );
+  }
+
+  startTemperatureCalibration(
+    options: RequestOptions = {},
+  ): Promise<TemperatureCalibrationState> {
+    return this.request(
+      "/api/v2/temperature-calibration/start",
+      TemperatureCalibrationStateSchema,
+      { authenticated: true, errorVersion: "v2", method: "POST" },
+      options,
+    );
+  }
+
+  async updateTemperatureCalibrationCandidate(
+    request: UpdateTemperatureCalibrationCandidateRequest,
+    options: RequestOptions = {},
+  ): Promise<TemperatureCalibrationState> {
+    const parsed =
+      UpdateTemperatureCalibrationCandidateRequestSchema.safeParse(request);
+    if (!parsed.success) {
+      throw new ApiClientError(
+        "invalid-request",
+        "The temperature calibration candidate is invalid.",
+      );
+    }
+    return await this.request(
+      "/api/v2/temperature-calibration/candidate",
+      TemperatureCalibrationStateSchema,
+      {
+        authenticated: true,
+        body: parsed.data,
+        errorVersion: "v2",
+        method: "PUT",
+      },
+      options,
+    );
+  }
+
+  saveTemperatureCalibration(
+    request: TemperatureCalibrationSessionRequest,
+    options: RequestOptions = {},
+  ): Promise<TemperatureCalibrationState> {
+    return this.temperatureCalibrationSessionMutation(
+      "save",
+      request,
+      options,
+    );
+  }
+
+  cancelTemperatureCalibration(
+    request: TemperatureCalibrationSessionRequest,
+    options: RequestOptions = {},
+  ): Promise<TemperatureCalibrationState> {
+    return this.temperatureCalibrationSessionMutation(
+      "cancel",
+      request,
+      options,
+    );
+  }
+
   async updateTemperatureSettings(
     settings: TemperatureSettingsRequest,
     options: RequestOptions = {},
@@ -409,6 +489,31 @@ export class DeviceApiClient {
       OverTemperatureDismissResponseSchema,
       {
         authenticated: true,
+        method: "POST",
+      },
+      options,
+    );
+  }
+
+  private async temperatureCalibrationSessionMutation(
+    operation: "cancel" | "save",
+    request: TemperatureCalibrationSessionRequest,
+    options: RequestOptions,
+  ): Promise<TemperatureCalibrationState> {
+    const parsed = TemperatureCalibrationSessionRequestSchema.safeParse(request);
+    if (!parsed.success) {
+      throw new ApiClientError(
+        "invalid-request",
+        "The temperature calibration session is invalid.",
+      );
+    }
+    return await this.request(
+      `/api/v2/temperature-calibration/${operation}`,
+      TemperatureCalibrationStateSchema,
+      {
+        authenticated: true,
+        body: parsed.data,
+        errorVersion: "v2",
         method: "POST",
       },
       options,

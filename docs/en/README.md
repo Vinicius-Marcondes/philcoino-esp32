@@ -141,9 +141,9 @@ switch position, or confirmed physical de-energization.
 
 The simulator also exposes `_simulator/*` controls that are deliberately outside API v1 and must never be implemented as production firmware endpoints.
 
-The current Steam range remains `110–120°C`. Separate TCAL-008 work plans to
-make `135°C` an inclusive target only after replacement raw/effective fault
-boundaries above that target are approved.
+The current Steam range is `110–135°C`, inclusive. `135°C` is the permitted
+target and reading cap; any effective Steam or raw temperature above `135°C`
+latches `over_temperature` and commands the heater off.
 
 ## Core design rules
 

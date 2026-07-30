@@ -1,5 +1,9 @@
 # TCAL-004 — Model calibration in the deterministic simulator
 
+> TCAL-008 supersedes this task's original fault-at-`135°C` equality:
+> exact `135°C` is permitted and values strictly above either simulated cap
+> fault.
+
 Status: Done
 Review Mode: Agent
 Review Reason: Manual time advancement, injected persistence failures, strict
@@ -56,7 +60,7 @@ exercise calibration without claiming physical temperature or steam evidence.
 
 ## Completion Evidence
 
-- Simulator suite: 92 tests and 731 expectations passed.
+- Current simulator suite: 92 tests and 741 expectations passed.
 - Simulator TypeScript typecheck passed.
 - Route tests cover authentication, strict query/body parsing, all five
   calibration operations, opaque ownership, late/mismatched sessions, guarded

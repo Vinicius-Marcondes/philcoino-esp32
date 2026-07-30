@@ -4,6 +4,13 @@ Expo 54 / React Native client for discovering, pairing with, monitoring, and sub
 
 The app is a client, not the temperature-control authority. Firmware owns sensors, targets, persistence, readiness, timeouts, heater output, and faults.
 
+Machine also opens a focused Temperature Calibration modal. Its dedicated
+session reads and mutates only the strict API v2 calibration resource, presents
+requested candidates only after acknowledgement, cancels on lifecycle exit,
+and never commands the pump or steam valve. The user opens the wand manually,
+adjusts the raw target in whole degrees, reviews the derived global offset, and
+explicitly confirms Save.
+
 ## Runtime flow
 
 ```text
@@ -59,8 +66,9 @@ API integration work.
 Debug mode also supplies the PRD-002 API v2 dashboard through the same client
 boundary using deterministic in-memory acknowledgements rather than HTTP. The
 three-page bottom navigation keeps machine state and extraction controls on
-Dashboard, editing/export on Profiles, and temperature/heater/device controls on
-Machine.
+Dashboard, editing/export on Profiles, and temperature/heater/device/calibration
+controls on Machine. The full-screen calibration modal supports portrait and
+both landscape directions with its own live responsive dimensions.
 
 Outside debug mode the same approved pages use API v2 combined polling and
 acknowledged profile/Start/Stop mutations. Mobile profiles persist independently

@@ -1,6 +1,6 @@
 # TCAL-009 — Perform supervised physical acceptance
 
-Status: Todo
+Status: Prepared — Not Authorized or Executed
 Review Mode: Human
 Human Review Needs: Explicitly authorize and supervise the connected/energized
 setup, verify instrumentation and independent protection, observe calibration
@@ -69,6 +69,15 @@ thermostat for the exact installed machine.
 ## Dependencies
 
 - TCAL-008 complete with all available software and target evidence.
+
+## Prepared Evidence
+
+- `docs/prds/PRD-017/evidence/PHYSICAL-ACCEPTANCE-PROCEDURE.md`
+- The worksheet separates de-energized inspection, heater-disconnected
+  low-voltage boundary checks, supervised calibration, lifecycle checks, and
+  qualified thermostat review.
+- No connected, low-voltage, or energized step has been authorized or
+  performed.
 
 ## Stop Conditions
 
