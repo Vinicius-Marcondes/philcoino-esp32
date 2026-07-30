@@ -176,7 +176,7 @@ idf.py build
 idf.py size
 ```
 
-PASS — `ESP-IDF v6.0.2`, target `esp32c3`.
+PASS — `ESP-IDF v6.0.2`, firmware `0.4.1`, target `esp32c3`.
 
 ```text
 Application binary: 0x11c730 bytes

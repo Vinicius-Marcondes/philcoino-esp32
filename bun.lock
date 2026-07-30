@@ -7,7 +7,7 @@
     },
     "apps/mobile": {
       "name": "@philcoino/mobile",
-      "version": "1.0.3",
+      "version": "1.0.4",
       "dependencies": {
         "@expo/vector-icons": "^15.0.3",
         "@philcoino/protocol": "workspace:*",

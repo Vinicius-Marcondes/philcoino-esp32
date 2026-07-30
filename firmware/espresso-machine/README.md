@@ -65,7 +65,7 @@ bearer/API parsing, the authenticated temperature-calibration transaction, and
 contract response captures. It does not exercise ESP-IDF scheduling, physical
 sensors, GPIO, SSRs, or thermal behavior.
 
-Firmware `0.4.0` emits at most eight controller-diagnostic history samples per
+Firmware `0.4.1` emits at most eight controller-diagnostic history samples per
 response and keeps the serialized body within an 8 KiB host-tested transport
 budget. `/api/v2/state` is queryless; the removed prediction opt-in is an
 intentional matched API break. History includes build/controller configuration,

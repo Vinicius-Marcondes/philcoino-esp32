@@ -31,7 +31,7 @@ does not prove:
 | Date, location, and allowed test boundary | |
 | Repository revision and firmware artifact hash | |
 | ESP-IDF version / target | `6.0.2` / `esp32c3` |
-| Firmware version | `0.4.0` |
+| Firmware version | `0.4.1` |
 | App build and protocol revision | |
 | Brew / Steam targets | |
 | Existing saved offset and calibration status | |

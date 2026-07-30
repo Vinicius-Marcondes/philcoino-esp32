@@ -6,7 +6,7 @@
 
 namespace philcoino::config {
 
-inline constexpr char kFirmwareVersion[] = "0.4.0";
+inline constexpr char kFirmwareVersion[] = "0.4.1";
 inline constexpr char kFriendlyName[] = "PhilcoINO";
 inline constexpr char kDeviceModel[] = "ESP32-C3 Super Mini";
 inline constexpr char kDeviceIdPrefix[] = "philcoino-";
