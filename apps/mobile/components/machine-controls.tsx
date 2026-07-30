@@ -26,6 +26,7 @@ interface MachineControlsProps {
   heaterMutation: DashboardMutationState;
   modeMutation: DashboardMutationState;
   onSetMode: (mode: Mode) => void;
+  onOpenTemperatureCalibration: () => void;
   onUpdateTemperatureSettings: (
     settings: TemperatureSettingsRequest,
   ) => void;
@@ -41,6 +42,7 @@ export function MachineControls({
   heaterMutation,
   modeMutation,
   onSetMode,
+  onOpenTemperatureCalibration,
   onUpdateTemperatureSettings,
   snapshot,
   steamWorkflowBlocked = false,
@@ -81,8 +83,16 @@ export function MachineControls({
   };
 
   return (
-    <View style={[styles.controlsSection, compact && styles.controlsSectionLandscape]}>
-      <View style={[styles.controlCard, compact && styles.controlCardLandscape]}>
+    <View
+      style={[
+        styles.controlsSection,
+        compact && styles.controlsSectionLandscape,
+      ]}>
+      <View
+        style={[
+          styles.controlCard,
+          compact && styles.controlCardLandscape,
+        ]}>
         <Text selectable style={styles.eyebrow}>
           {translate("controls.activeMode")}
         </Text>
@@ -113,7 +123,11 @@ export function MachineControls({
         ) : null}
       </View>
 
-      <View style={[styles.controlCard, compact && styles.controlCardLandscape]}>
+      <View
+        style={[
+          styles.controlCard,
+          compact && styles.controlCardLandscape,
+        ]}>
         <View style={styles.sectionHeading}>
           <View style={styles.headingCopy}>
             <Text selectable style={styles.eyebrow}>
@@ -186,6 +200,28 @@ export function MachineControls({
             onPress={requestTargetConfirmation}
           />
         )}
+      </View>
+
+      <View
+        style={[
+          styles.controlCard,
+          compact && styles.controlCardLandscape,
+          compact && styles.calibrationCardLandscape,
+        ]}>
+        <Text selectable style={styles.eyebrow}>
+          {translate("temperatureCalibration.entryEyebrow")}
+        </Text>
+        <Text selectable style={styles.sectionTitle}>
+          {translate("temperatureCalibration.entryTitle")}
+        </Text>
+        <Text selectable style={styles.helpText}>
+          {translate("temperatureCalibration.entryDetail")}
+        </Text>
+        <ControlButton
+          disabled={mutationPending}
+          label={translate("temperatureCalibration.open")}
+          onPress={onOpenTemperatureCalibration}
+        />
       </View>
 
     </View>
@@ -413,13 +449,14 @@ function feedbackTitle(status: DashboardMutationState["status"]): string {
 }
 
 const styles = StyleSheet.create({
-  controlsSection: { gap: 12 },
+  controlsSection: { gap: 12, minWidth: 0, width: "100%" },
   controlsSectionLandscape: {
     alignItems: "flex-start",
     flexDirection: "row",
     flexWrap: "wrap",
   },
-  controlCardLandscape: { flexBasis: 220, flexGrow: 1 },
+  controlCardLandscape: { flexBasis: 340, flexGrow: 1, minWidth: 0 },
+  calibrationCardLandscape: { flexBasis: "100%" },
   controlCard: {
     backgroundColor: "#FFFCF7",
     borderColor: "#DDD3C7",

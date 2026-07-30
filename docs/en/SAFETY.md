@@ -9,10 +9,17 @@ Philcoino is an experimental, mains-adjacent espresso-machine controller. The re
 - Human review of every implemented feature and the tested physical configuration was accepted by the owner on 2026-07-16. The Agent-owned PHIL-012 automated contract/resilience task remains pending.
 - The current codebase review contains unresolved BLOCKER and MAJOR findings in firmware timing, sensor monitoring, timeout behavior, physical output certainty, transport, and credential/device identity.
 - Current firmware permanently uses one boiler-base thermocouple for both brew and steam. It is a single point of control failure and provides no independent sensor cross-check.
-- PRD-003 implements an owner-selected fixed `+5°C` correction only after raw
-  validation and only in Steam. The corrected value drives control, limits,
-  and API behavior. The owner accepted the value for the tested
-  configuration in STEAM-004; raw instrument/measurement records are not in the repository.
+- PRD-017 supersedes PRD-003's fixed Steam-only runtime correction with one
+  persisted signed global offset applied once to Brew and Steam after raw
+  validation. A missing record is uncalibrated `0°C`; corrupt or unreadable
+  storage faults with the heater commanded off. The owner accepted the UI, but
+  physical calibration, boiling-point accuracy, and energized operation remain
+  pending.
+- The retained thermostat is identified by the owner/listing as nominally
+  `145°C`, 10 A, 250 V. The listing does not prove installed tolerance,
+  coupling, series wiring, or heater interruption. TCAL-008 permits an
+  inclusive `135°C` Steam target; that is software evidence and does not
+  validate the thermostat or authorize energized operation.
 - PRD-004 software adds a fixed Manual/main `+2°C` heater-duty-only bias and a
   firmware-owned cooldown command workflow with a 45-second pump cutoff and
   five-second stabilization. The owner accepted THERM-002, THERM-010, and
@@ -36,8 +43,12 @@ See the [codebase review](../../CODEBASE_REVIEW_REPORT.md), [tracker](../TRACKER
 Firmware owns the temperature-control loop and does not rely on app connectivity. Its policy code:
 
 - validates MAX6675 status and finite readings;
-- uses the raw reading in Brew and applies one compile-time `+5°C` correction
-  in Steam before decisions and snapshots;
+- validates the raw reading, applies one persisted global offset in Brew and
+  Steam, and uses the resulting effective temperature for decisions and
+  snapshots;
+- permits effective Steam temperature and the raw reading through `135°C`,
+  inclusive, before correction; either one strictly above the cap latches
+  `over_temperature` and commands the heater off;
 - applies mode-specific target and over-temperature limits;
 - requires a three-second ready hold;
 - applies a heating timeout and five-minute steam-ready timeout;
@@ -46,7 +57,8 @@ Firmware owns the temperature-control loop and does not rely on app connectivity
   calculations while leaving targets, readiness, deadlines, limits, and
   profile data unchanged;
 - latches faults and commands the SSR output off;
-- persists validated targets and complete four-slot extraction profile sets;
+- persists validated targets, complete four-slot extraction profile sets, and
+  temperature calibration in separate NVS records;
 - runs Manual and persisted profiles in a dedicated monotonic controller,
   initializes GPIO10 `off`, and never restores `running` at boot;
 - runs mutually exclusive cooldown through a bounded 10 ms workflow task,
@@ -74,10 +86,10 @@ report requested/command state; `deliveredCommandDuty1s` is a firmware command
 fraction, not measured SSR current or power.
 
 Agreement between control and API establishes only software consistency.
-It does not prove that `+5°C` represents the physical boiler gradient, that
-`+2°C` improves extraction, or that a cooldown command produces flow or cooling.
-It does not replace independent measurement, a thermal cutoff, or energized
-review.
+It does not prove that a user-observed offset represents calibrated physical
+temperature or the local boiling point, that `+2°C` improves extraction, or
+that a cooldown command produces flow or cooling. It does not replace
+independent measurement, a thermal cutoff, or energized review.
 
 Likewise, historical `heaterActive` and `pumpActive` values describe the last
 known firmware command. Backfill, SQLite, graph, and CSV data do not prove

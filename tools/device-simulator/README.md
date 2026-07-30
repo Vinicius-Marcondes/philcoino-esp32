@@ -53,6 +53,23 @@ Time remains manual:
 - same-key replay never resets elapsed time, and reset/power-cycle never resumes
   either workflow.
 
+The simulator also implements the authenticated PRD-017 temperature-calibration
+transaction:
+
+- `GET /api/v2/temperature-calibration`
+- `POST /api/v2/temperature-calibration/start`
+- `PUT /api/v2/temperature-calibration/candidate`
+- `POST /api/v2/temperature-calibration/save`
+- `POST /api/v2/temperature-calibration/cancel`
+
+The saved signed offset is applied once to Brew and Steam state, history, and
+control calculations. Calibration uses a raw `90–120°C` candidate, advisory
+stability, and a deterministic 15-second inactivity lease. Power-cycle
+preserves the saved record; full reset removes it. Effective Steam and raw
+temperature each permit exactly `135°C` and independently fault when strictly
+above that cap. The Steam target schema is `110–135°C`, inclusive, subject to
+offset-adjusted raw reachability.
+
 These are deterministic logical command states. They do not confirm pump
 operation, water flow, cooling, current, SSR output, switch state, or physical
 de-energization.
@@ -62,21 +79,31 @@ de-energization.
 These controls are intentionally outside `/api/v1` and must not appear in firmware:
 
 - `POST /_simulator/advance` with `{ "milliseconds": 3000 }` advances manual time by at most one simulated hour per request.
-- `PUT /_simulator/temperatures` sets the already-effective logical
-  `boilerTemperatureC` control value. The simulator does not add the firmware
-  Steam offset or model a physical top-to-bottom boiler gradient.
+- `PUT /_simulator/raw-temperature` with
+  `{ "boilerTemperatureRawC": 108 }` explicitly sets and returns raw and
+  effective temperature. The older `/_simulator/temperatures` route remains a
+  compatibility alias whose `boilerTemperatureC` input is treated as raw.
 - `PUT /_simulator/fault` latches a contract fault code.
-- `POST /_simulator/power-cycle` clears volatile mode, readings, heater permission, uptime, timers, and faults while preserving targets.
-- `POST /_simulator/reset` also restores default targets.
+- `POST /_simulator/power-cycle` clears volatile mode, readings, heater
+  permission, uptime, timers, faults, and calibration sessions while preserving
+  targets and the saved temperature offset.
+- `POST /_simulator/reset` also restores default targets and removes the saved
+  temperature-calibration record.
+- `POST /_simulator/fail-next-temperature-calibration-save` injects one
+  transactional persistence failure.
+- `POST /_simulator/corrupt-temperature-calibration` marks the persisted record
+  unreadable; the next power-cycle latches `internal_error` with the heater
+  command off.
 - `POST /_simulator/fail-next-output-command` with a `command` of
   `heater-off`, `pump-running`, or `pump-off` injects one deterministic command
   failure for workflow/error UI tests.
 
 Readiness requires three simulated seconds in the target band. The five-minute steam timeout begins at readiness and returns the model to brew. Time never advances in the background.
 
-Simulator temperature scenarios are API/UI evidence only. They do not validate
-the owner-selected `+5°C` firmware correction, firmware PI timing or tuning,
-physical calibration, or heater safety. Simulator controller diagnostics use
-bounded logical values and do not reproduce the firmware SSR loop.
+Simulator temperature scenarios are API/UI evidence only. The model does not
+detect steam, operate a steam wand, calculate a physical boiling point, prove
+calibration accuracy, or validate the thermostat/heater interruption path.
+Simulator controller diagnostics use bounded logical values and do not
+reproduce the firmware SSR loop.
 
 See [Development](../../docs/DEVELOPMENT.md), [Architecture](../../docs/ARCHITECTURE.md), and [Safety](../../docs/en/SAFETY.md).

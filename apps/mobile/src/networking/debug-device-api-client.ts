@@ -6,12 +6,18 @@ import {
   MachineStateV2Schema,
   ModeRequestSchema,
   ProfileSetSchema,
+  RAW_BOILER_OVER_TEMPERATURE_C,
+  STEAM_TARGET_MAX_C,
   STEAM_TARGET_MIN_C,
+  TemperatureCalibrationSessionRequestSchema,
+  TemperatureCalibrationStateSchema,
   TemperatureSettingsRequestSchema,
+  UpdateTemperatureCalibrationCandidateRequestSchema,
   StartExtractionRequestSchema,
   StartCooldownRequestSchema,
   ScaleStateSchema,
   type DeviceResponse,
+  type ApiV2ErrorCode,
   type CooldownState,
   type HeaterSettingsRequest,
   type HeaterSettingsResponse,
@@ -35,6 +41,9 @@ import {
   type WeightedExtractionTraceCursor,
   type TemperatureSettingsRequest,
   type TemperatureSettingsResponse,
+  type TemperatureCalibrationSessionRequest,
+  type TemperatureCalibrationState,
+  type UpdateTemperatureCalibrationCandidateRequest,
 } from "@philcoino/protocol";
 
 import type { DashboardMutationClient } from "../dashboard/dashboard-mutation-session";
@@ -95,6 +104,9 @@ export class DebugDeviceApiClient
     terminalExtraction: null,
     warning: null,
   });
+  private temperatureCalibration: TemperatureCalibrationState =
+    createDebugTemperatureCalibration();
+  private temperatureCalibrationWasSaved = false;
 
   async getHealth(options: { signal?: AbortSignal } = {}): Promise<HealthResponse> {
     throwIfAborted(options.signal);
@@ -366,6 +378,176 @@ export class DebugDeviceApiClient
     return this.scale;
   }
 
+  async getTemperatureCalibration(
+    calibrationId?: string,
+    options: { signal?: AbortSignal } = {},
+  ): Promise<TemperatureCalibrationState> {
+    throwIfAborted(options.signal);
+    if (this.temperatureCalibration.status === "calibrating") {
+      if (calibrationId !== this.temperatureCalibration.calibrationId) {
+        throw temperatureCalibrationError(
+          "temperature_calibration_session_mismatch",
+          "The calibration identifier does not own the debug session.",
+        );
+      }
+    } else if (calibrationId !== undefined) {
+      throw temperatureCalibrationError(
+        "temperature_calibration_inactive",
+        "No debug temperature calibration is active.",
+      );
+    }
+    return this.temperatureCalibration;
+  }
+
+  async startTemperatureCalibration(
+    options: { signal?: AbortSignal } = {},
+  ): Promise<TemperatureCalibrationState> {
+    throwIfAborted(options.signal);
+    if (this.temperatureCalibration.status === "calibrating") {
+      throw temperatureCalibrationError(
+        "temperature_calibration_active",
+        "A debug temperature calibration is already active.",
+      );
+    }
+    if (this.state.activeMode !== "brew") {
+      throw temperatureCalibrationError(
+        "brew_mode_required",
+        "Debug temperature calibration requires Brew mode.",
+      );
+    }
+    if (!this.state.heaterEnabled) {
+      throw temperatureCalibrationError(
+        "heater_disabled",
+        "Debug heater permission is disabled.",
+      );
+    }
+    const savedOffsetC = this.temperatureCalibration.savedOffsetC;
+    this.temperatureCalibration = TemperatureCalibrationStateSchema.parse({
+      ...debugTemperatureCalibrationCommon(
+        this.state,
+        savedOffsetC,
+      ),
+      status: "calibrating",
+      calibrationId: "temp-cal-debug-0001",
+      candidateRawTargetC: 100 - savedOffsetC,
+      offsetPreviewC: savedOffsetC,
+      advisoryStableMs: 0,
+      sessionLeaseRemainingMs: 15_000,
+      previewSafeTargetBounds:
+        debugTemperatureSafeBounds(savedOffsetC),
+    });
+    return this.temperatureCalibration;
+  }
+
+  async updateTemperatureCalibrationCandidate(
+    request: UpdateTemperatureCalibrationCandidateRequest,
+    options: { signal?: AbortSignal } = {},
+  ): Promise<TemperatureCalibrationState> {
+    throwIfAborted(options.signal);
+    const parsed =
+      UpdateTemperatureCalibrationCandidateRequestSchema.safeParse(request);
+    if (!parsed.success) {
+      throw new ApiClientError(
+        "invalid-request",
+        "The debug temperature calibration candidate is invalid.",
+      );
+    }
+    const active = this.requireDebugTemperatureCalibration(
+      parsed.data.calibrationId,
+    );
+    const offsetPreviewC = 100 - parsed.data.candidateRawTargetC;
+    this.temperatureCalibration = TemperatureCalibrationStateSchema.parse({
+      ...active,
+      candidateRawTargetC: parsed.data.candidateRawTargetC,
+      offsetPreviewC,
+      advisoryStableMs: 0,
+      sessionLeaseRemainingMs: 15_000,
+      previewSafeTargetBounds:
+        debugTemperatureSafeBounds(offsetPreviewC),
+    });
+    return this.temperatureCalibration;
+  }
+
+  async saveTemperatureCalibration(
+    request: TemperatureCalibrationSessionRequest,
+    options: { signal?: AbortSignal } = {},
+  ): Promise<TemperatureCalibrationState> {
+    throwIfAborted(options.signal);
+    const parsed = TemperatureCalibrationSessionRequestSchema.safeParse(request);
+    if (!parsed.success) {
+      throw new ApiClientError(
+        "invalid-request",
+        "The debug temperature calibration session is invalid.",
+      );
+    }
+    const active = this.requireDebugTemperatureCalibration(
+      parsed.data.calibrationId,
+    );
+    if (
+      this.state.steamTargetC - active.offsetPreviewC >
+      RAW_BOILER_OVER_TEMPERATURE_C
+    ) {
+      throw temperatureCalibrationError(
+        "temperature_target_unsafe",
+        "The debug Steam target would require a raw temperature above the cap.",
+      );
+    }
+    this.temperatureCalibration = TemperatureCalibrationStateSchema.parse({
+      ...debugTemperatureCalibrationCommon(
+        this.state,
+        active.offsetPreviewC,
+      ),
+      status: "calibrated",
+    });
+    this.temperatureCalibrationWasSaved = true;
+    return this.temperatureCalibration;
+  }
+
+  async cancelTemperatureCalibration(
+    request: TemperatureCalibrationSessionRequest,
+    options: { signal?: AbortSignal } = {},
+  ): Promise<TemperatureCalibrationState> {
+    throwIfAborted(options.signal);
+    const parsed = TemperatureCalibrationSessionRequestSchema.safeParse(request);
+    if (!parsed.success) {
+      throw new ApiClientError(
+        "invalid-request",
+        "The debug temperature calibration session is invalid.",
+      );
+    }
+    const active = this.requireDebugTemperatureCalibration(
+      parsed.data.calibrationId,
+    );
+    this.temperatureCalibration = TemperatureCalibrationStateSchema.parse({
+      ...debugTemperatureCalibrationCommon(
+        this.state,
+        active.savedOffsetC,
+      ),
+      status:
+        this.temperatureCalibrationWasSaved
+          ? "calibrated"
+          : "uncalibrated",
+    });
+    return this.temperatureCalibration;
+  }
+
+  private requireDebugTemperatureCalibration(calibrationId: string) {
+    const active = this.temperatureCalibration;
+    if (active.status !== "calibrating") {
+      throw temperatureCalibrationError(
+        "temperature_calibration_inactive",
+        "No debug temperature calibration is active.",
+      );
+    }
+    if (active.calibrationId !== calibrationId) {
+      throw temperatureCalibrationError(
+        "temperature_calibration_session_mismatch",
+        "The calibration identifier does not own the debug session.",
+      );
+    }
+    return active;
+  }
+
   async startCooldown(
     request: StartCooldownRequest,
     options: { signal?: AbortSignal } = {},
@@ -447,11 +629,23 @@ export class DebugDeviceApiClient
         "The temperature settings request is invalid.",
       );
     }
+    this.rejectConflictingTemperatureCalibration(
+      "Debug temperature calibration was cancelled before changing targets.",
+    );
 
     const response = {
       brewTargetC: parsed.data.brewTargetC ?? this.state.brewTargetC,
       steamTargetC: parsed.data.steamTargetC ?? this.state.steamTargetC,
     };
+    const savedOffsetC = this.temperatureCalibration.savedOffsetC;
+    if (
+      response.brewTargetC - savedOffsetC >
+        RAW_BOILER_OVER_TEMPERATURE_C ||
+      response.steamTargetC - savedOffsetC >
+        RAW_BOILER_OVER_TEMPERATURE_C
+    ) {
+      throw temperatureTargetUnsafeError();
+    }
     this.state = createDebugState({
       activeMode: this.state.activeMode,
       heaterEnabled: this.state.heaterEnabled,
@@ -469,6 +663,9 @@ export class DebugDeviceApiClient
     if (!parsed.success) {
       throw new ApiClientError("invalid-request", "The mode request is invalid.");
     }
+    this.rejectConflictingTemperatureCalibration(
+      "Debug temperature calibration was cancelled before changing mode.",
+    );
 
     if (
       parsed.data.mode === "steam" &&
@@ -506,6 +703,9 @@ export class DebugDeviceApiClient
         "The heater permission request is invalid.",
       );
     }
+    this.rejectConflictingTemperatureCalibration(
+      "Debug temperature calibration was cancelled before changing heater permission.",
+    );
 
     this.state = createDebugState({
       activeMode: this.state.activeMode,
@@ -522,6 +722,23 @@ export class DebugDeviceApiClient
     throwIfAborted(options.signal);
     return this.state;
   }
+
+  private rejectConflictingTemperatureCalibration(message: string): void {
+    const active = this.temperatureCalibration;
+    if (active.status !== "calibrating") {
+      return;
+    }
+    this.temperatureCalibration = TemperatureCalibrationStateSchema.parse({
+      ...debugTemperatureCalibrationCommon(this.state, active.savedOffsetC),
+      status: this.temperatureCalibrationWasSaved
+        ? "calibrated"
+        : "uncalibrated",
+    });
+    throw temperatureCalibrationError(
+      "temperature_calibration_active",
+      message,
+    );
+  }
 }
 
 function cooldownActiveError(cooldown: CooldownState): ApiClientError {
@@ -537,6 +754,62 @@ function cooldownActiveError(cooldown: CooldownState): ApiClientError {
       activeCooldown: cooldown,
     },
     status: 409,
+  });
+}
+
+function createDebugTemperatureCalibration(): TemperatureCalibrationState {
+  return TemperatureCalibrationStateSchema.parse({
+    ...debugTemperatureCalibrationCommon(createDebugState(), 0),
+    status: "uncalibrated",
+  });
+}
+
+function debugTemperatureCalibrationCommon(
+  state: MachineState,
+  savedOffsetC: number,
+) {
+  return {
+    savedOffsetC,
+    boilerTemperatureRawC:
+      state.boilerTemperatureC - savedOffsetC,
+    boilerTemperatureC: state.boilerTemperatureC,
+    heaterActive: state.heaterActive,
+    ready: false,
+    safeTargetBounds: debugTemperatureSafeBounds(savedOffsetC),
+  };
+}
+
+function debugTemperatureSafeBounds(offsetC: number) {
+  const maximum = RAW_BOILER_OVER_TEMPERATURE_C + offsetC;
+  return {
+    brewMinimumC: 85 as const,
+    brewMaximumC: Math.min(95, maximum),
+    steamMinimumC: 110 as const,
+    steamMaximumC: Math.min(STEAM_TARGET_MAX_C, maximum),
+  };
+}
+
+function temperatureCalibrationError(
+  code: ApiV2ErrorCode,
+  message: string,
+): ApiClientError {
+  return new ApiClientError("http", message, {
+    response: { error: { code, message } },
+    status: 409,
+  });
+}
+
+function temperatureTargetUnsafeError(): ApiClientError {
+  const message =
+    "The requested effective target would exceed the raw temperature ceiling.";
+  return new ApiClientError("http", message, {
+    response: {
+      error: {
+        code: "temperature_target_unsafe",
+        message,
+      },
+    },
+    status: 400,
   });
 }
 

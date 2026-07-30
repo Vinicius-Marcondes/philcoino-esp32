@@ -13,7 +13,10 @@ import {
   ProfileSetSchema,
   StartCooldownRequestSchema,
   StartExtractionRequestSchema,
+  TemperatureCalibrationSessionIdSchema,
+  TemperatureCalibrationSessionRequestSchema,
   TemperatureSettingsRequestSchema,
+  UpdateTemperatureCalibrationCandidateRequestSchema,
   WeightedExtractionTraceCursorSchema,
   type ErrorCode,
   type ErrorResponse,
@@ -26,6 +29,7 @@ import {
   SimulatorMachine,
   type SimulatedOutputCommand,
   type SimulatorMachineOptions,
+  type TemperatureCalibrationOperationResult,
 } from "./model.ts";
 
 export const DEFAULT_SIMULATOR_TOKEN = "philcoino-dev-token";
@@ -102,6 +106,8 @@ export function createSimulator(
   app.use("/api/v2/extractions/stop", requireBearerV2);
   app.use("/api/v2/cooldowns/start", requireBearerV2);
   app.use("/api/v2/cooldowns/stop", requireBearerV2);
+  app.use("/api/v2/temperature-calibration", requireBearerV2);
+  app.use("/api/v2/temperature-calibration/*", requireBearerV2);
 
   app.get("/api/v1/state", (c) => c.json(machine.getState()));
 
@@ -123,6 +129,22 @@ export function createSimulator(
       }
       return contractError(c, 400, "malformed_request", MALFORMED_REQUEST_MESSAGE);
     }
+    if (machine.abortTemperatureCalibrationForConflict()) {
+      return contractError(
+        c,
+        409,
+        "sensor_unavailable",
+        "Temperature calibration was cancelled before changing targets.",
+      );
+    }
+    if (!machine.temperatureTargetsAreSafe(parsed.data)) {
+      return contractError(
+        c,
+        400,
+        "temperature_target_unsafe",
+        "The requested target would require a raw temperature above the cap.",
+      );
+    }
 
     return c.json(machine.updateTemperatureSettings(parsed.data));
   });
@@ -136,6 +158,14 @@ export function createSimulator(
     const parsed = ModeRequestSchema.safeParse(body.value);
     if (!parsed.success) {
       return contractError(c, 400, "malformed_request", MALFORMED_REQUEST_MESSAGE);
+    }
+    if (machine.abortTemperatureCalibrationForConflict()) {
+      return contractError(
+        c,
+        409,
+        "sensor_unavailable",
+        "Temperature calibration was cancelled before changing mode.",
+      );
     }
 
     if (machine.getState().status === "fault") {
@@ -167,6 +197,14 @@ export function createSimulator(
     const parsed = HeaterSettingsRequestSchema.safeParse(body.value);
     if (!parsed.success) {
       return contractError(c, 400, "malformed_request", MALFORMED_REQUEST_MESSAGE);
+    }
+    if (machine.abortTemperatureCalibrationForConflict()) {
+      return contractError(
+        c,
+        409,
+        "sensor_unavailable",
+        "Temperature calibration was cancelled before changing heater permission.",
+      );
     }
 
     return c.json(
@@ -201,6 +239,84 @@ export function createSimulator(
     }
     return c.json(machine.getStateV2());
   });
+
+  app.get("/api/v2/temperature-calibration", (c) => {
+    const calibrationId = temperatureCalibrationQuery(c.req.url);
+    if (!calibrationId.ok) {
+      return contractV2Error(
+        c,
+        400,
+        "malformed_request",
+        "The temperature calibration query is malformed.",
+      );
+    }
+    const result = machine.getTemperatureCalibration(calibrationId.value);
+    return result.ok
+      ? c.json(result.state)
+      : temperatureCalibrationError(c, result.reason);
+  });
+
+  app.post("/api/v2/temperature-calibration/start", (c) => {
+    const result = machine.startTemperatureCalibration();
+    return result.ok
+      ? c.json(result.state)
+      : temperatureCalibrationError(c, result.reason);
+  });
+
+  app.put("/api/v2/temperature-calibration/candidate", async (c) => {
+    const body = await readJson(c);
+    const parsed = body.ok
+      ? UpdateTemperatureCalibrationCandidateRequestSchema.safeParse(
+          body.value,
+        )
+      : null;
+    if (parsed === null || !parsed.success) {
+      return contractV2Error(
+        c,
+        400,
+        "malformed_request",
+        "The calibration candidate request is malformed.",
+      );
+    }
+    const result = machine.updateTemperatureCalibrationCandidate(
+      parsed.data.calibrationId,
+      parsed.data.candidateRawTargetC,
+    );
+    return result.ok
+      ? c.json(result.state)
+      : temperatureCalibrationError(c, result.reason);
+  });
+
+  for (const operation of ["save", "cancel"] as const) {
+    app.post(
+      `/api/v2/temperature-calibration/${operation}`,
+      async (c) => {
+        const body = await readJson(c);
+        const parsed = body.ok
+          ? TemperatureCalibrationSessionRequestSchema.safeParse(body.value)
+          : null;
+        if (parsed === null || !parsed.success) {
+          return contractV2Error(
+            c,
+            400,
+            "malformed_request",
+            "The calibration session request is malformed.",
+          );
+        }
+        const result =
+          operation === "save"
+            ? machine.saveTemperatureCalibration(
+                parsed.data.calibrationId,
+              )
+            : machine.cancelTemperatureCalibration(
+                parsed.data.calibrationId,
+              );
+        return result.ok
+          ? c.json(result.state)
+          : temperatureCalibrationError(c, result.reason);
+      },
+    );
+  }
 
   app.get("/api/v2/history", (c) => {
     const cursor = historyCursor(c.req.url);
@@ -247,6 +363,14 @@ export function createSimulator(
   });
 
   app.post("/api/v2/scale/calibration/start", (c) => {
+    if (machine.abortTemperatureCalibrationForConflict()) {
+      return contractV2Error(
+        c,
+        409,
+        "temperature_calibration_active",
+        "Temperature calibration was cancelled before starting scale calibration.",
+      );
+    }
     const result = machine.startScaleCalibration();
     if (result === "ok") {
       return c.json(machine.getScaleState());
@@ -393,6 +517,14 @@ export function createSimulator(
         "The extraction Start request is invalid.",
       );
     }
+    if (machine.abortTemperatureCalibrationForConflict()) {
+      return contractV2Error(
+        c,
+        409,
+        "temperature_calibration_active",
+        "Temperature calibration was cancelled before starting extraction.",
+      );
+    }
 
     const result = machine.startExtraction(
       parsed.data.idempotencyKey,
@@ -476,6 +608,14 @@ export function createSimulator(
         400,
         "malformed_request",
         "The cooldown Start request is invalid.",
+      );
+    }
+    if (machine.abortTemperatureCalibrationForConflict()) {
+      return contractV2Error(
+        c,
+        409,
+        "temperature_calibration_active",
+        "Temperature calibration was cancelled before starting cooldown.",
       );
     }
 
@@ -569,6 +709,15 @@ export function createSimulator(
     return c.json(machine.getState());
   });
 
+  app.put("/_simulator/raw-temperature", async (c) => {
+    const body = await readJson(c);
+    if (!body.ok || !isRawTemperatureControlRequest(body.value)) {
+      return contractError(c, 400, "malformed_request", MALFORMED_REQUEST_MESSAGE);
+    }
+    machine.setTemperature(body.value.boilerTemperatureRawC);
+    return c.json(machine.getRawTemperature());
+  });
+
   app.put("/_simulator/fault", async (c) => {
     const body = await readJson(c);
     if (!body.ok || !isExactObject(body.value, ["code"])) {
@@ -585,6 +734,16 @@ export function createSimulator(
   app.post("/_simulator/fail-next-profile-save", (c) => {
     machine.injectNextProfileSaveFailure();
     return c.json({ status: "armed" });
+  });
+
+  app.post("/_simulator/fail-next-temperature-calibration-save", (c) => {
+    machine.injectNextTemperatureCalibrationSaveFailure();
+    return c.json({ status: "armed" });
+  });
+
+  app.post("/_simulator/corrupt-temperature-calibration", (c) => {
+    machine.corruptTemperatureCalibrationStorage();
+    return c.json({ status: "corrupted" });
   });
 
   app.post("/_simulator/fail-next-output-command", async (c) => {
@@ -692,6 +851,118 @@ function weightedTraceCursor(
     afterSequence: Number(sequenceText),
   });
   return parsed.success ? { ok: true, value: parsed.data } : { ok: false };
+}
+
+function temperatureCalibrationQuery(
+  requestUrl: string,
+):
+  | { ok: true; value: string | undefined }
+  | { ok: false } {
+  const parameters = new URL(requestUrl).searchParams;
+  for (const key of parameters.keys()) {
+    if (
+      key !== "calibrationId" ||
+      parameters.getAll(key).length !== 1
+    ) {
+      return { ok: false };
+    }
+  }
+  const calibrationId = parameters.get("calibrationId");
+  if (calibrationId === null) {
+    return { ok: true, value: undefined };
+  }
+  const parsed =
+    TemperatureCalibrationSessionIdSchema.safeParse(calibrationId);
+  return parsed.success
+    ? { ok: true, value: parsed.data }
+    : { ok: false };
+}
+
+function temperatureCalibrationError(
+  c: Context,
+  reason: Extract<
+    TemperatureCalibrationOperationResult,
+    { ok: false }
+  >["reason"],
+): Response {
+  const mapping: Record<
+    typeof reason,
+    { code: ApiV2ErrorCode; message: string; status: 409 | 500 }
+  > = {
+    active: {
+      code: "temperature_calibration_active",
+      message: "A temperature calibration session is already active.",
+      status: 409,
+    },
+    inactive: {
+      code: "temperature_calibration_inactive",
+      message: "No temperature calibration session is active.",
+      status: 409,
+    },
+    "session-mismatch": {
+      code: "temperature_calibration_session_mismatch",
+      message: "The calibration identifier does not own the active session.",
+      status: 409,
+    },
+    expired: {
+      code: "temperature_calibration_expired",
+      message: "The temperature calibration session expired from inactivity.",
+      status: 409,
+    },
+    "machine-faulted": {
+      code: "machine_faulted",
+      message: "Temperature calibration cannot run while a fault is latched.",
+      status: 409,
+    },
+    "sensor-unavailable": {
+      code: "sensor_unavailable",
+      message: "Temperature calibration requires a valid raw sensor reading.",
+      status: 409,
+    },
+    "heater-disabled": {
+      code: "heater_disabled",
+      message: "Enable firmware heater permission before calibration.",
+      status: 409,
+    },
+    "steam-mode": {
+      code: "brew_mode_required",
+      message: "Switch to Brew before starting temperature calibration.",
+      status: 409,
+    },
+    "extraction-active": {
+      code: "extraction_active",
+      message: "Temperature calibration requires extraction to be idle.",
+      status: 409,
+    },
+    "cooldown-active": {
+      code: "cooldown_active",
+      message: "Temperature calibration requires cooldown to be idle.",
+      status: 409,
+    },
+    "scale-calibration-active": {
+      code: "calibration_in_progress",
+      message: "Finish or cancel scale calibration first.",
+      status: 409,
+    },
+    "unsafe-target": {
+      code: "temperature_target_unsafe",
+      message:
+        "The saved targets would require a raw temperature above the cap.",
+      status: 409,
+    },
+    persistence: {
+      code: "persistence_failure",
+      message: "Temperature calibration could not be persisted.",
+      status: 500,
+    },
+  };
+  const error = mapping[reason];
+  return contractV2Error(
+    c,
+    error.status,
+    error.code,
+    error.message,
+  );
 }
 
 function contractV2Error(
@@ -807,6 +1078,18 @@ function isTemperatureControlRequest(value: unknown): value is {
     isExactObject(value, ["boilerTemperatureC"]) &&
     typeof value.boilerTemperatureC === "number" &&
     Number.isFinite(value.boilerTemperatureC)
+  );
+}
+
+function isRawTemperatureControlRequest(value: unknown): value is {
+  boilerTemperatureRawC: number;
+} {
+  return (
+    isExactObject(value, ["boilerTemperatureRawC"]) &&
+    typeof value.boilerTemperatureRawC === "number" &&
+    Number.isFinite(value.boilerTemperatureRawC) &&
+    value.boilerTemperatureRawC >= -40 &&
+    value.boilerTemperatureRawC <= 160
   );
 }
 

@@ -20,6 +20,16 @@ ESP-IDF scheduling, GPIO/SSR output, thermal response, wiring, independent
 cutoff behavior, or mains safety. The active PI build remains pending a pinned
 target build and supervised instrumented A/B acceptance.
 
+PRD-017 removes the fixed Steam-only temperature correction and adds one
+firmware-owned persisted global offset, a guided raw-target calibration
+transaction, a `110–135°C` inclusive Steam target range, and independent
+effective-Steam/raw caps that fault strictly above `135°C`. Protocol,
+simulator, mobile, host, sanitizer, and contract-capture
+results do not close any review finding or prove physical boiling-point
+accuracy, sensor accuracy, heater de-energization, thermostat interruption, or
+safe energized calibration. TCAL-009 retains the separate Human-owned physical
+acceptance.
+
 The project remains a prototype. Do not infer production, unattended, or
 energized authorization from passing software checks or earlier owner-reported
 acceptance of a different tested configuration.

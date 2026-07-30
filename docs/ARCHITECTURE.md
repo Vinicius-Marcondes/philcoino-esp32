@@ -50,11 +50,11 @@ The simulator implements the contract and selected product semantics with a manu
 `packages/protocol/openapi.yaml` is the language-neutral source of truth. It defines seven API v1/public operations plus the additive API v2 workflow, history, and scale operations, bearer security, strict object shapes, limits, fault/error codes, and examples. The file uses JSON syntax, which is valid YAML 1.2.
 
 API v2 defines authenticated combined machine/extraction/compensation/cooldown
-state, four-slot profile read/replace, and idempotent extraction and cooldown
-Start/Stop shapes. Mobile, simulator, and firmware use these routes; API v1
-remains unchanged and temperature-control-only. Contract, simulator, and
-host-test agreement does not establish physical pump, heater, or cooling
-behavior.
+state, four-slot profile read/replace, idempotent extraction and cooldown
+Start/Stop shapes, and a firmware-owned temperature-calibration transaction.
+Mobile, simulator, and firmware use these routes; API v1 remains compatible and
+temperature-control-only. Contract, simulator, and host-test agreement does not
+establish physical pump, heater, steam, cooling, or calibration accuracy.
 
 `packages/protocol/src/schemas.ts` mirrors the contract as strict Zod schemas. Mobile and simulator imports come from `@philcoino/protocol`; firmware deliberately does not. Firmware independently implements the contract through the bounded generic JSON boundary in `api_json.cpp`, typed machine and workflow codecs in `api_machine_codec.cpp` and `api_workflow_codec.cpp`, shared response/error helpers in `api_codec.cpp`, and firmware contract captures validated against the strict schemas.
 
@@ -63,7 +63,9 @@ Boundary rules:
 - public: `GET /healthz` and `GET /api/v1/device`;
 - authenticated: state and all mutations;
 - unknown request/response fields are rejected;
-- targets are whole numbers: brew 85–95°C, steam 110–120°C;
+- targets are whole numbers: brew 85–95°C, steam 110–135°C;
+- temperature calibration uses a raw whole-degree candidate from 90–120°C and
+  one signed persisted offset from -20–10°C;
 - fault state requires a fault object and `heaterActive: false`;
 - `_simulator/*` is never part of API v1 or API v2.
 
@@ -193,6 +195,15 @@ profile export, extraction Start/Stop, and cooldown Start/Stop mutations. It:
 
 This prevents an older poll from overwriting an acknowledgement and prevents a timed-out request from appearing successful. Target edits remain local drafts until explicit confirmation.
 
+The focused Machine-page Temperature Calibration modal uses a separate
+`TemperatureCalibrationSession`. It serializes status, Start, candidate, Save,
+and Cancel, polls only while the modal and app are active, and presents only
+validated firmware acknowledgements. Backgrounding, navigation, disconnection,
+terminal expiry, or a conflicting failure discards the unsaved candidate or
+relies on the firmware's bounded inactivity lease. The UI never commands the
+pump or valve, never detects steam, and requires the user to operate the wand
+and explicitly confirm Save.
+
 The mobile four-slot profile set is stored independently from the selected
 device record through a strict SecureStore-backed repository and seeded only on
 first use. A focused profile synchronization session loads local and machine
@@ -283,18 +294,24 @@ The deterministic model also captures the same one-Hertz rolling history,
 eight-sample pagination, overflow, boot reset, and full command/fault context.
 Simulator time remains manually advanced; it does not create background samples.
 
-The model holds persisted targets and the four-slot profile set separately from
-volatile mode, temperatures, heater permission, faults, extraction/idempotency,
-readiness, timeouts, and uptime. Time never advances in the background.
+The model holds persisted targets, the four-slot profile set, and the signed
+temperature calibration separately from volatile mode, raw temperature,
+heater permission, faults, workflows/idempotency, readiness, timeouts, and
+uptime. Time never advances in the background.
 `POST /_simulator/advance` steps temperature, extraction, and cooldown state in
 bounded increments, which makes phases, threshold completion, the 45-second
 cutoff, five-second stabilization, readiness, and timeout boundaries
-deterministic. Power-cycle preserves targets/profiles and resets both workflows
-idle; reset restores all defaults.
+deterministic. Power-cycle preserves targets, profiles, and calibration while
+reset restores their defaults and clears calibration.
 
-Simulator `boilerTemperatureC` is already the effective logical control value.
-The simulator does not add the firmware Steam offset, model separate
-boiler-base and upper-boiler temperatures, or provide calibration evidence.
+The simulator stores one raw boiler temperature and derives
+`boilerTemperatureC = rawTemperatureC + temperatureOffsetC` exactly once for
+both modes. Its calibration transaction controls the raw candidate from
+90–120°C, persists `100 - candidate`, reports offset-adjusted target bounds,
+and permits each independent effective-Steam and raw reading through `135°C`.
+Either reading strictly above that cap latches the simulated fault.
+These logical values do not model separate boiler-base/upper-boiler
+temperatures or provide physical calibration evidence.
 
 Simulator-only routes can set readings, inject faults or the next profile-save
 failure, advance time, power-cycle, or reset. They are test controls, not
@@ -367,13 +384,20 @@ not enter the workflow mutex or publish to `ScaleController`; accepted samples
 refresh the cached median, spread, stability, and calibrated weight once, and
 consumer snapshots apply only O(1) age/availability gating. This does not block
 temperature control or ordinary Manual/timed extraction.
-Calibration has its own NVS blob; completion prepares an immutable tokenized
+Scale calibration has its own NVS blob; completion prepares an immutable tokenized
 candidate under the workflow mutex, saves it after unlocking, then reacquires
 the mutex to adopt that exact candidate. Save failure retains the previous
 calibration for retry. A save that cannot be acknowledged remains pending and
 blocks weighted Start until the same transaction is recovered; Cancel cannot
-clear that pending adoption. Invalid/missing calibration disables weighted
+clear that pending adoption. Invalid/missing scale calibration disables weighted
 Start without preventing machine startup.
+
+Temperature calibration uses a separate versioned NVS record. A missing record
+is valid uncalibrated state with a `0°C` offset; corrupt or unreadable storage
+latches an internal fault and keeps the heater command off. Save prepares the
+candidate under the workflow mutex, persists it outside the mutex, then adopts
+the exact persisted candidate under the mutex. A persistence failure retains
+the previous offset and targets.
 
 The API and control loops share controller snapshots behind the bounded workflow
 domain. Target updates first validate and command heater off under the boundary,
@@ -387,16 +411,19 @@ stay tracked as unresolved findings.
 `Max6675` enforces conversion timing and rejects open, invalid, or
 transport-failed frames from the permanent boiler-base thermocouple. The
 controller also rejects non-finite values before conversion. One controller-owned
-path then defines the active temperature: the validated raw reading in Brew and
-that raw reading plus the compile-time `kSteamTemperatureOffsetC = 5` correction
-in Steam. No API, mobile, simulator, or persistence caller adds another
-correction.
+path then defines the effective temperature in both modes by adding the one
+persisted signed global offset exactly once. A missing record contributes
+`0°C`; no mode-specific correction remains. Raw validation and the independent
+raw ceiling occur before offset correction, and no API, mobile, simulator, or
+persistence caller adds another correction.
 
 `TemperatureController` boots in brew mode with volatile heater permission enabled. A valid update:
 
 1. validates the raw boiler reading status and finite numeric value;
-2. derives the active temperature once for the current mode;
-3. applies the active-mode over-temperature limit and steam return timeout;
+2. derives effective temperature once from the validated raw reading and saved
+   offset;
+3. applies the active-mode effective over-temperature limit, the independent
+   raw ceiling, and the Steam return timeout;
 4. requires ±1°C stability for three seconds before `ready`;
 5. tracks active-temperature heating demand toward a ten-minute timeout;
 6. calculates both the legacy nonlinear requested duty and a fixed-gain PI
@@ -411,7 +438,8 @@ correction.
 remains authoritative and the PI result is shadow-only; arbitrary shadow output
 cannot change commands, readiness, faults, timeouts, extraction, cooldown, or
 persistence. When explicitly enabled, PI owns requested duty only in Brew.
-Steam always retains the legacy curve and fixed `+5°C` correction. The PI uses
+Steam always retains the legacy curve and uses the same global effective
+temperature as Brew. The PI uses
 the fixed 500 ms interval, Kp `0.08`, Ki `0.01`, EMA alpha `0.25`, bounded
 integral state, and conditional anti-windup. Invalid readings/timing, mode or
 target changes, phase changes, inhibition, permission, faults, safety-lease
@@ -437,11 +465,11 @@ snapshot, 45 seconds, or Stop requests pump off and begins exactly five seconds
 of heater-inhibited stabilization. User heater permission is never changed;
 reset/power loss never resumes the RAM-only workflow.
 
-Consequently, a valid raw `115°C` reading is controlled and published as
-`120°C` in Steam and as `115°C` in Brew. A mode acknowledgement can change
-`boilerTemperatureC` by exactly `5°C` without a new sensor
-sample. This is an owner-selected correction pending repeatable instrumented
-physical validation, not proof of the upper-boiler temperature.
+Consequently, one valid raw sample plus one saved offset produces the same
+effective `boilerTemperatureC` in Brew and Steam. For example, raw boiling
+observed at `108°C` saves `-8°C`, so that raw point is controlled and published
+as effective `100°C` in either mode. This is a user-observed rebasing result,
+not proof of boiling-point accuracy or upper-boiler temperature.
 
 Sensor, over-temperature, heating-timeout, and internal faults latch and command the SSR off. Only over-temperature can be dismissed without a power cycle, and only when the boiler reading is valid, the temperature is back at the active target, and the active mode limit is clear.
 
@@ -457,6 +485,7 @@ The ESP-IDF adapter owns the 512-byte authorization-header limit, 1,024-byte req
 | --- | --- | --- | --- |
 | Selected device ID/address/token | Mobile SecureStore | Yes | Not applicable |
 | Brew/steam targets | Firmware NVS | Yes | Yes |
+| Temperature calibration offset/status | Firmware NVS | Yes | Yes; missing record is uncalibrated `0°C`, corrupt/unreadable storage faults |
 | Mobile extraction profiles | Mobile SecureStore | Yes | Not applicable |
 | Keep-screen-awake preference | Mobile local key-value storage | Yes | App-level; independent of the selected machine |
 | Firmware extraction profiles | Firmware NVS | Not applicable | Yes |

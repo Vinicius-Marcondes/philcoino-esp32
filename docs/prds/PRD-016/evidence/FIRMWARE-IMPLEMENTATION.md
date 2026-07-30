@@ -2,6 +2,10 @@
 
 Date: 2026-07-28
 
+> Historical evidence: PRD-017 later replaced the fixed Steam-only `+5°C`
+> correction described below with one persisted signed global offset. The Brew
+> PI and prediction-removal evidence remains valid.
+
 ## Implemented boundary
 
 - Removed the passive prediction model, configuration, feature histories,

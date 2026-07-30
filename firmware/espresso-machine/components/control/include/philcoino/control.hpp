@@ -5,6 +5,7 @@
 #include <string>
 
 #include "philcoino/brew_pi.hpp"
+#include "philcoino/config.hpp"
 #include "philcoino/peripherals.hpp"
 
 namespace philcoino::control {
@@ -64,8 +65,8 @@ struct ControlSnapshot {
   ControlStatus status{ControlStatus::kHeating};
   ControlMode mode{ControlMode::kBrew};
   peripherals::TemperatureTargets targets{};
-  // Valid readings contain the active effective control temperature: raw in
-  // Brew and corrected once by the controller in Steam.
+  // Valid readings contain the effective control temperature after the one
+  // persisted global calibration offset is applied.
   peripherals::ThermocoupleReading boiler_temperature{};
   bool heater_enabled_permission{true};
   bool heater_enabled{false};
@@ -73,6 +74,54 @@ struct ControlSnapshot {
   FaultSnapshot fault{};
   SteamTimeoutSnapshot steam_timeout{};
   ControllerDiagnostics controller{};
+};
+
+enum class TemperatureCalibrationStatus {
+  kUncalibrated,
+  kCalibrating,
+  kCalibrated,
+};
+
+struct TemperatureSafeTargetBounds {
+  std::int32_t brew_minimum_c{0};
+  std::int32_t brew_maximum_c{0};
+  std::int32_t steam_minimum_c{0};
+  std::int32_t steam_maximum_c{0};
+};
+
+struct TemperatureCalibrationSnapshot {
+  TemperatureCalibrationStatus status{
+      TemperatureCalibrationStatus::kUncalibrated};
+  std::int32_t saved_offset_c{0};
+  bool temperature_available{false};
+  float raw_temperature_c{0.0F};
+  float effective_temperature_c{0.0F};
+  bool heater_active{false};
+  bool ready{false};
+  TemperatureSafeTargetBounds safe_target_bounds{};
+  std::string calibration_id{};
+  std::int32_t candidate_raw_target_c{
+      config::kTemperatureCalibrationReferenceC};
+  std::int32_t offset_preview_c{0};
+  std::uint32_t advisory_stable_ms{0};
+  std::uint32_t session_lease_remaining_ms{0};
+  TemperatureSafeTargetBounds preview_safe_target_bounds{};
+};
+
+enum class TemperatureCalibrationResult {
+  kOk,
+  kActive,
+  kInactive,
+  kSessionMismatch,
+  kExpired,
+  kSensorUnavailable,
+  kHeaterDisabled,
+  kFault,
+  kSteamMode,
+  kMutationConflict,
+  kUnsafeTarget,
+  kOutputFailure,
+  kAdoptionPending,
 };
 
 const char* fault_code_name(FaultCode code);
@@ -86,6 +135,11 @@ class TemperatureController {
                         peripherals::FailOffSsr& heater,
                         BrewPiConfig pi_configuration =
                             default_brew_pi_config());
+  TemperatureController(
+      peripherals::TemperatureTargets targets,
+      peripherals::TemperatureCalibration calibration,
+      peripherals::FailOffSsr& heater,
+      BrewPiConfig pi_configuration = default_brew_pi_config());
 
   ControlMode mode() const;
   ControlStatus status() const;
@@ -94,7 +148,34 @@ class TemperatureController {
   FaultCode fault_code() const;
   bool heater_enabled_permission() const;
   bool heater_enabled() const;
+  const peripherals::TemperatureCalibration& temperature_calibration() const;
+  bool raw_temperature(float& temperature_c) const;
   bool brew_effective_temperature(float& temperature_c) const;
+  bool targets_reachable(
+      const peripherals::TemperatureTargets& targets) const;
+  bool temperature_calibration_active() const;
+  TemperatureCalibrationResult start_temperature_calibration(
+      const std::string& calibration_id, std::uint32_t now_ms);
+  TemperatureCalibrationResult renew_temperature_calibration(
+      const std::string& calibration_id, std::uint32_t now_ms);
+  TemperatureCalibrationResult update_temperature_calibration_candidate(
+      const std::string& calibration_id, std::int32_t candidate_raw_target_c,
+      std::uint32_t now_ms);
+  TemperatureCalibrationResult prepare_temperature_calibration_save(
+      const std::string& calibration_id,
+      peripherals::TemperatureCalibration& candidate,
+      std::uint32_t now_ms);
+  TemperatureCalibrationResult adopt_persisted_temperature_calibration(
+      const std::string& calibration_id,
+      const peripherals::TemperatureCalibration& calibration,
+      std::uint32_t now_ms);
+  TemperatureCalibrationResult rollback_temperature_calibration_save(
+      const std::string& calibration_id, std::uint32_t now_ms);
+  TemperatureCalibrationResult cancel_temperature_calibration(
+      const std::string& calibration_id, std::uint32_t now_ms);
+  void abort_temperature_calibration(std::uint32_t now_ms);
+  TemperatureCalibrationSnapshot temperature_calibration_snapshot(
+      std::uint32_t now_ms);
   bool extraction_compensation_active() const;
   bool cooldown_inhibited() const;
   bool target_update_in_progress() const;
@@ -126,6 +207,8 @@ class TemperatureController {
   std::int32_t active_target() const;
   std::int32_t heater_duty_target() const;
   float active_temperature() const;
+  std::int32_t control_target() const;
+  float control_temperature() const;
   bool active_temperature_in_ready_band() const;
   bool active_temperature_demands_heat() const;
   bool boiler_reading_ok() const;
@@ -147,6 +230,8 @@ class TemperatureController {
   void reset_heater_control_window(std::uint32_t now_ms);
   void reset_readiness(std::uint32_t now_ms);
   void return_to_brew(std::uint32_t now_ms);
+  bool expire_temperature_calibration(std::uint32_t now_ms);
+  void restore_ordinary_brew_control(std::uint32_t now_ms);
   bool validate_readings(std::uint32_t now_ms);
   bool update_readiness(std::uint32_t now_ms);
   bool update_heater(std::uint32_t now_ms, float requested_duty);
@@ -154,6 +239,7 @@ class TemperatureController {
 
   peripherals::FailOffSsr& heater_;
   peripherals::TemperatureTargets targets_{};
+  peripherals::TemperatureCalibration temperature_calibration_{};
   peripherals::ThermocoupleReading raw_boiler_temperature_{};
   ControlMode mode_{ControlMode::kBrew};
   ControlStatus status_{ControlStatus::kHeating};
@@ -164,6 +250,15 @@ class TemperatureController {
   bool target_update_in_progress_{false};
   bool pending_active_target_change_{false};
   peripherals::TemperatureTargets pending_targets_{};
+  bool temperature_calibration_active_{false};
+  bool temperature_calibration_save_in_progress_{false};
+  std::string temperature_calibration_id_{};
+  std::string expired_temperature_calibration_id_{};
+  std::int32_t temperature_calibration_candidate_raw_c_{
+      config::kTemperatureCalibrationReferenceC};
+  peripherals::TemperatureCalibration
+      pending_temperature_calibration_{};
+  std::uint32_t temperature_calibration_last_activity_ms_{0};
   bool fault_latched_{false};
   bool ready_band_active_{false};
   std::uint32_t ready_band_since_ms_{0};

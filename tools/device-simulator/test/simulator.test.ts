@@ -67,6 +67,11 @@ describe("bearer authentication", () => {
     ["POST", "/api/v2/extractions/stop"],
     ["POST", "/api/v2/cooldowns/start"],
     ["POST", "/api/v2/cooldowns/stop"],
+    ["GET", "/api/v2/temperature-calibration"],
+    ["POST", "/api/v2/temperature-calibration/start"],
+    ["PUT", "/api/v2/temperature-calibration/candidate"],
+    ["POST", "/api/v2/temperature-calibration/save"],
+    ["POST", "/api/v2/temperature-calibration/cancel"],
   ])("rejects a missing token for %s %s", async (method, path) => {
     const response = await simulator.app.request(path, { method });
     expect(response.status).toBe(401);
@@ -525,21 +530,44 @@ describe("API v1 state and mutations", () => {
   it("persists valid target updates and returns both targets", async () => {
     const response = await simulator.app.request(
       "/api/v1/settings/temperatures",
-      jsonRequest("PATCH", { brewTargetC: 95 }, authorization),
+      jsonRequest(
+        "PATCH",
+        { brewTargetC: 95, steamTargetC: 135 },
+        authorization,
+      ),
     );
     expect(response.status).toBe(200);
     expect(TemperatureSettingsResponseSchema.parse(await response.json())).toEqual({
       brewTargetC: 95,
-      steamTargetC: 115,
+      steamTargetC: 135,
     });
+
+    const adjacentResponse = await simulator.app.request(
+      "/api/v1/settings/temperatures",
+      jsonRequest("PATCH", { steamTargetC: 134 }, authorization),
+    );
+    expect(adjacentResponse.status).toBe(200);
+    expect(
+      TemperatureSettingsResponseSchema.parse(await adjacentResponse.json()),
+    ).toEqual({
+      brewTargetC: 95,
+      steamTargetC: 134,
+    });
+
+    const maximumResponse = await simulator.app.request(
+      "/api/v1/settings/temperatures",
+      jsonRequest("PATCH", { steamTargetC: 135 }, authorization),
+    );
+    expect(maximumResponse.status).toBe(200);
 
     await simulator.app.request("/_simulator/power-cycle", { method: "POST" });
     expect((await getState()).brewTargetC).toBe(95);
+    expect((await getState()).steamTargetC).toBe(135);
   });
 
   it.each([
     [{ brewTargetC: 84 }, "temperature_out_of_range"],
-    [{ steamTargetC: 121 }, "temperature_out_of_range"],
+    [{ steamTargetC: 136 }, "temperature_out_of_range"],
     [{ brewTargetC: 92.5 }, "temperature_out_of_range"],
     [{}, "malformed_request"],
     [{ brewTargetC: 93, unexpected: true }, "malformed_request"],

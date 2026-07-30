@@ -309,14 +309,14 @@ describe("extraction design preview model", () => {
     expect(source).toContain("faultMutation={faultMutation}\n                          fillHeight");
     expect(source).toContain("<ThermalWorkflowStatus\n                          compact\n                          fillHeight");
 
-    const machineControls = source.indexOf("<MachineControls");
-    const heaterToggle = source.indexOf("<HeaterToggleBar", machineControls);
-    const uptime = source.indexOf('translate("dashboard.machineUptime")', heaterToggle);
+    const heaterToggle = source.indexOf("<HeaterToggleBar");
+    const machineControls = source.indexOf("<MachineControls", heaterToggle);
+    const uptime = source.indexOf('translate("dashboard.machineUptime")', machineControls);
     const steamTimer = source.indexOf('translate("dashboard.steamTimer")', uptime);
     const historyExport = source.indexOf("<TemperatureHistoryExportCard", steamTimer);
     const savedMachine = source.indexOf('translate("dashboard.savedMachine")', historyExport);
-    expect(heaterToggle).toBeGreaterThan(machineControls);
-    expect(uptime).toBeGreaterThan(heaterToggle);
+    expect(machineControls).toBeGreaterThan(heaterToggle);
+    expect(uptime).toBeGreaterThan(machineControls);
     expect(steamTimer).toBeGreaterThan(uptime);
     expect(historyExport).toBeGreaterThan(steamTimer);
     expect(savedMachine).toBeGreaterThan(historyExport);

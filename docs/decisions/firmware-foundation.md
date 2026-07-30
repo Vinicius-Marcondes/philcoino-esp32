@@ -1,9 +1,14 @@
 # Firmware foundation decisions
 
-Status: HUMAN-APPROVED 2026-07-04; TEMPORARY DIAGNOSTIC AMENDMENT 2026-07-06
+Status: HISTORICAL FOUNDATION — CURRENT TEMPERATURE POLICY SUPERSEDED BY PRD-017
 
 These decisions establish PHIL-004. They do not approve energized heater tests or
 implement peripheral and control behavior.
+
+PRD-017 supersedes the historical Steam over-temperature value below for
+current runtime behavior. Current source uses a `110–135°C` inclusive Steam
+target range, permits effective-Steam and raw readings through `135°C`, faults
+strictly above either cap, and applies one persisted global calibration offset.
 
 ## Platform and dependencies
 

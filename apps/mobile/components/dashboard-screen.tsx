@@ -56,6 +56,7 @@ import {
   ExtractionConsoleEntry,
   ExtractionConsoleScreen,
 } from "@/components/extraction-console-screen";
+import { TemperatureCalibrationScreen } from "@/components/temperature-calibration-screen";
 import { WeightControlEditor } from "@/components/weight-mode-card";
 import { formatWeightReadout } from "@/src/telemetry/telemetry-readouts";
 import {
@@ -232,6 +233,8 @@ export function DashboardScreen({
   const [dashboardPage, setDashboardPage] =
     useState<DashboardPage>("dashboard");
   const [consoleOpen, setConsoleOpen] = useState(false);
+  const [temperatureCalibrationOpen, setTemperatureCalibrationOpen] =
+    useState(false);
   const scale = useScale({
     client,
     deviceId: selectedDevice.deviceId,
@@ -541,6 +544,12 @@ export function DashboardScreen({
               ? "steam"
               : null
         }
+      />
+      <TemperatureCalibrationScreen
+        client={client}
+        deviceName={deviceName}
+        onClose={() => setTemperatureCalibrationOpen(false)}
+        visible={temperatureCalibrationOpen}
       />
       <KeyboardAvoidingView
         behavior={process.env.EXPO_OS === "ios" ? "padding" : undefined}
@@ -951,6 +960,15 @@ export function DashboardScreen({
               state={heaterMutation}
             />
 
+            {connection.status === "online" && snapshot !== null ? (
+              <HeaterToggleBar
+                disabled={mutationPending}
+                mutation={heaterMutation}
+                onSetHeaterEnabled={setHeaterEnabled}
+                snapshot={snapshot}
+              />
+            ) : null}
+
             <View
               style={[
                 styles.machineLayout,
@@ -965,6 +983,9 @@ export function DashboardScreen({
                       faultMutation={faultMutation}
                       heaterMutation={heaterMutation}
                       modeMutation={modeMutation}
+                      onOpenTemperatureCalibration={() =>
+                        setTemperatureCalibrationOpen(true)
+                      }
                       onSetMode={setMode}
                       onUpdateTemperatureSettings={updateTemperatureSettings}
                       snapshot={snapshot}
@@ -975,12 +996,6 @@ export function DashboardScreen({
                         cooldownStartMutation.status === "pending"
                       }
                       temperatureMutation={temperatureMutation}
-                    />
-                    <HeaterToggleBar
-                      disabled={mutationPending}
-                      mutation={heaterMutation}
-                      onSetHeaterEnabled={setHeaterEnabled}
-                      snapshot={snapshot}
                     />
                   </>
                 ) : (
@@ -2225,10 +2240,9 @@ const styles = StyleSheet.create({
   displayPreferenceCopy: { flex: 1, gap: 4 },
   machineLayout: { gap: 12 },
   machineLayoutLandscape: {
-    alignItems: "flex-start",
-    flexDirection: "row",
+    flexDirection: "column",
   },
-  machineLayoutColumn: { flex: 1, gap: 12, minWidth: 230 },
+  machineLayoutColumn: { flex: 1, gap: 12, minWidth: 0 },
   historyExportCard: {
     backgroundColor: "#FFFCF7",
     borderColor: "#DDD3C7",

@@ -21,6 +21,8 @@ struct Classification {
   bool temperatures{false};
   bool mode{false};
   bool heater{false};
+  bool temperature_calibration_candidate{false};
+  bool temperature_calibration_session{false};
   bool profiles{false};
   bool extraction_start{false};
   bool cooldown_start{false};
@@ -54,6 +56,21 @@ Classification classify(const std::string& body) {
   if (!result.heater) {
     assert(enabled == original_enabled);
   }
+  std::string calibration_id = "unchanged";
+  std::int32_t candidate_raw_target_c = 77;
+  result.temperature_calibration_candidate =
+      parse_temperature_calibration_candidate(
+          body, calibration_id, candidate_raw_target_c);
+  if (!result.temperature_calibration_candidate) {
+    assert(calibration_id == "unchanged" &&
+           candidate_raw_target_c == 77);
+  }
+  calibration_id = "unchanged";
+  result.temperature_calibration_session =
+      parse_temperature_calibration_session(body, calibration_id);
+  if (!result.temperature_calibration_session) {
+    assert(calibration_id == "unchanged");
+  }
   ExtractionProfiles profiles = default_extraction_profiles();
   const std::string original_profiles = serialize_profiles(profiles);
   result.profiles = parse_profiles(body, profiles);
@@ -80,6 +97,10 @@ bool same(const Classification& left, const Classification& right) {
   return left.json == right.json &&
          left.temperatures == right.temperatures && left.mode == right.mode &&
          left.heater == right.heater && left.profiles == right.profiles &&
+         left.temperature_calibration_candidate ==
+             right.temperature_calibration_candidate &&
+         left.temperature_calibration_session ==
+             right.temperature_calibration_session &&
          left.extraction_start == right.extraction_start &&
          left.cooldown_start == right.cooldown_start;
 }
@@ -89,7 +110,9 @@ void exercise(const std::string& body) {
   assert(same(first, classify(body)));
   if (body.size() > json::kMaximumInputBytes) {
     assert(!first.json && !first.temperatures && !first.mode &&
-           !first.heater && !first.profiles && !first.extraction_start &&
+           !first.heater && !first.temperature_calibration_candidate &&
+           !first.temperature_calibration_session && !first.profiles &&
+           !first.extraction_start &&
            !first.cooldown_start);
   }
 }
@@ -130,8 +153,8 @@ void run_deterministic_mutations(const std::string& seed) {
 
 void run_structured_mutation_classes() {
   for (const std::string body : {
-           "{\"steamTargetC\":120,\"brewTargetC\":85}",
-           " { \"brewTargetC\" : 85 , \"steamTargetC\" : 120 } ",
+           "{\"steamTargetC\":135,\"brewTargetC\":85}",
+           " { \"brewTargetC\" : 85 , \"steamTargetC\" : 135 } ",
            "{\"brewTargetC\":85,\"brewTargetC\":86}",
            "{\"brewTargetC\":85,\"unknown\":true}",
            "{\"brewTargetC\":true}",

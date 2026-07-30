@@ -112,7 +112,48 @@ struct TemperatureTargets {
 
 bool targets_are_valid(const TemperatureTargets& targets);
 
+struct TemperatureCalibration {
+  std::int32_t offset_c{0};
+  bool calibrated{false};
+};
+
+bool temperature_calibration_is_valid(
+    const TemperatureCalibration& calibration);
+float effective_temperature_c(float raw_temperature_c,
+                              const TemperatureCalibration& calibration);
+bool target_is_reachable(std::int32_t effective_target_c,
+                         const TemperatureCalibration& calibration);
+bool targets_are_reachable(const TemperatureTargets& targets,
+                           const TemperatureCalibration& calibration);
+
 enum class BackendLoadResult { kOk, kNotFound, kError };
+
+class TemperatureCalibrationBackend {
+ public:
+  virtual ~TemperatureCalibrationBackend() = default;
+  virtual BackendLoadResult load(TemperatureCalibration& calibration) = 0;
+  virtual bool save(const TemperatureCalibration& calibration) = 0;
+};
+
+enum class TemperatureCalibrationLoadResult {
+  kOk,
+  kNotCalibrated,
+  kCorrupt,
+  kError,
+};
+
+class TemperatureCalibrationStorage {
+ public:
+  explicit TemperatureCalibrationStorage(
+      TemperatureCalibrationBackend& backend);
+
+  TemperatureCalibrationLoadResult load(
+      TemperatureCalibration& calibration);
+  bool save(const TemperatureCalibration& calibration);
+
+ private:
+  TemperatureCalibrationBackend& backend_;
+};
 
 class ScaleCalibrationBackend {
  public:

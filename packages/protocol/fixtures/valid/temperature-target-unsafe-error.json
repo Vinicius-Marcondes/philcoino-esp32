@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": "temperature_target_unsafe",
+    "message": "The requested effective target would exceed the raw temperature ceiling."
+  }
+}

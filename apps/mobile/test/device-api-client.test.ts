@@ -507,6 +507,7 @@ describe("DeviceApiClient", () => {
         method,
       });
 
+    await client.setMode({ mode: "steam" });
     await control("PUT", "/_simulator/temperatures", {
       boilerTemperatureC: 110,
     });
@@ -559,8 +560,9 @@ describe("DeviceApiClient", () => {
     });
 
     await control("POST", "/_simulator/reset");
+    await client.setMode({ mode: "steam" });
     await control("PUT", "/_simulator/temperatures", {
-      boilerTemperatureC: 1_000,
+      boilerTemperatureC: 120,
     });
     await client.startCooldown({ idempotencyKey: "mobile-cooldown-cutoff-01" });
     await control("POST", "/_simulator/advance", { milliseconds: 45_000 });
@@ -578,6 +580,7 @@ describe("DeviceApiClient", () => {
     });
 
     await control("POST", "/_simulator/reset");
+    await client.setMode({ mode: "steam" });
     await control("PUT", "/_simulator/temperatures", {
       boilerTemperatureC: 110,
     });
@@ -623,6 +626,7 @@ describe("DeviceApiClient", () => {
       selection: { kind: "manual" },
     });
     await client.stopExtraction();
+    await client.setMode({ mode: "steam" });
     await control("PUT", "/_simulator/temperatures", {
       boilerTemperatureC: 110,
     });

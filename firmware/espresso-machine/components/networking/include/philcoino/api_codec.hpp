@@ -29,6 +29,16 @@ bool parse_temperatures(const std::string& body,
                         bool& constraint_violation);
 bool parse_mode(const std::string& body, control::ControlMode& mode);
 bool parse_heater_enabled(const std::string& body, bool& enabled);
+bool parse_temperature_calibration_query(const std::string& query,
+                                         bool& calibration_id_supplied,
+                                         std::string& calibration_id);
+bool parse_temperature_calibration_candidate(
+    const std::string& body, std::string& calibration_id,
+    std::int32_t& candidate_raw_target_c);
+bool parse_temperature_calibration_session(const std::string& body,
+                                           std::string& calibration_id);
+std::string serialize_temperature_calibration(
+    const control::TemperatureCalibrationSnapshot& snapshot);
 
 bool parse_profiles(const std::string& body,
                     peripherals::ExtractionProfiles& profiles);

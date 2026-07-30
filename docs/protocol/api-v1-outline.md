@@ -86,11 +86,12 @@ A state payload contains the single boiler thermocouple temperature:
 ```
 
 `boilerTemperatureC` is the firmware-authoritative active effective control
-temperature. After the raw boiler-base thermocouple sample is validated, Brew
-reports it unchanged while Steam reports it with the firmware-configured
-`+5°C` correction. A mode change can therefore change the reported value by
-exactly `5°C` without a new physical sensor sample. The API does not expose
-the raw Steam reading or offset as separate fields. `activeMode` selects the
+temperature. After the raw boiler-base thermocouple sample is validated,
+firmware adds the one persisted signed global calibration offset exactly once
+in both Brew and Steam. A missing calibration record means uncalibrated with a
+`0°C` offset. API v1 keeps its existing state shape and does not expose the raw
+reading, saved offset, or calibration status; those are available through the
+additive authenticated API v2 calibration resource. `activeMode` selects the
 target and mode-specific safety policy and is `brew` or `steam`. `uptimeMs` is
 monotonic device uptime and does not require internet time synchronization.
 `fault` is `null` while status is `heating` or `ready`, and contains a stable
@@ -127,9 +128,12 @@ The machine reports `ready` only after the measured control temperature remains 
 ## Temperature constraints
 
 - Brew target: 85°C through 95°C inclusive.
-- Steam target: 110°C through 120°C inclusive.
+- Steam target: 110°C through 135°C inclusive.
 - V1 target values use whole degrees Celsius.
 - Firmware rejects out-of-range, non-finite, or malformed values.
+- Firmware also rejects a range-valid target whose implied raw target would
+  exceed the independent raw `135°C` cap under the saved offset;
+  it never clamps or rewrites the requested value.
 - The app sends changes only after an explicit user confirmation.
 - A temperature update is not successful until the firmware validates and persists it in ESP32 NVS.
 - A successful update returns both persisted targets, including the unchanged target when only one was requested.
@@ -147,9 +151,9 @@ All non-success responses should use one stable shape:
 }
 ```
 
-The stable API error codes are `malformed_request`, `unauthorized`,
-`temperature_out_of_range`, `sensor_unavailable`, `persistence_failure`, and
-`internal_error`.
+The stable API error codes include `malformed_request`, `unauthorized`,
+`temperature_out_of_range`, `temperature_target_unsafe`,
+`sensor_unavailable`, `persistence_failure`, and `internal_error`.
 
 Initial machine fault codes are:
 

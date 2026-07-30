@@ -17,6 +17,11 @@ enum class ApiRouteId {
   kHeater,
   kDismissOverTemperature,
   kStateV2,
+  kTemperatureCalibrationGet,
+  kTemperatureCalibrationStart,
+  kTemperatureCalibrationCandidate,
+  kTemperatureCalibrationSave,
+  kTemperatureCalibrationCancel,
   kHistory,
   kScaleGet,
   kScaleTrace,
@@ -39,7 +44,7 @@ struct ApiRouteDescriptor {
   bool requires_authentication;
 };
 
-inline constexpr std::array<ApiRouteDescriptor, 21> kApiRoutes{{
+inline constexpr std::array<ApiRouteDescriptor, 26> kApiRoutes{{
     {ApiRouteId::kHealth, HttpMethod::kGet, "/healthz", false},
     {ApiRouteId::kDevice, HttpMethod::kGet, "/api/v1/device", false},
     {ApiRouteId::kStateV1, HttpMethod::kGet, "/api/v1/state", true},
@@ -50,6 +55,16 @@ inline constexpr std::array<ApiRouteDescriptor, 21> kApiRoutes{{
     {ApiRouteId::kDismissOverTemperature, HttpMethod::kPost,
      "/api/v1/faults/over-temperature/dismiss", true},
     {ApiRouteId::kStateV2, HttpMethod::kGet, "/api/v2/state", true},
+    {ApiRouteId::kTemperatureCalibrationGet, HttpMethod::kGet,
+     "/api/v2/temperature-calibration", true},
+    {ApiRouteId::kTemperatureCalibrationStart, HttpMethod::kPost,
+     "/api/v2/temperature-calibration/start", true},
+    {ApiRouteId::kTemperatureCalibrationCandidate, HttpMethod::kPut,
+     "/api/v2/temperature-calibration/candidate", true},
+    {ApiRouteId::kTemperatureCalibrationSave, HttpMethod::kPost,
+     "/api/v2/temperature-calibration/save", true},
+    {ApiRouteId::kTemperatureCalibrationCancel, HttpMethod::kPost,
+     "/api/v2/temperature-calibration/cancel", true},
     {ApiRouteId::kHistory, HttpMethod::kGet, "/api/v2/history", true},
     {ApiRouteId::kScaleGet, HttpMethod::kGet, "/api/v2/scale", true},
     {ApiRouteId::kScaleTrace, HttpMethod::kGet, "/api/v2/scale/trace", true},

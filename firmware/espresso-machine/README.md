@@ -1,6 +1,10 @@
 # PhilcoINO ESP32-C3 firmware
 
-ESP-IDF C++ firmware for the ESP32-C3 Super Mini. It owns sensor sampling, persisted targets/profiles, brew/steam control state, extraction/cooldown workflows, independent heater/pump command boundaries, bearer-authenticated API v1/v2 HTTP, and `_philcoino._tcp` mDNS advertising.
+ESP-IDF C++ firmware for the ESP32-C3 Super Mini. It owns sensor sampling,
+persisted targets/profiles/temperature calibration, brew/steam control state,
+extraction/cooldown/calibration workflows, independent heater/pump command
+boundaries, bearer-authenticated API v1/v2 HTTP, and `_philcoino._tcp` mDNS
+advertising.
 
 > [!CAUTION]
 > This firmware is not approved for production, unattended, or mains-powered heater operation. Keep the heater/load disconnected for development and read [Safety](../../docs/en/SAFETY.md) plus the [current review](../../CODEBASE_REVIEW_REPORT.md).
@@ -57,10 +61,11 @@ The suite covers identity/configuration, MAX6675 decoding, target/profile
 persistence policy, fail-off heater/pump command behavior,
 control transitions/timeouts/faults, bounded PI/legacy authority isolation, the
 bounded history ring and cursor codec,
-bearer/API parsing, and contract response captures. It does not exercise
-ESP-IDF scheduling, physical sensors, GPIO, SSRs, or thermal behavior.
+bearer/API parsing, the authenticated temperature-calibration transaction, and
+contract response captures. It does not exercise ESP-IDF scheduling, physical
+sensors, GPIO, SSRs, or thermal behavior.
 
-Firmware `0.4.0` emits at most eight controller-diagnostic history samples per
+Firmware `0.4.1` emits at most eight controller-diagnostic history samples per
 response and keeps the serialized body within an 8 KiB host-tested transport
 budget. `/api/v2/state` is queryless; the removed prediction opt-in is an
 intentional matched API break. History includes build/controller configuration,
@@ -71,11 +76,17 @@ These are software command observations, not physical feedback.
 `CONFIG_PHILCOINO_BREW_PI_CONTROL` defaults off. Disabled builds preserve the
 legacy Brew curve as authority while calculating bounded PI shadow diagnostics;
 enabled builds give PI requested-duty authority only in Brew through the same
-ten-second SSR window and fail-off owner. Steam always retains the legacy curve
-and fixed `+5°C` correction. Kp, Ki, EMA alpha, and the 500 ms controller
-interval are compile-time constants. Enabling or tuning PI requires a pinned
-target build plus supervised instrumented physical A/B review; host tests do
-not authorize it.
+ten-second SSR window and fail-off owner. Steam always retains the legacy
+curve. A single persisted temperature offset rebases both modes; the missing
+record default is `0°C`, and there is no Steam-only correction. Both the
+effective Steam temperature and the uncorrected raw thermocouple reading permit
+exactly `135°C` and independently fault when strictly above that cap. The
+persisted Steam target range is `110–135°C`, inclusive, subject to
+offset-adjusted raw reachability. Kp, Ki, EMA alpha, and the 500 ms
+controller interval are compile-time constants. Enabling or tuning PI, raising
+the Steam limit, and accepting the temperature calibration on energized
+hardware require pinned target builds plus supervised physical review; host
+tests do not authorize them.
 
 For deterministic malformed-input coverage under AddressSanitizer and
 UndefinedBehaviorSanitizer:

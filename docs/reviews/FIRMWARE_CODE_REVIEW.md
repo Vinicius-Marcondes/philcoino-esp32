@@ -12,6 +12,15 @@ networking, main-task ownership, and host tests
 > rerun and none of its findings are closed by PRD-016 host tests. Target,
 > instrumented thermal, output, and independent-cutoff evidence remains
 > separate and pending.
+>
+> **Current-state note (2026-07-30):** PRD-017/TCAL-008 supersedes the
+> historical `120°C` firmware target ceiling below with an inclusive
+> `110–135°C` Steam range and strict-above-`135°C` raw/effective faults. The
+> owner now identifies the retained part from a listing as a nominal `145°C`,
+> 10 A, 250 V thermostat, not proof of the `140°C` fuse assertions recorded in
+> this historical review. Installed identity, tolerance, series wiring, and
+> interruption must be revalidated under TCAL-009; the historical closure
+> cannot be extended to the new limit.
 
 ## Method and validation
 

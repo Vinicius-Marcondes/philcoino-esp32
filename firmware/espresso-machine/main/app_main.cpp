@@ -561,6 +561,29 @@ extern "C" void app_main() {
     return;
   }
 
+  static EspNvsTemperatureCalibrationBackend
+      temperature_calibration_backend;
+  if (!temperature_calibration_backend.initialize()) {
+    ESP_LOGE(kLogTag,
+             "NVS temperature calibration storage initialization failed");
+    ssr.force_off();
+    return;
+  }
+  static TemperatureCalibrationStorage temperature_calibration_storage(
+      temperature_calibration_backend);
+  TemperatureCalibration temperature_calibration{};
+  const auto temperature_calibration_result =
+      temperature_calibration_storage.load(temperature_calibration);
+  if (temperature_calibration_result ==
+          TemperatureCalibrationLoadResult::kCorrupt ||
+      temperature_calibration_result ==
+          TemperatureCalibrationLoadResult::kError) {
+    ESP_LOGE(kLogTag,
+             "Persisted temperature calibration is unavailable or invalid");
+    ssr.force_off();
+    return;
+  }
+
   static EspNvsProfileBackend profile_backend;
   if (!profile_backend.initialize()) {
     ESP_LOGE(kLogTag, "NVS profile storage initialization failed");
@@ -578,7 +601,8 @@ extern "C" void app_main() {
     ssr.force_off();
     return;
   }
-  static philcoino::control::TemperatureController controller(targets, ssr);
+  static philcoino::control::TemperatureController controller(
+      targets, temperature_calibration, ssr);
   static philcoino::control::ExtractionController extraction_controller(
       profiles, pump);
   static philcoino::control::CooldownController cooldown_controller(controller,
@@ -686,9 +710,9 @@ extern "C" void app_main() {
   };
   static philcoino::networking::FirmwareApi api(
       identity, CONFIG_PHILCOINO_BEARER_TOKEN, controller, target_storage,
-      extraction_controller, cooldown_controller, profile_storage,
-      scale_calibration_storage, synchronization, &history, &scale_controller,
-      &weighted_trace);
+      temperature_calibration_storage, extraction_controller,
+      cooldown_controller, profile_storage, scale_calibration_storage,
+      synchronization, &history, &scale_controller, &weighted_trace);
   static philcoino::networking::EspNetworkServer network(
       api, identity, performance_diagnostics);
   static const NetworkStartContext network_context{

@@ -4,10 +4,12 @@ import type { ZodType } from "zod";
 import {
   ActiveCompensationStateSchema,
   ActiveCooldownStateSchema,
+  ActiveTemperatureCalibrationStateSchema,
   ApiV2ErrorCodeSchema,
   ApiV2ErrorResponseSchema,
   BREW_TARGET_MAX_C,
   BREW_TARGET_MIN_C,
+  CalibratedTemperatureCalibrationStateSchema,
   CompleteScaleCalibrationRequestSchema,
   BrewTargetSchema,
   COOLDOWN_MAX_DURATION_MS,
@@ -58,26 +60,42 @@ import {
   PumpCommandSchema,
   PumpingCooldownStateSchema,
   RunningExtractionStateSchema,
+  RAW_BOILER_OVER_TEMPERATURE_C,
   ScaleStateSchema,
   ScaleTraceResponseSchema,
   SelectedControllerSchema,
   TerminalExtractionStateSchema,
   STEAM_TARGET_MAX_C,
   STEAM_TARGET_MIN_C,
+  STEAM_OVER_TEMPERATURE_C,
   SteamTargetSchema,
   StartExtractionRequestSchema,
   StartCooldownRequestSchema,
   StabilizingCooldownStateSchema,
   TemperatureSettingsRequestSchema,
   TemperatureSettingsResponseSchema,
+  TEMPERATURE_CALIBRATION_CANDIDATE_MAX_C,
+  TEMPERATURE_CALIBRATION_CANDIDATE_MIN_C,
+  TEMPERATURE_CALIBRATION_OFFSET_MAX_C,
+  TEMPERATURE_CALIBRATION_OFFSET_MIN_C,
+  TEMPERATURE_CALIBRATION_REFERENCE_C,
+  TEMPERATURE_CALIBRATION_SESSION_LEASE_MS,
+  TEMPERATURE_CALIBRATION_STEP_C,
+  TemperatureCalibrationSessionRequestSchema,
+  TemperatureCalibrationStateSchema,
+  UncalibratedTemperatureCalibrationStateSchema,
+  UpdateTemperatureCalibrationCandidateRequestSchema,
 } from "../src/index.ts";
 
 type OpenApiSchema = {
+  const?: unknown;
   description?: string;
   enum?: unknown[];
   examples?: unknown[];
   maximum?: number;
   minimum?: number;
+  multipleOf?: number;
+  oneOf?: OpenApiSchema[];
   properties?: Record<string, OpenApiSchema>;
 };
 
@@ -103,6 +121,17 @@ const documentedSchemas: Record<string, ZodType> = {
   MachineState: MachineStateSchema,
   TemperatureSettingsRequest: TemperatureSettingsRequestSchema,
   TemperatureSettingsResponse: TemperatureSettingsResponseSchema,
+  UncalibratedTemperatureCalibrationState:
+    UncalibratedTemperatureCalibrationStateSchema,
+  ActiveTemperatureCalibrationState:
+    ActiveTemperatureCalibrationStateSchema,
+  CalibratedTemperatureCalibrationState:
+    CalibratedTemperatureCalibrationStateSchema,
+  TemperatureCalibrationState: TemperatureCalibrationStateSchema,
+  UpdateTemperatureCalibrationCandidateRequest:
+    UpdateTemperatureCalibrationCandidateRequestSchema,
+  TemperatureCalibrationSessionRequest:
+    TemperatureCalibrationSessionRequestSchema,
   ModeRequest: ModeRequestSchema,
   ModeResponse: ModeResponseSchema,
   HeaterSettingsRequest: HeaterSettingsRequestSchema,
@@ -139,6 +168,26 @@ const validFixtures = [
   ["valid/state-fault.json", MachineStateSchema],
   ["valid/temperatures-request.json", TemperatureSettingsRequestSchema],
   ["valid/temperatures-response.json", TemperatureSettingsResponseSchema],
+  [
+    "valid/temperature-calibration-uncalibrated.json",
+    TemperatureCalibrationStateSchema,
+  ],
+  [
+    "valid/temperature-calibration-active.json",
+    TemperatureCalibrationStateSchema,
+  ],
+  [
+    "valid/temperature-calibration-calibrated.json",
+    TemperatureCalibrationStateSchema,
+  ],
+  [
+    "valid/temperature-calibration-candidate-request.json",
+    UpdateTemperatureCalibrationCandidateRequestSchema,
+  ],
+  [
+    "valid/temperature-calibration-session-request.json",
+    TemperatureCalibrationSessionRequestSchema,
+  ],
   ["valid/mode-request.json", ModeRequestSchema],
   ["valid/mode-response.json", ModeResponseSchema],
   ["valid/heater-request.json", HeaterSettingsRequestSchema],
@@ -177,6 +226,7 @@ const validFixtures = [
   ["valid/cooldown-not-required-error.json", ApiV2ErrorResponseSchema],
   ["valid/cooldown-sensor-unavailable-error.json", ApiV2ErrorResponseSchema],
   ["valid/cooldown-machine-faulted-error.json", ApiV2ErrorResponseSchema],
+  ["valid/temperature-target-unsafe-error.json", ApiV2ErrorResponseSchema],
   ["valid/machine-v2-failed-cooldown.json", MachineStateV2Schema],
 ] as const;
 
@@ -195,6 +245,22 @@ const invalidFixtures = [
   ["invalid/brew-target-too-low.json", TemperatureSettingsRequestSchema],
   ["invalid/brew-target-fractional.json", TemperatureSettingsRequestSchema],
   ["invalid/steam-target-too-high.json", TemperatureSettingsRequestSchema],
+  [
+    "invalid/temperature-calibration-candidate-too-high.json",
+    UpdateTemperatureCalibrationCandidateRequestSchema,
+  ],
+  [
+    "invalid/temperature-calibration-candidate-extra-property.json",
+    UpdateTemperatureCalibrationCandidateRequestSchema,
+  ],
+  [
+    "invalid/temperature-calibration-active-preview-mismatch.json",
+    TemperatureCalibrationStateSchema,
+  ],
+  [
+    "invalid/temperature-calibration-session-short.json",
+    TemperatureCalibrationSessionRequestSchema,
+  ],
   ["invalid/mode-invalid.json", ModeRequestSchema],
   ["invalid/heater-invalid.json", HeaterSettingsRequestSchema],
   ["invalid/error-extra-property.json", ErrorResponseSchema],
@@ -293,6 +359,24 @@ describe("documented OpenAPI examples", () => {
       TemperatureSettingsResponse: [
         await fixture("valid/temperatures-response.json"),
       ],
+      UncalibratedTemperatureCalibrationState: [
+        await fixture("valid/temperature-calibration-uncalibrated.json"),
+      ],
+      ActiveTemperatureCalibrationState: [
+        await fixture("valid/temperature-calibration-active.json"),
+      ],
+      CalibratedTemperatureCalibrationState: [
+        await fixture("valid/temperature-calibration-calibrated.json"),
+      ],
+      TemperatureCalibrationState: [
+        await fixture("valid/temperature-calibration-calibrated.json"),
+      ],
+      UpdateTemperatureCalibrationCandidateRequest: [
+        await fixture("valid/temperature-calibration-candidate-request.json"),
+      ],
+      TemperatureCalibrationSessionRequest: [
+        await fixture("valid/temperature-calibration-session-request.json"),
+      ],
       ModeRequest: [await fixture("valid/mode-request.json")],
       ModeResponse: [await fixture("valid/mode-response.json")],
       HeaterSettingsRequest: [await fixture("valid/heater-request.json")],
@@ -334,6 +418,7 @@ describe("documented OpenAPI examples", () => {
         await fixture("valid/cooldown-not-required-error.json"),
         await fixture("valid/cooldown-sensor-unavailable-error.json"),
         await fixture("valid/cooldown-machine-faulted-error.json"),
+        await fixture("valid/temperature-target-unsafe-error.json"),
       ],
       ExtractionActiveConflictResponse: [
         await fixture("valid/extraction-active-conflict.json"),
@@ -381,25 +466,26 @@ describe("documented OpenAPI examples", () => {
 });
 
 describe("temperature boundaries and drift", () => {
-  test("documents mode-dependent effective boiler temperature semantics", () => {
+  test("documents one global effective boiler temperature semantics", () => {
     const description =
       openApi.components.schemas.MachineState.properties?.boilerTemperatureC
         ?.description;
 
-    expect(description).toContain("Brew mode reports the raw boiler-base reading");
     expect(description).toContain(
-      "Steam mode reports that raw reading plus the firmware-configured Steam offset",
+      "effective control temperature in both Brew and Steam",
     );
     expect(description).toContain(
-      "change this value by 5 degrees Celsius without a new physical sensor reading",
+      "one persisted signed global temperature-calibration offset exactly once",
     );
+    expect(description).toContain("offset is zero");
   });
 
   test("accepts every inclusive whole-degree boundary", () => {
     expect(BrewTargetSchema.parse(BREW_TARGET_MIN_C)).toBe(85);
     expect(BrewTargetSchema.parse(BREW_TARGET_MAX_C)).toBe(95);
     expect(SteamTargetSchema.parse(STEAM_TARGET_MIN_C)).toBe(110);
-    expect(SteamTargetSchema.parse(STEAM_TARGET_MAX_C)).toBe(120);
+    expect(SteamTargetSchema.parse(STEAM_TARGET_MAX_C - 1)).toBe(134);
+    expect(SteamTargetSchema.parse(STEAM_TARGET_MAX_C)).toBe(135);
   });
 
   test("rejects adjacent and fractional values", () => {
@@ -407,7 +493,7 @@ describe("temperature boundaries and drift", () => {
       expect(BrewTargetSchema.safeParse(value).success).toBe(false);
     }
 
-    for (const value of [109, 110.5, 121]) {
+    for (const value of [109, 110.5, 136]) {
       expect(SteamTargetSchema.safeParse(value).success).toBe(false);
     }
   });
@@ -420,6 +506,74 @@ describe("temperature boundaries and drift", () => {
     expect(openApi.components.schemas.SteamTarget).toMatchObject({
       minimum: STEAM_TARGET_MIN_C,
       maximum: STEAM_TARGET_MAX_C,
+    });
+  });
+
+  test("calibration constants and offset arithmetic remain aligned", async () => {
+    expect(TEMPERATURE_CALIBRATION_REFERENCE_C).toBe(100);
+    expect(TEMPERATURE_CALIBRATION_CANDIDATE_MIN_C).toBe(90);
+    expect(TEMPERATURE_CALIBRATION_CANDIDATE_MAX_C).toBe(120);
+    expect(TEMPERATURE_CALIBRATION_STEP_C).toBe(1);
+    expect(TEMPERATURE_CALIBRATION_OFFSET_MIN_C).toBe(-20);
+    expect(TEMPERATURE_CALIBRATION_OFFSET_MAX_C).toBe(10);
+    expect(TEMPERATURE_CALIBRATION_SESSION_LEASE_MS).toBe(15_000);
+    expect(STEAM_OVER_TEMPERATURE_C).toBe(135);
+    expect(RAW_BOILER_OVER_TEMPERATURE_C).toBe(135);
+
+    const activeFixture = await fixture(
+      "valid/temperature-calibration-active.json",
+    );
+    for (const [candidateRawTargetC, expectedOffsetC] of [
+      [108, -8],
+      [95, 5],
+      [100, 0],
+    ] as const) {
+      const state = TemperatureCalibrationStateSchema.parse({
+        ...(activeFixture as Record<string, unknown>),
+        candidateRawTargetC,
+        offsetPreviewC: expectedOffsetC,
+      });
+      expect(state.offsetPreviewC).toBe(
+        TEMPERATURE_CALIBRATION_REFERENCE_C - candidateRawTargetC,
+      );
+    }
+  });
+
+  test("accepts calibration candidates only at whole-degree boundaries", () => {
+    for (const candidateRawTargetC of [
+      TEMPERATURE_CALIBRATION_CANDIDATE_MIN_C,
+      TEMPERATURE_CALIBRATION_CANDIDATE_MAX_C,
+    ]) {
+      expect(
+        UpdateTemperatureCalibrationCandidateRequestSchema.safeParse({
+          calibrationId: "temp-cal-01J2ABCDEF",
+          candidateRawTargetC,
+        }).success,
+      ).toBe(true);
+    }
+
+    for (const candidateRawTargetC of [89, 90.5, 121]) {
+      expect(
+        UpdateTemperatureCalibrationCandidateRequestSchema.safeParse({
+          calibrationId: "temp-cal-01J2ABCDEF",
+          candidateRawTargetC,
+        }).success,
+      ).toBe(false);
+    }
+
+    expect(
+      openApi.components.schemas.TemperatureCalibrationCandidateRawTarget,
+    ).toMatchObject({
+      minimum: TEMPERATURE_CALIBRATION_CANDIDATE_MIN_C,
+      maximum: TEMPERATURE_CALIBRATION_CANDIDATE_MAX_C,
+      multipleOf: TEMPERATURE_CALIBRATION_STEP_C,
+    });
+    expect(
+      openApi.components.schemas.TemperatureCalibrationOffset,
+    ).toMatchObject({
+      minimum: TEMPERATURE_CALIBRATION_OFFSET_MIN_C,
+      maximum: TEMPERATURE_CALIBRATION_OFFSET_MAX_C,
+      multipleOf: TEMPERATURE_CALIBRATION_STEP_C,
     });
   });
 
@@ -675,7 +829,7 @@ describe("API v2 thermal workflow boundaries", () => {
     expect(ErrorCodeSchema.options).toContain("sensor_unavailable");
   });
 
-  test("adds only the approved API v2 workflow and scale paths", () => {
+  test("adds only the approved API v2 workflow, scale, and calibration paths", () => {
     const v2Paths = Object.keys(openApi.paths)
       .filter((path) => path.startsWith("/api/v2/"))
       .sort();
@@ -693,7 +847,27 @@ describe("API v2 thermal workflow boundaries", () => {
       "/api/v2/scale/trace",
       "/api/v2/scale/warnings/acknowledge",
       "/api/v2/state",
+      "/api/v2/temperature-calibration",
+      "/api/v2/temperature-calibration/cancel",
+      "/api/v2/temperature-calibration/candidate",
+      "/api/v2/temperature-calibration/save",
+      "/api/v2/temperature-calibration/start",
     ]);
+  });
+
+  test("keeps temperature calibration conflicts and failures distinguishable", () => {
+    for (const code of [
+      "heater_disabled",
+      "temperature_calibration_active",
+      "temperature_calibration_inactive",
+      "temperature_calibration_session_mismatch",
+      "temperature_calibration_expired",
+      "temperature_target_unsafe",
+      "persistence_failure",
+    ]) {
+      expect(ApiV2ErrorCodeSchema.options).toContain(code);
+    }
+    expect(ErrorCodeSchema.options).toContain("temperature_target_unsafe");
   });
 });
 

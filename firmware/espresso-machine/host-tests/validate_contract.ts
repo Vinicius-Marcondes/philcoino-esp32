@@ -19,6 +19,7 @@ import {
   StartCooldownResponseSchema,
   StopCooldownResponseSchema,
   TemperatureSettingsResponseSchema,
+  TemperatureCalibrationStateSchema,
   ScaleStateSchema,
   ScaleTraceResponseSchema,
 } from "../../../packages/protocol/src/schemas.ts";
@@ -39,6 +40,9 @@ const captures = [
   ["heater-response.json", HeaterSettingsResponseSchema],
   ["error.json", ErrorResponseSchema],
   ["state-v2.json", MachineStateV2Schema],
+  ["temperature-calibration-uncalibrated-v2.json", TemperatureCalibrationStateSchema],
+  ["temperature-calibration-active-v2.json", TemperatureCalibrationStateSchema],
+  ["temperature-calibration-calibrated-v2.json", TemperatureCalibrationStateSchema],
   ["history-v2.json", HistoryPageSchema],
   ["profiles-v2.json", ProfileSetSchema],
   ["scale-v2.json", ScaleStateSchema],

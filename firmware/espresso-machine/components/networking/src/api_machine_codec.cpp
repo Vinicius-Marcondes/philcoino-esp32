@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "philcoino/api_json.hpp"
+#include "philcoino/config.hpp"
 
 namespace philcoino::networking::codec {
 namespace {
@@ -24,8 +25,50 @@ const char* status_name(control::ControlStatus status) {
   return "fault";
 }
 
+const char* temperature_calibration_status_name(
+    control::TemperatureCalibrationStatus status) {
+  switch (status) {
+    case control::TemperatureCalibrationStatus::kUncalibrated:
+      return "uncalibrated";
+    case control::TemperatureCalibrationStatus::kCalibrating:
+      return "calibrating";
+    case control::TemperatureCalibrationStatus::kCalibrated:
+      return "calibrated";
+  }
+  return "uncalibrated";
+}
+
 float json_temperature(float temperature_c) {
   return std::isfinite(temperature_c) ? temperature_c : 0.0F;
+}
+
+bool calibration_id_is_valid(const std::string& value) {
+  if (value.size() < 16U || value.size() > 64U) {
+    return false;
+  }
+  for (std::size_t index = 0; index < value.size(); ++index) {
+    const char character = value[index];
+    const bool alphanumeric =
+        (character >= 'A' && character <= 'Z') ||
+        (character >= 'a' && character <= 'z') ||
+        (character >= '0' && character <= '9');
+    if (!alphanumeric &&
+        (index == 0U ||
+         (character != '.' && character != '_' && character != '~' &&
+          character != '-'))) {
+      return false;
+    }
+  }
+  return true;
+}
+
+void serialize_safe_target_bounds(
+    std::ostringstream& output,
+    const control::TemperatureSafeTargetBounds& bounds) {
+  output << "{\"brewMinimumC\":" << bounds.brew_minimum_c
+         << ",\"brewMaximumC\":" << bounds.brew_maximum_c
+         << ",\"steamMinimumC\":" << bounds.steam_minimum_c
+         << ",\"steamMaximumC\":" << bounds.steam_maximum_c << '}';
 }
 
 }  // namespace
@@ -118,12 +161,19 @@ bool parse_temperatures(const std::string& body,
       continue;
     }
     if (field.key == "brewTargetC") {
-      if (field.value.number < 85.0 || field.value.number > 95.0) {
+      if (field.value.number <
+              static_cast<double>(config::kBrewTargetMinimumC) ||
+          field.value.number >
+              static_cast<double>(config::kBrewTargetMaximumC)) {
         candidate_constraint_violation = true;
       } else {
         candidate.brew_c = static_cast<std::int32_t>(field.value.number);
       }
-    } else if (field.value.number < 110.0 || field.value.number > 120.0) {
+    } else if (
+        field.value.number <
+            static_cast<double>(config::kSteamTargetMinimumC) ||
+        field.value.number >
+            static_cast<double>(config::kSteamTargetMaximumC)) {
       candidate_constraint_violation = true;
     } else {
       candidate.steam_c = static_cast<std::int32_t>(field.value.number);
@@ -168,6 +218,122 @@ bool parse_heater_enabled(const std::string& body, bool& enabled) {
   }
   enabled = fields[0].value.boolean;
   return true;
+}
+
+bool parse_temperature_calibration_query(
+    const std::string& query, bool& calibration_id_supplied,
+    std::string& calibration_id) {
+  if (query.empty()) {
+    calibration_id_supplied = false;
+    calibration_id.clear();
+    return true;
+  }
+  constexpr char prefix[] = "calibrationId=";
+  if (query.compare(0, sizeof(prefix) - 1U, prefix) != 0 ||
+      query.find('&') != std::string::npos) {
+    return false;
+  }
+  const auto candidate = query.substr(sizeof(prefix) - 1U);
+  if (!calibration_id_is_valid(candidate)) {
+    return false;
+  }
+  calibration_id_supplied = true;
+  calibration_id = candidate;
+  return true;
+}
+
+bool parse_temperature_calibration_candidate(
+    const std::string& body, std::string& calibration_id,
+    std::int32_t& candidate_raw_target_c) {
+  std::vector<JsonField> fields;
+  JsonObjectParser parser(body);
+  if (!parser.parse(fields) || fields.size() != 2U) {
+    return false;
+  }
+  std::string candidate_id;
+  std::int32_t candidate_target = 0;
+  bool id_seen = false;
+  bool target_seen = false;
+  for (const auto& field : fields) {
+    if (field.key == "calibrationId" &&
+        field.value.type == JsonValue::Type::kString) {
+      candidate_id = field.value.string;
+      id_seen = calibration_id_is_valid(candidate_id);
+    } else if (field.key == "candidateRawTargetC" &&
+               field.value.type == JsonValue::Type::kNumber &&
+               std::floor(field.value.number) == field.value.number &&
+               field.value.number >=
+                   config::kTemperatureCalibrationCandidateMinimumC &&
+               field.value.number <=
+                   config::kTemperatureCalibrationCandidateMaximumC) {
+      candidate_target =
+          static_cast<std::int32_t>(field.value.number);
+      target_seen = true;
+    } else {
+      return false;
+    }
+  }
+  if (!id_seen || !target_seen) {
+    return false;
+  }
+  calibration_id = candidate_id;
+  candidate_raw_target_c = candidate_target;
+  return true;
+}
+
+bool parse_temperature_calibration_session(
+    const std::string& body, std::string& calibration_id) {
+  std::vector<JsonField> fields;
+  JsonObjectParser parser(body);
+  if (!parser.parse(fields) || fields.size() != 1U ||
+      fields[0].key != "calibrationId" ||
+      fields[0].value.type != JsonValue::Type::kString ||
+      !calibration_id_is_valid(fields[0].value.string)) {
+    return false;
+  }
+  calibration_id = fields[0].value.string;
+  return true;
+}
+
+std::string serialize_temperature_calibration(
+    const control::TemperatureCalibrationSnapshot& snapshot) {
+  std::ostringstream output;
+  output.imbue(std::locale::classic());
+  output << std::setprecision(6) << "{\"status\":\""
+         << temperature_calibration_status_name(snapshot.status)
+         << "\",\"savedOffsetC\":" << snapshot.saved_offset_c
+         << ",\"boilerTemperatureRawC\":";
+  if (snapshot.temperature_available) {
+    output << json_temperature(snapshot.raw_temperature_c);
+  } else {
+    output << "null";
+  }
+  output << ",\"boilerTemperatureC\":";
+  if (snapshot.temperature_available) {
+    output << json_temperature(snapshot.effective_temperature_c);
+  } else {
+    output << "null";
+  }
+  output << ",\"heaterActive\":"
+         << (snapshot.heater_active ? "true" : "false")
+         << ",\"ready\":" << (snapshot.ready ? "true" : "false")
+         << ",\"safeTargetBounds\":";
+  serialize_safe_target_bounds(output, snapshot.safe_target_bounds);
+  if (snapshot.status ==
+      control::TemperatureCalibrationStatus::kCalibrating) {
+    output << ",\"calibrationId\":\"" << snapshot.calibration_id
+           << "\",\"candidateRawTargetC\":"
+           << snapshot.candidate_raw_target_c
+           << ",\"offsetPreviewC\":" << snapshot.offset_preview_c
+           << ",\"advisoryStableMs\":" << snapshot.advisory_stable_ms
+           << ",\"sessionLeaseRemainingMs\":"
+           << snapshot.session_lease_remaining_ms
+           << ",\"previewSafeTargetBounds\":";
+    serialize_safe_target_bounds(output,
+                                 snapshot.preview_safe_target_bounds);
+  }
+  output << '}';
+  return output.str();
 }
 
 }  // namespace philcoino::networking::codec

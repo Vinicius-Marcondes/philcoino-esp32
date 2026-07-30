@@ -172,6 +172,68 @@ bool targets_are_valid(const TemperatureTargets& targets) {
          targets.steam_c <= config::kSteamTargetMaximumC;
 }
 
+bool temperature_calibration_is_valid(
+    const TemperatureCalibration& calibration) {
+  if (!calibration.calibrated) {
+    return calibration.offset_c == 0;
+  }
+  return calibration.offset_c >=
+             config::kTemperatureCalibrationOffsetMinimumC &&
+         calibration.offset_c <=
+             config::kTemperatureCalibrationOffsetMaximumC;
+}
+
+float effective_temperature_c(
+    float raw_temperature_c,
+    const TemperatureCalibration& calibration) {
+  return raw_temperature_c + static_cast<float>(calibration.offset_c);
+}
+
+bool target_is_reachable(
+    std::int32_t effective_target_c,
+    const TemperatureCalibration& calibration) {
+  if (!temperature_calibration_is_valid(calibration)) {
+    return false;
+  }
+  const auto raw_target_c = effective_target_c - calibration.offset_c;
+  return raw_target_c <= config::kRawBoilerOverTemperatureC;
+}
+
+bool targets_are_reachable(
+    const TemperatureTargets& targets,
+    const TemperatureCalibration& calibration) {
+  return targets_are_valid(targets) &&
+         target_is_reachable(targets.brew_c, calibration) &&
+         target_is_reachable(targets.steam_c, calibration);
+}
+
+TemperatureCalibrationStorage::TemperatureCalibrationStorage(
+    TemperatureCalibrationBackend& backend)
+    : backend_(backend) {}
+
+TemperatureCalibrationLoadResult TemperatureCalibrationStorage::load(
+    TemperatureCalibration& calibration) {
+  const auto result = backend_.load(calibration);
+  if (result == BackendLoadResult::kNotFound) {
+    calibration = {};
+    return TemperatureCalibrationLoadResult::kNotCalibrated;
+  }
+  if (result == BackendLoadResult::kError) {
+    return TemperatureCalibrationLoadResult::kError;
+  }
+  return temperature_calibration_is_valid(calibration) &&
+                 calibration.calibrated
+             ? TemperatureCalibrationLoadResult::kOk
+             : TemperatureCalibrationLoadResult::kCorrupt;
+}
+
+bool TemperatureCalibrationStorage::save(
+    const TemperatureCalibration& calibration) {
+  return calibration.calibrated &&
+         temperature_calibration_is_valid(calibration) &&
+         backend_.save(calibration);
+}
+
 TargetStorage::TargetStorage(TargetBackend& backend) : backend_(backend) {}
 
 TargetLoadResult TargetStorage::load(TemperatureTargets& targets) {

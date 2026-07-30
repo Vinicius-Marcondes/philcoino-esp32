@@ -26,11 +26,21 @@ operations are `GET /healthz` and `GET /api/v1/device`.
 API v1 authenticated operations are state read, temperature-target update, mode
 selection, volatile heater permission, and cooled over-temperature dismissal.
 API v2 additionally defines combined machine/extraction/compensation/cooldown
-state, four-slot profile read/replace, idempotent extraction Start/Stop, and
-idempotent cooldown Start/Stop. Cooldown and compensation fields describe
-firmware acknowledgements and GPIO/control commands only; they are not evidence
-of physical flow, current, cooling, SSR state, or de-energization. Layer support
-is introduced by the supervised PRD tasks after the contract task.
+state, four-slot profile read/replace, idempotent extraction Start/Stop,
+idempotent cooldown Start/Stop, and the additive PRD-017
+temperature-calibration transaction. Calibration status, Start, whole-degree
+candidate update, Save, and Cancel use firmware-owned session identity and
+report raw/effective temperature plus offset-adjusted safe target bounds. The
+contract fixes the candidate range at `90–120°C`, the signed offset range at
+`-20–10°C`, and both the effective Steam limit and independent raw ceiling at
+`135°C`. The strict Steam target range is `110–135°C`, inclusive. Exact
+`135°C` readings are permitted; either effective Steam or raw temperature
+strictly above `135°C` faults.
+
+Cooldown, compensation, heater, pump, and calibration fields describe firmware
+acknowledgements and command policy only; they are not evidence of physical
+flow, steam, current, cooling, SSR state, or de-energization. Runtime layer
+support is introduced by the supervised PRD tasks after each contract change.
 Objects are strict: consumers must reject unknown fields rather than silently
 accept protocol drift.
 

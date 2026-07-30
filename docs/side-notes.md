@@ -8,7 +8,13 @@ Status: OWNER-REPORTED INSTRUMENTED ACCEPTANCE 2026-07-16 — DESIGN RISK RETAIN
 
 The current heater design relies on the ESP32-C3 and a single FOTEK SSR-40 DA to interrupt power to the 800 W, 127 VAC boiler heater. This is not fail-safe because an SSR can fail with its output shorted; software cannot turn off a shorted output.
 
-The plan is to retain the espresso machine's original over-temperature fuse or thermostat, described as interrupting heater power above approximately 120°C, while replacing only the original brew-temperature control. This can provide the required independent cutoff only if it is physically wired in series with the heater and opens the load even when the SSR output is shorted.
+The plan is to retain the espresso machine's original over-temperature
+thermostat. The owner now identifies the retained component from a marketplace
+listing as nominally `145°C`, 10 A, 250 V; that listing is not installed-unit
+trip, tolerance, wiring, coupling, or interruption evidence. It can provide the
+required independent cutoff only if the exact installed part is correctly wired
+in series with the heater and opens the load even when the SSR output is
+shorted.
 
 On 2026-07-16, the owner reported that the energy controls and related
 electrical behavior were checked with technical equipment and looked correct,
@@ -23,13 +29,12 @@ block the approved software/API scope in PRD-001.
 
 ## PRD-003 Steam temperature correction validation
 
-Status: STEAM-004 HUMAN ACCEPTED 2026-07-16
+Status: HISTORICAL — SUPERSEDED BY PRD-017
 
-Firmware now validates the boiler-base thermocouple reading and uses it raw in
-Brew or with one fixed owner-selected `+5°C` correction in Steam. The corrected
-Steam value is shared by control, heater duty/recovery, readiness, timeouts,
-over-temperature policy, API output, and OLED output. Protocol, host, simulator,
-mobile, capture, and target-build checks are software evidence only.
+STEAM-004 Human acceptance on 2026-07-16 remains a historical record for the
+then-tested fixed `+5°C` Steam-only correction. PRD-017 removes that correction
+from current runtime behavior and replaces it with one persisted signed global
+offset applied exactly once in Brew and Steam.
 
 On 2026-07-16, Vinicius reported that every implemented feature and the
 energy-control behavior were tested with technical equipment and looked
@@ -39,6 +44,30 @@ instrument/calibration identifiers, probe/setup details, and exact build
 identifiers were not committed, so the evidence is owner-reported and is not
 certification. Existing single-sensor and source-review limitations remain
 engineering risks rather than pending STEAM-004 Human work.
+
+## PRD-017 guided temperature calibration
+
+Status: SOFTWARE IMPLEMENTED THROUGH TCAL-008 — PHYSICAL ACCEPTANCE PENDING
+
+The firmware-owned workflow controls a temporary uncorrected raw target, starts
+at `100°C`, accepts whole-degree candidates from `90–120°C`, and saves
+`temperatureOffsetC = 100 - candidateRawTargetC` atomically in a dedicated NVS
+record. The effective temperature is raw plus that offset exactly once in Brew
+and Steam. Missing storage is valid uncalibrated `0°C`; corrupt or unreadable
+storage faults and keeps the heater command off.
+
+The user manually opens the steam wand and decides when boiling is observed.
+The app and firmware do not command the pump/valve or detect steam. Simulator,
+protocol, mobile, host, sanitizer, and contract-capture checks are software
+evidence only. They cannot establish the local boiling point, sensor accuracy,
+repeatability, heater current interruption, or the installed thermostat path.
+
+The Steam target range is `110–135°C`. Effective Steam and raw temperatures
+are each permitted through the inclusive `135°C` cap; either reading strictly
+above it independently latches `over_temperature` and commands the heater off.
+Offset-dependent targets whose implied raw value exceeds `135°C` remain
+rejected without clamping. TCAL-009 retains the separately authorized physical
+acceptance.
 
 ## PRD-011 HX711 scale validation
 
@@ -142,15 +171,20 @@ future hardware revision must revalidate activation and reset/boot behavior.
 
 ## Mechanical thermostat assertion
 
-Status: OWNER-REPORTED INSTRUMENTED ACCEPTANCE 2026-07-16
+Status: HISTORICAL OWNER REPORT — PRD-017 REVALIDATION PENDING
 
-On 2026-07-04, the project owner confirmed that the existing mechanical thermostat
-remains in place, interrupts overheating, has a nominal 120°C point with stated
-5°C variance, and will not shut down below 120°C. On 2026-07-16, he reported
-technical-equipment checks of the energy controls and accepted the tested
-configuration. Raw trip measurements and device identifiers were not committed.
-The software Steam over-temperature threshold remains 130°C, and the cutoff
-remains an independent physical protection rather than a software guarantee.
+The owner reports retaining a thermostat sold nominally as `145°C`, 10 A,
+250 V. The marketplace listing supports component identification only; it does
+not establish the installed unit's trip tolerance, thermal coupling, series
+wiring, or successful heater interruption. Earlier 2026-07-16
+technical-equipment acceptance applies only to the then-tested configuration,
+before PRD-017's calibration and raised software limits.
+
+Current TCAL-007 software faults when effective Steam or raw temperature reaches
+`135°C`. This does not prove the thermostat opens, that an SSR is not shorted,
+or that heater current stopped. TCAL-009 must retain independent Human review of
+the exact installed cutoff path after TCAL-008 resolves the requested inclusive
+`135°C` Steam target and its replacement software boundaries.
 
 ## PHIL-009 physical iPhone review
 
