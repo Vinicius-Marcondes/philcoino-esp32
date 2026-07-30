@@ -1,3 +1,59 @@
+# PRD-017 Tracker
+
+PRD Status: Software Complete Through TCAL-007 — TCAL-008/009 Pending
+Current Task: [TCAL-008](prds/PRD-017/tasks/TCAL-008.md) — Awaiting Human boundary decision
+
+Implementation Boundary: Add a firmware-owned guided raw-temperature
+calibration that persists one signed global offset for Brew and Steam, while
+preserving acknowledged mobile state, fail-off ownership, and independent raw
+and effective `135°C` limits.
+
+## Summary
+
+Guide the user from Machine through manual steam-wand observation, map the
+selected raw boiling point to logical `100°C`, persist and apply the correction
+exactly once, replace the fixed Steam `+5°C`, and retain physical acceptance as
+a separately authorized Human gate.
+
+PRD: `docs/prds/PRD-017/PRD-017.md`
+
+## Compatibility and Safety Boundary
+
+- API v2 calibration routes are additive; existing machine-state shapes remain
+  unchanged while `boilerTemperatureC` becomes effective in both modes.
+- Missing calibration uses `0°C`; corrupt/unreadable storage faults and keeps
+  the heater off.
+- Effective Steam `135°C` and raw `135°C` independently latch
+  `over_temperature`; offsets and target mutations cannot bypass the raw ceiling.
+- Firmware owns calibration target, persistence, conflicts, inactivity expiry,
+  normal control restoration, faults, timeouts, safety lease, and fail-off.
+- The app never commands the pump or steam valve and never presents requested
+  calibration values as live before acknowledgement.
+- Software evidence does not prove boiling-point accuracy, thermostat
+  interruption, physical heater state, or energized safety.
+
+## Git
+
+- Planned branch: `feature/implement-temp-calibration-and-offset`
+- Base: `main`
+- Merge target: `main`
+
+## Execution State
+
+| Task | Review | Status | Evidence | Decision Log | Commit | Blocked Reason | Requested Decision |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| [TCAL-001](prds/PRD-017/tasks/TCAL-001.md) | Agent | Done | OpenAPI valid; protocol 157 tests/336 expectations; typecheck | Strict additive v2 session transaction; one global effective-temperature meaning; 15-second inactivity lease | Pending | None | None |
+| [TCAL-002](prds/PRD-017/tasks/TCAL-002.md) | Agent | Done | Native/sanitizer 10/10; 32 captures | Dedicated versioned NVS calibration; one global offset; raw/effective 135°C fail-off; unreachable targets rejected | Pending | None | None |
+| [TCAL-003](prds/PRD-017/tasks/TCAL-003.md) | Agent | Done | Native/sanitizer 10/10; 35 captures | Firmware-owned raw-target session; 15-second inactivity lease; prepare/persist/adopt; conflicts cancel fail-off | Pending | None | None |
+| [TCAL-004](prds/PRD-017/tasks/TCAL-004.md) | Agent | Done | Simulator 92 tests/731 expectations; typecheck | Deterministic raw/effective model, strict session routes, persistence/reset/corruption, dual 135°C limits | Pending | None | None |
+| [TCAL-005](prds/PRD-017/tasks/TCAL-005.md) | Agent | Done | Mobile 243 tests/2,312 expectations; typecheck; Expo lint | Strict client + debug parity; serialized acknowledged session; lifecycle Cancel and lease fallback | Pending | None | None |
+| [TCAL-006](prds/PRD-017/tasks/TCAL-006.md) | Human | Done | Mobile 250 tests/2,424 expectations; typecheck; Expo lint; Human approved revised UI | Full-screen modal permits both landscape directions, reads its own live dimensions, and compacts narrow landscape columns; acknowledged-only flow and safety copy retained | Pending | None | None |
+| [TCAL-007](prds/PRD-017/tasks/TCAL-007.md) | Agent | Done | OpenAPI valid; protocol 157/336; simulator 92/731; mobile 250/2,424; native/sanitizer 10/10; 35 captures; exact host resource report | Current docs aligned; PRD-003 historical; all configured software passed; `idf.py` and physical evidence remain unavailable | Pending | None | None |
+| [TCAL-008](prds/PRD-017/tasks/TCAL-008.md) | Human | Todo | Pending | Inclusive 135°C target requires replacement raw/effective fault boundaries above the target; current fault-at-135°C behavior remains through TCAL-007 | Pending | Exact replacement boundaries not yet approved | Approve raw and effective trip thresholds before implementation |
+| [TCAL-009](prds/PRD-017/tasks/TCAL-009.md) | Human | Todo | Pending | Pending | Pending | None | None |
+
+---
+
 # PRD-016 Tracker
 
 PRD Status: Software Complete — Target/Physical A/B Pending

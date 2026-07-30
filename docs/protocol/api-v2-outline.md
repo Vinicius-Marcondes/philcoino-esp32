@@ -1,16 +1,23 @@
 # ESP32 API v2 workflow outline
 
-Status: IMPLEMENTED; HUMAN ACCEPTED 2026-07-16
+Status: IMPLEMENTED; CALIBRATION UI HUMAN ACCEPTED 2026-07-30; PHYSICAL ACCEPTANCE PENDING
 
 The authoritative wire contract is
 [`packages/protocol/openapi.yaml`](../../packages/protocol/openapi.yaml). API v2
 is additive: every API v1 temperature endpoint remains available and unchanged.
 
-The nested `machine.boilerTemperatureC` retains the API v1 semantics: it is the
-validated raw boiler-base reading in Brew and the active effective reading with
-the firmware-configured `+5°C` correction in Steam. Switching modes can change
-the reported value by exactly `5°C` without a new physical sensor sample. API
-v2 adds no raw-temperature or offset field.
+PRD-017 supersedes the former mode-dependent `+5°C` Steam correction.
+`machine.boilerTemperatureC` is now defined as the firmware-authoritative
+effective temperature in both Brew and Steam:
+
+```text
+effectiveTemperatureC = rawTemperatureC + temperatureOffsetC
+```
+
+The same persisted signed offset is applied exactly once after raw-sensor
+validation. A missing calibration record means uncalibrated with `0°C`.
+Existing machine-state payload shapes remain unchanged; raw temperature and
+calibration details are exposed only by the additive calibration resource.
 
 ## Authenticated endpoints
 
@@ -39,6 +46,18 @@ v2 adds no raw-temperature or offset field.
   the strict two-step calibration workflow.
 - `POST /api/v2/scale/warnings/acknowledge` clears the weighted-start gate
   after a timer fallback.
+- `GET /api/v2/temperature-calibration` returns uncalibrated, calibrating, or
+  calibrated state. A matching active session ID renews its 15-second
+  inactivity lease.
+- `POST /api/v2/temperature-calibration/start` enters firmware-owned raw-target
+  control at `100°C`, or at the saved calibration's implied raw boiling point.
+- `PUT /api/v2/temperature-calibration/candidate` acknowledges a whole-degree
+  raw target from `90°C` through `120°C` without changing the saved offset.
+- `POST /api/v2/temperature-calibration/save` atomically persists
+  `temperatureOffsetC = 100 - candidateRawTargetC`; unsafe or failed saves
+  retain the prior offset and targets.
+- `POST /api/v2/temperature-calibration/cancel` discards the candidate and
+  restores ordinary Brew control without changing persisted targets.
 
 All endpoints require the same bearer authentication as API v1. Unknown fields,
 invalid slot order/IDs, invalid names or durations, malformed selections, and
@@ -46,6 +65,24 @@ invalid idempotency keys are rejected independently by firmware C++.
 Extraction Start requires acknowledged Brew mode and idle cooldown. Steam mode
 is rejected during extraction or cooldown. Conflict bodies include the active
 workflow snapshot when the contract requires it.
+
+Temperature calibration additionally requires a valid sensor, enabled heater
+permission, no fault, Brew mode, and no extraction, cooldown, scale
+calibration, Steam workflow, or conflicting mutation. The workflow controls
+only the raw boiler target. It never commands the pump or steam valve and its
+stability duration is advisory rather than a Save gate. The user manually opens
+the steam wand and confirms the observed boiling point.
+
+Normal targets stay numerically unchanged. Firmware rejects a calibration Save
+or later target mutation if the effective target would require raw temperature
+at or above the independent `135°C` raw ceiling; it never clamps. Effective
+Steam temperature at `135°C` and raw temperature at `135°C` independently latch
+`over_temperature` and command the heater off.
+
+This current fault-at-`135°C` behavior means `135°C` is not a usable target.
+TCAL-008 separately tracks the owner-requested inclusive `135°C` Steam target
+and requires Human-approved raw/effective fault boundaries above it before the
+protocol or runtime limit changes.
 
 History authentication is resolved before query parsing. A request either has
 no cursor or has exactly one `bootId` plus one `afterSequence`; unknown,

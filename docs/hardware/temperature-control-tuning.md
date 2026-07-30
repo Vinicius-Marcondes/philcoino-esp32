@@ -28,34 +28,41 @@ below target.
 When the active temperature reaches or exceeds the active target, firmware turns
 the heater command off and resets the heater window.
 
-## Steam temperature correction
+## Global temperature calibration
 
 Firmware validates the raw boiler-base MAX6675 status and finite reading before
-deriving the active temperature. The only correction constant is compile-time:
-
-```cpp
-kSteamTemperatureOffsetC = 5;
-```
-
-The controller uses these semantics:
+applying one persisted signed offset:
 
 ```text
-Brew active temperature  = validated raw boiler-base temperature
-Steam active temperature = validated raw boiler-base temperature + 5°C
+temperatureOffsetC = 100 - observedRawBoilingTemperatureC
+effectiveTemperatureC = rawTemperatureC + temperatureOffsetC
 ```
 
-The conversion occurs once inside `TemperatureController`. Heater demand and
-duty, recovery, readiness, heating timeout, five-minute Steam timeout,
-over-temperature latching/dismissal, API state, and OLED presentation all use
-that same active value. At a Steam target of `120°C`, raw `115°C` is active
-`120°C` and requests no additional heat. The unchanged raw sample is reported
-as `115°C` in Brew, so a mode change may visibly move the API/OLED value by
-exactly `5°C`.
+The same effective temperature is used in Brew and Steam for heater demand and
+duty, recovery, readiness, heating deadlines, five-minute Steam timeout,
+effective over-temperature decisions, API state, and history. The correction
+occurs exactly once inside the controller. A missing record is valid
+uncalibrated state with `0°C`; an explicitly saved `0°C` remains calibrated.
+Corrupt or unreadable calibration storage faults and keeps the heater command
+off.
 
-This fixed value is an owner-selected compensation for an observed boiler-base
-to upper-boiler difference. It is not a calibration result, scaling curve, or
-proof of heater safety. Changing it requires a source edit, rebuild, and
-reflash; do not add runtime configuration under PRD-003.
+The focused firmware-owned workflow starts at raw `100°C`, accepts
+whole-degree raw candidates from `90–120°C`, and reports advisory stability.
+The user manually opens the steam wand and decides when boiling is observed;
+software neither commands the pump/valve nor detects steam. Saving is rejected
+if NVS fails or if an existing effective target would require raw temperature
+at or above the independent `135°C` ceiling. Targets are never clamped or
+rewritten as a calibration side effect.
+
+Raw ceiling validation is independent and occurs before correction. Effective
+Steam temperature reaching `135°C` or raw temperature reaching `135°C`
+independently latches `over_temperature` and commands the heater off. These are
+software command boundaries, not proof of physical de-energization.
+
+Mapping a user-observed boiling point to logical `100°C` is a machine-specific
+rebasing convention. It is not a correction curve, altitude/pressure model,
+certified calibration, or evidence that the installed thermostat or SSR
+interrupts heater current.
 
 ## Extraction heater-duty bias
 
@@ -136,7 +143,8 @@ and it does not control GPIO20 before firmware initializes the pin.
 - Disabled: the legacy nonlinear curve remains Brew requested-duty authority;
   the bounded PI calculation is diagnostic shadow state only.
 - Enabled: PI becomes requested-duty authority only in Brew.
-- Steam: always uses the legacy curve and fixed `+5°C` correction.
+- Steam: always uses the legacy curve and the same persisted global effective
+  temperature as Brew.
 
 Both Brew modes route their selected duty through the existing ten-second SSR
 window, minimum 500 ms pulse, heater permission, cooldown inhibit, fault,
@@ -362,23 +370,23 @@ Useful observations:
 - Approximate time from lowest point back to target.
 - Whether the SSR LED is solid on, pulsing, or off.
 
-Physical acceptance of the Steam correction was completed by the owner in
-STEAM-004 on 2026-07-16 for the tested configuration. For any future
-revalidation, record the reference instrument and calibration status, exact
-probe locations, firmware build, boiler fill/state,
-pressure context, ambient conditions, heat-soak duration, and supervision.
-Collect repeated paired raw-base and independent top-reference readings near
-raw `110°C`, `115°C`, and `120°C` during rise, steady Steam operation, and
-recovery. Software, simulator, host, and target-build results cannot substitute
-for those measurements.
+The historical fixed Steam correction was accepted under STEAM-004 on
+2026-07-16 for that tested configuration, but PRD-017 supersedes it in current
+runtime behavior. Physical acceptance of the new guided global calibration is
+separate and pending. Record the reference instrument and calibration status,
+exact probe locations, firmware build, saved offset, boiler fill/state,
+pressure context, ambient conditions, heat-soak duration, repeated boiling
+observations, and supervision. Software, simulator, host, and target-build
+results cannot substitute for those measurements.
 
 ## Safety limits
 
 These tuning constants must not be used to compensate for missing hardware
 safety:
 
-- `kBrewOverTemperatureC` and `kSteamOverTemperatureC` are fault thresholds, not
-  tuning knobs for flavor or speed.
+- `kBrewOverTemperatureC`, `kSteamOverTemperatureC`, and
+  `kRawBoilerOverTemperatureC` are fault thresholds, not tuning knobs for
+  flavor, speed, or offset reachability.
 - A working independent thermal cutoff is still required.
 - An SSR can fail shorted, leaving the heater on even when firmware commands it
   off.

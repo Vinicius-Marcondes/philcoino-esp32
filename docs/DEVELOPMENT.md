@@ -95,9 +95,10 @@ device API and are unmistakably labeled as preview state. Debug mode is not an
 integration or safety test.
 
 The debug dashboard uses bottom navigation to separate live Dashboard,
-extraction Profiles, and Machine configuration. While a mock extraction is
-active, a persistent bar above the navigation links back to its Start/Stop and
-phase controls.
+extraction Profiles, and Machine configuration. Its in-memory client also
+implements the strict temperature-calibration transaction. While a mock
+extraction is active, a persistent bar above the navigation links back to its
+Start/Stop and phase controls.
 
 The mobile UI auto-rotates when the OS permits it. Portrait uses bottom
 navigation; landscape phones use the transparent three-dot rail and responsive
@@ -124,6 +125,13 @@ Profiles should show the editor on the left and the 2-by-2 profile selection
 above sync on the right without clipping. Its compact duration steppers should
 render as unified rounded controls.
 
+From Machine, open Temperature Calibration and verify that its full-screen
+modal rotates into both landscape directions, uses compact non-clipping columns,
+and retains readable raw/effective, candidate, offset, heater, readiness,
+advisory stability, safe-bound, lease, error, Cancel, and explicit Save-review
+states. The user operates the steam wand manually; the app never commands the
+pump or detects steam.
+
 ### Simulator-backed app
 
 Start the API simulator in one terminal:
@@ -144,11 +152,13 @@ separate:
 
 ```text
 POST /_simulator/advance
-PUT  /_simulator/temperatures
+PUT  /_simulator/raw-temperature
 PUT  /_simulator/fault
 POST /_simulator/power-cycle
 POST /_simulator/reset
 POST /_simulator/fail-next-profile-save
+POST /_simulator/fail-next-temperature-calibration-save
+POST /_simulator/corrupt-temperature-calibration
 ```
 
 Examples:
@@ -158,15 +168,18 @@ curl -X POST http://localhost:3000/_simulator/advance \
   -H 'Content-Type: application/json' \
   -d '{"milliseconds":3000}'
 
-curl -X PUT http://localhost:3000/_simulator/temperatures \
+curl -X PUT http://localhost:3000/_simulator/raw-temperature \
   -H 'Content-Type: application/json' \
-  -d '{"boilerTemperatureC":93}'
+  -d '{"boilerTemperatureRawC":93}'
 
 curl http://localhost:3000/api/v1/state \
   -H 'Authorization: Bearer philcoino-dev-token'
 ```
 
-Manual time never advances in the background. Power-cycle clears volatile state and preserves targets; reset also restores default targets. The simple temperature model is for deterministic app/contract scenarios only.
+Manual time never advances in the background. Power-cycle clears volatile state
+and preserves targets, profiles, and the signed temperature offset; reset also
+restores default targets and removes the calibration record. The simple
+temperature model is for deterministic app/contract scenarios only.
 
 Every manually crossed one-second boundary adds one history sample, capped at
 600. Fetch retained pages with the development bearer token:
@@ -193,10 +206,13 @@ boot ID and clears retained history. Simulator diagnostics are deterministic
 logical values for contract/UI testing; they do not reproduce firmware PI
 timing, SSR delivery, or physical temperature response.
 
-The simulator treats `boilerTemperatureC` as the already-effective logical
-control temperature in either mode. It does not add the firmware Steam offset,
-model separate boiler-base and upper-boiler temperatures, or validate that the
-owner-selected physical correction is accurate.
+The simulator stores the injected raw temperature and applies the one persisted
+signed global offset exactly once to produce effective
+`boilerTemperatureC` in either mode. It implements the raw-target calibration
+workflow, persistence failures, corrupt-record startup fault, offset-adjusted
+target reachability, and independent raw/effective `135°C` fault boundaries.
+It does not model separate boiler-base and upper-boiler temperatures or
+validate a user-observed physical boiling point.
 
 The simulator also serves authenticated API v2 state, complete profile-set
 read/replace, extraction Start/Stop, cooldown Start/Stop, and the scale
@@ -270,6 +286,7 @@ Use a temporary build directory outside the repository to avoid generated output
 The generated capture set includes unchanged API v1 and queryless API v2 state
 responses plus strict API v2 extraction,
 compensation, cooldown Start/replay/conflict/Stop/terminal,
+temperature-calibration status/Start/candidate/Save/Cancel,
 controller-diagnostic history, eligibility errors, and failed terminal state.
 Capture validation proves only that independent C++ serialization matches the
 wire schemas.
@@ -304,16 +321,21 @@ idf.py build
 Configure Wi-Fi SSID, Wi-Fi password, and bearer token through `idf.py menuconfig` under `PhilcoINO`. Values belong only in generated, ignored `sdkconfig`; never put them in source, defaults, logs, screenshots, tests, or documentation.
 
 Current source permanently uses one boiler-base thermocouple on
-GPIO4/GPIO5/GPIO7 for both control modes. Firmware validates the raw sample, reports it unchanged
-in Brew, and applies the compile-time `kSteamTemperatureOffsetC = 5` correction
-once in Steam before control, safety, and API use. Manual/main extraction
+GPIO4/GPIO5/GPIO7 for both control modes. Firmware validates the raw sample,
+checks the independent raw `135°C` ceiling, and applies one persisted signed
+global offset exactly once before Brew and Steam control, readiness, safety,
+history, and API use. A missing calibration record is uncalibrated `0°C`;
+corrupt or unreadable calibration storage faults with heater command off.
+Manual/main extraction
 adds a separate compile-time `+2°C` bias only to the private heater-duty target;
 pre-infusion uses `0°C`. Cooldown uses the validated Brew-effective sample,
-fixed 45-second pump cutoff, and fixed five-second stabilization. None of these
-values is configurable through NVS, HTTP, mDNS, simulator controls, or
-mobile. Check [Safety](SAFETY.md), the tracker, and hardware documents before
-any device test. The owner accepted the configuration tested on 2026-07-16;
-that acceptance does not authorize a different setup or unattended use.
+fixed 45-second pump cutoff, and fixed five-second stabilization. Temperature
+calibration is changed only through the authenticated API v2 firmware-owned
+session; it starts at raw `100°C`, accepts whole-degree raw candidates from
+`90–120°C`, and saves `100 - candidate` only after strict reachability and NVS
+success. Check [Safety](SAFETY.md), the tracker, and hardware documents before
+any device test. The 2026-07-16 acceptance predates this calibration change and
+does not authorize it on an energized setup or unattended use.
 
 The `CONFIG_PHILCOINO_BREW_PI_CONTROL` Kconfig selector defaults off. Disabled
 builds keep the legacy Brew curve authoritative and run PI only as a bounded

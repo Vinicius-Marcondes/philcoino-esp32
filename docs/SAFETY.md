@@ -9,10 +9,17 @@ Philcoino é um controller experimental para máquina de espresso que trabalha p
 - A revisão Human de todas as features implementadas e da configuração física testada foi aceita pelo owner em 2026-07-16. A task Agent PHIL-012 de resiliência/contrato automatizado continua pendente.
 - A revisão atual do codebase contém findings BLOCKER e MAJOR não resolvidos sobre timing do firmware, monitoramento dos sensores, comportamento de timeout, certeza da saída física, transporte e identidade/credenciais do dispositivo.
 - O firmware usa permanentemente uma leitura de thermocouple na base da boiler para brew e steam. Isso mantém um único ponto de falha de controle e não oferece cross-check independente entre sensores.
-- A PRD-003 implementa uma correção fixa e owner-selected de `+5°C` apenas em
-  Steam, depois da validação da leitura raw. O valor corrigido orienta control,
-  limits e API. O owner aceitou o valor para a configuração testada em
-  STEAM-004; os registros brutos de instrumentos/medições não estão no repo.
+- A PRD-017 substitui em runtime a correção fixa Steam-only da PRD-003 por um
+  offset global assinado e persistido, aplicado uma vez em Brew e Steam após a
+  validação raw. Registro ausente significa não calibrado com `0°C`; storage
+  corrompido ou ilegível causa fault e comando do heater off. A UI foi aceita
+  pelo owner, mas calibração física, precisão do ponto de ebulição e operação
+  energizada continuam pendentes.
+- O thermostat retido é identificado pelo owner/listing como nominalmente
+  `145°C`, 10 A, 250 V. O listing não comprova tolerância, acoplamento, ligação
+  em série ou interrupção do heater instalado. A futura TCAL-008 para permitir
+  target Steam inclusivo de `135°C` exige novos limites raw/effective aprovados;
+  não está implementada nesta evidência.
 - O software da PRD-004 adiciona bias fixo de `+2°C` somente ao cálculo de duty
   durante Manual/main e um workflow de comando de cooldown do firmware com
   cutoff da pump em 45 segundos e estabilização de cinco segundos. THERM-002,
@@ -37,8 +44,11 @@ Consulte [CODEBASE_REVIEW_REPORT.md](../CODEBASE_REVIEW_REPORT.md), [docs/TRACKE
 O firmware controla o temperature-control loop e não depende da conectividade do aplicativo. Seu policy code:
 
 - valida o status do MAX6675 e leituras finitas;
-- usa a leitura raw em Brew e aplica uma única correção compile-time de `+5°C`
-  em Steam antes das decisões e snapshots;
+- valida a leitura raw, aplica um único offset global persistido em Brew e
+  Steam e usa a temperatura effective resultante para decisões e snapshots;
+- aplica limites independentes de `135°C` à temperatura Steam effective e à
+  leitura raw antes da correção; qualquer um causa latch de
+  `over_temperature` e comando do heater off;
 - aplica target e limites de over-temperature específicos de cada mode;
 - exige três segundos contínuos na ready band;
 - aplica um heating timeout e um timeout de cinco minutos após steam-ready;
@@ -46,7 +56,8 @@ O firmware controla o temperature-control loop e não depende da conectividade d
 - aplica o bias fixo de extração somente ao duty em Manual/main, sem alterar
   targets, readiness, deadlines, limits ou profiles;
 - faz latch de faults e comanda a saída do SSR para off;
-- persiste apenas targets e conjuntos completos de profiles validados;
+- persiste targets, conjuntos completos de profiles validados e o offset de
+  calibração em registros NVS separados;
 - executa Manual e profiles em um controller monotônico dedicado, inicializa GPIO10 como `off` e não restaura `running` no boot;
 - amostra o HX711 fora do loop crítico e só inicia uma extração por peso após
   calibração, disponibilidade, estabilidade e tara automática; falha de tara
@@ -83,10 +94,10 @@ Valores de histórico descrevem requests/comandos; `deliveredCommandDuty1s` é
 fração de comando do firmware, não medição da corrente ou potência do SSR.
 
 A concordância entre control e API demonstra somente consistência de software.
-Ela não comprova que `+5°C` representa a diferença física da boiler,
-que `+2°C` melhora a extração ou que um comando de cooldown produz fluxo ou
-resfriamento. Também não substitui medição independente, cutoff térmico ou
-revisão energizada.
+Ela não comprova que um offset observado pelo usuário representa temperatura
+física calibrada ou o ponto de ebulição local, que `+2°C` melhora a extração,
+ou que um comando de cooldown produz fluxo ou resfriamento. Também não
+substitui medição independente, cutoff térmico ou revisão energizada.
 
 Da mesma forma, valores históricos de `heaterActive` e `pumpActive` descrevem
 o último comando conhecido do firmware. Backfill, SQLite, gráfico e CSV não

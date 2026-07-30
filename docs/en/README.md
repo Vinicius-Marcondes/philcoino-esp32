@@ -26,6 +26,9 @@ The phone discovers and authenticates one machine, displays live state, and subm
   ESP32 RAM history, controller diagnostics, and horizontally paged 30-second
   Live windows.
 - Firmware-acknowledged brew/steam targets, active mode, heater permission, and over-temperature dismissal.
+- Guided Machine-page temperature calibration with a raw `90–120°C` target,
+  manual steam-wand operation, explicit Save, and one persisted global offset
+  applied once in Brew and Steam.
 - ESP32-C3 control, NVS target persistence, MAX6675 sampling, HTTP/mDNS networking, and host-testable policy boundaries.
 - A default-off compile-time selector that keeps the legacy Brew curve
   authoritative while comparing bounded PI in shadow; active-PI builds still
@@ -51,7 +54,7 @@ Expo mobile app
                     ESP32 firmware (authority)
              sensors -> control -> SSR command -> faults
                               |
-                         NVS targets
+                  NVS targets/calibration
 
 OpenAPI 3.1.1 contract
   -> strict Zod schemas (mobile + simulator)
@@ -126,12 +129,21 @@ API v2 adds without removing v1:
 - `POST /api/v2/extractions/stop`
 - `POST /api/v2/cooldowns/start`
 - `POST /api/v2/cooldowns/stop`
+- `GET /api/v2/temperature-calibration`
+- `POST /api/v2/temperature-calibration/start`
+- `PUT /api/v2/temperature-calibration/candidate`
+- `POST /api/v2/temperature-calibration/save`
+- `POST /api/v2/temperature-calibration/cancel`
 
 Historical and current `running`/`off` values describe firmware commands, not
 current, flow, series
 switch position, or confirmed physical de-energization.
 
 The simulator also exposes `_simulator/*` controls that are deliberately outside API v1 and must never be implemented as production firmware endpoints.
+
+The current Steam range remains `110–120°C`. Separate TCAL-008 work plans to
+make `135°C` an inclusive target only after replacement raw/effective fault
+boundaries above that target are approved.
 
 ## Core design rules
 
