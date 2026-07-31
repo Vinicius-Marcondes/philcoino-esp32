@@ -67,7 +67,9 @@ class FirmwareApi {
               ApiSynchronization& synchronization,
               HistoryBuffer* history = nullptr,
               control::ScaleController* scale_controller = nullptr,
-              WeightedTraceBuffer* weighted_trace = nullptr);
+              WeightedTraceBuffer* weighted_trace = nullptr,
+              peripherals::SteamControlSettingsStorage*
+                  steam_control_settings_storage = nullptr);
 
   HttpResponse handle(HttpMethod method, const std::string& path,
                       const char* authorization, const std::string& body,
@@ -82,6 +84,9 @@ class FirmwareApi {
   HttpResponse health(std::uint64_t uptime_ms) const;
   HttpResponse device() const;
   HttpResponse state(std::uint64_t uptime_ms) const;
+  HttpResponse steam_control_settings(std::uint64_t uptime_ms) const;
+  HttpResponse update_steam_control_settings(const std::string& body,
+                                             std::uint64_t uptime_ms);
   HttpResponse update_temperatures(const std::string& body,
                                    std::uint64_t uptime_ms);
   HttpResponse update_mode(const std::string& body,
@@ -134,6 +139,8 @@ class FirmwareApi {
   HistoryBuffer* history_;
   control::ScaleController* scale_controller_;
   WeightedTraceBuffer* weighted_trace_;
+  peripherals::SteamControlSettingsStorage*
+      steam_control_settings_storage_;
   std::uint32_t temperature_calibration_sequence_{0};
 };
 

@@ -97,6 +97,7 @@ describe("DashboardMutationSession", () => {
       status: "heating",
       steamTargetC: 115,
       steamTimeoutRemainingMs: null,
+      steamControl: inactiveSteamControl,
       uptimeMs: 190_000,
     };
     const response = deferred<MachineState>();
@@ -702,6 +703,7 @@ function mutationClient(
       status: "heating",
       steamTargetC: 115,
       steamTimeoutRemainingMs: null,
+      steamControl: inactiveSteamControl,
       uptimeMs: 190_000,
     }),
     replaceProfiles: async (profiles) => profiles,
@@ -743,6 +745,18 @@ function mutationClient(
     ...overrides,
   };
 }
+
+const inactiveSteamControl = {
+  settings: {
+    initialCompensationC: 12,
+    decayDurationMs: 720_000,
+    readyTimeoutMs: 300_000,
+  },
+  compensationActive: false,
+  appliedCompensationC: 0,
+  controlTemperatureC: null,
+  heatSoakElapsedMs: null,
+} as const;
 
 function deferred<T>() {
   let resolve!: (value: T) => void;

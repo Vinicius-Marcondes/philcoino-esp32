@@ -209,7 +209,7 @@ void test_workflow_codecs() {
 }
 
 void test_authoritative_route_matrix() {
-  assert(kApiRoutes.size() == 26U);
+  assert(kApiRoutes.size() == 28U);
   std::size_t protected_count = 0;
   for (std::size_t index = 0; index < kApiRoutes.size(); ++index) {
     const auto& route = kApiRoutes[index];
@@ -220,7 +220,7 @@ void test_authoritative_route_matrix() {
              std::string(route.path) != kApiRoutes[other].path);
     }
   }
-  assert(protected_count == 24U);
+  assert(protected_count == 26U);
   assert(!request_requires_auth(HttpMethod::kGet, "/healthz"));
   assert(request_requires_auth(HttpMethod::kPost,
                                "/api/v2/cooldowns/stop"));
@@ -228,6 +228,8 @@ void test_authoritative_route_matrix() {
   assert(request_requires_auth(HttpMethod::kGet, "/api/v2/scale/trace"));
   assert(request_requires_auth(
       HttpMethod::kPost, "/api/v2/temperature-calibration/save"));
+  assert(request_requires_auth(
+      HttpMethod::kPatch, "/api/v2/settings/steam-control"));
   assert(find_api_route(HttpMethod::kGet, "/api/v2/state?ignored=true") ==
          find_api_route(HttpMethod::kGet, "/api/v2/state"));
   assert(find_api_route(HttpMethod::kPost, "/healthz") == nullptr);

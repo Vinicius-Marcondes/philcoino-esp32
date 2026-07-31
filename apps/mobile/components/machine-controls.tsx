@@ -26,6 +26,7 @@ interface MachineControlsProps {
   heaterMutation: DashboardMutationState;
   modeMutation: DashboardMutationState;
   onSetMode: (mode: Mode) => void;
+  onOpenSteamControlSettings: () => void;
   onOpenTemperatureCalibration: () => void;
   onUpdateTemperatureSettings: (
     settings: TemperatureSettingsRequest,
@@ -42,6 +43,7 @@ export function MachineControls({
   heaterMutation,
   modeMutation,
   onSetMode,
+  onOpenSteamControlSettings,
   onOpenTemperatureCalibration,
   onUpdateTemperatureSettings,
   snapshot,
@@ -222,6 +224,23 @@ export function MachineControls({
           label={translate("temperatureCalibration.open")}
           onPress={onOpenTemperatureCalibration}
         />
+        <View style={styles.secondarySetting}>
+          <Text selectable style={styles.eyebrow}>
+            {translate("steamControl.entryEyebrow")}
+          </Text>
+          <Text selectable style={styles.sectionTitle}>
+            {translate("steamControl.entryTitle")}
+          </Text>
+          <Text selectable style={styles.helpText}>
+            {translate("steamControl.entryDetail")}
+          </Text>
+          <ControlButton
+            disabled={mutationPending}
+            label={translate("steamControl.open")}
+            onPress={onOpenSteamControlSettings}
+            secondary
+          />
+        </View>
       </View>
 
     </View>
@@ -526,6 +545,13 @@ const styles = StyleSheet.create({
   },
   stepButtonText: { color: "#8B3A2B", fontSize: 25, fontWeight: "700" },
   helpText: { color: "#695A50", fontSize: 14, lineHeight: 20 },
+  secondarySetting: {
+    borderTopColor: "#E5DBD0",
+    borderTopWidth: 1,
+    gap: 10,
+    marginTop: 4,
+    paddingTop: 16,
+  },
   confirmationCard: {
     backgroundColor: "#F3E6DC",
     borderColor: "#D3B9A7",

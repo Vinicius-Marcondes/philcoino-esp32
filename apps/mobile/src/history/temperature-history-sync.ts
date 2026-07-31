@@ -191,6 +191,7 @@ export function mapHistoryPage(
     startsAfterHistoryGap:
       index === 0 &&
       (page.continuity === "reset" || page.continuity === "truncated"),
+    steamControl: sample.steamControl,
     steamTargetC: sample.steamTargetC,
     uptimeMs: sample.uptimeMs,
   }));

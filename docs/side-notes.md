@@ -69,6 +69,28 @@ Offset-dependent targets whose implied raw value exceeds `135°C` remain
 rejected without clamping. TCAL-009 retains the separately authorized physical
 acceptance.
 
+## PRD-018 dynamic Steam heat-soak compensation
+
+Status: SOFTWARE IMPLEMENTED — VERIFICATION/PHYSICAL ACCEPTANCE PENDING
+
+The owner reported an initial lateral-thermocouple gap of roughly `10–15°C`
+when steam first becomes usable, with equilibrium after roughly `10–15 min`.
+The implementation therefore starts with editable `12°C`/`12 min` defaults
+and exposes the compensated estimate separately from the calibrated sensor.
+Those reported observations are not a committed instrumented dataset and do
+not validate the defaults.
+
+Firmware owns the monotonic heat-soak episode, linear decay, readiness,
+post-ready timeout, NVS transaction, and fail-off. The episode is RAM-only and
+survives a temporary mode change until the effective lateral sensor reaches the
+Brew target. Active setting writes preserve both original timing origins.
+Raw/effective `135°C` checks remain independent and unchanged.
+
+Physical promotion requires repeated supervised traces with an independent
+reference, exact build/settings/global calibration, heater-command evidence,
+peak temperatures, equilibrium criteria, and independent cutoff verification.
+No energized work was performed or authorized by PRD-018 software changes.
+
 ## PRD-011 HX711 scale validation
 
 Status: SOFTWARE IMPLEMENTED — PHYSICAL VALIDATION PENDING

@@ -38,6 +38,17 @@ const machine: MachineState = {
   status: "heating",
   steamTargetC: 115,
   steamTimeoutRemainingMs: null,
+  steamControl: {
+    settings: {
+      initialCompensationC: 12,
+      decayDurationMs: 720_000,
+      readyTimeoutMs: 300_000,
+    },
+    compensationActive: false,
+    appliedCompensationC: 0,
+    controlTemperatureC: null,
+    heatSoakElapsedMs: null,
+  },
   uptimeMs: 184_220,
 };
 
@@ -119,6 +130,7 @@ describe("temperature history", () => {
       sourceBootId: null,
       sourceSequence: null,
       startsAfterHistoryGap: false,
+      steamControl: machine.steamControl,
       steamTargetC: 115,
       uptimeMs: 184_220,
     });
@@ -416,7 +428,7 @@ describe("temperature history", () => {
     ]);
     const lines = csv.trimEnd().split("\r\n");
     expect(lines[0]).toBe(
-      "recorded_at_utc,device_id,machine_uptime_ms,boiler_temperature_c,brew_target_c,steam_target_c,active_mode,active_target_c,heater_enabled,heater_active,pump_active,machine_status,fault_code,controller_firmware_version,controller_selected,controller_pi_kp,controller_pi_ki,controller_filter_alpha,controller_interval_ms,ssr_window_ms,temperature_raw_c,temperature_filtered_c,controller_base_target_c,controller_private_target_c,controller_error_c,legacy_requested_duty,pi_requested_duty,pi_proportional_contribution,pi_integral_contribution,pi_integral_state,pi_saturation,pi_anti_windup_active,heater_command_active,delivered_command_duty_1s,pump_command,extraction_phase,controller_operating_mode",
+      "recorded_at_utc,device_id,machine_uptime_ms,boiler_temperature_c,brew_target_c,steam_target_c,active_mode,active_target_c,steam_control_temperature_c,steam_applied_compensation_c,steam_compensation_active,steam_heat_soak_elapsed_ms,steam_initial_compensation_c,steam_decay_duration_ms,steam_ready_timeout_ms,heater_enabled,heater_active,pump_active,machine_status,fault_code,controller_firmware_version,controller_selected,controller_pi_kp,controller_pi_ki,controller_filter_alpha,controller_interval_ms,ssr_window_ms,temperature_raw_c,temperature_filtered_c,controller_base_target_c,controller_private_target_c,controller_error_c,legacy_requested_duty,pi_requested_duty,pi_proportional_contribution,pi_integral_contribution,pi_integral_state,pi_saturation,pi_anti_windup_active,heater_command_active,delivered_command_duty_1s,pump_command,extraction_phase,controller_operating_mode",
     );
     expect(lines[1]).toContain("2026-07-18T13:00:00.000Z");
     expect(lines[1]).toContain('"\'=machine,1"');

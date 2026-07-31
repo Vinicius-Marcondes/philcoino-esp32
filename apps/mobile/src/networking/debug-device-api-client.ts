@@ -9,6 +9,11 @@ import {
   RAW_BOILER_OVER_TEMPERATURE_C,
   STEAM_TARGET_MAX_C,
   STEAM_TARGET_MIN_C,
+  STEAM_COMPENSATION_DECAY_DEFAULT_MS,
+  STEAM_COMPENSATION_INITIAL_DEFAULT_C,
+  STEAM_READY_TIMEOUT_DEFAULT_MS,
+  SteamControlSettingsRequestSchema,
+  SteamControlStateSchema,
   TemperatureCalibrationSessionRequestSchema,
   TemperatureCalibrationStateSchema,
   TemperatureSettingsRequestSchema,
@@ -36,6 +41,8 @@ import {
   type StartCooldownResponse,
   type StopCooldownResponse,
   type StopExtractionResponse,
+  type SteamControlSettingsRequest,
+  type SteamControlState,
   type ScaleState,
   type ScaleTraceResponse,
   type WeightedExtractionTraceCursor,
@@ -107,6 +114,17 @@ export class DebugDeviceApiClient
   private temperatureCalibration: TemperatureCalibrationState =
     createDebugTemperatureCalibration();
   private temperatureCalibrationWasSaved = false;
+  private steamControl: SteamControlState = SteamControlStateSchema.parse({
+    settings: {
+      initialCompensationC: STEAM_COMPENSATION_INITIAL_DEFAULT_C,
+      decayDurationMs: STEAM_COMPENSATION_DECAY_DEFAULT_MS,
+      readyTimeoutMs: STEAM_READY_TIMEOUT_DEFAULT_MS,
+    },
+    compensationActive: false,
+    appliedCompensationC: 0,
+    controlTemperatureC: null,
+    heatSoakElapsedMs: null,
+  });
 
   async getHealth(options: { signal?: AbortSignal } = {}): Promise<HealthResponse> {
     throwIfAborted(options.signal);
@@ -121,6 +139,33 @@ export class DebugDeviceApiClient
   async getState(options: { signal?: AbortSignal } = {}): Promise<MachineState> {
     throwIfAborted(options.signal);
     return this.state;
+  }
+
+  async getSteamControlSettings(
+    options: { signal?: AbortSignal } = {},
+  ): Promise<SteamControlState> {
+    throwIfAborted(options.signal);
+    return this.steamControl;
+  }
+
+  async updateSteamControlSettings(
+    request: SteamControlSettingsRequest,
+    options: { signal?: AbortSignal } = {},
+  ): Promise<SteamControlState> {
+    throwIfAborted(options.signal);
+    const parsed = SteamControlSettingsRequestSchema.safeParse(request);
+    if (!parsed.success) {
+      throw new ApiClientError(
+        "invalid-request",
+        "The steam-control settings request is invalid.",
+      );
+    }
+    this.steamControl = SteamControlStateSchema.parse({
+      ...this.steamControl,
+      settings: { ...this.steamControl.settings, ...parsed.data },
+    });
+    this.synchronizeSteamControl();
+    return this.steamControl;
   }
 
   async getStateV2(
@@ -585,6 +630,7 @@ export class DebugDeviceApiClient
       heaterEnabled: this.state.heaterEnabled,
       steamTargetC: this.state.steamTargetC,
     });
+    this.synchronizeSteamControl();
     this.cooldown = CooldownStateSchema.parse({
       status: "pumping",
       cooldownId: "debug-cooldown-1",
@@ -651,6 +697,7 @@ export class DebugDeviceApiClient
       heaterEnabled: this.state.heaterEnabled,
       ...response,
     });
+    this.synchronizeSteamControl();
     return response;
   }
 
@@ -688,6 +735,7 @@ export class DebugDeviceApiClient
       heaterEnabled: this.state.heaterEnabled,
       steamTargetC: this.state.steamTargetC,
     });
+    this.synchronizeSteamControl();
     return { mode: parsed.data.mode };
   }
 
@@ -713,6 +761,7 @@ export class DebugDeviceApiClient
       heaterEnabled: parsed.data.heaterEnabled,
       steamTargetC: this.state.steamTargetC,
     });
+    this.synchronizeSteamControl();
     return { heaterEnabled: parsed.data.heaterEnabled };
   }
 
@@ -721,6 +770,22 @@ export class DebugDeviceApiClient
   ): Promise<OverTemperatureDismissResponse> {
     throwIfAborted(options.signal);
     return this.state;
+  }
+
+  private synchronizeSteamControl(): void {
+    const active = this.state.activeMode === "steam";
+    const appliedCompensationC = active
+      ? this.steamControl.settings.initialCompensationC
+      : 0;
+    this.steamControl = SteamControlStateSchema.parse({
+      settings: this.steamControl.settings,
+      compensationActive: active && appliedCompensationC > 0,
+      appliedCompensationC,
+      controlTemperatureC:
+        active ? this.state.boilerTemperatureC + appliedCompensationC : null,
+      heatSoakElapsedMs: active ? 0 : null,
+    });
+    this.state = { ...this.state, steamControl: this.steamControl };
   }
 
   private rejectConflictingTemperatureCalibration(message: string): void {
@@ -837,6 +902,19 @@ function createDebugState(
     status: "heating",
     steamTargetC: overrides.steamTargetC ?? STEAM_TARGET_MIN_C,
     steamTimeoutRemainingMs: activeMode === "steam" ? 0 : null,
+    steamControl: {
+      settings: {
+        initialCompensationC: STEAM_COMPENSATION_INITIAL_DEFAULT_C,
+        decayDurationMs: STEAM_COMPENSATION_DECAY_DEFAULT_MS,
+        readyTimeoutMs: STEAM_READY_TIMEOUT_DEFAULT_MS,
+      },
+      compensationActive: activeMode === "steam",
+      appliedCompensationC:
+        activeMode === "steam" ? STEAM_COMPENSATION_INITIAL_DEFAULT_C : 0,
+      controlTemperatureC:
+        activeMode === "steam" ? STEAM_COMPENSATION_INITIAL_DEFAULT_C : null,
+      heatSoakElapsedMs: activeMode === "steam" ? 0 : null,
+    },
     uptimeMs: 0,
   };
 }

@@ -8,5 +8,16 @@
   "heaterActive": true,
   "fault": null,
   "steamTimeoutRemainingMs": null,
+  "steamControl": {
+    "settings": {
+      "initialCompensationC": 12,
+      "decayDurationMs": 720000,
+      "readyTimeoutMs": 300000
+    },
+    "compensationActive": false,
+    "appliedCompensationC": 0,
+    "controlTemperatureC": null,
+    "heatSoakElapsedMs": null
+  },
   "uptimeMs": 184220
 }

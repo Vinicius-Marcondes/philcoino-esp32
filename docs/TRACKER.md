@@ -1,3 +1,37 @@
+# PRD-018 Tracker
+
+PRD Status: Approved / Finished
+Current Task: No further software work; physical characterization is authorized follow-up
+
+Implementation Boundary: Add a firmware-owned, persisted, linearly decaying
+Steam heat-soak estimate without changing the calibrated sensor value or either
+independent `135°C` safety cap.
+
+PRD: `docs/prds/PRD-018/PRD-018.md`
+
+## Compatibility and Safety Boundary
+
+- The required `steamControl` state and settings route intentionally break
+  clients that predate PRD-018.
+- The transient estimate affects Steam control semantics only.
+  `boilerTemperatureC` remains the calibrated lateral thermocouple reading.
+- Missing settings persist defaults; invalid storage and failed persistence
+  retain fail-off behavior.
+- Software evidence does not establish the physical gap, equilibrium duration,
+  energized tuning safety, or thermostat interruption.
+
+## Execution State
+
+| Area | Status | Evidence | Blocked Reason |
+| --- | --- | --- | --- |
+| Protocol | Done | OpenAPI valid; typecheck; 165 tests / 363 expectations | None |
+| Firmware | Done — software/build boundary | Native and sanitizer 10/10; 36 strict captures; ESP-IDF 6.0.2 target build and size pass | Connected runtime and physical evidence unavailable |
+| Simulator | Done | Typecheck; 95 tests / 776 expectations | None |
+| Mobile | Done | Typecheck; Expo lint; 253 tests / 2,460 expectations | Native visual/accessibility review remains optional follow-up |
+| Physical validation | Authorized — Not Executed | Bounded 10-cycle worksheet and required instrumentation defined | Measurements and independent cutoff evidence still required for any production-tuning claim |
+
+---
+
 # PRD-017 Tracker
 
 PRD Status: Software Complete Through TCAL-008 — Physical Acceptance Pending

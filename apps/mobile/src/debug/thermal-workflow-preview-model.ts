@@ -261,6 +261,17 @@ function createMachine(overrides: Partial<MachineState> = {}): MachineState {
     heaterActive: false,
     fault: null,
     steamTimeoutRemainingMs: activeMode === "steam" ? 240_000 : null,
+    steamControl: {
+      settings: {
+        initialCompensationC: 12,
+        decayDurationMs: 720_000,
+        readyTimeoutMs: 300_000,
+      },
+      compensationActive: activeMode === "steam",
+      appliedCompensationC: activeMode === "steam" ? 10 : 0,
+      controlTemperatureC: activeMode === "steam" ? 114.3 : null,
+      heatSoakElapsedMs: activeMode === "steam" ? 120_000 : null,
+    },
     uptimeMs: 184_220,
     ...overrides,
   } as MachineState;

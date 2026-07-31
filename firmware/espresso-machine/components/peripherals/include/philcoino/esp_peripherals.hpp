@@ -73,6 +73,18 @@ class EspNvsTemperatureCalibrationBackend final
   bool initialized_{false};
 };
 
+class EspNvsSteamControlSettingsBackend final
+    : public SteamControlSettingsBackend {
+ public:
+  bool initialize();
+  BackendLoadResult load(SteamControlSettings& settings) override;
+  bool save(const SteamControlSettings& settings) override;
+
+ private:
+  std::uint32_t handle_{0};
+  bool initialized_{false};
+};
+
 class EspNvsProfileBackend final : public ProfileBackend {
  public:
   bool initialize();

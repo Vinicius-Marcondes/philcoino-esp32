@@ -99,6 +99,17 @@ const faultState: MachineState = {
     message: "The boiler thermocouple reading is unavailable.",
   },
   steamTimeoutRemainingMs: null,
+  steamControl: {
+    settings: {
+      initialCompensationC: 12,
+      decayDurationMs: 720_000,
+      readyTimeoutMs: 300_000,
+    },
+    compensationActive: false,
+    appliedCompensationC: 0,
+    controlTemperatureC: null,
+    heatSoakElapsedMs: null,
+  },
   uptimeMs: 185000,
 };
 

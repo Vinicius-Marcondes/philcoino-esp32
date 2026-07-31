@@ -103,18 +103,30 @@ const char* controller_operating_mode_name(ControllerOperatingMode mode) {
 TemperatureController::TemperatureController(
     peripherals::TemperatureTargets targets, peripherals::FailOffSsr& heater,
     BrewPiConfig pi_configuration)
-    : TemperatureController(targets, {}, heater, pi_configuration) {}
+    : TemperatureController(targets, {}, {}, heater, pi_configuration) {}
 
 TemperatureController::TemperatureController(
     peripherals::TemperatureTargets targets,
     peripherals::TemperatureCalibration calibration,
     peripherals::FailOffSsr& heater, BrewPiConfig pi_configuration)
+    : TemperatureController(targets, calibration, {}, heater,
+                            pi_configuration) {}
+
+TemperatureController::TemperatureController(
+    peripherals::TemperatureTargets targets,
+    peripherals::TemperatureCalibration calibration,
+    peripherals::SteamControlSettings steam_control_settings,
+    peripherals::FailOffSsr& heater, BrewPiConfig pi_configuration)
     : heater_(heater),
       targets_(targets),
       temperature_calibration_(calibration),
+      steam_control_settings_(steam_control_settings),
+      pending_steam_control_settings_(steam_control_settings),
       brew_pi_(pi_configuration) {
   if (!peripherals::targets_are_reachable(targets_,
-                                          temperature_calibration_)) {
+                                          temperature_calibration_) ||
+      !peripherals::steam_control_settings_are_valid(
+          steam_control_settings_)) {
     targets_ = {};
     latch_fault(FaultCode::kInternalError);
   }
@@ -141,6 +153,107 @@ bool TemperatureController::heater_enabled() const { return heater_.is_enabled()
 const peripherals::TemperatureCalibration&
 TemperatureController::temperature_calibration() const {
   return temperature_calibration_;
+}
+
+const peripherals::SteamControlSettings&
+TemperatureController::steam_control_settings() const {
+  return steam_control_settings_;
+}
+
+float TemperatureController::applied_steam_compensation(
+    std::uint32_t now_ms) const {
+  if (!steam_heat_soak_active_ ||
+      steam_control_settings_.initial_compensation_c <= 0) {
+    return 0.0F;
+  }
+  const auto elapsed_ms =
+      static_cast<std::uint32_t>(now_ms - steam_heat_soak_started_ms_);
+  if (elapsed_ms >= steam_control_settings_.decay_duration_ms) {
+    return 0.0F;
+  }
+  const auto remaining_ratio =
+      1.0F - static_cast<float>(elapsed_ms) /
+                  static_cast<float>(
+                      steam_control_settings_.decay_duration_ms);
+  return static_cast<float>(
+             steam_control_settings_.initial_compensation_c) *
+         std::clamp(remaining_ratio, 0.0F, 1.0F);
+}
+
+SteamControlSnapshot TemperatureController::steam_control_snapshot(
+    std::uint32_t now_ms) const {
+  SteamControlSnapshot value{};
+  value.settings = steam_control_settings_;
+  value.heat_soak_active = steam_heat_soak_active_;
+  if (steam_heat_soak_active_) {
+    value.heat_soak_elapsed_ms =
+        static_cast<std::uint32_t>(now_ms - steam_heat_soak_started_ms_);
+  }
+  if (mode_ == ControlMode::kSteam && boiler_reading_ok() &&
+      !temperature_calibration_active_) {
+    value.applied_compensation_c =
+        applied_steam_compensation(now_ms);
+    value.compensation_active =
+        value.applied_compensation_c > 0.0F;
+    value.control_temperature_available = true;
+    value.control_temperature_c =
+        active_temperature() + value.applied_compensation_c;
+  }
+  return value;
+}
+
+bool TemperatureController::prepare_steam_control_settings_update(
+    const peripherals::SteamControlSettings& settings,
+    std::uint32_t now_ms) {
+  if (fault_latched_ || steam_control_settings_update_in_progress_ ||
+      target_update_in_progress_ ||
+      !peripherals::steam_control_settings_are_valid(settings)) {
+    return false;
+  }
+  pending_steam_control_settings_ = settings;
+  steam_control_settings_update_in_progress_ = true;
+  reset_heater_control_window(now_ms);
+  if (heater_.force_off()) {
+    return true;
+  }
+  latch_fault(FaultCode::kInternalError);
+  return false;
+}
+
+bool TemperatureController::adopt_persisted_steam_control_settings(
+    const peripherals::SteamControlSettings& settings,
+    std::uint32_t now_ms) {
+  if (!steam_control_settings_update_in_progress_ ||
+      settings.initial_compensation_c !=
+          pending_steam_control_settings_.initial_compensation_c ||
+      settings.decay_duration_ms !=
+          pending_steam_control_settings_.decay_duration_ms ||
+      settings.ready_timeout_ms !=
+          pending_steam_control_settings_.ready_timeout_ms ||
+      !peripherals::steam_control_settings_are_valid(settings)) {
+    latch_fault(FaultCode::kInternalError);
+    return false;
+  }
+  steam_control_settings_ = settings;
+  pending_steam_control_settings_ = settings;
+  steam_control_settings_update_in_progress_ = false;
+  current_steam_compensation_c_ =
+      mode_ == ControlMode::kSteam
+          ? applied_steam_compensation(now_ms)
+          : 0.0F;
+  reset_heater_control_window(now_ms);
+  return true;
+}
+
+bool TemperatureController::rollback_steam_control_settings_update(
+    std::uint32_t now_ms) {
+  if (!steam_control_settings_update_in_progress_) {
+    return false;
+  }
+  pending_steam_control_settings_ = steam_control_settings_;
+  steam_control_settings_update_in_progress_ = false;
+  reset_heater_control_window(now_ms);
+  return heater_.force_off();
 }
 
 bool TemperatureController::raw_temperature(float& temperature_c) const {
@@ -189,7 +302,8 @@ TemperatureController::start_temperature_calibration(
   if (mode_ == ControlMode::kSteam) {
     return TemperatureCalibrationResult::kSteamMode;
   }
-  if (target_update_in_progress_ || cooldown_inhibited_ ||
+  if (target_update_in_progress_ ||
+      steam_control_settings_update_in_progress_ || cooldown_inhibited_ ||
       extraction_phase_ != ExtractionPhase::kIdle || calibration_id.empty()) {
     return TemperatureCalibrationResult::kMutationConflict;
   }
@@ -489,13 +603,22 @@ bool TemperatureController::set_mode(ControlMode mode, std::uint32_t now_ms) {
     abort_temperature_calibration(now_ms);
     return false;
   }
-  if (target_update_in_progress_) {
+  if (target_update_in_progress_ ||
+      steam_control_settings_update_in_progress_) {
     return false;
   }
   if (mode_ == mode) {
     return true;
   }
+  if (mode == ControlMode::kSteam && !steam_heat_soak_active_) {
+    steam_heat_soak_active_ = true;
+    steam_heat_soak_started_ms_ = now_ms;
+  }
   mode_ = mode;
+  current_steam_compensation_c_ =
+      mode_ == ControlMode::kSteam
+          ? applied_steam_compensation(now_ms)
+          : 0.0F;
   brew_pi_.reset();
   post_brew_recovery_active_ = false;
   reset_readiness(now_ms);
@@ -551,6 +674,7 @@ bool TemperatureController::prepare_target_update(
     return false;
   }
   if (target_update_in_progress_ ||
+      steam_control_settings_update_in_progress_ ||
       !targets_reachable(targets)) {
     return false;
   }
@@ -676,9 +800,21 @@ ControlSnapshot TemperatureController::update(
     return snapshot(now_ms);
   }
 
+  if (mode_ != ControlMode::kSteam && steam_heat_soak_active_ &&
+      active_temperature() <= static_cast<float>(targets_.brew_c)) {
+    steam_heat_soak_active_ = false;
+    current_steam_compensation_c_ = 0.0F;
+  } else {
+    current_steam_compensation_c_ =
+        mode_ == ControlMode::kSteam
+            ? applied_steam_compensation(now_ms)
+            : 0.0F;
+  }
+
   if (!temperature_calibration_active_ &&
       mode_ == ControlMode::kSteam && steam_timeout_active_ &&
-      elapsed(now_ms, steam_timeout_started_ms_, config::kSteamReadyTimeoutMs)) {
+      elapsed(now_ms, steam_timeout_started_ms_,
+              steam_control_settings_.ready_timeout_ms)) {
     return_to_brew(now_ms);
   }
 
@@ -760,6 +896,7 @@ ControlSnapshot TemperatureController::snapshot(std::uint32_t now_ms) const {
   value.fault_active = fault_latched_;
   value.fault = {fault_code_, fault_message(fault_code_)};
   value.steam_timeout = steam_timeout_snapshot(now_ms);
+  value.steam_control = steam_control_snapshot(now_ms);
   value.controller = controller_diagnostics_;
   value.controller.temperature_raw_c =
       boiler_reading_ok() ? raw_boiler_temperature_.temperature_c : 0.0F;
@@ -847,7 +984,10 @@ std::int32_t TemperatureController::control_target() const {
 float TemperatureController::control_temperature() const {
   return temperature_calibration_active_
              ? raw_boiler_temperature_.temperature_c
-             : active_temperature();
+             : active_temperature() +
+                   (mode_ == ControlMode::kSteam
+                        ? current_steam_compensation_c_
+                        : 0.0F);
 }
 
 bool TemperatureController::active_temperature_in_ready_band() const {
@@ -953,6 +1093,7 @@ std::uint32_t TemperatureController::duty_pulse_ms(
 
 float TemperatureController::baseline_heater_duty() const {
   if (fault_latched_ || target_update_in_progress_ || cooldown_inhibited_ ||
+      steam_control_settings_update_in_progress_ ||
       !heater_enabled_permission_ || !boiler_reading_ok() ||
       control_temperature() >= static_cast<float>(heater_duty_target())) {
     return 0.0F;
@@ -999,7 +1140,8 @@ void TemperatureController::update_controller_diagnostics(
   const float base_target_c = static_cast<float>(control_target());
   const float private_target_c = static_cast<float>(heater_duty_target());
   const bool inhibited =
-      fault_latched_ || target_update_in_progress_ || cooldown_inhibited_ ||
+      fault_latched_ || target_update_in_progress_ ||
+      steam_control_settings_update_in_progress_ || cooldown_inhibited_ ||
       !heater_enabled_permission_ || heater_.safety_cutoff_tripped();
 
   BrewPiDiagnostics pi{};
@@ -1118,6 +1260,7 @@ void TemperatureController::reset_readiness(std::uint32_t now_ms) {
 
 void TemperatureController::return_to_brew(std::uint32_t now_ms) {
   mode_ = ControlMode::kBrew;
+  current_steam_compensation_c_ = 0.0F;
   brew_pi_.reset();
   post_brew_recovery_active_ = false;
   steam_timeout_active_ = false;
@@ -1197,6 +1340,10 @@ bool TemperatureController::update_heater(std::uint32_t now_ms,
     reset_heater_control_window(now_ms);
     return heater_.set_enabled(false);
   }
+  if (steam_control_settings_update_in_progress_) {
+    reset_heater_control_window(now_ms);
+    return heater_.set_enabled(false);
+  }
   if (cooldown_inhibited_) {
     reset_heater_control_window(now_ms);
     return heater_.set_enabled(false);
@@ -1232,10 +1379,10 @@ SteamTimeoutSnapshot TemperatureController::steam_timeout_snapshot(
   }
   const auto elapsed_ms = static_cast<std::uint32_t>(
       now_ms - steam_timeout_started_ms_);
-  if (elapsed_ms >= config::kSteamReadyTimeoutMs) {
+  if (elapsed_ms >= steam_control_settings_.ready_timeout_ms) {
     return {true, 0};
   }
-  return {true, config::kSteamReadyTimeoutMs - elapsed_ms};
+  return {true, steam_control_settings_.ready_timeout_ms - elapsed_ms};
 }
 
 bool weight_control_is_valid(const WeightControl& control) {

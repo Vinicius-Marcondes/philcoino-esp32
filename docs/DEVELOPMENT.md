@@ -159,6 +159,8 @@ POST /_simulator/reset
 POST /_simulator/fail-next-profile-save
 POST /_simulator/fail-next-temperature-calibration-save
 POST /_simulator/corrupt-temperature-calibration
+POST /_simulator/fail-next-steam-control-save
+POST /_simulator/corrupt-steam-control
 ```
 
 Examples:
@@ -177,9 +179,10 @@ curl http://localhost:3000/api/v1/state \
 ```
 
 Manual time never advances in the background. Power-cycle clears volatile state
-and preserves targets, profiles, and the signed temperature offset; reset also
-restores default targets and removes the calibration record. The simple
-temperature model is for deterministic app/contract scenarios only.
+and preserves targets, profiles, the signed temperature offset, and Steam
+control settings; reset restores all persisted defaults and removes the
+calibration record. The simple temperature model is for deterministic
+app/contract scenarios only.
 
 Every manually crossed one-second boundary adds one history sample, capped at
 600. Fetch retained pages with the development bearer token:
@@ -212,8 +215,13 @@ signed global offset exactly once to produce effective
 workflow, persistence failures, corrupt-record startup fault, offset-adjusted
 target reachability, inclusive raw/effective `135°C` caps, and faults strictly
 above either cap.
-It does not model separate boiler-base and upper-boiler temperatures or
-validate a user-observed physical boiling point.
+In Steam, the simulator deterministically adds the persisted linearly decaying
+heat-soak estimate to the effective sensor value for control/readiness while
+keeping `boilerTemperatureC` and its safety checks unchanged. It exposes the
+estimate and settings in state/history and implements authenticated
+`GET`/`PATCH /api/v2/settings/steam-control`. This does not model separate
+boiler-base and upper-boiler temperatures, establish the real lag, or validate
+a user-observed physical boiling point.
 
 The simulator also serves authenticated API v2 state, complete profile-set
 read/replace, extraction Start/Stop, cooldown Start/Stop, and the scale
@@ -287,6 +295,7 @@ Use a temporary build directory outside the repository to avoid generated output
 The generated capture set includes unchanged API v1 and queryless API v2 state
 responses plus strict API v2 extraction,
 compensation, cooldown Start/replay/conflict/Stop/terminal,
+Steam-control settings/state,
 temperature-calibration status/Start/candidate/Save/Cancel,
 controller-diagnostic history, eligibility errors, and failed terminal state.
 Capture validation proves only that independent C++ serialization matches the
@@ -327,6 +336,11 @@ checks the independent raw `135°C` cap, and applies one persisted signed
 global offset exactly once before Brew and Steam control, readiness, safety,
 history, and API use. A missing calibration record is uncalibrated `0°C`;
 corrupt or unreadable calibration storage faults with heater command off.
+Steam then uses a separate volatile heat-soak estimate for control semantics
+only. Its persisted defaults are `12°C` initial compensation, `12 min` linear
+decay, and `5 min` post-ready timeout; allowed settings are `0–20°C`,
+`1–30 min`, and `1–15 min`. Raw/effective safety evaluation never includes
+this transient term.
 Manual/main extraction
 adds a separate compile-time `+2°C` bias only to the private heater-duty target;
 pre-infusion uses `0°C`. Cooldown uses the validated Brew-effective sample,

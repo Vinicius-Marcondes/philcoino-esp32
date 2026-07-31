@@ -57,6 +57,7 @@ import {
   ExtractionConsoleScreen,
 } from "@/components/extraction-console-screen";
 import { TemperatureCalibrationScreen } from "@/components/temperature-calibration-screen";
+import { SteamControlSettingsScreen } from "@/components/steam-control-settings-screen";
 import { WeightControlEditor } from "@/components/weight-mode-card";
 import { formatWeightReadout } from "@/src/telemetry/telemetry-readouts";
 import {
@@ -234,6 +235,8 @@ export function DashboardScreen({
     useState<DashboardPage>("dashboard");
   const [consoleOpen, setConsoleOpen] = useState(false);
   const [temperatureCalibrationOpen, setTemperatureCalibrationOpen] =
+    useState(false);
+  const [steamControlSettingsOpen, setSteamControlSettingsOpen] =
     useState(false);
   const scale = useScale({
     client,
@@ -551,6 +554,12 @@ export function DashboardScreen({
         onClose={() => setTemperatureCalibrationOpen(false)}
         visible={temperatureCalibrationOpen}
       />
+      <SteamControlSettingsScreen
+        client={client}
+        deviceName={deviceName}
+        onClose={() => setSteamControlSettingsOpen(false)}
+        visible={steamControlSettingsOpen}
+      />
       <KeyboardAvoidingView
         behavior={process.env.EXPO_OS === "ios" ? "padding" : undefined}
         keyboardVerticalOffset={landscape ? 0 : safeAreaInsets.top}
@@ -759,8 +768,16 @@ export function DashboardScreen({
                           compact
                           compensation={compensation}
                           mode={snapshot.activeMode}
+                          sensorTemperatureC={
+                            snapshot.activeMode === "steam"
+                              ? snapshot.boilerTemperatureC
+                              : null
+                          }
                           targetC={boilerTargetC(snapshot)}
-                          temperatureC={boilerTemperatureC(snapshot)}
+                          temperatureC={
+                            snapshot.steamControl.controlTemperatureC ??
+                            boilerTemperatureC(snapshot)
+                          }
                           width="100%"
                         />
                       </View>
@@ -802,8 +819,16 @@ export function DashboardScreen({
                             compact={landscape}
                             compensation={compensation}
                             mode={snapshot.activeMode}
+                            sensorTemperatureC={
+                              snapshot.activeMode === "steam"
+                                ? snapshot.boilerTemperatureC
+                                : null
+                            }
                             targetC={boilerTargetC(snapshot)}
-                            temperatureC={boilerTemperatureC(snapshot)}
+                            temperatureC={
+                              snapshot.steamControl.controlTemperatureC ??
+                              boilerTemperatureC(snapshot)
+                            }
                             width="100%"
                           />
                         </View>
@@ -985,6 +1010,9 @@ export function DashboardScreen({
                       modeMutation={modeMutation}
                       onOpenTemperatureCalibration={() =>
                         setTemperatureCalibrationOpen(true)
+                      }
+                      onOpenSteamControlSettings={() =>
+                        setSteamControlSettingsOpen(true)
                       }
                       onSetMode={setMode}
                       onUpdateTemperatureSettings={updateTemperatureSettings}
@@ -1748,6 +1776,7 @@ function TemperatureCard({
   compact,
   compensation,
   mode,
+  sensorTemperatureC,
   targetC,
   temperatureC,
   width,
@@ -1755,6 +1784,7 @@ function TemperatureCard({
   compact: boolean;
   compensation: CompensationState | null;
   mode: MachineState["activeMode"];
+  sensorTemperatureC: number | null;
   targetC: number;
   temperatureC: number;
   width: "100%" | "48.5%";
@@ -1789,6 +1819,13 @@ function TemperatureCard({
       <Text selectable style={styles.temperatureTarget}>
         {translate("dashboard.target")} {formatTarget(targetC)}
       </Text>
+      {sensorTemperatureC === null ? null : (
+        <Text selectable style={styles.temperatureTarget}>
+          {translate("steamControl.sensorReading", {
+            value: formatTemperature(sensorTemperatureC),
+          })}
+        </Text>
+      )}
     </View>
   );
 }

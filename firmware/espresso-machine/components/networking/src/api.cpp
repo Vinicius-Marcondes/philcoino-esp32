@@ -24,6 +24,7 @@ using codec::parse_heater_enabled;
 using codec::parse_mode;
 using codec::parse_profiles;
 using codec::parse_scale_calibration_complete;
+using codec::parse_steam_control_settings;
 using codec::parse_start;
 using codec::parse_temperature_calibration_candidate;
 using codec::parse_temperature_calibration_query;
@@ -39,6 +40,7 @@ using codec::serialize_mode;
 using codec::serialize_profiles;
 using codec::serialize_scale;
 using codec::serialize_state;
+using codec::serialize_steam_control;
 using codec::serialize_targets;
 using codec::serialize_temperature_calibration;
 
@@ -209,7 +211,9 @@ FirmwareApi::FirmwareApi(DeviceIdentity identity, std::string bearer_token,
                          ApiSynchronization& synchronization,
                          HistoryBuffer* history,
                          control::ScaleController* scale_controller,
-                         WeightedTraceBuffer* weighted_trace)
+                         WeightedTraceBuffer* weighted_trace,
+                         peripherals::SteamControlSettingsStorage*
+                             steam_control_settings_storage)
     : identity_(std::move(identity)),
       bearer_token_(std::move(bearer_token)),
       controller_(controller),
@@ -222,7 +226,8 @@ FirmwareApi::FirmwareApi(DeviceIdentity identity, std::string bearer_token,
       synchronization_(synchronization),
       history_(history),
       scale_controller_(scale_controller),
-      weighted_trace_(weighted_trace) {}
+      weighted_trace_(weighted_trace),
+      steam_control_settings_storage_(steam_control_settings_storage) {}
 
 bool FirmwareApi::authorized(const char* authorization) const {
   return constant_time_bearer_matches(authorization, bearer_token_);
@@ -267,6 +272,10 @@ HttpResponse FirmwareApi::handle_resolved(const ApiRouteDescriptor& route,
     case ApiRouteId::kTemperatures:
       return update_temperatures(body, uptime_ms);
     case ApiRouteId::kStateV2: return state_v2(query, uptime_ms);
+    case ApiRouteId::kSteamControlSettingsGet:
+      return steam_control_settings(uptime_ms);
+    case ApiRouteId::kSteamControlSettingsPatch:
+      return update_steam_control_settings(body, uptime_ms);
     case ApiRouteId::kTemperatureCalibrationGet:
       return temperature_calibration(query, uptime_ms);
     case ApiRouteId::kTemperatureCalibrationStart:
@@ -345,6 +354,121 @@ HttpResponse FirmwareApi::state(std::uint64_t uptime_ms) const {
     snapshot = controller_.snapshot(static_cast<std::uint32_t>(uptime_ms));
   }
   return json_response(200, serialize_state(snapshot, uptime_ms));
+}
+
+HttpResponse FirmwareApi::steam_control_settings(
+    std::uint64_t uptime_ms) const {
+  control::SteamControlSnapshot snapshot{};
+  {
+    ScopedApiLock lock(synchronization_, ApiDomain::kTemperature);
+    if (!lock.locked()) {
+      return error_response(500, "internal_error",
+                            "Temperature control synchronization failed.");
+    }
+    snapshot = controller_.steam_control_snapshot(
+        static_cast<std::uint32_t>(uptime_ms));
+  }
+  return json_response(200, serialize_steam_control(snapshot));
+}
+
+HttpResponse FirmwareApi::update_steam_control_settings(
+    const std::string& body, std::uint64_t uptime_ms) {
+  if (steam_control_settings_storage_ == nullptr) {
+    return error_response(500, "internal_error",
+                          "Steam control settings storage is unavailable.");
+  }
+  peripherals::SteamControlSettings current{};
+  {
+    ScopedApiLock lock(synchronization_, ApiDomain::kTemperature);
+    if (!lock.locked()) {
+      return error_response(500, "internal_error",
+                            "Temperature control synchronization failed.");
+    }
+    if (controller_.has_fault()) {
+      return error_response(
+          409, "machine_faulted",
+          "Steam control settings cannot change while a fault is latched.");
+    }
+    current = controller_.steam_control_settings();
+  }
+
+  peripherals::SteamControlSettings updated{};
+  bool constraint_violation = false;
+  if (!parse_steam_control_settings(body, current, updated,
+                                    constraint_violation)) {
+    return error_response(400, "malformed_request", kMalformedMessage);
+  }
+  if (constraint_violation) {
+    return error_response(
+        400, "malformed_request",
+        "Steam control settings must use whole bounded units.");
+  }
+
+  bool no_change = false;
+  bool prepared = false;
+  {
+    ScopedApiLock lock(synchronization_, ApiDomain::kTemperature);
+    if (!lock.locked()) {
+      return error_response(500, "internal_error",
+                            "Temperature control synchronization failed.");
+    }
+    current = controller_.steam_control_settings();
+    peripherals::SteamControlSettings revalidated{};
+    if (!parse_steam_control_settings(body, current, revalidated,
+                                      constraint_violation) ||
+        constraint_violation) {
+      return error_response(400, "malformed_request", kMalformedMessage);
+    }
+    updated = revalidated;
+    no_change =
+        updated.initial_compensation_c == current.initial_compensation_c &&
+        updated.decay_duration_ms == current.decay_duration_ms &&
+        updated.ready_timeout_ms == current.ready_timeout_ms;
+    prepared =
+        no_change ||
+        controller_.prepare_steam_control_settings_update(
+            updated, static_cast<std::uint32_t>(uptime_ms));
+  }
+  if (!prepared) {
+    return error_response(
+        409, "internal_error",
+        "Another temperature mutation is active or heater fail-off failed.");
+  }
+  if (!no_change && !steam_control_settings_storage_->save(updated)) {
+    bool rolled_back = false;
+    {
+      ScopedApiLock lock(synchronization_, ApiDomain::kTemperature);
+      rolled_back =
+          lock.locked() &&
+          controller_.rollback_steam_control_settings_update(
+              static_cast<std::uint32_t>(uptime_ms));
+    }
+    if (!rolled_back) {
+      return error_response(
+          500, "internal_error",
+          "Steam settings persistence failed and rollback was not acknowledged.");
+    }
+    return error_response(500, "persistence_failure",
+                          "Steam control settings could not be persisted.");
+  }
+
+  control::SteamControlSnapshot snapshot{};
+  {
+    ScopedApiLock lock(synchronization_, ApiDomain::kTemperature);
+    if (!lock.locked()) {
+      return error_response(500, "internal_error",
+                            "Persisted Steam settings could not be acknowledged.");
+    }
+    if (!no_change &&
+        !controller_.adopt_persisted_steam_control_settings(
+            updated, static_cast<std::uint32_t>(uptime_ms))) {
+      return error_response(500, "internal_error",
+                            "Persisted Steam settings could not be adopted.");
+    }
+    snapshot = controller_.steam_control_snapshot(
+        static_cast<std::uint32_t>(uptime_ms));
+  }
+  return json_response(200, serialize_steam_control(snapshot));
 }
 
 HttpResponse FirmwareApi::temperature_calibration(

@@ -23,6 +23,17 @@ const validState: MachineState = {
   status: "heating",
   steamTargetC: 115,
   steamTimeoutRemainingMs: null,
+  steamControl: {
+    settings: {
+      initialCompensationC: 12,
+      decayDurationMs: 720_000,
+      readyTimeoutMs: 300_000,
+    },
+    compensationActive: false,
+    appliedCompensationC: 0,
+    controlTemperatureC: null,
+    heatSoakElapsedMs: null,
+  },
   uptimeMs: 184_220,
 };
 
@@ -402,6 +413,48 @@ describe("DeviceApiClient", () => {
           timeoutMs: 30_001,
         }),
     ).toThrow(RangeError);
+  });
+
+  test("reads and persists strict steam-control settings", async () => {
+    const simulator = createSimulator();
+    const request = simulator.app.request.bind(simulator.app);
+    const client = new DeviceApiClient({
+      address: "http://127.0.0.1:3000",
+      fetch: (url, init) =>
+        Promise.resolve(
+          request(url, {
+            body: init.body,
+            headers: init.headers,
+            method: init.method,
+            signal: init.signal,
+          }),
+        ),
+      token: DEFAULT_SIMULATOR_TOKEN,
+    });
+
+    await expect(client.getSteamControlSettings()).resolves.toMatchObject({
+      settings: {
+        initialCompensationC: 12,
+        decayDurationMs: 720_000,
+        readyTimeoutMs: 300_000,
+      },
+    });
+    await expect(
+      client.updateSteamControlSettings({
+        initialCompensationC: 15,
+        decayDurationMs: 600_000,
+        readyTimeoutMs: 420_000,
+      }),
+    ).resolves.toMatchObject({
+      settings: {
+        initialCompensationC: 15,
+        decayDurationMs: 600_000,
+        readyTimeoutMs: 420_000,
+      },
+    });
+    await expect(
+      client.updateSteamControlSettings({ decayDurationMs: 61_000 }),
+    ).rejects.toMatchObject({ kind: "invalid-request" });
   });
 
   test("validates API v2 profile and acknowledged extraction operations against the simulator", async () => {

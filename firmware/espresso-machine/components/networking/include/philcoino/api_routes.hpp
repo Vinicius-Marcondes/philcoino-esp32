@@ -17,6 +17,8 @@ enum class ApiRouteId {
   kHeater,
   kDismissOverTemperature,
   kStateV2,
+  kSteamControlSettingsGet,
+  kSteamControlSettingsPatch,
   kTemperatureCalibrationGet,
   kTemperatureCalibrationStart,
   kTemperatureCalibrationCandidate,
@@ -44,7 +46,7 @@ struct ApiRouteDescriptor {
   bool requires_authentication;
 };
 
-inline constexpr std::array<ApiRouteDescriptor, 26> kApiRoutes{{
+inline constexpr std::array<ApiRouteDescriptor, 28> kApiRoutes{{
     {ApiRouteId::kHealth, HttpMethod::kGet, "/healthz", false},
     {ApiRouteId::kDevice, HttpMethod::kGet, "/api/v1/device", false},
     {ApiRouteId::kStateV1, HttpMethod::kGet, "/api/v1/state", true},
@@ -55,6 +57,10 @@ inline constexpr std::array<ApiRouteDescriptor, 26> kApiRoutes{{
     {ApiRouteId::kDismissOverTemperature, HttpMethod::kPost,
      "/api/v1/faults/over-temperature/dismiss", true},
     {ApiRouteId::kStateV2, HttpMethod::kGet, "/api/v2/state", true},
+    {ApiRouteId::kSteamControlSettingsGet, HttpMethod::kGet,
+     "/api/v2/settings/steam-control", true},
+    {ApiRouteId::kSteamControlSettingsPatch, HttpMethod::kPatch,
+     "/api/v2/settings/steam-control", true},
     {ApiRouteId::kTemperatureCalibrationGet, HttpMethod::kGet,
      "/api/v2/temperature-calibration", true},
     {ApiRouteId::kTemperatureCalibrationStart, HttpMethod::kPost,

@@ -344,6 +344,17 @@ function sample(sequence: number, uptimeMs: number): HistoryPage["samples"][numb
     heaterEnabled: true,
     machineStatus: "heating",
     pumpActive: false,
+    steamControl: {
+      settings: {
+        initialCompensationC: 12,
+        decayDurationMs: 720_000,
+        readyTimeoutMs: 300_000,
+      },
+      compensationActive: false,
+      appliedCompensationC: 0,
+      controlTemperatureC: null,
+      heatSoakElapsedMs: null,
+    },
     controllerDiagnostics,
     sequence,
     steamTargetC: 115,
@@ -364,6 +375,17 @@ function phoneSample(recordedAtMs: number, uptimeMs: number) {
       status: "heating",
       steamTargetC: 115,
       steamTimeoutRemainingMs: null,
+      steamControl: {
+        settings: {
+          initialCompensationC: 12,
+          decayDurationMs: 720_000,
+          readyTimeoutMs: 300_000,
+        },
+        compensationActive: false,
+        appliedCompensationC: 0,
+        controlTemperatureC: null,
+        heatSoakElapsedMs: null,
+      },
       uptimeMs,
     },
     {

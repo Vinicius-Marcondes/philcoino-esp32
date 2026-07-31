@@ -13,6 +13,7 @@ import {
   ProfileSetSchema,
   StartCooldownRequestSchema,
   StartExtractionRequestSchema,
+  SteamControlSettingsRequestSchema,
   TemperatureCalibrationSessionIdSchema,
   TemperatureCalibrationSessionRequestSchema,
   TemperatureSettingsRequestSchema,
@@ -99,6 +100,7 @@ export function createSimulator(
   app.use("/api/v1/faults/over-temperature/dismiss", requireBearer);
   app.use("/api/v2/state", requireBearerV2);
   app.use("/api/v2/history", requireBearerV2);
+  app.use("/api/v2/settings/steam-control", requireBearerV2);
   app.use("/api/v2/scale", requireBearerV2);
   app.use("/api/v2/scale/*", requireBearerV2);
   app.use("/api/v2/profiles", requireBearerV2);
@@ -238,6 +240,48 @@ export function createSimulator(
       );
     }
     return c.json(machine.getStateV2());
+  });
+
+  app.get("/api/v2/settings/steam-control", (c) =>
+    c.json(machine.getSteamControlState()),
+  );
+
+  app.patch("/api/v2/settings/steam-control", async (c) => {
+    const body = await readJson(c);
+    if (!body.ok) {
+      return contractV2Error(
+        c,
+        400,
+        "malformed_request",
+        MALFORMED_REQUEST_MESSAGE,
+      );
+    }
+    const parsed = SteamControlSettingsRequestSchema.safeParse(body.value);
+    if (!parsed.success) {
+      return contractV2Error(
+        c,
+        400,
+        "malformed_request",
+        "Steam-control settings must use the documented whole-degree and whole-minute ranges.",
+      );
+    }
+    if (machine.getState().status === "fault") {
+      return contractV2Error(
+        c,
+        409,
+        "machine_faulted",
+        "Steam-control settings cannot change while a machine fault is latched.",
+      );
+    }
+    const state = machine.updateSteamControlSettings(parsed.data);
+    return state === null
+      ? contractV2Error(
+          c,
+          500,
+          "internal_error",
+          "The simulator failed off while persisting steam-control settings.",
+        )
+      : c.json(state);
   });
 
   app.get("/api/v2/temperature-calibration", (c) => {
@@ -741,8 +785,18 @@ export function createSimulator(
     return c.json({ status: "armed" });
   });
 
+  app.post("/_simulator/fail-next-steam-control-save", (c) => {
+    machine.injectNextSteamControlSaveFailure();
+    return c.json({ status: "armed" });
+  });
+
   app.post("/_simulator/corrupt-temperature-calibration", (c) => {
     machine.corruptTemperatureCalibrationStorage();
+    return c.json({ status: "corrupted" });
+  });
+
+  app.post("/_simulator/corrupt-steam-control", (c) => {
+    machine.corruptSteamControlStorage();
     return c.json({ status: "corrupted" });
   });
 

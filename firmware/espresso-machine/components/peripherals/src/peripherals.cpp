@@ -207,6 +207,49 @@ bool targets_are_reachable(
          target_is_reachable(targets.steam_c, calibration);
 }
 
+bool steam_control_settings_are_valid(
+    const SteamControlSettings& settings) {
+  return settings.initial_compensation_c >=
+             config::kSteamCompensationInitialMinimumC &&
+         settings.initial_compensation_c <=
+             config::kSteamCompensationInitialMaximumC &&
+         settings.decay_duration_ms >=
+             config::kSteamCompensationDecayMinimumMs &&
+         settings.decay_duration_ms <=
+             config::kSteamCompensationDecayMaximumMs &&
+         settings.decay_duration_ms % config::kSteamSettingTimeStepMs == 0U &&
+         settings.ready_timeout_ms >= config::kSteamReadyTimeoutMinimumMs &&
+         settings.ready_timeout_ms <= config::kSteamReadyTimeoutMaximumMs &&
+         settings.ready_timeout_ms % config::kSteamSettingTimeStepMs == 0U;
+}
+
+SteamControlSettingsStorage::SteamControlSettingsStorage(
+    SteamControlSettingsBackend& backend)
+    : backend_(backend) {}
+
+SteamControlSettingsLoadResult SteamControlSettingsStorage::load(
+    SteamControlSettings& settings) {
+  const auto result = backend_.load(settings);
+  if (result == BackendLoadResult::kError) {
+    return SteamControlSettingsLoadResult::kError;
+  }
+  if (result == BackendLoadResult::kNotFound) {
+    settings = {};
+    return backend_.save(settings)
+               ? SteamControlSettingsLoadResult::kInitializedDefaults
+               : SteamControlSettingsLoadResult::kError;
+  }
+  return steam_control_settings_are_valid(settings)
+             ? SteamControlSettingsLoadResult::kOk
+             : SteamControlSettingsLoadResult::kCorrupt;
+}
+
+bool SteamControlSettingsStorage::save(
+    const SteamControlSettings& settings) {
+  return steam_control_settings_are_valid(settings) &&
+         backend_.save(settings);
+}
+
 TemperatureCalibrationStorage::TemperatureCalibrationStorage(
     TemperatureCalibrationBackend& backend)
     : backend_(backend) {}

@@ -29,6 +29,9 @@ O celular descobre e autentica uma máquina, exibe o estado em tempo real e envi
 - Calibração guiada em Machine com target raw de `90–120°C`, operação manual
   da steam wand, Save explícito e um offset global persistido aplicado uma vez
   em Brew e Steam.
+- Compensação dinâmica de equilíbrio térmico em Steam, configurada e
+  persistida pelo firmware, com estimativa e leitura lateral exibidas
+  separadamente e contexto completo no CSV.
 - Controle pelo ESP32-C3, persistência dos targets em NVS, amostragem MAX6675, rede HTTP/mDNS e policy boundaries testáveis no host.
 - Selector compile-time default-off que mantém a curva Brew legacy como
   autoridade e permite comparar um PI bounded em shadow; builds PI ativos
@@ -137,6 +140,8 @@ A API v2 adiciona, sem remover v1:
 - `PUT /api/v2/temperature-calibration/candidate`
 - `POST /api/v2/temperature-calibration/save`
 - `POST /api/v2/temperature-calibration/cancel`
+- `GET /api/v2/settings/steam-control`
+- `PATCH /api/v2/settings/steam-control`
 
 Valores históricos e atuais `running`/`off` indicam somente comandos do
 firmware, não corrente, fluxo,
@@ -147,6 +152,7 @@ O simulador também disponibiliza controles `_simulator/*`, que ficam deliberada
 O range Steam atual é `110–135°C`, inclusivo. `135°C` é o cap permitido para
 target e leitura; qualquer temperatura Steam effective ou raw acima de
 `135°C` causa latch de `over_temperature` e comando do heater off.
+A estimativa transitória de Steam não altera essa leitura nem esses caps.
 
 ## Regras centrais de design
 

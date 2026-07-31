@@ -5,6 +5,8 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "philcoino/config.hpp"
+
 namespace philcoino::peripherals {
 
 inline constexpr std::uint32_t kMax6675ConversionMs = 220;
@@ -127,6 +129,40 @@ bool targets_are_reachable(const TemperatureTargets& targets,
                            const TemperatureCalibration& calibration);
 
 enum class BackendLoadResult { kOk, kNotFound, kError };
+
+struct SteamControlSettings {
+  std::int32_t initial_compensation_c{
+      config::kSteamCompensationInitialDefaultC};
+  std::uint32_t decay_duration_ms{
+      config::kSteamCompensationDecayDefaultMs};
+  std::uint32_t ready_timeout_ms{config::kSteamReadyTimeoutMs};
+};
+
+bool steam_control_settings_are_valid(const SteamControlSettings& settings);
+
+class SteamControlSettingsBackend {
+ public:
+  virtual ~SteamControlSettingsBackend() = default;
+  virtual BackendLoadResult load(SteamControlSettings& settings) = 0;
+  virtual bool save(const SteamControlSettings& settings) = 0;
+};
+
+enum class SteamControlSettingsLoadResult {
+  kOk,
+  kInitializedDefaults,
+  kCorrupt,
+  kError,
+};
+
+class SteamControlSettingsStorage {
+ public:
+  explicit SteamControlSettingsStorage(SteamControlSettingsBackend& backend);
+  SteamControlSettingsLoadResult load(SteamControlSettings& settings);
+  bool save(const SteamControlSettings& settings);
+
+ private:
+  SteamControlSettingsBackend& backend_;
+};
 
 class TemperatureCalibrationBackend {
  public:

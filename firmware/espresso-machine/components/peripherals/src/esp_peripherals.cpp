@@ -36,6 +36,10 @@ constexpr char kTemperatureCalibrationNvsNamespace[] = "temp_cal";
 constexpr char kTemperatureCalibrationKey[] = "offset";
 constexpr std::int32_t kTemperatureCalibrationBlobMagic = 0x5443414C;
 constexpr std::int32_t kTemperatureCalibrationBlobVersion = 1;
+constexpr char kSteamControlNvsNamespace[] = "steam_ctl";
+constexpr char kSteamControlKey[] = "settings";
+constexpr std::int32_t kSteamControlBlobMagic = 0x5354434C;
+constexpr std::int32_t kSteamControlBlobVersion = 1;
 constexpr char kProfileNvsNamespace[] = "profiles";
 constexpr char kProfilesKey[] = "set";
 constexpr char kScaleNvsNamespace[] = "scale";
@@ -378,6 +382,60 @@ bool EspNvsTemperatureCalibrationBackend::save(
   return initialized_ && calibration.calibrated &&
          temperature_calibration_is_valid(calibration) &&
          nvs_set_blob(handle_, kTemperatureCalibrationKey, stored.data(),
+                      sizeof(stored)) == ESP_OK &&
+         nvs_commit(handle_) == ESP_OK;
+}
+
+bool EspNvsSteamControlSettingsBackend::initialize() {
+  if (!initialize_nvs_flash()) {
+    return false;
+  }
+  nvs_handle_t handle = 0;
+  if (nvs_open(kSteamControlNvsNamespace, NVS_READWRITE, &handle) != ESP_OK) {
+    return false;
+  }
+  handle_ = handle;
+  initialized_ = true;
+  return true;
+}
+
+BackendLoadResult EspNvsSteamControlSettingsBackend::load(
+    SteamControlSettings& settings) {
+  if (!initialized_) {
+    return BackendLoadResult::kError;
+  }
+  std::array<std::int32_t, 5> stored{};
+  std::size_t stored_size = sizeof(stored);
+  const auto result =
+      nvs_get_blob(handle_, kSteamControlKey, stored.data(), &stored_size);
+  if (result == ESP_ERR_NVS_NOT_FOUND) {
+    return BackendLoadResult::kNotFound;
+  }
+  if (result != ESP_OK || stored_size != sizeof(stored) ||
+      stored[0] != kSteamControlBlobMagic ||
+      stored[1] != kSteamControlBlobVersion || stored[3] < 0 ||
+      stored[4] < 0) {
+    return BackendLoadResult::kError;
+  }
+  settings = {
+      stored[2],
+      static_cast<std::uint32_t>(stored[3]),
+      static_cast<std::uint32_t>(stored[4]),
+  };
+  return BackendLoadResult::kOk;
+}
+
+bool EspNvsSteamControlSettingsBackend::save(
+    const SteamControlSettings& settings) {
+  const std::array<std::int32_t, 5> stored{
+      kSteamControlBlobMagic,
+      kSteamControlBlobVersion,
+      settings.initial_compensation_c,
+      static_cast<std::int32_t>(settings.decay_duration_ms),
+      static_cast<std::int32_t>(settings.ready_timeout_ms),
+  };
+  return initialized_ && steam_control_settings_are_valid(settings) &&
+         nvs_set_blob(handle_, kSteamControlKey, stored.data(),
                       sizeof(stored)) == ESP_OK &&
          nvs_commit(handle_) == ESP_OK;
 }

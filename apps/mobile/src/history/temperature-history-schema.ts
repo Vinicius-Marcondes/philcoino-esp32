@@ -1,4 +1,4 @@
-export const TEMPERATURE_HISTORY_DATABASE_VERSION = 5;
+export const TEMPERATURE_HISTORY_DATABASE_VERSION = 6;
 
 export const TEMPERATURE_HISTORY_CURRENT_COLUMNS = [
   "id",
@@ -17,6 +17,7 @@ export const TEMPERATURE_HISTORY_CURRENT_COLUMNS = [
   "fault_code",
   "controller_configuration_json",
   "controller_diagnostics_json",
+  "steam_control_json",
   "source_boot_id",
   "source_sequence",
   "starts_after_history_gap",
@@ -49,6 +50,7 @@ export function createTemperatureHistoryTableSql(
       )),
       controller_configuration_json TEXT,
       controller_diagnostics_json TEXT,
+      steam_control_json TEXT,
       source_boot_id TEXT,
       source_sequence INTEGER,
       starts_after_history_gap INTEGER NOT NULL DEFAULT 0
@@ -67,13 +69,14 @@ export function rebuildTemperatureHistoryV5Sql(): string {
       brew_target_c, steam_target_c, active_mode, active_target_c,
       heater_enabled, heater_active, pump_active, machine_status, fault_code,
       controller_configuration_json, controller_diagnostics_json,
+      steam_control_json,
       source_boot_id, source_sequence, starts_after_history_gap
     )
     SELECT
       id, device_id, recorded_at_ms, uptime_ms, boiler_temperature_c,
       brew_target_c, steam_target_c, active_mode, active_target_c,
       heater_enabled, heater_active, pump_active, machine_status, fault_code,
-      NULL, NULL, source_boot_id, source_sequence, starts_after_history_gap
+      NULL, NULL, NULL, source_boot_id, source_sequence, starts_after_history_gap
     FROM temperature_history;
     DROP TABLE temperature_history;
     ALTER TABLE temperature_history_v5 RENAME TO temperature_history;

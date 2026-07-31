@@ -1,0 +1,11 @@
+{
+  "settings": {
+    "initialCompensationC": 12,
+    "decayDurationMs": 720000,
+    "readyTimeoutMs": 300000
+  },
+  "compensationActive": true,
+  "appliedCompensationC": 10,
+  "controlTemperatureC": 130,
+  "heatSoakElapsedMs": 120000
+}

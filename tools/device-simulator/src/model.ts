@@ -22,7 +22,9 @@ import {
   STEAM_TARGET_MAX_C,
   STEAM_TARGET_MIN_C,
   STEAM_OVER_TEMPERATURE_C,
-  STEAM_TIMEOUT_MS,
+  STEAM_COMPENSATION_DECAY_DEFAULT_MS,
+  STEAM_COMPENSATION_INITIAL_DEFAULT_C,
+  STEAM_READY_TIMEOUT_DEFAULT_MS,
   RAW_BOILER_OVER_TEMPERATURE_C,
   TEMPERATURE_CALIBRATION_CANDIDATE_MAX_C,
   TEMPERATURE_CALIBRATION_CANDIDATE_MIN_C,
@@ -63,6 +65,9 @@ import {
   type RunningExtractionState,
   type ScaleState,
   type ScaleTraceResponse,
+  type SteamControlSettings,
+  type SteamControlSettingsRequest,
+  type SteamControlState,
   type TerminalExtractionState,
   type WeightControl,
   type WeightedExtractionTraceCursor,
@@ -283,6 +288,16 @@ export class SimulatorMachine {
   private brewTargetC: number;
   private steamTargetC: number;
   private savedTemperatureOffsetC = 0;
+  private steamControlSettings: SteamControlSettings = {
+    initialCompensationC: STEAM_COMPENSATION_INITIAL_DEFAULT_C,
+    decayDurationMs: STEAM_COMPENSATION_DECAY_DEFAULT_MS,
+    readyTimeoutMs: STEAM_READY_TIMEOUT_DEFAULT_MS,
+  };
+  private steamControlRecordPresent = true;
+  private steamControlStorageCorrupt = false;
+  private failNextSteamControlSave = false;
+  private steamHeatSoakStartedAtMs: number | null = null;
+  private steamReadyAtMs: number | null = null;
   private temperatureCalibrationRecordPresent = false;
   private temperatureCalibrationStorageCorrupt = false;
   private activeTemperatureCalibration: ActiveTemperatureCalibration | null =
@@ -369,8 +384,59 @@ export class SimulatorMachine {
       heaterActive: this.isHeaterActive(),
       fault: this.fault,
       steamTimeoutRemainingMs: this.steamTimeoutRemainingMs,
+      steamControl: this.getSteamControlState(),
       uptimeMs: this.uptimeMs,
     });
+  }
+
+  getSteamControlState(): SteamControlState {
+    const inSteam = this.activeMode === "steam";
+    const elapsedMs = this.steamHeatSoakElapsedMs();
+    const appliedCompensationC = inSteam
+      ? this.appliedSteamCompensationC()
+      : 0;
+    return {
+      settings: { ...this.steamControlSettings },
+      compensationActive: inSteam && appliedCompensationC > 0,
+      appliedCompensationC: roundTemperature(appliedCompensationC),
+      controlTemperatureC:
+        inSteam && this.fault === null
+          ? roundTemperature(this.steamControlTemperature())
+          : null,
+      heatSoakElapsedMs: elapsedMs,
+    };
+  }
+
+  updateSteamControlSettings(
+    request: SteamControlSettingsRequest,
+  ): SteamControlState | null {
+    if (this.fault !== null || !this.attemptOutputCommand("heater-off")) {
+      if (this.fault === null) {
+        this.injectFault("internal_error");
+      }
+      return null;
+    }
+    if (this.failNextSteamControlSave) {
+      this.failNextSteamControlSave = false;
+      this.injectFault("internal_error");
+      return null;
+    }
+    this.steamControlSettings = {
+      ...this.steamControlSettings,
+      ...request,
+    };
+    this.steamControlRecordPresent = true;
+    this.steamControlStorageCorrupt = false;
+    this.refreshSteamTimeout();
+    return this.getSteamControlState();
+  }
+
+  injectNextSteamControlSaveFailure(): void {
+    this.failNextSteamControlSave = true;
+  }
+
+  corruptSteamControlStorage(): void {
+    this.steamControlStorageCorrupt = true;
   }
 
   getStateV2(): MachineStateV2 {
@@ -1201,8 +1267,12 @@ export class SimulatorMachine {
     }
 
     this.activeMode = mode;
+    if (mode === "steam" && this.steamHeatSoakStartedAtMs === null) {
+      this.steamHeatSoakStartedAtMs = this.uptimeMs;
+    }
     this.readyElapsedMs = 0;
     this.steamTimeoutRemainingMs = null;
+    this.steamReadyAtMs = null;
     return this.activeMode;
   }
 
@@ -1287,12 +1357,25 @@ export class SimulatorMachine {
   powerCycle(): void {
     this.failNextProfileSave = false;
     this.failNextTemperatureCalibrationSave = false;
+    this.failNextSteamControlSave = false;
     this.failNextOutputCommands.clear();
     this.resetVolatileState();
     if (this.temperatureCalibrationStorageCorrupt) {
       this.savedTemperatureOffsetC = 0;
       this.temperatureCalibrationRecordPresent = false;
       this.injectFault("internal_error");
+    }
+    if (this.steamControlStorageCorrupt || !this.steamControlRecordPresent) {
+      if (!this.steamControlRecordPresent && !this.steamControlStorageCorrupt) {
+        this.steamControlSettings = {
+          initialCompensationC: STEAM_COMPENSATION_INITIAL_DEFAULT_C,
+          decayDurationMs: STEAM_COMPENSATION_DECAY_DEFAULT_MS,
+          readyTimeoutMs: STEAM_READY_TIMEOUT_DEFAULT_MS,
+        };
+        this.steamControlRecordPresent = true;
+      } else {
+        this.injectFault("internal_error");
+      }
     }
   }
 
@@ -1306,12 +1389,19 @@ export class SimulatorMachine {
     this.temperatureCalibrationRecordPresent = false;
     this.temperatureCalibrationStorageCorrupt = false;
     this.failNextTemperatureCalibrationSave = false;
+    this.steamControlSettings = {
+      initialCompensationC: STEAM_COMPENSATION_INITIAL_DEFAULT_C,
+      decayDurationMs: STEAM_COMPENSATION_DECAY_DEFAULT_MS,
+      readyTimeoutMs: STEAM_READY_TIMEOUT_DEFAULT_MS,
+    };
+    this.steamControlRecordPresent = true;
+    this.steamControlStorageCorrupt = false;
+    this.failNextSteamControlSave = false;
     this.failNextOutputCommands.clear();
     this.resetVolatileState();
   }
 
   private advanceStep(milliseconds: number): void {
-    const timeoutWasActive = this.steamTimeoutRemainingMs !== null;
     const seconds = milliseconds / 1_000;
 
     if (this.fault || this.isCooldownActive()) {
@@ -1335,6 +1425,13 @@ export class SimulatorMachine {
     this.advanceScaleSettling(milliseconds);
     this.captureWeightedTraceIfDue();
     this.advanceCooldown(milliseconds);
+    if (
+      this.activeMode !== "steam" &&
+      this.steamHeatSoakStartedAtMs !== null &&
+      this.effectiveTemperature() <= this.brewTargetC
+    ) {
+      this.steamHeatSoakStartedAtMs = null;
+    }
 
     if (
       !this.fault &&
@@ -1361,17 +1458,11 @@ export class SimulatorMachine {
     if (
       this.activeMode === "steam" &&
       this.readyElapsedMs >= READY_HOLD_MS &&
-      this.steamTimeoutRemainingMs === null
+      this.steamReadyAtMs === null
     ) {
-      this.steamTimeoutRemainingMs = STEAM_TIMEOUT_MS;
-    } else if (timeoutWasActive && this.steamTimeoutRemainingMs !== null) {
-      this.steamTimeoutRemainingMs -= milliseconds;
-      if (this.steamTimeoutRemainingMs <= 0) {
-        this.activeMode = "brew";
-        this.readyElapsedMs = 0;
-        this.steamTimeoutRemainingMs = null;
-      }
+      this.steamReadyAtMs = this.uptimeMs;
     }
+    this.refreshSteamTimeout();
 
     const currentSecond = Math.floor(this.uptimeMs / 1_000);
     if (currentSecond > this.lastHistorySecond) {
@@ -1401,6 +1492,7 @@ export class SimulatorMachine {
         pumpActive,
         machineStatus: machine.status,
         faultCode: machine.fault?.code ?? null,
+        steamControl: machine.steamControl,
         controllerDiagnostics: this.getControllerDiagnostics(
           extraction,
           cooldown,
@@ -1428,8 +1520,11 @@ export class SimulatorMachine {
       Math.max(-60, Math.min(170, this.effectiveTemperature())),
     );
     const baseTarget = this.activeTarget();
-    const privateTarget = this.controlTarget();
-    const error = roundTemperature(privateTarget - temperature);
+    const privateTarget =
+      this.activeMode === "steam"
+        ? this.steamTargetC - this.appliedSteamCompensationC()
+        : this.controlTarget();
+    const error = privateTarget - temperature;
     const proportionalContribution = roundTemperature(
       Math.max(-16, Math.min(16, 0.08 * error)),
     );
@@ -1740,7 +1835,7 @@ export class SimulatorMachine {
 
   private isActiveTemperatureReady(): boolean {
     return (
-      Math.abs(this.effectiveTemperature() - this.activeTarget()) <=
+      Math.abs(this.activeControlTemperature() - this.activeTarget()) <=
       READY_BAND_C
     );
   }
@@ -1774,8 +1869,56 @@ export class SimulatorMachine {
   private rawControlTarget(): number {
     return (
       this.activeTemperatureCalibration?.candidateRawTargetC ??
-      this.controlTarget() - this.savedTemperatureOffsetC
+      this.controlTarget() -
+        this.savedTemperatureOffsetC -
+        (this.activeMode === "steam"
+          ? this.appliedSteamCompensationC()
+          : 0)
     );
+  }
+
+  private activeControlTemperature(): number {
+    return this.activeMode === "steam"
+      ? this.steamControlTemperature()
+      : this.effectiveTemperature();
+  }
+
+  private steamControlTemperature(): number {
+    return this.effectiveTemperature() + this.appliedSteamCompensationC();
+  }
+
+  private steamHeatSoakElapsedMs(): number | null {
+    return this.steamHeatSoakStartedAtMs === null
+      ? null
+      : Math.max(0, this.uptimeMs - this.steamHeatSoakStartedAtMs);
+  }
+
+  private appliedSteamCompensationC(): number {
+    const elapsedMs = this.steamHeatSoakElapsedMs();
+    if (elapsedMs === null || elapsedMs >= this.steamControlSettings.decayDurationMs) {
+      return 0;
+    }
+    return (
+      this.steamControlSettings.initialCompensationC *
+      (1 - elapsedMs / this.steamControlSettings.decayDurationMs)
+    );
+  }
+
+  private refreshSteamTimeout(): void {
+    if (this.activeMode !== "steam" || this.steamReadyAtMs === null) {
+      this.steamTimeoutRemainingMs = null;
+      return;
+    }
+    const elapsedMs = Math.max(0, this.uptimeMs - this.steamReadyAtMs);
+    const remainingMs = this.steamControlSettings.readyTimeoutMs - elapsedMs;
+    if (remainingMs <= 0) {
+      this.activeMode = "brew";
+      this.readyElapsedMs = 0;
+      this.steamReadyAtMs = null;
+      this.steamTimeoutRemainingMs = null;
+      return;
+    }
+    this.steamTimeoutRemainingMs = remainingMs;
   }
 
   private activeModeOverTemperature(): boolean {
@@ -1914,6 +2057,7 @@ export class SimulatorMachine {
     this.activeMode = "brew";
     this.readyElapsedMs = 0;
     this.steamTimeoutRemainingMs = null;
+    this.steamReadyAtMs = null;
   }
 
   private isCalibrationTemperatureStable(): boolean {
@@ -1944,6 +2088,8 @@ export class SimulatorMachine {
     this.fault = null;
     this.readyElapsedMs = 0;
     this.steamTimeoutRemainingMs = null;
+    this.steamHeatSoakStartedAtMs = null;
+    this.steamReadyAtMs = null;
     this.uptimeMs = 0;
     this.activeExtraction = null;
     this.terminalExtraction = null;

@@ -584,6 +584,28 @@ extern "C" void app_main() {
     return;
   }
 
+  static EspNvsSteamControlSettingsBackend steam_control_settings_backend;
+  if (!steam_control_settings_backend.initialize()) {
+    ESP_LOGE(kLogTag,
+             "NVS Steam control settings initialization failed");
+    ssr.force_off();
+    return;
+  }
+  static SteamControlSettingsStorage steam_control_settings_storage(
+      steam_control_settings_backend);
+  SteamControlSettings steam_control_settings{};
+  const auto steam_control_settings_result =
+      steam_control_settings_storage.load(steam_control_settings);
+  if (steam_control_settings_result ==
+          SteamControlSettingsLoadResult::kCorrupt ||
+      steam_control_settings_result ==
+          SteamControlSettingsLoadResult::kError) {
+    ESP_LOGE(kLogTag,
+             "Persisted Steam control settings are unavailable or invalid");
+    ssr.force_off();
+    return;
+  }
+
   static EspNvsProfileBackend profile_backend;
   if (!profile_backend.initialize()) {
     ESP_LOGE(kLogTag, "NVS profile storage initialization failed");
@@ -602,7 +624,7 @@ extern "C" void app_main() {
     return;
   }
   static philcoino::control::TemperatureController controller(
-      targets, temperature_calibration, ssr);
+      targets, temperature_calibration, steam_control_settings, ssr);
   static philcoino::control::ExtractionController extraction_controller(
       profiles, pump);
   static philcoino::control::CooldownController cooldown_controller(controller,
@@ -712,7 +734,8 @@ extern "C" void app_main() {
       identity, CONFIG_PHILCOINO_BEARER_TOKEN, controller, target_storage,
       temperature_calibration_storage, extraction_controller,
       cooldown_controller, profile_storage, scale_calibration_storage,
-      synchronization, &history, &scale_controller, &weighted_trace);
+      synchronization, &history, &scale_controller, &weighted_trace,
+      &steam_control_settings_storage);
   static philcoino::networking::EspNetworkServer network(
       api, identity, performance_diagnostics);
   static const NetworkStartContext network_context{

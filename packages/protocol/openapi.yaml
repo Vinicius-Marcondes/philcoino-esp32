@@ -198,6 +198,53 @@
         }
       }
     },
+    "/api/v2/settings/steam-control": {
+      "get": {
+        "operationId": "getSteamControlSettings",
+        "summary": "Read persisted Steam heat-soak settings and live estimator state",
+        "security": [{ "bearerAuth": [] }],
+        "responses": {
+          "200": {
+            "description": "Firmware-authoritative persisted settings and current transient Steam estimator state.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/SteamControlState" }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/V2Unauthorized" },
+          "500": { "$ref": "#/components/responses/V2InternalError" }
+        }
+      },
+      "patch": {
+        "operationId": "updateSteamControlSettings",
+        "summary": "Validate and atomically persist one or more Steam heat-soak settings",
+        "description": "The heater is commanded off before persistence. A successful update adopts the settings without restarting an existing heat-soak or Ready timestamp. Updates are rejected while the machine is faulted.",
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/SteamControlSettingsRequest" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Acknowledged persisted settings and recomputed live estimator state.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/SteamControlState" }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/V2BadRequest" },
+          "401": { "$ref": "#/components/responses/V2Unauthorized" },
+          "409": { "$ref": "#/components/responses/V2Conflict" },
+          "500": { "$ref": "#/components/responses/V2InternalError" }
+        }
+      }
+    },
     "/api/v2/temperature-calibration": {
       "get": {
         "operationId": "getTemperatureCalibration",
@@ -878,6 +925,7 @@
           "heaterActive",
           "fault",
           "steamTimeoutRemainingMs",
+          "steamControl",
           "uptimeMs"
         ],
         "properties": {
@@ -885,7 +933,7 @@
           "activeMode": { "$ref": "#/components/schemas/Mode" },
           "boilerTemperatureC": {
             "type": "number",
-            "description": "The firmware-authoritative effective control temperature in both Brew and Steam. After raw thermocouple validation, firmware adds the one persisted signed global temperature-calibration offset exactly once. With no saved calibration the offset is zero."
+            "description": "The firmware-authoritative globally calibrated thermocouple temperature in both Brew and Steam. After raw validation, firmware adds the one persisted signed global temperature-calibration offset exactly once. With no saved calibration the offset is zero. The transient Steam control estimate is exposed separately in steamControl."
           },
           "brewTargetC": { "$ref": "#/components/schemas/BrewTarget" },
           "steamTargetC": { "$ref": "#/components/schemas/SteamTarget" },
@@ -899,10 +947,11 @@
           },
           "steamTimeoutRemainingMs": {
             "oneOf": [
-              { "type": "integer", "minimum": 0, "maximum": 300000 },
+              { "type": "integer", "minimum": 0, "maximum": 900000 },
               { "type": "null" }
             ]
           },
+          "steamControl": { "$ref": "#/components/schemas/SteamControlState" },
           "uptimeMs": { "type": "integer", "minimum": 0 }
         },
         "allOf": [
@@ -935,6 +984,17 @@
             "heaterActive": true,
             "fault": null,
             "steamTimeoutRemainingMs": null,
+            "steamControl": {
+              "settings": {
+                "initialCompensationC": 12,
+                "decayDurationMs": 720000,
+                "readyTimeoutMs": 300000
+              },
+              "compensationActive": false,
+              "appliedCompensationC": 0,
+              "controlTemperatureC": null,
+              "heatSoakElapsedMs": null
+            },
             "uptimeMs": 184220
           },
           {
@@ -950,6 +1010,17 @@
               "message": "The boiler thermocouple reading is unavailable."
             },
             "steamTimeoutRemainingMs": null,
+            "steamControl": {
+              "settings": {
+                "initialCompensationC": 12,
+                "decayDurationMs": 720000,
+                "readyTimeoutMs": 300000
+              },
+              "compensationActive": false,
+              "appliedCompensationC": 0,
+              "controlTemperatureC": null,
+              "heatSoakElapsedMs": null
+            },
             "uptimeMs": 185000
           }
         ]
@@ -979,6 +1050,108 @@
         },
         "examples": [
           { "brewTargetC": 93, "steamTargetC": 115 }
+        ]
+      },
+      "SteamCompensationInitial": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 20,
+        "multipleOf": 1
+      },
+      "SteamCompensationDecay": {
+        "type": "integer",
+        "minimum": 60000,
+        "maximum": 1800000,
+        "multipleOf": 60000
+      },
+      "SteamReadyTimeout": {
+        "type": "integer",
+        "minimum": 60000,
+        "maximum": 900000,
+        "multipleOf": 60000
+      },
+      "SteamControlSettings": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "initialCompensationC",
+          "decayDurationMs",
+          "readyTimeoutMs"
+        ],
+        "properties": {
+          "initialCompensationC": { "$ref": "#/components/schemas/SteamCompensationInitial" },
+          "decayDurationMs": { "$ref": "#/components/schemas/SteamCompensationDecay" },
+          "readyTimeoutMs": { "$ref": "#/components/schemas/SteamReadyTimeout" }
+        },
+        "examples": [
+          {
+            "initialCompensationC": 12,
+            "decayDurationMs": 720000,
+            "readyTimeoutMs": 300000
+          }
+        ]
+      },
+      "SteamControlSettingsRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "initialCompensationC": { "$ref": "#/components/schemas/SteamCompensationInitial" },
+          "decayDurationMs": { "$ref": "#/components/schemas/SteamCompensationDecay" },
+          "readyTimeoutMs": { "$ref": "#/components/schemas/SteamReadyTimeout" }
+        },
+        "anyOf": [
+          { "required": ["initialCompensationC"] },
+          { "required": ["decayDurationMs"] },
+          { "required": ["readyTimeoutMs"] }
+        ],
+        "examples": [
+          {
+            "initialCompensationC": 12,
+            "decayDurationMs": 720000,
+            "readyTimeoutMs": 300000
+          }
+        ]
+      },
+      "SteamControlState": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "settings",
+          "compensationActive",
+          "appliedCompensationC",
+          "controlTemperatureC",
+          "heatSoakElapsedMs"
+        ],
+        "properties": {
+          "settings": { "$ref": "#/components/schemas/SteamControlSettings" },
+          "compensationActive": { "type": "boolean" },
+          "appliedCompensationC": { "type": "number", "minimum": 0, "maximum": 20 },
+          "controlTemperatureC": {
+            "oneOf": [
+              { "type": "number", "minimum": -40, "maximum": 180 },
+              { "type": "null" }
+            ]
+          },
+          "heatSoakElapsedMs": {
+            "oneOf": [
+              { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+              { "type": "null" }
+            ]
+          }
+        },
+        "description": "The transient positive-only Steam estimator layered after the persisted global calibration. It is active only in Steam, never changes the raw or calibrated 135°C fault boundaries, and retains its monotonic episode timestamp across short mode changes until the calibrated boiler reaches the Brew target.",
+        "examples": [
+          {
+            "settings": {
+              "initialCompensationC": 12,
+              "decayDurationMs": 720000,
+              "readyTimeoutMs": 300000
+            },
+            "compensationActive": true,
+            "appliedCompensationC": 10,
+            "controlTemperatureC": 130,
+            "heatSoakElapsedMs": 120000
+          }
         ]
       },
       "TemperatureCalibrationSessionId": {
@@ -1301,6 +1474,17 @@
             "heaterActive": false,
             "fault": null,
             "steamTimeoutRemainingMs": null,
+            "steamControl": {
+              "settings": {
+                "initialCompensationC": 12,
+                "decayDurationMs": 720000,
+                "readyTimeoutMs": 300000
+              },
+              "compensationActive": false,
+              "appliedCompensationC": 0,
+              "controlTemperatureC": null,
+              "heatSoakElapsedMs": null
+            },
             "uptimeMs": 190000
           }
         ]
@@ -1901,6 +2085,17 @@
               "heaterActive": false,
               "fault": null,
               "steamTimeoutRemainingMs": null,
+              "steamControl": {
+                "settings": {
+                  "initialCompensationC": 12,
+                  "decayDurationMs": 720000,
+                  "readyTimeoutMs": 300000
+                },
+                "compensationActive": false,
+                "appliedCompensationC": 0,
+                "controlTemperatureC": null,
+                "heatSoakElapsedMs": null
+              },
               "uptimeMs": 184220
             },
             "extraction": {
@@ -1985,7 +2180,7 @@
         "required": ["temperatureRawC", "temperatureFilteredC", "baseTargetC", "privateTargetC", "errorC", "selectedController", "legacyRequestedDuty", "piRequestedDuty", "proportionalContribution", "integralContribution", "integralState", "piSaturation", "piAntiWindupActive", "heaterCommandActive", "deliveredCommandDuty1s", "pumpCommand", "extractionPhase", "operatingMode"],
         "properties": {
           "temperatureRawC": { "type": "number", "minimum": -40, "maximum": 160, "description": "Validated thermocouple reading before the persisted global temperature-calibration offset." },
-          "temperatureFilteredC": { "type": "number", "minimum": -40, "maximum": 160, "description": "Controller-owned filtered effective temperature after applying the persisted global offset exactly once in Brew or Steam." },
+          "temperatureFilteredC": { "type": "number", "minimum": -40, "maximum": 180, "description": "Controller-owned temperature used for duty calculations: filtered globally calibrated temperature in Brew, or globally calibrated temperature plus the transient positive-only heat-soak compensation in Steam." },
           "baseTargetC": { "type": "number", "minimum": 0, "maximum": 135, "description": "Persisted active-mode target used by readiness, limits, and public state." },
           "privateTargetC": { "type": "number", "minimum": 0, "maximum": 135, "description": "Private duty target after the fixed Brew extraction bias; it never mutates persisted/public targets." },
           "errorC": { "type": "number", "minimum": -200, "maximum": 200, "description": "privateTargetC minus temperatureFilteredC." },
@@ -2030,7 +2225,7 @@
       "HistorySample": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["sequence", "uptimeMs", "boilerTemperatureC", "brewTargetC", "steamTargetC", "activeMode", "heaterEnabled", "heaterActive", "pumpActive", "machineStatus", "faultCode", "controllerDiagnostics"],
+        "required": ["sequence", "uptimeMs", "boilerTemperatureC", "brewTargetC", "steamTargetC", "activeMode", "heaterEnabled", "heaterActive", "pumpActive", "machineStatus", "faultCode", "steamControl", "controllerDiagnostics"],
         "properties": {
           "sequence": { "$ref": "#/components/schemas/HistorySequence" },
           "uptimeMs": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
@@ -2043,6 +2238,7 @@
           "pumpActive": { "type": "boolean", "description": "Firmware pump command state only; not proof of flow or physical operation." },
           "machineStatus": { "$ref": "#/components/schemas/MachineStatus" },
           "faultCode": { "oneOf": [{ "$ref": "#/components/schemas/FaultCode" }, { "type": "null" }] },
+          "steamControl": { "$ref": "#/components/schemas/SteamControlState" },
           "controllerDiagnostics": { "$ref": "#/components/schemas/ControllerDiagnostics" }
         }
       },
@@ -2094,6 +2290,17 @@
                 "pumpActive": false,
                 "machineStatus": "heating",
                 "faultCode": null,
+                "steamControl": {
+                  "settings": {
+                    "initialCompensationC": 12,
+                    "decayDurationMs": 720000,
+                    "readyTimeoutMs": 300000
+                  },
+                  "compensationActive": false,
+                  "appliedCompensationC": 0,
+                  "controlTemperatureC": null,
+                  "heatSoakElapsedMs": null
+                },
                 "controllerDiagnostics": {
                   "temperatureRawC": 92.75,
                   "temperatureFilteredC": 92.5,
@@ -2127,6 +2334,17 @@
                 "pumpActive": false,
                 "machineStatus": "ready",
                 "faultCode": null,
+                "steamControl": {
+                  "settings": {
+                    "initialCompensationC": 12,
+                    "decayDurationMs": 720000,
+                    "readyTimeoutMs": 300000
+                  },
+                  "compensationActive": false,
+                  "appliedCompensationC": 0,
+                  "controlTemperatureC": null,
+                  "heatSoakElapsedMs": null
+                },
                 "controllerDiagnostics": {
                   "temperatureRawC": 93,
                   "temperatureFilteredC": 92.9,

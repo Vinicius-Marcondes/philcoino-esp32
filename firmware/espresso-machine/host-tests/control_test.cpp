@@ -224,8 +224,12 @@ ThermocoupleReading open_boiler() {
 struct ControllerHarness {
   explicit ControllerHarness(
       TemperatureTargets targets = {},
-      TemperatureCalibration calibration = {})
-      : controller(targets, calibration, ssr) {
+      TemperatureCalibration calibration = {},
+      SteamControlSettings steam_settings = {
+          0,
+          philcoino::config::kSteamCompensationDecayDefaultMs,
+          philcoino::config::kSteamReadyTimeoutMs})
+      : controller(targets, calibration, steam_settings, ssr) {
     assert(ssr.initialize());
   }
 
@@ -1925,6 +1929,83 @@ void test_cooldown_eligibility_failures_reset_and_output_fail_off() {
   assert(!reset.temperature.controller.heater_enabled_permission());
 }
 
+void test_dynamic_steam_compensation_decay_episode_and_timeout_updates() {
+  ControllerHarness harness(
+      {93, 115}, {},
+      {12, 12U * 60U * 1000U, 15U * 60U * 1000U});
+  assert(harness.controller.set_mode(ControlMode::kSteam, 0));
+
+  auto state = harness.controller.update(reading(103.0F), 0);
+  assert(state.mode == ControlMode::kSteam);
+  assert(state.steam_control.compensation_active);
+  assert(state.steam_control.applied_compensation_c == 12.0F);
+  assert(state.steam_control.control_temperature_c == 115.0F);
+  assert(state.boiler_temperature.temperature_c == 103.0F);
+
+  harness.controller.update(reading(103.0F), 2999);
+  state = harness.controller.update(reading(103.0F), 3000);
+  assert(state.status == ControlStatus::kReady);
+  assert(state.steam_timeout.active);
+  assert(state.steam_timeout.remaining_ms == 15U * 60U * 1000U);
+
+  state = harness.controller.update(reading(109.0F), 6U * 60U * 1000U);
+  assert(state.steam_control.applied_compensation_c > 5.99F);
+  assert(state.steam_control.applied_compensation_c < 6.01F);
+  assert(state.steam_control.control_temperature_c > 114.99F);
+  assert(state.steam_control.control_temperature_c < 115.01F);
+
+  assert(harness.controller.set_mode(ControlMode::kBrew,
+                                     6U * 60U * 1000U + 1U));
+  state = harness.controller.update(reading(97.0F),
+                                    6U * 60U * 1000U + 2U);
+  assert(state.steam_control.heat_soak_active);
+  assert(!state.steam_control.control_temperature_available);
+
+  assert(harness.controller.set_mode(ControlMode::kSteam,
+                                     7U * 60U * 1000U));
+  state = harness.controller.update(reading(110.0F),
+                                    7U * 60U * 1000U);
+  assert(state.steam_control.heat_soak_elapsed_ms ==
+         7U * 60U * 1000U);
+  assert(state.steam_control.applied_compensation_c > 4.99F);
+  assert(state.steam_control.applied_compensation_c < 5.01F);
+
+  assert(harness.controller.set_mode(ControlMode::kBrew,
+                                     7U * 60U * 1000U + 1U));
+  state = harness.controller.update(reading(0.0F),
+                                    7U * 60U * 1000U + 2U);
+  assert(!state.steam_control.heat_soak_active);
+  assert(harness.controller.set_mode(ControlMode::kSteam,
+                                     7U * 60U * 1000U + 3U));
+  state = harness.controller.update(reading(103.0F),
+                                    7U * 60U * 1000U + 3U);
+  assert(state.steam_control.heat_soak_elapsed_ms == 0U);
+
+  ControllerHarness timeout(
+      {93, 115}, {}, {12, 12U * 60U * 1000U, 2U * 60U * 1000U});
+  assert(timeout.controller.set_mode(ControlMode::kSteam, 0));
+  timeout.controller.update(reading(103.0F), 0);
+  timeout.controller.update(reading(103.0F), 2999);
+  state = timeout.controller.update(reading(103.0F), 3000);
+  assert(state.status == ControlStatus::kReady);
+  assert(state.steam_timeout.remaining_ms == 120000U);
+
+  const SteamControlSettings shortened{
+      15, 10U * 60U * 1000U, 60U * 1000U};
+  assert(timeout.controller.prepare_steam_control_settings_update(shortened,
+                                                                  33000));
+  assert(!timeout.output.level);
+  assert(timeout.controller.adopt_persisted_steam_control_settings(shortened,
+                                                                   33000));
+  state = timeout.controller.snapshot(33000);
+  assert(state.steam_control.heat_soak_elapsed_ms == 33000U);
+  assert(state.steam_timeout.remaining_ms == 30000U);
+  assert(state.status == ControlStatus::kReady);
+  state = timeout.controller.update(reading(101.0F), 63000);
+  assert(state.mode == ControlMode::kBrew);
+  assert(!state.steam_timeout.active);
+}
+
 }  // namespace
 
 int main() {
@@ -1984,5 +2065,6 @@ int main() {
   test_cooldown_replay_conflict_target_snapshot_and_threshold();
   test_cooldown_cutoff_stop_delayed_update_and_wraparound();
   test_cooldown_eligibility_failures_reset_and_output_fail_off();
+  test_dynamic_steam_compensation_decay_episode_and_timeout_updates();
   return 0;
 }

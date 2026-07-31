@@ -87,6 +87,38 @@ struct ProfileMemoryState {
   ExtractionProfiles profiles{};
 };
 
+struct SteamControlMemoryState {
+  bool present{false};
+  bool fail_load{false};
+  bool fail_save{false};
+  SteamControlSettings settings{};
+  int save_count{0};
+};
+
+class SteamControlMemoryBackend final : public SteamControlSettingsBackend {
+ public:
+  explicit SteamControlMemoryBackend(SteamControlMemoryState& state)
+      : state_(state) {}
+
+  BackendLoadResult load(SteamControlSettings& settings) override {
+    if (state_.fail_load) return BackendLoadResult::kError;
+    if (!state_.present) return BackendLoadResult::kNotFound;
+    settings = state_.settings;
+    return BackendLoadResult::kOk;
+  }
+
+  bool save(const SteamControlSettings& settings) override {
+    ++state_.save_count;
+    if (state_.fail_save) return false;
+    state_.settings = settings;
+    state_.present = true;
+    return true;
+  }
+
+ private:
+  SteamControlMemoryState& state_;
+};
+
 class ProfileMemoryBackend final : public ProfileBackend {
  public:
   explicit ProfileMemoryBackend(ProfileMemoryState& state) : state_(state) {}
@@ -499,6 +531,56 @@ void test_temperature_calibration_storage_and_conversion() {
   assert(!target_is_reachable(135, {-1, true}));
 }
 
+void test_steam_control_settings_storage_defaults_validation_and_failures() {
+  SteamControlMemoryState missing{};
+  SteamControlMemoryBackend missing_backend(missing);
+  SteamControlSettingsStorage missing_storage(missing_backend);
+  SteamControlSettings settings{};
+  assert(missing_storage.load(settings) ==
+         SteamControlSettingsLoadResult::kInitializedDefaults);
+  assert(missing.present);
+  assert(missing.save_count == 1);
+  assert(settings.initial_compensation_c ==
+         philcoino::config::kSteamCompensationInitialDefaultC);
+  assert(settings.decay_duration_ms ==
+         philcoino::config::kSteamCompensationDecayDefaultMs);
+  assert(settings.ready_timeout_ms ==
+         philcoino::config::kSteamReadyTimeoutMs);
+
+  const SteamControlSettings tuned{15, 10U * 60U * 1000U,
+                                   7U * 60U * 1000U};
+  assert(missing_storage.save(tuned));
+  SteamControlSettings loaded{};
+  assert(missing_storage.load(loaded) ==
+         SteamControlSettingsLoadResult::kOk);
+  assert(loaded.initial_compensation_c == 15);
+  assert(loaded.decay_duration_ms == 600000U);
+  assert(loaded.ready_timeout_ms == 420000U);
+
+  SteamControlMemoryState corrupt{};
+  corrupt.present = true;
+  corrupt.settings = {21, 60000U, 60000U};
+  SteamControlMemoryBackend corrupt_backend(corrupt);
+  SteamControlSettingsStorage corrupt_storage(corrupt_backend);
+  assert(corrupt_storage.load(loaded) ==
+         SteamControlSettingsLoadResult::kCorrupt);
+
+  SteamControlMemoryState unreadable{};
+  unreadable.fail_load = true;
+  SteamControlMemoryBackend unreadable_backend(unreadable);
+  SteamControlSettingsStorage unreadable_storage(unreadable_backend);
+  assert(unreadable_storage.load(loaded) ==
+         SteamControlSettingsLoadResult::kError);
+
+  SteamControlMemoryState unsavable{};
+  unsavable.fail_save = true;
+  SteamControlMemoryBackend unsavable_backend(unsavable);
+  SteamControlSettingsStorage unsavable_storage(unsavable_backend);
+  assert(unsavable_storage.load(loaded) ==
+         SteamControlSettingsLoadResult::kError);
+  assert(!unsavable_storage.save(tuned));
+}
+
 ExtractionProfile configured_profile(const char* name, std::uint8_t pre,
                                      std::uint8_t soak, std::uint8_t main) {
   ExtractionProfile profile{};
@@ -811,6 +893,7 @@ int main() {
   test_event_driven_hx711_acquisition();
   test_target_storage();
   test_temperature_calibration_storage_and_conversion();
+  test_steam_control_settings_storage_defaults_validation_and_failures();
   test_profile_storage();
   test_fail_off_pump();
   test_fail_off_ssr();

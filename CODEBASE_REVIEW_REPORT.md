@@ -30,6 +30,14 @@ accuracy, sensor accuracy, heater de-energization, thermostat interruption, or
 safe energized calibration. TCAL-009 retains the separate Human-owned physical
 acceptance.
 
+PRD-018 adds a persisted, linearly decaying Steam heat-soak estimate for
+control/readiness while keeping the calibrated lateral-sensor state and both
+independent `135°C` checks unchanged. The estimate, simulator, history, and
+mobile tuning surface do not establish the reported physical temperature gap,
+equilibrium duration, top-of-boiler temperature, SSR current, or thermostat
+interruption. Its defaults remain pending repeated supervised instrumented
+acceptance.
+
 The project remains a prototype. Do not infer production, unattended, or
 energized authorization from passing software checks or earlier owner-reported
 acceptance of a different tested configuration.

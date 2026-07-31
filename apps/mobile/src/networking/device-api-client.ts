@@ -18,6 +18,8 @@ import {
   StartCooldownResponseSchema,
   StartExtractionRequestSchema,
   StartExtractionResponseSchema,
+  SteamControlSettingsRequestSchema,
+  SteamControlStateSchema,
   ScaleStateSchema,
   ScaleTraceResponseSchema,
   CompleteScaleCalibrationRequestSchema,
@@ -44,6 +46,8 @@ import {
   type StartCooldownResponse,
   type StartExtractionRequest,
   type StartExtractionResponse,
+  type SteamControlSettingsRequest,
+  type SteamControlState,
   type ScaleState,
   type ScaleTraceResponse,
   type WeightedExtractionTraceCursor,
@@ -157,6 +161,41 @@ export class DeviceApiClient {
       `/api/v2/history${query}`,
       HistoryPageSchema,
       { authenticated: true, errorVersion: "v2" },
+      options,
+    );
+  }
+
+  getSteamControlSettings(
+    options: RequestOptions = {},
+  ): Promise<SteamControlState> {
+    return this.request(
+      "/api/v2/settings/steam-control",
+      SteamControlStateSchema,
+      { authenticated: true, errorVersion: "v2" },
+      options,
+    );
+  }
+
+  async updateSteamControlSettings(
+    request: SteamControlSettingsRequest,
+    options: RequestOptions = {},
+  ): Promise<SteamControlState> {
+    const parsed = SteamControlSettingsRequestSchema.safeParse(request);
+    if (!parsed.success) {
+      throw new ApiClientError(
+        "invalid-request",
+        "The steam-control settings request is invalid.",
+      );
+    }
+    return await this.request(
+      "/api/v2/settings/steam-control",
+      SteamControlStateSchema,
+      {
+        authenticated: true,
+        body: parsed.data,
+        errorVersion: "v2",
+        method: "PATCH",
+      },
       options,
     );
   }

@@ -40,6 +40,16 @@ struct SteamTimeoutSnapshot {
   std::uint32_t remaining_ms{0};
 };
 
+struct SteamControlSnapshot {
+  peripherals::SteamControlSettings settings{};
+  bool compensation_active{false};
+  float applied_compensation_c{0.0F};
+  bool control_temperature_available{false};
+  float control_temperature_c{0.0F};
+  bool heat_soak_active{false};
+  std::uint32_t heat_soak_elapsed_ms{0};
+};
+
 struct ControllerDiagnostics {
   float temperature_raw_c{0.0F};
   float temperature_filtered_c{0.0F};
@@ -73,6 +83,7 @@ struct ControlSnapshot {
   bool fault_active{false};
   FaultSnapshot fault{};
   SteamTimeoutSnapshot steam_timeout{};
+  SteamControlSnapshot steam_control{};
   ControllerDiagnostics controller{};
 };
 
@@ -140,6 +151,12 @@ class TemperatureController {
       peripherals::TemperatureCalibration calibration,
       peripherals::FailOffSsr& heater,
       BrewPiConfig pi_configuration = default_brew_pi_config());
+  TemperatureController(
+      peripherals::TemperatureTargets targets,
+      peripherals::TemperatureCalibration calibration,
+      peripherals::SteamControlSettings steam_control_settings,
+      peripherals::FailOffSsr& heater,
+      BrewPiConfig pi_configuration = default_brew_pi_config());
 
   ControlMode mode() const;
   ControlStatus status() const;
@@ -149,6 +166,15 @@ class TemperatureController {
   bool heater_enabled_permission() const;
   bool heater_enabled() const;
   const peripherals::TemperatureCalibration& temperature_calibration() const;
+  const peripherals::SteamControlSettings& steam_control_settings() const;
+  SteamControlSnapshot steam_control_snapshot(std::uint32_t now_ms) const;
+  bool prepare_steam_control_settings_update(
+      const peripherals::SteamControlSettings& settings,
+      std::uint32_t now_ms);
+  bool adopt_persisted_steam_control_settings(
+      const peripherals::SteamControlSettings& settings,
+      std::uint32_t now_ms);
+  bool rollback_steam_control_settings_update(std::uint32_t now_ms);
   bool raw_temperature(float& temperature_c) const;
   bool brew_effective_temperature(float& temperature_c) const;
   bool targets_reachable(
@@ -207,6 +233,7 @@ class TemperatureController {
   std::int32_t active_target() const;
   std::int32_t heater_duty_target() const;
   float active_temperature() const;
+  float applied_steam_compensation(std::uint32_t now_ms) const;
   std::int32_t control_target() const;
   float control_temperature() const;
   bool active_temperature_in_ready_band() const;
@@ -240,6 +267,8 @@ class TemperatureController {
   peripherals::FailOffSsr& heater_;
   peripherals::TemperatureTargets targets_{};
   peripherals::TemperatureCalibration temperature_calibration_{};
+  peripherals::SteamControlSettings steam_control_settings_{};
+  peripherals::SteamControlSettings pending_steam_control_settings_{};
   peripherals::ThermocoupleReading raw_boiler_temperature_{};
   ControlMode mode_{ControlMode::kBrew};
   ControlStatus status_{ControlStatus::kHeating};
@@ -248,6 +277,7 @@ class TemperatureController {
   ExtractionPhase extraction_phase_{ExtractionPhase::kIdle};
   bool cooldown_inhibited_{false};
   bool target_update_in_progress_{false};
+  bool steam_control_settings_update_in_progress_{false};
   bool pending_active_target_change_{false};
   peripherals::TemperatureTargets pending_targets_{};
   bool temperature_calibration_active_{false};
@@ -272,6 +302,9 @@ class TemperatureController {
   bool recovery_heat_active_{false};
   bool steam_timeout_active_{false};
   std::uint32_t steam_timeout_started_ms_{0};
+  bool steam_heat_soak_active_{false};
+  std::uint32_t steam_heat_soak_started_ms_{0};
+  float current_steam_compensation_c_{0.0F};
   bool post_brew_recovery_active_{false};
   std::uint32_t last_pump_running_ms_{0};
   BrewPiController brew_pi_;
