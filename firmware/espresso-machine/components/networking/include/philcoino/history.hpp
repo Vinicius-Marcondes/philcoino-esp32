@@ -31,9 +31,15 @@ struct HistorySample {
   std::int16_t integral_state_tenths{0};
   std::uint16_t delivered_command_duty_1s_thousandths{0};
   std::uint16_t controller_flags{0};
+  std::int16_t steam_control_temperature_quarters_c{0};
+  std::int16_t steam_compensation_quarters_c{0};
+  std::uint16_t steam_heat_soak_elapsed_seconds{0};
+  std::uint8_t steam_initial_compensation_c{0};
+  std::uint8_t steam_decay_minutes{0};
+  std::uint8_t steam_ready_timeout_minutes{0};
 };
 
-static_assert(sizeof(HistorySample) <= 48U);
+static_assert(sizeof(HistorySample) <= 56U);
 
 enum class HistoryContinuity { kInitial, kContinuous, kTruncated, kReset };
 

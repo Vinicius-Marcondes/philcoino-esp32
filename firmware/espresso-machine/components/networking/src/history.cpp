@@ -19,6 +19,8 @@ constexpr std::uint16_t kHeaterActive = 1U << 2U;
 constexpr std::uint16_t kPumpActive = 1U << 3U;
 constexpr unsigned kStatusShift = 4U;
 constexpr unsigned kFaultShift = 6U;
+constexpr std::uint16_t kSteamControlTemperatureAvailable = 1U << 9U;
+constexpr std::uint16_t kSteamHeatSoakActive = 1U << 10U;
 constexpr std::uint16_t kSelectedPi = 1U << 0U;
 constexpr unsigned kPiSaturationShift = 1U;
 constexpr std::uint16_t kPiAntiWindup = 1U << 3U;
@@ -207,15 +209,37 @@ bool HistoryBuffer::record(std::uint64_t uptime_ms,
       static_cast<std::uint16_t>(status_bits(snapshot.status) << kStatusShift) |
       static_cast<std::uint16_t>(
           fault_bits(snapshot.fault_active, snapshot.fault.code) << kFaultShift);
+  if (snapshot.steam_control.control_temperature_available) {
+    sample.flags |= kSteamControlTemperatureAvailable;
+  }
+  if (snapshot.steam_control.heat_soak_active) {
+    sample.flags |= kSteamHeatSoakActive;
+  }
+  sample.steam_control_temperature_quarters_c =
+      bounded_signed_fixed(snapshot.steam_control.control_temperature_c,
+                           -40.0F, 180.0F, 4.0F);
+  sample.steam_compensation_quarters_c =
+      bounded_signed_fixed(snapshot.steam_control.applied_compensation_c,
+                           0.0F, 20.0F, 4.0F);
+  sample.steam_heat_soak_elapsed_seconds =
+      static_cast<std::uint16_t>(std::min<std::uint32_t>(
+          snapshot.steam_control.heat_soak_elapsed_ms / 1000U,
+          std::numeric_limits<std::uint16_t>::max()));
+  sample.steam_initial_compensation_c = static_cast<std::uint8_t>(
+      snapshot.steam_control.settings.initial_compensation_c);
+  sample.steam_decay_minutes = static_cast<std::uint8_t>(
+      snapshot.steam_control.settings.decay_duration_ms / 60000U);
+  sample.steam_ready_timeout_minutes = static_cast<std::uint8_t>(
+      snapshot.steam_control.settings.ready_timeout_ms / 60000U);
   const auto& diagnostics = snapshot.controller;
   sample.temperature_raw_quarters_c =
       bounded_signed_fixed(diagnostics.temperature_raw_c, -40.0F, 160.0F,
                            4.0F);
   sample.temperature_filtered_quarters_c =
       bounded_signed_fixed(diagnostics.temperature_filtered_c, -40.0F,
-                           160.0F, 4.0F);
+                           180.0F, 4.0F);
   sample.private_target_quarters_c =
-      bounded_signed_fixed(diagnostics.private_target_c, 0.0F, 120.0F, 4.0F);
+      bounded_signed_fixed(diagnostics.private_target_c, 0.0F, 135.0F, 4.0F);
   sample.legacy_requested_duty_thousandths =
       unsigned_fixed(diagnostics.legacy_requested_duty, 1000.0F);
   sample.pi_requested_duty_thousandths =
@@ -384,6 +408,35 @@ std::string serialize_history_page(const std::string& device_id,
            << "\",\"faultCode\":";
     const auto* fault = fault_name(flags);
     if (fault == nullptr) output << "null"; else output << '\"' << fault << '\"';
+    output << ",\"steamControl\":{\"settings\":{\"initialCompensationC\":"
+           << static_cast<unsigned>(sample.steam_initial_compensation_c)
+           << ",\"decayDurationMs\":"
+           << static_cast<unsigned>(sample.steam_decay_minutes) * 60000U
+           << ",\"readyTimeoutMs\":"
+           << static_cast<unsigned>(sample.steam_ready_timeout_minutes) *
+                  60000U
+           << "},\"compensationActive\":"
+           << (((flags & kSteamMode) != 0U &&
+                sample.steam_compensation_quarters_c > 0)
+                   ? "true"
+                   : "false")
+           << ",\"appliedCompensationC\":"
+           << signed_value(sample.steam_compensation_quarters_c, 4.0)
+           << ",\"controlTemperatureC\":";
+    if ((flags & kSteamControlTemperatureAvailable) != 0U) {
+      output << signed_value(sample.steam_control_temperature_quarters_c, 4.0);
+    } else {
+      output << "null";
+    }
+    output << ",\"heatSoakElapsedMs\":";
+    if ((flags & kSteamHeatSoakActive) != 0U) {
+      output << static_cast<unsigned>(
+                    sample.steam_heat_soak_elapsed_seconds) *
+                    1000U;
+    } else {
+      output << "null";
+    }
+    output << '}';
     serialize_controller_diagnostics(output, sample, flags);
     output << '}';
   }

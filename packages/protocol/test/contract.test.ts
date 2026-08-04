@@ -68,6 +68,19 @@ import {
   STEAM_TARGET_MAX_C,
   STEAM_TARGET_MIN_C,
   STEAM_OVER_TEMPERATURE_C,
+  STEAM_COMPENSATION_DECAY_DEFAULT_MS,
+  STEAM_COMPENSATION_DECAY_MAX_MS,
+  STEAM_COMPENSATION_DECAY_MIN_MS,
+  STEAM_COMPENSATION_INITIAL_DEFAULT_C,
+  STEAM_COMPENSATION_INITIAL_MAX_C,
+  STEAM_COMPENSATION_INITIAL_MIN_C,
+  STEAM_READY_TIMEOUT_DEFAULT_MS,
+  STEAM_READY_TIMEOUT_MAX_MS,
+  STEAM_READY_TIMEOUT_MIN_MS,
+  STEAM_SETTING_TIME_STEP_MS,
+  SteamControlSettingsRequestSchema,
+  SteamControlSettingsSchema,
+  SteamControlStateSchema,
   SteamTargetSchema,
   StartExtractionRequestSchema,
   StartCooldownRequestSchema,
@@ -119,6 +132,9 @@ const documentedSchemas: Record<string, ZodType> = {
   HistoryPage: HistoryPageSchema,
   DeviceResponse: DeviceResponseSchema,
   MachineState: MachineStateSchema,
+  SteamControlSettings: SteamControlSettingsSchema,
+  SteamControlSettingsRequest: SteamControlSettingsRequestSchema,
+  SteamControlState: SteamControlStateSchema,
   TemperatureSettingsRequest: TemperatureSettingsRequestSchema,
   TemperatureSettingsResponse: TemperatureSettingsResponseSchema,
   UncalibratedTemperatureCalibrationState:
@@ -166,6 +182,11 @@ const validFixtures = [
   ["valid/device.json", DeviceResponseSchema],
   ["valid/state.json", MachineStateSchema],
   ["valid/state-fault.json", MachineStateSchema],
+  [
+    "valid/steam-control-settings-request.json",
+    SteamControlSettingsRequestSchema,
+  ],
+  ["valid/steam-control-state.json", SteamControlStateSchema],
   ["valid/temperatures-request.json", TemperatureSettingsRequestSchema],
   ["valid/temperatures-response.json", TemperatureSettingsResponseSchema],
   [
@@ -241,6 +262,14 @@ const invalidFixtures = [
   ["invalid/state-legacy-temperatures.json", MachineStateSchema],
   ["invalid/state-fault-heater-active.json", MachineStateSchema],
   ["invalid/state-fault-without-details.json", MachineStateSchema],
+  [
+    "invalid/steam-control-settings-empty.json",
+    SteamControlSettingsRequestSchema,
+  ],
+  [
+    "invalid/steam-control-settings-duration-step.json",
+    SteamControlSettingsRequestSchema,
+  ],
   ["invalid/temperatures-request-empty.json", TemperatureSettingsRequestSchema],
   ["invalid/brew-target-too-low.json", TemperatureSettingsRequestSchema],
   ["invalid/brew-target-fractional.json", TemperatureSettingsRequestSchema],
@@ -353,6 +382,15 @@ describe("documented OpenAPI examples", () => {
         await fixture("valid/state.json"),
         await fixture("valid/state-fault.json"),
       ],
+      SteamControlSettings: [
+        (await fixture("valid/steam-control-state.json") as {
+          settings: unknown;
+        }).settings,
+      ],
+      SteamControlSettingsRequest: [
+        await fixture("valid/steam-control-settings-request.json"),
+      ],
+      SteamControlState: [await fixture("valid/steam-control-state.json")],
       TemperatureSettingsRequest: [
         await fixture("valid/temperatures-request.json"),
       ],
@@ -466,18 +504,19 @@ describe("documented OpenAPI examples", () => {
 });
 
 describe("temperature boundaries and drift", () => {
-  test("documents one global effective boiler temperature semantics", () => {
+  test("documents calibrated and transient Steam temperature semantics", () => {
     const description =
       openApi.components.schemas.MachineState.properties?.boilerTemperatureC
         ?.description;
 
-    expect(description).toContain(
-      "effective control temperature in both Brew and Steam",
-    );
+    expect(description).toContain("globally calibrated");
     expect(description).toContain(
       "one persisted signed global temperature-calibration offset exactly once",
     );
     expect(description).toContain("offset is zero");
+    expect(
+      openApi.components.schemas.SteamControlState.description,
+    ).toContain("transient positive-only Steam estimator");
   });
 
   test("accepts every inclusive whole-degree boundary", () => {
@@ -537,6 +576,29 @@ describe("temperature boundaries and drift", () => {
         TEMPERATURE_CALIBRATION_REFERENCE_C - candidateRawTargetC,
       );
     }
+  });
+
+  test("Steam heat-soak settings use bounded whole-unit defaults", () => {
+    expect(STEAM_COMPENSATION_INITIAL_MIN_C).toBe(0);
+    expect(STEAM_COMPENSATION_INITIAL_MAX_C).toBe(20);
+    expect(STEAM_COMPENSATION_INITIAL_DEFAULT_C).toBe(12);
+    expect(STEAM_COMPENSATION_DECAY_MIN_MS).toBe(60_000);
+    expect(STEAM_COMPENSATION_DECAY_MAX_MS).toBe(1_800_000);
+    expect(STEAM_COMPENSATION_DECAY_DEFAULT_MS).toBe(720_000);
+    expect(STEAM_READY_TIMEOUT_MIN_MS).toBe(60_000);
+    expect(STEAM_READY_TIMEOUT_MAX_MS).toBe(900_000);
+    expect(STEAM_READY_TIMEOUT_DEFAULT_MS).toBe(300_000);
+    expect(STEAM_SETTING_TIME_STEP_MS).toBe(60_000);
+    expect(
+      SteamControlSettingsRequestSchema.safeParse({
+        initialCompensationC: 0,
+      }).success,
+    ).toBe(true);
+    expect(
+      SteamControlSettingsRequestSchema.safeParse({
+        readyTimeoutMs: STEAM_READY_TIMEOUT_MAX_MS,
+      }).success,
+    ).toBe(true);
   });
 
   test("accepts calibration candidates only at whole-degree boundaries", () => {
@@ -829,7 +891,7 @@ describe("API v2 thermal workflow boundaries", () => {
     expect(ErrorCodeSchema.options).toContain("sensor_unavailable");
   });
 
-  test("adds only the approved API v2 workflow, scale, and calibration paths", () => {
+  test("adds only the approved API v2 workflow, settings, scale, and calibration paths", () => {
     const v2Paths = Object.keys(openApi.paths)
       .filter((path) => path.startsWith("/api/v2/"))
       .sort();
@@ -846,6 +908,7 @@ describe("API v2 thermal workflow boundaries", () => {
       "/api/v2/scale/calibration/start",
       "/api/v2/scale/trace",
       "/api/v2/scale/warnings/acknowledge",
+      "/api/v2/settings/steam-control",
       "/api/v2/state",
       "/api/v2/temperature-calibration",
       "/api/v2/temperature-calibration/cancel",

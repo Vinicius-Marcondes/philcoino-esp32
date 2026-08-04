@@ -74,6 +74,7 @@ const expectedOperations = {
   "/api/v1/heater": "put",
   "/api/v1/faults/over-temperature/dismiss": "post",
   "/api/v2/state": "get",
+  "/api/v2/settings/steam-control": "get",
   "/api/v2/temperature-calibration": "get",
   "/api/v2/temperature-calibration/start": "post",
   "/api/v2/temperature-calibration/candidate": "put",
@@ -95,6 +96,7 @@ const expectedOperations = {
 
 const expectedAdditionalOperations = {
   "/api/v2/profiles": "put",
+  "/api/v2/settings/steam-control": "patch",
 } as const;
 
 if (

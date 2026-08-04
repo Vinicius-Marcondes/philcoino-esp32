@@ -22,6 +22,7 @@ import {
   TemperatureCalibrationStateSchema,
   ScaleStateSchema,
   ScaleTraceResponseSchema,
+  SteamControlStateSchema,
 } from "../../../packages/protocol/src/schemas.ts";
 
 const directory = process.argv[2];
@@ -40,6 +41,7 @@ const captures = [
   ["heater-response.json", HeaterSettingsResponseSchema],
   ["error.json", ErrorResponseSchema],
   ["state-v2.json", MachineStateV2Schema],
+  ["steam-control-settings-v2.json", SteamControlStateSchema],
   ["temperature-calibration-uncalibrated-v2.json", TemperatureCalibrationStateSchema],
   ["temperature-calibration-active-v2.json", TemperatureCalibrationStateSchema],
   ["temperature-calibration-calibrated-v2.json", TemperatureCalibrationStateSchema],

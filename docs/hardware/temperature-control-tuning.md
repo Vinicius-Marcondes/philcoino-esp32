@@ -65,6 +65,34 @@ rebasing convention. It is not a correction curve, altitude/pressure model,
 certified calibration, or evidence that the installed thermostat or SSR
 interrupts heater current.
 
+## Dynamic Steam heat-soak compensation
+
+PRD-018 addresses the lateral thermocouple lag without changing global
+calibration:
+
+```text
+steamControlTemperatureC =
+  effectiveTemperatureC +
+  initialCompensationC × max(0, 1 - elapsedMs / decayDurationMs)
+```
+
+Defaults are `12°C` and `12 min`; the persisted bounds are `0–20°C` and
+`1–30 min` in whole units. The post-ready return-to-Brew timeout is separately
+persisted from `1–15 min`, default `5 min`. The origin starts on Steam entry,
+survives a temporary mode change while the boiler remains above the Brew
+target, and is not restored after reboot.
+
+The transient owns only Steam control, duty, recovery, readiness, demand,
+status, and timeout-start semantics. API/mobile retain the effective lateral
+sensor as `boilerTemperatureC` and report the estimate separately. Raw and
+effective `135°C` checks run before/without the transient value.
+
+Tune from repeated instrumented runs, not the estimate alone. Record both
+sensor locations, calibration/instrument identity, settings, heater command,
+ambient/start state, time to usable steam, time to equilibrium, peaks, and
+independent cutoff behavior. A fitted value is not evidence of safe physical
+de-energization.
+
 ## Extraction heater-duty bias
 
 Brew extraction has a separate compile-time duty-only hypothesis:

@@ -15,6 +15,12 @@ Philcoino é um controller experimental para máquina de espresso que trabalha p
   corrompido ou ilegível causa fault e comando do heater off. A UI foi aceita
   pelo owner, mas calibração física, precisão do ponto de ebulição e operação
   energizada continuam pendentes.
+- A PRD-018 adiciona uma estimativa transitória somente ao controle Steam:
+  `effective + compensation`, com padrão de `12°C` decaindo linearmente por
+  `12 min`. A leitura effective publicada e os caps raw/effective de `135°C`
+  não recebem essa compensação. A estimativa representa uma hipótese de atraso
+  térmico, não uma segunda medição; seus valores e o timeout configurável
+  exigem validação física supervisionada.
 - O thermostat retido é identificado pelo owner/listing como nominalmente
   `145°C`, 10 A, 250 V. O listing não comprova tolerância, acoplamento, ligação
   em série ou interrupção do heater instalado. A TCAL-008 permite target Steam
@@ -51,13 +57,14 @@ O firmware controla o temperature-control loop e não depende da conectividade d
   `over_temperature` e comando do heater off;
 - aplica target e limites de over-temperature específicos de cada mode;
 - exige três segundos contínuos na ready band;
-- aplica um heating timeout e um timeout de cinco minutos após steam-ready;
+- aplica um heating timeout e um timeout persistido de `1–15 min` após
+  steam-ready, com padrão de cinco minutos;
 - calcula o duty do heater em janelas de dez segundos;
 - aplica o bias fixo de extração somente ao duty em Manual/main, sem alterar
   targets, readiness, deadlines, limits ou profiles;
 - faz latch de faults e comanda a saída do SSR para off;
-- persiste targets, conjuntos completos de profiles validados e o offset de
-  calibração em registros NVS separados;
+- persiste targets, conjuntos completos de profiles validados, o offset de
+  calibração e os ajustes de compensação Steam em registros NVS separados;
 - executa Manual e profiles em um controller monotônico dedicado, inicializa GPIO10 como `off` e não restaura `running` no boot;
 - amostra o HX711 fora do loop crítico e só inicia uma extração por peso após
   calibração, disponibilidade, estabilidade e tara automática; falha de tara

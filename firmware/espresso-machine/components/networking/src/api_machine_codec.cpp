@@ -120,7 +120,38 @@ std::string serialize_state(const control::ControlSnapshot& snapshot,
   } else {
     output << "null";
   }
+  output << ",\"steamControl\":"
+         << serialize_steam_control(snapshot.steam_control);
   output << ",\"uptimeMs\":" << uptime_ms << '}';
+  return output.str();
+}
+
+std::string serialize_steam_control(
+    const control::SteamControlSnapshot& snapshot) {
+  std::ostringstream output;
+  output.imbue(std::locale::classic());
+  output << std::setprecision(6)
+         << "{\"settings\":{\"initialCompensationC\":"
+         << snapshot.settings.initial_compensation_c
+         << ",\"decayDurationMs\":" << snapshot.settings.decay_duration_ms
+         << ",\"readyTimeoutMs\":" << snapshot.settings.ready_timeout_ms
+         << "},\"compensationActive\":"
+         << (snapshot.compensation_active ? "true" : "false")
+         << ",\"appliedCompensationC\":"
+         << snapshot.applied_compensation_c
+         << ",\"controlTemperatureC\":";
+  if (snapshot.control_temperature_available) {
+    output << json_temperature(snapshot.control_temperature_c);
+  } else {
+    output << "null";
+  }
+  output << ",\"heatSoakElapsedMs\":";
+  if (snapshot.heat_soak_active) {
+    output << snapshot.heat_soak_elapsed_ms;
+  } else {
+    output << "null";
+  }
+  output << '}';
   return output.str();
 }
 
@@ -217,6 +248,65 @@ bool parse_heater_enabled(const std::string& body, bool& enabled) {
     return false;
   }
   enabled = fields[0].value.boolean;
+  return true;
+}
+
+bool parse_steam_control_settings(
+    const std::string& body,
+    peripherals::SteamControlSettings current,
+    peripherals::SteamControlSettings& updated,
+    bool& constraint_violation) {
+  std::vector<JsonField> fields;
+  JsonObjectParser parser(body);
+  if (!parser.parse(fields) || fields.empty()) {
+    return false;
+  }
+  auto candidate = current;
+  bool invalid = false;
+  for (const auto& field : fields) {
+    if (field.value.type != JsonValue::Type::kNumber ||
+        std::floor(field.value.number) != field.value.number) {
+      return false;
+    }
+    if (field.key == "initialCompensationC") {
+      if (field.value.number <
+              config::kSteamCompensationInitialMinimumC ||
+          field.value.number >
+              config::kSteamCompensationInitialMaximumC) {
+        invalid = true;
+      } else {
+        candidate.initial_compensation_c =
+            static_cast<std::int32_t>(field.value.number);
+      }
+    } else if (field.key == "decayDurationMs") {
+      if (field.value.number <
+              config::kSteamCompensationDecayMinimumMs ||
+          field.value.number >
+              config::kSteamCompensationDecayMaximumMs) {
+        invalid = true;
+      } else {
+        candidate.decay_duration_ms =
+            static_cast<std::uint32_t>(field.value.number);
+      }
+    } else if (field.key == "readyTimeoutMs") {
+      if (field.value.number < config::kSteamReadyTimeoutMinimumMs ||
+          field.value.number > config::kSteamReadyTimeoutMaximumMs) {
+        invalid = true;
+      } else {
+        candidate.ready_timeout_ms =
+            static_cast<std::uint32_t>(field.value.number);
+      }
+    } else {
+      return false;
+    }
+  }
+  if (!peripherals::steam_control_settings_are_valid(candidate)) {
+    invalid = true;
+  }
+  constraint_violation = invalid;
+  if (!invalid) {
+    updated = candidate;
+  }
   return true;
 }
 

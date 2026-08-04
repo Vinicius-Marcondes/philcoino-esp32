@@ -14,9 +14,11 @@ import type {
 import {
   ControllerConfigurationSchema,
   ControllerDiagnosticsSchema,
+  SteamControlStateSchema,
   type ControllerConfiguration,
   type ControllerDiagnostics,
   type HistoryCursor,
+  type SteamControlState,
 } from "@philcoino/protocol";
 
 interface TemperatureHistoryRow {
@@ -32,6 +34,7 @@ interface TemperatureHistoryRow {
   pump_active: unknown;
   controller_configuration_json: unknown;
   controller_diagnostics_json: unknown;
+  steam_control_json: unknown;
   recorded_at_ms: unknown;
   source_boot_id: unknown;
   source_sequence: unknown;
@@ -65,8 +68,9 @@ class SQLiteTemperatureHistoryRepository
         machine_status,
         fault_code,
         controller_configuration_json,
-        controller_diagnostics_json
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        controller_diagnostics_json,
+        steam_control_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(device_id, recorded_at_ms) DO UPDATE SET
         uptime_ms = excluded.uptime_ms,
         boiler_temperature_c = excluded.boiler_temperature_c,
@@ -80,7 +84,8 @@ class SQLiteTemperatureHistoryRepository
         machine_status = excluded.machine_status,
         fault_code = excluded.fault_code,
         controller_configuration_json = excluded.controller_configuration_json,
-        controller_diagnostics_json = excluded.controller_diagnostics_json
+        controller_diagnostics_json = excluded.controller_diagnostics_json,
+        steam_control_json = excluded.steam_control_json
       WHERE temperature_history.source_sequence IS NULL`,
       sample.deviceId,
       sample.recordedAtMs,
@@ -97,6 +102,7 @@ class SQLiteTemperatureHistoryRepository
       sample.faultCode,
       serializeControllerValue(sample.controllerConfiguration),
       serializeControllerValue(sample.controllerDiagnostics),
+      serializeSteamControl(sample.steamControl ?? null),
     );
     await this.prune(sample.recordedAtMs);
   }
@@ -173,6 +179,7 @@ class SQLiteTemperatureHistoryRepository
         fault_code,
         controller_configuration_json,
         controller_diagnostics_json,
+        steam_control_json,
         source_boot_id,
         source_sequence,
         starts_after_history_gap
@@ -229,8 +236,9 @@ class SQLiteTemperatureHistoryRepository
             active_mode, active_target_c, heater_enabled, heater_active,
             pump_active, machine_status, fault_code,
             controller_configuration_json, controller_diagnostics_json,
+            steam_control_json,
             source_boot_id, source_sequence, starts_after_history_gap
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           sample.deviceId,
           sample.recordedAtMs,
           sample.uptimeMs,
@@ -246,6 +254,7 @@ class SQLiteTemperatureHistoryRepository
           sample.faultCode,
           serializeControllerValue(sample.controllerConfiguration),
           serializeControllerValue(sample.controllerDiagnostics),
+          serializeSteamControl(sample.steamControl ?? null),
           sample.sourceBootId,
           sample.sourceSequence,
           sample.startsAfterHistoryGap ? 1 : 0,
@@ -307,6 +316,11 @@ class SQLiteTemperatureHistoryRepository
           ADD COLUMN starts_after_history_gap INTEGER NOT NULL DEFAULT 0
           CHECK(starts_after_history_gap IN (0, 1));
       `);
+    }
+    if (!columns.some((column) => column.name === "steam_control_json")) {
+      await database.execAsync(
+        "ALTER TABLE temperature_history ADD COLUMN steam_control_json TEXT;",
+      );
     }
     const needsControllerMigration =
       columns.some(
@@ -375,6 +389,11 @@ function rowToSample(row: TemperatureHistoryRow): TemperatureHistorySample {
       ControllerDiagnosticsSchema,
       "diagnostics",
     ),
+    steamControl: parseControllerValue(
+      row.steam_control_json,
+      SteamControlStateSchema,
+      "steam control",
+    ),
     recordedAtMs: nonNegativeInteger(row.recorded_at_ms),
     sourceBootId:
       row.source_boot_id === null ? null : historyBootId(row.source_boot_id),
@@ -391,6 +410,10 @@ function rowToSample(row: TemperatureHistoryRow): TemperatureHistorySample {
 function serializeControllerValue(
   value: ControllerConfiguration | ControllerDiagnostics | null,
 ): string | null {
+  return value === null ? null : JSON.stringify(value);
+}
+
+function serializeSteamControl(value: SteamControlState | null): string | null {
   return value === null ? null : JSON.stringify(value);
 }
 

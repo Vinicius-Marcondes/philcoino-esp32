@@ -86,10 +86,13 @@ describe("temperature calibration transaction", () => {
     });
     const history = await historyResponse.json();
     expect(history.samples[0]).toMatchObject({
-      boilerTemperatureC: 113,
+      boilerTemperatureC: 103,
+      steamControl: {
+        controlTemperatureC: 115,
+      },
       controllerDiagnostics: {
-        temperatureRawC: 121,
-        temperatureFilteredC: 113,
+        temperatureRawC: 111,
+        temperatureFilteredC: 103,
       },
     });
 

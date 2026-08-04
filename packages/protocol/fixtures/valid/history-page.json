@@ -32,6 +32,17 @@
       "pumpActive": false,
       "machineStatus": "heating",
       "faultCode": null,
+      "steamControl": {
+        "settings": {
+          "initialCompensationC": 12,
+          "decayDurationMs": 720000,
+          "readyTimeoutMs": 300000
+        },
+        "compensationActive": false,
+        "appliedCompensationC": 0,
+        "controlTemperatureC": null,
+        "heatSoakElapsedMs": null
+      },
       "controllerDiagnostics": {
         "temperatureRawC": 92.75,
         "temperatureFilteredC": 92.5,
@@ -65,6 +76,17 @@
       "pumpActive": false,
       "machineStatus": "ready",
       "faultCode": null,
+      "steamControl": {
+        "settings": {
+          "initialCompensationC": 12,
+          "decayDurationMs": 720000,
+          "readyTimeoutMs": 300000
+        },
+        "compensationActive": false,
+        "appliedCompensationC": 0,
+        "controlTemperatureC": null,
+        "heatSoakElapsedMs": null
+      },
       "controllerDiagnostics": {
         "temperatureRawC": 93,
         "temperatureFilteredC": 92.9,

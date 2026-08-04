@@ -42,6 +42,20 @@ inline constexpr std::int32_t kExtractionHeaterDutyOffsetC = 2;
 inline constexpr std::int32_t kBrewOverTemperatureC = 98;
 inline constexpr std::int32_t kSteamOverTemperatureC = 135;
 inline constexpr std::int32_t kRawBoilerOverTemperatureC = 135;
+inline constexpr std::int32_t kSteamCompensationInitialMinimumC = 0;
+inline constexpr std::int32_t kSteamCompensationInitialMaximumC = 20;
+inline constexpr std::int32_t kSteamCompensationInitialDefaultC = 12;
+inline constexpr std::uint32_t kSteamCompensationDecayMinimumMs =
+    1U * 60U * 1000U;
+inline constexpr std::uint32_t kSteamCompensationDecayMaximumMs =
+    30U * 60U * 1000U;
+inline constexpr std::uint32_t kSteamCompensationDecayDefaultMs =
+    12U * 60U * 1000U;
+inline constexpr std::uint32_t kSteamReadyTimeoutMinimumMs =
+    1U * 60U * 1000U;
+inline constexpr std::uint32_t kSteamReadyTimeoutMaximumMs =
+    15U * 60U * 1000U;
+inline constexpr std::uint32_t kSteamSettingTimeStepMs = 60U * 1000U;
 
 inline constexpr std::uint32_t kHeatingTimeoutMs = 10U * 60U * 1000U;
 inline constexpr std::uint32_t kSteamReadyTimeoutMs = 5U * 60U * 1000U;

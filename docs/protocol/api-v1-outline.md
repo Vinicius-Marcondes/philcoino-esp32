@@ -81,18 +81,29 @@ A state payload contains the single boiler thermocouple temperature:
   "heaterActive": true,
   "fault": null,
   "steamTimeoutRemainingMs": null,
+  "steamControl": {
+    "settings": {
+      "initialCompensationC": 12,
+      "decayDurationMs": 720000,
+      "readyTimeoutMs": 300000
+    },
+    "compensationActive": false,
+    "appliedCompensationC": 0,
+    "controlTemperatureC": null,
+    "heatSoakElapsedMs": null
+  },
   "uptimeMs": 184220
 }
 ```
 
-`boilerTemperatureC` is the firmware-authoritative active effective control
-temperature. After the raw boiler-base thermocouple sample is validated,
-firmware adds the one persisted signed global calibration offset exactly once
-in both Brew and Steam. A missing calibration record means uncalibrated with a
-`0°C` offset. API v1 keeps its existing state shape and does not expose the raw
-reading, saved offset, or calibration status; those are available through the
-additive authenticated API v2 calibration resource. `activeMode` selects the
-target and mode-specific safety policy and is `brew` or `steam`. `uptimeMs` is
+`boilerTemperatureC` remains the globally calibrated thermocouple reading.
+After the raw boiler-base sample is validated, firmware adds the one persisted
+signed global calibration offset exactly once in both Brew and Steam. During
+Steam, `steamControl.controlTemperatureC` adds a positive, linearly decaying
+heat-soak compensation used by Steam control decisions; raw and globally
+calibrated safety boundaries do not use that estimate. A missing calibration
+record means uncalibrated with a `0°C` offset. `activeMode` selects the target
+and mode-specific safety policy and is `brew` or `steam`. `uptimeMs` is
 monotonic device uptime and does not require internet time synchronization.
 `fault` is `null` while status is `heating` or `ready`, and contains a stable
 code and message while status is `fault`.

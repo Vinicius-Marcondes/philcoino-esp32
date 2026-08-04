@@ -15,6 +15,11 @@ Philcoino is an experimental, mains-adjacent espresso-machine controller. The re
   storage faults with the heater commanded off. The owner accepted the UI, but
   physical calibration, boiling-point accuracy, and energized operation remain
   pending.
+- PRD-018 adds a transient estimate to Steam control only: the `12°C` default
+  decays linearly over `12 min`. The published effective sensor value and the
+  independent raw/effective `135°C` caps do not include this term. It is a
+  thermal-lag hypothesis, not a second measurement, and its persisted values
+  require supervised physical validation.
 - The retained thermostat is identified by the owner/listing as nominally
   `145°C`, 10 A, 250 V. The listing does not prove installed tolerance,
   coupling, series wiring, or heater interruption. TCAL-008 permits an
@@ -51,14 +56,16 @@ Firmware owns the temperature-control loop and does not rely on app connectivity
   `over_temperature` and commands the heater off;
 - applies mode-specific target and over-temperature limits;
 - requires a three-second ready hold;
-- applies a heating timeout and five-minute steam-ready timeout;
+- applies a heating timeout and persisted `1–15 min` steam-ready timeout,
+  defaulting to five minutes;
 - computes heater duty in ten-second windows;
 - applies the fixed extraction bias only to Manual/main heater-duty
   calculations while leaving targets, readiness, deadlines, limits, and
   profile data unchanged;
 - latches faults and commands the SSR output off;
-- persists validated targets, complete four-slot extraction profile sets, and
-  temperature calibration in separate NVS records;
+- persists validated targets, complete four-slot extraction profile sets,
+  temperature calibration, and Steam heat-soak settings in separate NVS
+  records;
 - runs Manual and persisted profiles in a dedicated monotonic controller,
   initializes GPIO10 `off`, and never restores `running` at boot;
 - runs mutually exclusive cooldown through a bounded 10 ms workflow task,

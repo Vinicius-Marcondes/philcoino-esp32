@@ -17,7 +17,7 @@ import {
   steamCountdownContext,
 } from "../src/dashboard/dashboard-view-model";
 
-const steamState: MachineState = {
+const steamState: Extract<MachineState, { status: "ready" }> = {
   activeMode: "steam",
   brewTargetC: 93,
   boilerTemperatureC: 120,
@@ -27,6 +27,17 @@ const steamState: MachineState = {
   status: "ready",
   steamTargetC: 120,
   steamTimeoutRemainingMs: 299_001,
+  steamControl: {
+    settings: {
+      initialCompensationC: 12,
+      decayDurationMs: 720_000,
+      readyTimeoutMs: 300_000,
+    },
+    compensationActive: false,
+    appliedCompensationC: 0,
+    controlTemperatureC: 120,
+    heatSoakElapsedMs: 720_000,
+  },
   uptimeMs: 3_661_000,
 };
 

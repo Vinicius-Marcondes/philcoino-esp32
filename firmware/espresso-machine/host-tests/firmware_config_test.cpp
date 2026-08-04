@@ -29,6 +29,15 @@ int main() {
   static_assert(kSteamOverTemperatureC >= kSteamTargetMaximumC);
   static_assert(kSteamOverTemperatureC == 135);
   static_assert(kRawBoilerOverTemperatureC == 135);
+  static_assert(kSteamCompensationInitialMinimumC == 0);
+  static_assert(kSteamCompensationInitialMaximumC == 20);
+  static_assert(kSteamCompensationInitialDefaultC == 12);
+  static_assert(kSteamCompensationDecayMinimumMs == 60000U);
+  static_assert(kSteamCompensationDecayMaximumMs == 1800000U);
+  static_assert(kSteamCompensationDecayDefaultMs == 720000U);
+  static_assert(kSteamReadyTimeoutMinimumMs == 60000U);
+  static_assert(kSteamReadyTimeoutMaximumMs == 900000U);
+  static_assert(kSteamSettingTimeStepMs == 60000U);
   static_assert(kHeatingTimeoutMs == 600000U);
   static_assert(kSteamReadyTimeoutMs == 300000U);
   static_assert(kTemperatureControllerIntervalMs == 500U);

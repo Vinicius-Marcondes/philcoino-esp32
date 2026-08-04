@@ -6,6 +6,7 @@ import type {
   Mode,
   ControllerConfiguration,
   ControllerDiagnostics,
+  SteamControlState,
 } from "@philcoino/protocol";
 
 export const LIVE_HISTORY_WINDOW_MS = 30 * 1_000;
@@ -31,6 +32,7 @@ export interface TemperatureHistorySample {
   sourceBootId: string | null;
   sourceSequence: number | null;
   startsAfterHistoryGap: boolean;
+  steamControl?: SteamControlState | null;
   steamTargetC: number;
   uptimeMs: number;
 }
@@ -77,6 +79,7 @@ export function createTemperatureHistorySample(
     sourceBootId: null,
     sourceSequence: null,
     startsAfterHistoryGap: false,
+    steamControl: snapshot.steamControl,
     steamTargetC: snapshot.steamTargetC,
     uptimeMs: snapshot.uptimeMs,
   };

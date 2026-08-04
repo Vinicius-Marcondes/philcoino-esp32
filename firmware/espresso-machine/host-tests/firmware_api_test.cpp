@@ -114,6 +114,26 @@ class ScaleMemoryBackend final : public ScaleCalibrationBackend {
   int save_count{0};
 };
 
+class SteamControlMemoryBackend final : public SteamControlSettingsBackend {
+ public:
+  BackendLoadResult load(SteamControlSettings& settings) override {
+    settings = saved;
+    return BackendLoadResult::kOk;
+  }
+  bool save(const SteamControlSettings& settings) override {
+    assert(lock_held == nullptr || !*lock_held);
+    ++save_count;
+    if (fail_save) return false;
+    saved = settings;
+    return true;
+  }
+
+  SteamControlSettings saved{};
+  const bool* lock_held{nullptr};
+  bool fail_save{false};
+  int save_count{0};
+};
+
 class FakeApiSynchronization final : public ApiSynchronization {
  public:
   bool lock(ApiDomain) override {
@@ -193,18 +213,20 @@ struct ApiHarness {
         pump(pump_output, pump_critical_section),
         extraction(profile_backend.saved, pump),
         cooldown(controller, pump),
+        steam_control_storage(steam_control_backend),
         scale_storage(scale_backend),
         scale(scale_backend.saved, true),
         api({"philcoino-0102AF", "PhilcoINO", "ESP32-C3 Super Mini", "0.2.0"},
             "test-secret", controller, storage,
             temperature_calibration_storage, extraction, cooldown,
             profile_storage, scale_storage, synchronization, &history,
-            &scale, &weighted_trace) {
+            &scale, &weighted_trace, &steam_control_storage) {
     assert(ssr.initialize());
     assert(pump.initialize());
     scale_backend.lock_held = &synchronization.held;
     temperature_calibration_backend.lock_held =
         &synchronization.held;
+    steam_control_backend.lock_held = &synchronization.held;
     controller.update(ok(87.5F), 1000);
     for (std::int32_t index = 0; index < 10; ++index) {
       scale.update({Hx711Status::kOk, 80000}, 1000U + index);
@@ -237,6 +259,8 @@ struct ApiHarness {
   FailOffPump pump;
   ExtractionController extraction;
   CooldownController cooldown;
+  SteamControlMemoryBackend steam_control_backend;
+  SteamControlSettingsStorage steam_control_storage;
   ScaleMemoryBackend scale_backend;
   ScaleCalibrationStorage scale_storage;
   ScaleController scale;
@@ -251,6 +275,65 @@ void expect_error(const HttpResponse& response, int status,
   assert(response.status == status);
   assert(response.body.find(std::string("\"code\":\"") + code + "\"") !=
          std::string::npos);
+}
+
+void test_steam_control_settings_api_persists_strict_partial_updates() {
+  ApiHarness harness;
+  auto response = harness.request(
+      HttpMethod::kGet, "/api/v2/settings/steam-control",
+      "Bearer test-secret");
+  assert(response.status == 200);
+  assert(response.body.find("\"initialCompensationC\":12") !=
+         std::string::npos);
+  assert(response.body.find("\"decayDurationMs\":720000") !=
+         std::string::npos);
+  assert(response.body.find("\"readyTimeoutMs\":300000") !=
+         std::string::npos);
+
+  response = harness.request(
+      HttpMethod::kPatch, "/api/v2/settings/steam-control",
+      "Bearer test-secret",
+      "{\"initialCompensationC\":15,\"decayDurationMs\":600000,"
+      "\"readyTimeoutMs\":420000}");
+  assert(response.status == 200);
+  assert(harness.steam_control_backend.save_count == 1);
+  assert(harness.steam_control_backend.saved.initial_compensation_c == 15);
+  assert(harness.steam_control_backend.saved.decay_duration_ms == 600000U);
+  assert(harness.steam_control_backend.saved.ready_timeout_ms == 420000U);
+  assert(response.body.find("\"initialCompensationC\":15") !=
+         std::string::npos);
+
+  response = harness.request(
+      HttpMethod::kPatch, "/api/v2/settings/steam-control",
+      "Bearer test-secret", "{\"readyTimeoutMs\":60000}");
+  assert(response.status == 200);
+  assert(harness.steam_control_backend.save_count == 2);
+  assert(harness.controller.steam_control_settings().initial_compensation_c ==
+         15);
+  assert(harness.controller.steam_control_settings().ready_timeout_ms ==
+         60000U);
+
+  for (const char* body : {
+           "{}",
+           "{\"initialCompensationC\":21}",
+           "{\"decayDurationMs\":61000}",
+           "{\"readyTimeoutMs\":0}",
+           "{\"readyTimeoutMs\":60000,\"extra\":true}",
+       }) {
+    response = harness.request(
+        HttpMethod::kPatch, "/api/v2/settings/steam-control",
+        "Bearer test-secret", body);
+    expect_error(response, 400, "malformed_request");
+  }
+
+  harness.steam_control_backend.fail_save = true;
+  response = harness.request(
+      HttpMethod::kPatch, "/api/v2/settings/steam-control",
+      "Bearer test-secret", "{\"initialCompensationC\":14}");
+  expect_error(response, 500, "persistence_failure");
+  assert(!harness.output.level);
+  assert(harness.controller.steam_control_settings().initial_compensation_c ==
+         15);
 }
 
 std::string json_string_field(const std::string& body,
@@ -1275,6 +1358,16 @@ void capture_contract_payloads(const std::filesystem::path& directory) {
   write_capture(directory, "state-v2.json",
                 harness.request(HttpMethod::kGet, "/api/v2/state",
                                 authorization).body);
+  write_capture(
+      directory, "steam-control-settings-v2.json",
+      harness
+          .request(HttpMethod::kPatch,
+                   "/api/v2/settings/steam-control",
+                   authorization,
+                   "{\"initialCompensationC\":15,"
+                   "\"decayDurationMs\":600000,"
+                   "\"readyTimeoutMs\":420000}")
+          .body);
   ApiHarness temperature_calibration;
   write_capture(
       directory, "temperature-calibration-uncalibrated-v2.json",
@@ -1845,6 +1938,7 @@ void test_controller_diagnostics_history_page_stays_within_transport_budget() {
 int main(int argc, char** argv) {
   test_public_contract_and_authentication();
   test_state_and_mutations_delegate_to_control();
+  test_steam_control_settings_api_persists_strict_partial_updates();
   test_effective_temperature_serializes_once_across_v1_v2_and_modes();
   test_over_temperature_dismissal_endpoint_is_guarded();
   test_malformed_and_domain_failures_do_not_bypass_validation();

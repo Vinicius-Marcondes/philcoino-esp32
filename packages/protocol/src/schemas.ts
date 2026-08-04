@@ -5,6 +5,16 @@ export const BREW_TARGET_MAX_C = 95;
 export const STEAM_TARGET_MIN_C = 110;
 export const STEAM_TARGET_MAX_C = 135;
 export const STEAM_TIMEOUT_MS = 300_000;
+export const STEAM_COMPENSATION_INITIAL_MIN_C = 0;
+export const STEAM_COMPENSATION_INITIAL_MAX_C = 20;
+export const STEAM_COMPENSATION_INITIAL_DEFAULT_C = 12;
+export const STEAM_COMPENSATION_DECAY_MIN_MS = 60_000;
+export const STEAM_COMPENSATION_DECAY_MAX_MS = 30 * 60_000;
+export const STEAM_COMPENSATION_DECAY_DEFAULT_MS = 12 * 60_000;
+export const STEAM_READY_TIMEOUT_MIN_MS = 60_000;
+export const STEAM_READY_TIMEOUT_MAX_MS = 15 * 60_000;
+export const STEAM_READY_TIMEOUT_DEFAULT_MS = STEAM_TIMEOUT_MS;
+export const STEAM_SETTING_TIME_STEP_MS = 60_000;
 export const TEMPERATURE_CALIBRATION_REFERENCE_C = 100;
 export const TEMPERATURE_CALIBRATION_CANDIDATE_MIN_C = 90;
 export const TEMPERATURE_CALIBRATION_CANDIDATE_MAX_C = 120;
@@ -93,6 +103,57 @@ export const FaultSchema = z.strictObject({
   message: z.string().min(1).max(160),
 });
 
+export const SteamCompensationInitialSchema = z
+  .number()
+  .int()
+  .min(STEAM_COMPENSATION_INITIAL_MIN_C)
+  .max(STEAM_COMPENSATION_INITIAL_MAX_C);
+export const SteamCompensationDecaySchema = z
+  .number()
+  .int()
+  .min(STEAM_COMPENSATION_DECAY_MIN_MS)
+  .max(STEAM_COMPENSATION_DECAY_MAX_MS)
+  .multipleOf(STEAM_SETTING_TIME_STEP_MS);
+export const SteamReadyTimeoutSchema = z
+  .number()
+  .int()
+  .min(STEAM_READY_TIMEOUT_MIN_MS)
+  .max(STEAM_READY_TIMEOUT_MAX_MS)
+  .multipleOf(STEAM_SETTING_TIME_STEP_MS);
+export const SteamControlSettingsSchema = z.strictObject({
+  initialCompensationC: SteamCompensationInitialSchema,
+  decayDurationMs: SteamCompensationDecaySchema,
+  readyTimeoutMs: SteamReadyTimeoutSchema,
+});
+export const SteamControlSettingsRequestSchema = z.union([
+  z.strictObject({
+    initialCompensationC: SteamCompensationInitialSchema,
+    decayDurationMs: SteamCompensationDecaySchema.optional(),
+    readyTimeoutMs: SteamReadyTimeoutSchema.optional(),
+  }),
+  z.strictObject({
+    initialCompensationC: SteamCompensationInitialSchema.optional(),
+    decayDurationMs: SteamCompensationDecaySchema,
+    readyTimeoutMs: SteamReadyTimeoutSchema.optional(),
+  }),
+  z.strictObject({
+    initialCompensationC: SteamCompensationInitialSchema.optional(),
+    decayDurationMs: SteamCompensationDecaySchema.optional(),
+    readyTimeoutMs: SteamReadyTimeoutSchema,
+  }),
+]);
+export const SteamControlStateSchema = z.strictObject({
+  settings: SteamControlSettingsSchema,
+  compensationActive: z.boolean(),
+  appliedCompensationC: z
+    .number()
+    .finite()
+    .min(STEAM_COMPENSATION_INITIAL_MIN_C)
+    .max(STEAM_COMPENSATION_INITIAL_MAX_C),
+  controlTemperatureC: z.number().finite().min(-40).max(180).nullable(),
+  heatSoakElapsedMs: z.number().int().nonnegative().safe().nullable(),
+});
+
 const machineStateShape = {
   activeMode: ModeSchema,
   boilerTemperatureC: z.number(),
@@ -104,8 +165,9 @@ const machineStateShape = {
     .number()
     .int()
     .nonnegative()
-    .max(STEAM_TIMEOUT_MS)
+    .max(STEAM_READY_TIMEOUT_MAX_MS)
     .nullable(),
+  steamControl: SteamControlStateSchema,
   uptimeMs: z.number().int().nonnegative(),
 };
 
@@ -872,9 +934,9 @@ export const ControllerConfigurationSchema = z.strictObject({
 export const ControllerDiagnosticsSchema = z
   .strictObject({
     temperatureRawC: z.number().finite().min(-40).max(160),
-    temperatureFilteredC: z.number().finite().min(-40).max(160),
-    baseTargetC: z.number().finite().min(0).max(120),
-    privateTargetC: z.number().finite().min(0).max(120),
+    temperatureFilteredC: z.number().finite().min(-40).max(180),
+    baseTargetC: z.number().finite().min(0).max(STEAM_TARGET_MAX_C),
+    privateTargetC: z.number().finite().min(0).max(STEAM_TARGET_MAX_C),
     errorC: z.number().finite().min(-200).max(200),
     selectedController: SelectedControllerSchema,
     legacyRequestedDuty: z.number().finite().min(0).max(1),
@@ -923,6 +985,7 @@ const historySampleShape = {
   heaterEnabled: z.boolean(),
   heaterActive: z.boolean(),
   pumpActive: z.boolean(),
+  steamControl: SteamControlStateSchema,
   controllerDiagnostics: ControllerDiagnosticsSchema,
 };
 
@@ -1111,6 +1174,13 @@ export type HealthResponse = z.infer<typeof HealthResponseSchema>;
 export type DeviceResponse = z.infer<typeof DeviceResponseSchema>;
 export type Fault = z.infer<typeof FaultSchema>;
 export type MachineState = z.infer<typeof MachineStateSchema>;
+export type SteamControlSettings = z.infer<
+  typeof SteamControlSettingsSchema
+>;
+export type SteamControlSettingsRequest = z.infer<
+  typeof SteamControlSettingsRequestSchema
+>;
+export type SteamControlState = z.infer<typeof SteamControlStateSchema>;
 export type TemperatureSettingsRequest = z.infer<
   typeof TemperatureSettingsRequestSchema
 >;

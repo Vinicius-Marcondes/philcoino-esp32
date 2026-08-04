@@ -59,6 +59,8 @@ describe("bearer authentication", () => {
     ["POST", "/api/v1/faults/over-temperature/dismiss"],
     ["GET", "/api/v2/state"],
     ["GET", "/api/v2/history"],
+    ["GET", "/api/v2/settings/steam-control"],
+    ["PATCH", "/api/v2/settings/steam-control"],
     ["GET", "/api/v2/scale"],
     ["GET", "/api/v2/scale/trace"],
     ["GET", "/api/v2/profiles"],
@@ -681,13 +683,15 @@ describe("deterministic machine controls", () => {
   it("starts the steam timer on readiness and returns to brew at expiry", async () => {
     await setMode("steam");
     await control("PUT", "/_simulator/temperatures", {
-      boilerTemperatureC: 115,
+      boilerTemperatureC: 103,
     });
     await control("POST", "/_simulator/advance", { milliseconds: 3_000 });
 
     let state = await getState();
     expect(state.status).toBe("ready");
-    expect(state.boilerTemperatureC).toBe(115);
+    expect(state.boilerTemperatureC).toBe(103);
+    expect(state.steamControl.controlTemperatureC).toBeCloseTo(115, 1);
+    expect(state.steamControl.appliedCompensationC).toBeCloseTo(12, 0);
     expect(state.steamTimeoutRemainingMs).toBe(STEAM_TIMEOUT_MS);
 
     await control("POST", "/_simulator/advance", {
@@ -701,6 +705,84 @@ describe("deterministic machine controls", () => {
     state = await getState();
     expect(state.activeMode).toBe("brew");
     expect(state.steamTimeoutRemainingMs).toBeNull();
+  });
+
+  it("decays persisted steam compensation without restarting active clocks", async () => {
+    let response = await simulator.app.request(
+      "/api/v2/settings/steam-control",
+      { headers: authorization },
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      settings: {
+        initialCompensationC: 12,
+        decayDurationMs: 720_000,
+        readyTimeoutMs: 300_000,
+      },
+    });
+
+    response = await simulator.app.request(
+      "/api/v2/settings/steam-control",
+      jsonRequest(
+        "PATCH",
+        {
+          initialCompensationC: 15,
+          decayDurationMs: 60_000,
+          readyTimeoutMs: 120_000,
+        },
+        authorization,
+      ),
+    );
+    expect(response.status).toBe(200);
+
+    await setMode("steam");
+    await control("PUT", "/_simulator/temperatures", {
+      boilerTemperatureC: 100,
+    });
+    await advance(3_000);
+    let state = await getState();
+    expect(state.status).toBe("ready");
+    expect(state.steamControl.heatSoakElapsedMs).toBe(3_000);
+    expect(state.steamControl.appliedCompensationC).toBeCloseTo(14.3, 1);
+
+    await advance(27_000);
+    state = await getState();
+    expect(state.steamControl.heatSoakElapsedMs).toBe(30_000);
+    expect(state.steamControl.appliedCompensationC).toBeCloseTo(7.5, 1);
+
+    response = await simulator.app.request(
+      "/api/v2/settings/steam-control",
+      jsonRequest("PATCH", { readyTimeoutMs: 60_000 }, authorization),
+    );
+    expect(response.status).toBe(200);
+    state = await getState();
+    expect(state.steamControl.heatSoakElapsedMs).toBe(30_000);
+    expect(state.steamTimeoutRemainingMs).toBe(33_000);
+
+    await advance(33_000);
+    state = await getState();
+    expect(state.activeMode).toBe("brew");
+    expect(state.steamControl.heatSoakElapsedMs).toBe(63_000);
+
+    await control("PUT", "/_simulator/temperatures", {
+      boilerTemperatureC: 93,
+    });
+    await advance(1);
+    expect((await getState()).steamControl.heatSoakElapsedMs).toBeNull();
+
+    await simulator.app.request("/_simulator/power-cycle", { method: "POST" });
+    response = await simulator.app.request(
+      "/api/v2/settings/steam-control",
+      { headers: authorization },
+    );
+    expect(await response.json()).toMatchObject({
+      settings: {
+        initialCompensationC: 15,
+        decayDurationMs: 60_000,
+        readyTimeoutMs: 60_000,
+      },
+      heatSoakElapsedMs: null,
+    });
   });
 
   it("latches faults, de-energizes heating, and clears on power cycle", async () => {

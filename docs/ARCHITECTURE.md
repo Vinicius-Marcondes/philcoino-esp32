@@ -447,7 +447,26 @@ trips, and output failures reset/freeze or dominate PI as appropriate.
 Changing authority or constants requires a new build and does not become
 accepted control without pinned-target and supervised physical A/B evidence.
 
-Mode and target changes reset readiness, steam timing, demand tracking, recovery state, and the heater window. Targets are saved before becoming controller state. Steam timeout starts on first readiness and returns to brew after five minutes.
+Mode and target changes reset readiness, demand tracking, recovery state, and
+the heater window. Targets are saved before becoming controller state. On the
+first Steam entry of a heat-soak episode, firmware records a volatile monotonic
+origin and calculates:
+
+```text
+appliedCompensationC =
+  initialCompensationC × max(0, 1 - elapsedMs / decayDurationMs)
+steamControlTemperatureC =
+  boilerTemperatureC + appliedCompensationC
+```
+
+The estimate owns Steam demand, duty, recovery, readiness, status and the
+post-ready timeout start. `boilerTemperatureC` remains the globally calibrated
+sensor value, and raw/effective over-temperature checks run without the
+transient term. Leaving Steam preserves the origin until the effective sensor
+reading reaches the Brew target or below; reboot clears it. Persisted setting
+changes force heater command off before NVS, preserve active heat-soak and
+ready-timeout origins, and recalculate the timeout against its original
+ready timestamp.
 
 During Brew extraction, the controller derives a private heater-duty target.
 Pre-infusion uses a fixed `0°C` bias, Manual and profile main extraction use
@@ -486,6 +505,8 @@ The ESP-IDF adapter owns the 512-byte authorization-header limit, 1,024-byte req
 | Selected device ID/address/token | Mobile SecureStore | Yes | Not applicable |
 | Brew/steam targets | Firmware NVS | Yes | Yes |
 | Temperature calibration offset/status | Firmware NVS | Yes | Yes; missing record is uncalibrated `0°C`, corrupt/unreadable storage faults |
+| Steam compensation/decay/ready-timeout settings | Firmware NVS | Yes | Yes; missing record persists `12°C`/`12 min`/`5 min` defaults, invalid storage fails off |
+| Active Steam heat-soak origin | Firmware RAM | Reflected while powered | No |
 | Mobile extraction profiles | Mobile SecureStore | Yes | Not applicable |
 | Keep-screen-awake preference | Mobile local key-value storage | Yes | App-level; independent of the selected machine |
 | Firmware extraction profiles | Firmware NVS | Not applicable | Yes |
