@@ -465,7 +465,7 @@ required. No energized test was performed or authorized by this software task.
 
 ## PRD-019 local extraction telemetry streaming
 
-Status: IMPLEMENTED — PINNED TARGET AND CONNECTED ACCEPTANCE PENDING
+Status: IMPLEMENTED — CONNECTED ACCEPTANCE PENDING
 
 The repository now defines authenticated `GET /api/v2/extractions/stream` SSE,
 a separate zero-wait 320-sample firmware ring, deterministic simulator
@@ -476,8 +476,10 @@ remain authoritative; there is no high-frequency polling fallback.
 
 On 2026-08-05, OpenAPI validation, protocol and simulator typechecks/tests,
 mobile typecheck/lint/tests, and the complete native plus ASan/UBSan firmware
-host suites passed. `idf.py` was not available in the agent environment and was
-not installed. Therefore the ESP-IDF 6.0.2 target build and connected iOS/
-Android measurements of request rate, HTTP latency, heap/stack, workflow-mutex
-timing, stream gaps, Wi-Fi recovery, and control-loop deadlines remain pending.
-No energized or physical-safety test was performed or authorized.
+host suites passed. After activating the owner-provided toolchain,
+`ESP-IDF v6.0.2` built the ESP32-C3 target successfully. The application image
+is `0x120cb0` bytes with `0x5f350` bytes (25%) free in the smallest app
+partition. Connected iOS/Android measurements of request rate, HTTP latency,
+heap/stack, workflow-mutex timing, stream gaps, Wi-Fi recovery, and control-loop
+deadlines remain pending. No flashing, energized, or physical-safety test was
+performed or authorized.

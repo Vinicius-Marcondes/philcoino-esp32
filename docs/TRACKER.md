@@ -1,6 +1,6 @@
 # PRD-019 Tracker
 
-PRD Status: Implemented — Pinned target and Human acceptance pending
+PRD Status: Implemented — Connected and Human acceptance pending
 Current Task: [STRM-007](prds/PRD-019/tasks/STRM-007.md) — Verify connected behavior
 
 Implementation Boundary: Replace extraction-time scale/trace polling with one
@@ -39,7 +39,7 @@ PRD: `docs/prds/PRD-019/PRD-019.md`
 | [STRM-001](prds/PRD-019/tasks/STRM-001.md) | Agent | Done | OpenAPI validation; protocol typecheck; 169 tests | Additive SSE; `/scale/trace` compatible | Pending | None | None |
 | [STRM-002](prds/PRD-019/tasks/STRM-002.md) | Agent | Done | Simulator typecheck; 99 tests | Manual time publishes without sleeps | Pending | None | None |
 | [STRM-003](prds/PRD-019/tasks/STRM-003.md) | Agent | Done | Native and ASan/UBSan host suites: 11/11 | Separate 320-sample zero-wait ring | Pending | None | None |
-| [STRM-004](prds/PRD-019/tasks/STRM-004.md) | Agent | In Review | Host suites pass; target source implemented | One async subscriber; disconnect on send failure | Pending | `idf.py` unavailable; connected budgets unmeasured | Run pinned ESP-IDF 6.0.2 build and connected worksheet |
+| [STRM-004](prds/PRD-019/tasks/STRM-004.md) | Agent | In Review | Host suites pass; ESP-IDF 6.0.2 ESP32-C3 build passes (`0x120cb0`, 25% partition free) | One async subscriber; disconnect on send failure | Pending | Connected budgets unmeasured | Run connected worksheet |
 | [STRM-005](prds/PRD-019/tasks/STRM-005.md) | Agent | Done | Mobile typecheck; parser/session/integration tests | 404 unsupported; no polling fallback | Pending | None | None |
 | [STRM-006](prds/PRD-019/tasks/STRM-006.md) | Agent | Done | Migration/history/CSV/UI tests; lint | Unlimited retention until explicit clear | Pending | Native visual review is part of STRM-007 | None |
-| [STRM-007](prds/PRD-019/tasks/STRM-007.md) | Human | In Review | Automated matrix recorded in side notes | Connected evidence remains separate from safety | Pending | Target/native devices and instrumentation unavailable | Review native UI and connected target metrics |
+| [STRM-007](prds/PRD-019/tasks/STRM-007.md) | Human | In Review | Automated matrix and pinned target build recorded in side notes | Connected evidence remains separate from safety | Pending | Native devices and instrumentation unavailable | Review native UI and connected target metrics |

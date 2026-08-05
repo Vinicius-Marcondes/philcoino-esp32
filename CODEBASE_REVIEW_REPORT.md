@@ -42,9 +42,10 @@ PRD-019 replaces high-frequency mobile extraction polling with one
 authenticated local SSE subscriber and generalizes local extraction history.
 The stream is observational and preserves the one-second authoritative state
 poll plus REST commands. Passing protocol, simulator, mobile, and firmware host
-tests does not prove the ESP-IDF asynchronous adapter's target resource/timing
-behavior, Wi-Fi recovery, physical current, pump flow, or heater safety. Its
-pinned target build and connected iOS/Android acceptance remain pending.
+tests and the passing pinned ESP-IDF 6.0.2 ESP32-C3 build do not prove the
+asynchronous adapter's connected resource/timing behavior, Wi-Fi recovery,
+physical current, pump flow, or heater safety. Connected iOS/Android acceptance
+remains pending.
 
 The project remains a prototype. Do not infer production, unattended, or
 energized authorization from passing software checks or earlier owner-reported

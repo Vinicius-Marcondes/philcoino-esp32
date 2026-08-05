@@ -1,6 +1,6 @@
 # STRM-004 — Add the ESP-IDF asynchronous SSE adapter
 
-Status: In Review — Pinned target verification pending
+Status: In Review — Connected resource verification pending
 Review Mode: Agent
 Review Reason: Adapter tests plus the pinned target build provide deterministic software acceptance; runtime evidence stays separate.
 
@@ -28,7 +28,8 @@ Serve the telemetry ring through one bounded authenticated asynchronous SSE conn
 
 - [x] Busy/unavailable/authentication responses are strict.
 - [x] A slow client cannot queue unbounded work or block REST/control tasks.
-- [ ] Host checks and pinned ESP-IDF 6.0.2 build pass with recorded budgets.
+- [x] Host checks and the pinned ESP-IDF 6.0.2 ESP32-C3 build pass.
+- [ ] Connected heap, stack, latency, and control-deadline budgets are recorded.
 
 ## Verification Strategy
 
