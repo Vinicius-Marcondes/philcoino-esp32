@@ -34,6 +34,11 @@ const weightedScale: ScaleState = {
 };
 
 describe("ScalePollingSession", () => {
+  test("never uses REST for the 250 ms extraction telemetry cadence", () => {
+    expect(SCALE_FAST_POLL_INTERVAL_MS).toBe(1_000);
+    expect(SCALE_IDLE_POLL_INTERVAL_MS).toBe(1_000);
+  });
+
   test("polls immediately then uses the one-second idle cadence", async () => {
     const scheduler = new FakeScheduler();
     let requests = 0;

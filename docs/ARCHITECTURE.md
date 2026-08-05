@@ -47,11 +47,12 @@ The simulator implements the contract and selected product semantics with a manu
 
 ## API contract
 
-`packages/protocol/openapi.yaml` is the language-neutral source of truth. It defines seven API v1/public operations plus the additive API v2 workflow, history, and scale operations, bearer security, strict object shapes, limits, fault/error codes, and examples. The file uses JSON syntax, which is valid YAML 1.2.
+`packages/protocol/openapi.yaml` is the language-neutral source of truth. It defines seven API v1/public operations plus the additive API v2 workflow, history, scale, and extraction-stream operations, bearer security, strict object shapes, limits, fault/error codes, and examples. The file uses JSON syntax, which is valid YAML 1.2.
 
 API v2 defines authenticated combined machine/extraction/compensation/cooldown
 state, four-slot profile read/replace, idempotent extraction and cooldown
-Start/Stop shapes, and a firmware-owned temperature-calibration transaction.
+Start/Stop shapes, authenticated extraction telemetry SSE, and a firmware-owned
+temperature-calibration transaction.
 Mobile, simulator, and firmware use these routes; API v1 remains compatible and
 temperature-control-only. Contract, simulator, and host-test agreement does not
 establish physical pump, heater, steam, cooling, or calibration accuracy.
@@ -167,21 +168,23 @@ state together. Generation
 counters and `AbortController` prevent stopped/paused work from publishing.
 Failures clear both live snapshots before changing connection state.
 
-Scale polling has a separate completion-driven session with at most one request
-in flight. Its next timer uses the latest validated scale acknowledgement:
-one second while the Scale page is hidden and no weighted extraction is active,
-or 250 ms while the Scale page is visible or the acknowledged scale state
-reports a weighted extraction. Manual and timed extraction do not increase the
-scale cadence, and a failed hidden-page request falls back to one second without
-retaining stale weighted state.
+Scale diagnostics use a separate completion-driven one-second session with at
+most one request in flight. Once an acknowledged extraction is running, the app
+suppresses that REST session and starts one authenticated
+`GET /api/v2/extractions/stream` request even when the extraction console is
+closed. The one-second combined-state poll remains active for authoritative
+workflow, fault, and connection state.
 
-Weighted trace synchronization is a second completion-driven, non-overlapping
-session. It commits each page before advancing the durable
-extraction/boot/sequence cursor, aborts on backgrounding, and resumes backfill
-after reconnection. Firmware 404 permanently selects the legacy scale and
-temperature-graph path for that session. The phone derives beverage mass flow
-from raw net weight with a causal one-second regression and resets across every
-identity, sequence, availability, or null-weight discontinuity.
+`ExtractionStreamSession` incrementally parses `text/event-stream` bytes from
+Expo 54 `expo/fetch`. It commits every strict page to SQLite before advancing
+the durable extraction/boot/sequence cursor, aborts on backgrounding, and
+reconnects on foregrounding or transient failure after 250 ms, 500 ms, one
+second, and then two-second retries. A 404 marks streaming unsupported for that
+device session and shows an update-required state; there is no high-frequency
+polling fallback. Stream failures mark extraction telemetry stale/unavailable
+without disabling Start or REST Stop. The phone derives beverage mass flow from
+raw net weight with the existing causal one-second regression and resets across
+every identity, sequence, availability, or null-weight discontinuity.
 
 `DashboardMutationSession` serializes temperature, mode, heater, fault, complete
 profile export, extraction Start/Stop, and cooldown Start/Stop mutations. It:
@@ -229,15 +232,15 @@ row to mobile SQLite. Rows include phone UTC capture time plus acknowledged
 firmware uptime, temperature, targets, mode, heater permission/command, pump
 command, status, and fault context. Polling uses only queryless
 `GET /api/v2/state`; there is no prediction capability probe or fallback.
-The repository retains only the current
-local calendar day; background/offline periods and firmware uptime resets remain
+The temperature repository retains only the current local calendar day;
+background/offline periods and firmware uptime resets remain
 explicit graph gaps. The Dashboard presents consecutive thirty-second Live
 pages in the same telemetry surface used for weighted extraction traces. In
 temperature-history mode, the upper band renders only acknowledged boiler and
 target samples, the current scale state supplies the weight metric, and the
-lower band explicitly marks weight history and derived flow unavailable. A
-weighted trace populates that unchanged surface with retained weight and
-app-derived beverage flow, so extraction state changes do not replace or
+lower band explicitly marks weight history and derived flow unavailable. An
+extraction trace populates that unchanged surface with nullable retained weight
+and app-derived beverage flow, so extraction state changes do not replace or
 restyle the graph. Machine can export every stored temperature row for the
 current day. This observational data never participates in firmware control
 and contains neither bearer tokens nor network addresses.
@@ -269,6 +272,23 @@ serializing JSON within the 8 KiB response budget. A random 128-bit boot ID and
 increasing sequence distinguish reboot, continuous, reset, and truncated
 history without persisting anything to NVS.
 
+Extraction telemetry uses a separate RAM-only 320-sample ring. The workflow
+task attempts an observational capture every 250 ms for Manual, timed-profile,
+and weighted-profile extractions and for ten seconds after pump stop. Its
+atomic guard is zero-wait: contention skips the capture while sequence gaps
+remain explicit. Manual and timed starts latch the first usable calibrated
+scale value as a best-effort baseline; weighted starts reuse the
+firmware-authoritative net weight. Missing scale or baseline produces nullable
+weight and never blocks ordinary Start. A network task copies at most sixteen
+samples under the ring guard, then serializes and sends SSE outside the workflow
+mutex.
+
+Mobile extraction history keys summaries and traces by device, firmware boot,
+and extraction identity, so the firmware's reboot-reset extraction counter
+cannot overwrite an older retained shot. The SQLite migration copies existing
+weighted rows and trace boot IDs transactionally, keeps the legacy tables as
+migration sources, and performs no age-based pruning.
+
 Live graph pages use stable clock-aligned thirty-second windows. The newest
 page follows incoming samples only while the user remains at the latest offset;
 an older inspected window keeps its timestamp identity when live or recovered
@@ -290,9 +310,11 @@ the five API v1 mutations/state operations and all API v2 state, profile,
 extraction, and cooldown operations. Parsing uses protocol schemas and emits
 version-appropriate strict errors.
 
-The deterministic model also captures the same one-Hertz rolling history,
-eight-sample pagination, overflow, boot reset, and full command/fault context.
-Simulator time remains manually advanced; it does not create background samples.
+The deterministic model also captures the same one-Hertz rolling history and
+the independent 250 ms extraction telemetry ring, including all three control
+modes, best-effort baselines, a ten-second settling tail, cursor replay/reset,
+and strict SSE framing. Simulator time remains manually advanced; advancing it
+publishes deterministic stream events without real-time sleeps.
 
 The model holds persisted targets, the four-slot profile set, and the signed
 temperature calibration separately from volatile mode, raw temperature,
@@ -371,6 +393,14 @@ and posts an atomic fail-safe request; the next owner latches an internal fault,
 ends extraction, and aborts active cooldown. The GPTimer safety lease separately
 bounds a firmware-commanded heater-high pulse if normal controller renewal
 stalls. None of these command paths confirm physical de-energization.
+
+Extraction streaming never performs JSON serialization or socket transmission
+inside that mutex. Workflow code copies only the bounded observation and
+notifies the asynchronous stream task. One authenticated subscriber is allowed;
+a busy subscriber receives `409 stream_busy`, an unavailable/future cursor
+receives `409 stream_unavailable`, and a slow or failed client is disconnected
+instead of growing an unbounded queue. Two seconds without a sample emits an
+SSE comment heartbeat.
 
 Targets and the ordered four-slot extraction profile set load from separate one-key NVS blobs. Missing data initializes validated defaults; corrupt/invalid data stops startup. A profile replacement is validated as a complete set before its single blob commit, so firmware never deliberately publishes a partially replaced set. The first sensor sample happens before networking starts. Wi-Fi/API startup runs in a separate FreeRTOS task so a network failure does not intentionally stop temperature control.
 
@@ -496,7 +526,7 @@ Sensor, over-temperature, heating-timeout, and internal faults latch and command
 
 The ESP-IDF server connects as a Wi-Fi station, limits TX power when possible, registers reconnect handlers, serves port 80, and advertises identity through mDNS TXT records. One immutable route table in `api_routes.cpp` owns method/path/access metadata for HTTP registration, pre-body access checks, and `FirmwareApi` dispatch. `FirmwareApi` retains constant-time length-aware bearer comparison and explicit controller/storage orchestration; pure codec modules parse and serialize without locks, persistence, controller mutation, output access, or network I/O.
 
-The ESP-IDF adapter owns the 512-byte authorization-header limit, 1,024-byte request-body limit, two-second absolute body deadline, bounded timeout count, and response/challenge transmission. Protected requests are authenticated before their bodies are read. HTTP remains available if mDNS advertisement fails, so direct/manual address access remains usable.
+The ESP-IDF adapter owns the 512-byte authorization-header limit, 1,024-byte request-body limit, two-second absolute body deadline, bounded timeout count, response/challenge transmission, and asynchronous SSE request lifecycle. Protected requests, including the stream, are authenticated before cursor processing. HTTP remains available if mDNS advertisement fails, so direct/manual address access remains usable.
 
 ## Persistence and reset semantics
 
@@ -512,8 +542,8 @@ The ESP-IDF adapter owns the 512-byte authorization-header limit, 1,024-byte req
 | Firmware extraction profiles | Firmware NVS | Not applicable | Yes |
 | Scale calibration | Firmware NVS | Not applicable | Yes |
 | Per-profile weight defaults | Mobile SecureStore | Yes | Not applicable |
-| Weighted-shot history (90 days) | Mobile SQLite | Yes | Not applicable |
-| Active/last weighted extraction and fallback warning | Firmware RAM | Reflected while connected | No |
+| Extraction summaries/traces (Manual, timed, weighted; until explicit clear) | Mobile SQLite | Yes | Not applicable |
+| Active/last extraction telemetry ring and weighted fallback warning | Firmware RAM | Reflected while connected | No |
 | Pump GPIO10 command | Firmware RAM/GPIO | Reflected while connected | No; boots `off` |
 | Extraction/cooldown identity, phase, deadlines, outcome | Firmware RAM | Reflected while connected | No; both boot idle and cooldown history is cleared |
 | Extraction duty compensation | Derived firmware policy | Reflected while eligible | No persisted setting; recomputed from acknowledged phase |

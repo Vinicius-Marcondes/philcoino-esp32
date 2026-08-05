@@ -202,6 +202,23 @@ curl 'http://localhost:3000/api/v2/state' \
 Any state query parameter, including the removed prediction opt-in, is rejected
 as malformed.
 
+After starting any extraction, inspect its authenticated SSE stream with:
+
+```bash
+curl -N http://localhost:3000/api/v2/extractions/stream \
+  -H 'Authorization: Bearer philcoino-dev-token' \
+  -H 'Accept: text/event-stream'
+```
+
+Advance simulator time from a second terminal while the stream is open. The
+simulator immediately publishes deterministic 250 ms observations for every
+crossed interval; it does not sleep in real time. Reconnect by supplying all
+three values from `nextCursor` as `bootId`, `extractionId`, and
+`afterSequence`. Supplying only part of the cursor is invalid. The mobile app
+uses this stream for extraction telemetry and keeps the queryless one-second
+combined-state poll for authoritative workflow/fault/connection state; it does
+not fall back to high-frequency REST polling.
+
 Use the returned `nextCursor.bootId` and `nextCursor.afterSequence` together for
 the next page. Strict pages contain at most eight samples, one controller/build
 configuration, and per-sample controller diagnostics. Power-cycle changes the
@@ -278,7 +295,9 @@ filter.
 
 ### Host tests
 
-Host tests exercise pure C++ configuration, peripheral policies, control, and API serialization without ESP-IDF or hardware:
+Host tests exercise pure C++ configuration, peripheral policies, control,
+fixed extraction telemetry buffers, cursor/continuity rules, serialization,
+and resource bounds without ESP-IDF or hardware:
 
 ```bash
 cmake -S firmware/espresso-machine/host-tests -B /tmp/philcoino-host-tests
@@ -300,6 +319,13 @@ temperature-calibration status/Start/candidate/Save/Cancel,
 controller-diagnostic history, eligibility errors, and failed terminal state.
 Capture validation proves only that independent C++ serialization matches the
 wire schemas.
+
+`extraction_telemetry_test` additionally covers all extraction modes,
+best-effort baseline behavior, the 250 ms/ten-second lifecycle, retention and
+wrap-safe timing, zero-wait contention gaps, and bounded sixteen-sample pages.
+The async ESP-IDF server path, one-client enforcement, socket send failure, and
+task stack/heap behavior still require the pinned target build and connected
+acceptance below.
 
 Run the pure API codec/property targets and deterministic mutation campaign
 under AddressSanitizer and UndefinedBehaviorSanitizer with:
@@ -329,6 +355,17 @@ idf.py build
 ```
 
 Configure Wi-Fi SSID, Wi-Fi password, and bearer token through `idf.py menuconfig` under `PhilcoINO`. Values belong only in generated, ignored `sdkconfig`; never put them in source, defaults, logs, screenshots, tests, or documentation.
+
+For PRD-019 connected acceptance, keep mains loads disconnected unless a
+separate supervised safety procedure explicitly authorizes them. Compare the
+pre-stream and streaming builds for request rate, ordinary HTTP latency,
+free/minimum heap, stream-task stack high-water mark, workflow-mutex duration,
+sequence gaps, Wi-Fi loss/recovery, and temperature/control-loop deadline
+misses. Exercise Start, live samples, client disconnect, durable-cursor replay,
+the ten-second settling tail, and terminal closure for Manual, timed-profile,
+and weighted-profile shots on both native iOS and Android clients. Record raw
+measurements in the PRD evidence; a successful target build alone is not this
+runtime acceptance and neither is energized/physical-safety approval.
 
 Current source permanently uses one boiler-base thermocouple on
 GPIO4/GPIO5/GPIO7 for both control modes. Firmware validates the raw sample,

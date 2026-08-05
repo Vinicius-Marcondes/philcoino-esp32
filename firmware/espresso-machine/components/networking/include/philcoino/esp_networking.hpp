@@ -1,6 +1,8 @@
 #pragma once
 
+#include <array>
 #include <atomic>
+#include <cstdint>
 #include <string>
 
 #include "philcoino/api.hpp"
@@ -8,13 +10,16 @@
 
 namespace philcoino::networking {
 
+class ExtractionTelemetryBuffer;
+
 enum class WifiStatus { kOff, kConnecting, kConnected, kRetrying, kFailed };
 
 class EspNetworkServer {
  public:
   EspNetworkServer(
       FirmwareApi& api, const DeviceIdentity& identity,
-      diagnostics::PerformanceDiagnostics* performance_diagnostics = nullptr);
+      diagnostics::PerformanceDiagnostics* performance_diagnostics = nullptr,
+      ExtractionTelemetryBuffer* extraction_telemetry = nullptr);
 
   bool start(const char* ssid, const char* password);
   WifiStatus wifi_status() const;
@@ -28,10 +33,15 @@ class EspNetworkServer {
   void handle_wifi_event(const char* event_base, std::int32_t event_id,
                          void* event_data);
   int handle_http_request(void* request);
+  int handle_extraction_stream(void* request);
+  void run_extraction_stream();
+  static void extraction_stream_task(void* context);
+  static void notify_extraction_stream(void* context);
 
   FirmwareApi& api_;
   DeviceIdentity identity_;
   diagnostics::PerformanceDiagnostics* performance_diagnostics_;
+  ExtractionTelemetryBuffer* extraction_telemetry_;
   void* event_group_{nullptr};
   void* http_server_{nullptr};
   void* wifi_event_handler_{nullptr};
@@ -40,6 +50,13 @@ class EspNetworkServer {
   std::atomic<bool> mdns_started_{false};
   std::atomic<bool> mdns_starting_{false};
   std::atomic<bool> mdns_retry_running_{false};
+  std::atomic<bool> extraction_stream_active_{false};
+  void* extraction_stream_request_{nullptr};
+  std::atomic<void*> extraction_stream_task_handle_{nullptr};
+  std::array<char, 33> extraction_stream_boot_id_{};
+  std::array<char, 65> extraction_stream_extraction_id_{};
+  std::uint64_t extraction_stream_after_sequence_{0};
+  bool extraction_stream_cursor_supplied_{false};
 };
 
 }  // namespace philcoino::networking

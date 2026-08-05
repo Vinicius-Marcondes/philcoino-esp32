@@ -90,6 +90,7 @@ const expectedOperations = {
   "/api/v2/profiles": "get",
   "/api/v2/extractions/start": "post",
   "/api/v2/extractions/stop": "post",
+  "/api/v2/extractions/stream": "get",
   "/api/v2/cooldowns/start": "post",
   "/api/v2/cooldowns/stop": "post",
 } as const;

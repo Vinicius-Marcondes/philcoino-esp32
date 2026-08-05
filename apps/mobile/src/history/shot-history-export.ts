@@ -1,9 +1,9 @@
-import type { WeightedShotSummary } from "./shot-history";
-import type { StoredWeightedShotTrace } from "./weighted-shot-trace";
+import type { ExtractionSummary } from "./shot-history";
+import type { StoredExtractionTrace } from "./extraction-trace";
 
 export interface ShotHistoryExporter {
-  share(samples: WeightedShotSummary[]): Promise<void>;
-  shareTrace(trace: StoredWeightedShotTrace): Promise<void>;
+  share(samples: ExtractionSummary[]): Promise<void>;
+  shareTrace(trace: StoredExtractionTrace): Promise<void>;
 }
 
 export const shotHistoryExporter: ShotHistoryExporter = {

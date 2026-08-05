@@ -243,6 +243,7 @@ export function DashboardScreen({
     deviceId: selectedDevice.deviceId,
     extraction,
     scalePageVisible: dashboardPage === "scale" || consoleOpen,
+    streamClient: "streamExtractionTelemetry" in client ? client : null,
   });
   const traceCutoffDecigrams =
     scale.scale?.activeExtraction?.cutoffWeightDecigrams ??
@@ -519,10 +520,12 @@ export function DashboardScreen({
         cutoffDecigrams={traceCutoffDecigrams}
         deviceName={deviceName}
         extraction={extraction}
+        extractionHistory={scale.history}
         landscape={landscape}
         live={freshness === "live"}
         onBrewControlModeChange={setBrewControlMode}
         onClose={() => setConsoleOpen(false)}
+        onSelectHistoryTrace={scale.selectTrace}
         onStateChange={applyExtractionUiState}
         onWeightControlChange={setShotWeightControl}
         scale={scale.scale}
@@ -1358,16 +1361,18 @@ function ScalePage({
           {scale.history.slice(0, 20).map((shot) => (
             <Pressable
               accessibilityRole="button"
-              key={shot.extractionId}
+              key={`${shot.bootId ?? "legacy"}:${shot.extractionId}`}
               onPress={() =>
-                void scale.selectTrace(shot.extractionId).then(setSelectedTrace)
+                void scale
+                  .selectTrace(shot.extractionId, shot.bootId)
+                  .then(setSelectedTrace)
               }
               style={({ pressed }) => [
                 styles.scaleHistoryRow,
                 pressed && styles.pressed,
               ]}>
               <Text selectable style={styles.contextTitle}>
-                {formatWeightReadout(shot.finalWeightDecigrams)} · {shot.profileId}
+                {formatWeightReadout(shot.finalWeightDecigrams)} · {shotLabel(shot)}
               </Text>
               <Text selectable style={styles.contextText}>
                 {new Date(shot.recordedAtMs).toLocaleString()} · {shot.outcome}
@@ -1430,6 +1435,20 @@ function ScalePage({
       </View>
     </View>
   );
+}
+
+function shotLabel(shot: {
+  controlMode: "manual" | "timed" | "weight";
+  profileId: ProfileSlotId | null;
+}): string {
+  return translate(
+    shot.controlMode === "manual"
+      ? "scale.historyManual"
+      : shot.controlMode === "timed"
+        ? "scale.historyTimedProfile"
+        : "scale.historyWeightProfile",
+    { profile: shot.profileId ?? "" },
+  ).trim();
 }
 
 function ProfileLoadingCard({

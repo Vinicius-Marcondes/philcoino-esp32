@@ -7,6 +7,7 @@ idf_component_register(
     "src/api_routes.cpp"
     "src/api_workflow_codec.cpp"
     "src/esp_networking.cpp"
+    "src/extraction_telemetry.cpp"
     "src/history.cpp"
     "src/weighted_trace.cpp"
   INCLUDE_DIRS "include"

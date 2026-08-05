@@ -6,7 +6,7 @@ import type {
   WeightedExtractionTracePhase,
 } from "@philcoino/protocol";
 
-import type { StoredWeightedShotTrace } from "../history/weighted-shot-trace";
+import type { StoredExtractionTrace } from "../history/extraction-trace";
 import {
   currentScaleWeightDecigrams,
   formatElapsedReadout,
@@ -37,9 +37,9 @@ export interface ExtractionConsoleReadouts {
  * console never mixes two shots on one time axis.
  */
 export function extractionConsoleTrace(
-  trace: StoredWeightedShotTrace | null,
+  trace: StoredExtractionTrace | null,
   extraction: ExtractionState | null,
-): StoredWeightedShotTrace | null {
+): StoredExtractionTrace | null {
   if (trace === null) return null;
   if (
     extraction?.status === "running" &&
@@ -59,7 +59,7 @@ export function extractionConsoleReadouts({
   extraction: ExtractionState | null;
   scale: ScaleState | null;
   snapshot: MachineState | null;
-  trace: StoredWeightedShotTrace | null;
+  trace: StoredExtractionTrace | null;
 }): ExtractionConsoleReadouts {
   const running = extraction?.status === "running";
   const latest = trace?.samples.at(-1) ?? null;

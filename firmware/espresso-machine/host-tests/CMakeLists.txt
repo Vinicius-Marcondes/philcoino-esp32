@@ -119,6 +119,23 @@ target_compile_options(resource_budget_test PRIVATE -Wall -Wextra -Werror)
 add_test(NAME resource_budget_test COMMAND resource_budget_test)
 
 add_executable(
+  extraction_telemetry_test
+  extraction_telemetry_test.cpp
+  ../components/networking/src/extraction_telemetry.cpp
+)
+target_include_directories(
+  extraction_telemetry_test
+  PRIVATE
+    ../components/networking/include
+    ../components/control/include
+    ../components/peripherals/include
+    ../components/firmware_config/include
+)
+target_compile_features(extraction_telemetry_test PRIVATE cxx_std_17)
+target_compile_options(extraction_telemetry_test PRIVATE -Wall -Wextra -Werror)
+add_test(NAME extraction_telemetry_test COMMAND extraction_telemetry_test)
+
+add_executable(
   firmware_api_test
   firmware_api_test.cpp
   ../components/networking/src/api.cpp
@@ -126,8 +143,9 @@ add_executable(
   ../components/networking/src/api_json.cpp
   ../components/networking/src/api_machine_codec.cpp
   ../components/networking/src/api_routes.cpp
-  ../components/networking/src/api_workflow_codec.cpp
-  ../components/networking/src/history.cpp
+    ../components/networking/src/api_workflow_codec.cpp
+    ../components/networking/src/extraction_telemetry.cpp
+    ../components/networking/src/history.cpp
   ../components/networking/src/weighted_trace.cpp
   ../components/control/src/control.cpp
   ../components/control/src/brew_pi.cpp
@@ -153,6 +171,7 @@ set(
   ../components/networking/src/api_json.cpp
   ../components/networking/src/api_machine_codec.cpp
   ../components/networking/src/api_workflow_codec.cpp
+  ../components/networking/src/extraction_telemetry.cpp
   ../components/networking/src/history.cpp
   ../components/networking/src/weighted_trace.cpp
   ../components/control/src/control.cpp

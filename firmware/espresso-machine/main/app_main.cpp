@@ -23,6 +23,7 @@
 #include "philcoino/history.hpp"
 #include "philcoino/performance_diagnostics.hpp"
 #include "philcoino/weighted_trace.hpp"
+#include "philcoino/extraction_telemetry.hpp"
 
 namespace {
 
@@ -148,6 +149,7 @@ struct WorkflowTaskContext {
   FreeRtosApiSynchronization* synchronization;
   philcoino::control::ScaleController* scale;
   philcoino::networking::WeightedTraceBuffer* weighted_trace;
+  philcoino::networking::ExtractionTelemetryBuffer* extraction_telemetry;
   philcoino::diagnostics::PerformanceDiagnostics* performance_diagnostics;
 };
 
@@ -201,6 +203,7 @@ void workflow_control_task(void* argument) {
     philcoino::control::ScaleSnapshot trace_scale{};
     philcoino::control::WeightExtractionSnapshot trace_weight{};
     bool capture_trace = false;
+    bool capture_telemetry = false;
     bool trace_scale_copied = false;
     auto extraction_result =
         philcoino::control::ExtractionUpdateResult::kOk;
@@ -239,24 +242,35 @@ void workflow_control_task(void* argument) {
       context->temperature->latch_fault(
           philcoino::control::FaultCode::kInternalError);
     }
+    if (!trace_scale_copied) {
+      trace_scale = context->scale->snapshot(now_ms);
+    }
+    trace_weight = context->extraction->weight_snapshot(trace_scale, now_ms);
     if (!context->cooldown->active()) {
-      if (!trace_scale_copied) {
-        trace_scale = context->scale->snapshot(now_ms);
-      }
-      trace_weight =
-          context->extraction->weight_snapshot(trace_scale, now_ms);
       capture_trace = (trace_weight.active || trace_weight.terminal) &&
                       context->weighted_trace->capture_due(
                           now_ms, trace_weight.extraction_id);
-      if (capture_trace) {
-        trace_machine = context->temperature->snapshot(now_ms);
-      }
+    }
+    capture_telemetry =
+        (!trace_extraction.extraction_id.empty() &&
+         (trace_extraction.status ==
+              philcoino::control::ExtractionStatus::kRunning ||
+          trace_extraction.outcome !=
+              philcoino::control::ExtractionOutcome::kNone)) &&
+        context->extraction_telemetry->capture_due(
+            now_ms, trace_extraction.extraction_id);
+    if (capture_trace || capture_telemetry) {
+      trace_machine = context->temperature->snapshot(now_ms);
     }
     context->synchronization->unlock(
         philcoino::networking::ApiDomain::kExtraction);
     if (capture_trace) {
       context->weighted_trace->record(now_ms, trace_machine, trace_extraction,
                                       trace_scale, trace_weight);
+    }
+    if (capture_telemetry) {
+      context->extraction_telemetry->record(
+          now_ms, trace_machine, trace_extraction, trace_scale, trace_weight);
     }
     if (extraction_result ==
         philcoino::control::ExtractionUpdateResult::kOutputFailure) {
@@ -697,11 +711,13 @@ extern "C" void app_main() {
   static philcoino::networking::HistoryBuffer history(history_boot_id.data());
   static philcoino::networking::WeightedTraceBuffer weighted_trace(
       history_boot_id.data());
+  static philcoino::networking::ExtractionTelemetryBuffer extraction_telemetry(
+      history_boot_id.data());
 
   static WorkflowTaskContext workflow_context{
       &controller, &extraction_controller, &cooldown_controller,
       &pump, &ssr, &fail_safe_requested, &synchronization, &scale_controller,
-      &weighted_trace, performance_diagnostics};
+      &weighted_trace, &extraction_telemetry, performance_diagnostics};
   TaskHandle_t workflow_task = nullptr;
   if (xTaskCreate(workflow_control_task, "philcoino-workflow", 4096,
                   &workflow_context, configMAX_PRIORITIES - 2,
@@ -737,7 +753,7 @@ extern "C" void app_main() {
       synchronization, &history, &scale_controller, &weighted_trace,
       &steam_control_settings_storage);
   static philcoino::networking::EspNetworkServer network(
-      api, identity, performance_diagnostics);
+      api, identity, performance_diagnostics, &extraction_telemetry);
   static const NetworkStartContext network_context{
       &network,
       CONFIG_PHILCOINO_WIFI_SSID,

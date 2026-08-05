@@ -3,6 +3,8 @@ import {
   CooldownActiveConflictResponseSchema,
   CompleteScaleCalibrationRequestSchema,
   ErrorResponseSchema,
+  EXTRACTION_TELEMETRY_HEARTBEAT_INTERVAL_MS,
+  ExtractionTelemetryCursorSchema,
   ExtractionActiveConflictResponseSchema,
   FaultCodeSchema,
   HeaterSettingsRequestSchema,
@@ -23,6 +25,8 @@ import {
   type ErrorResponse,
   type ApiV2ErrorCode,
   type ApiV2ErrorResponse,
+  type ExtractionTelemetryCursor,
+  type ExtractionTelemetryPage,
 } from "@philcoino/protocol";
 import { Hono, type Context, type Next } from "hono";
 
@@ -52,6 +56,7 @@ export function createSimulator(
   const machine = new SimulatorMachine(options);
   const token = options.token ?? DEFAULT_SIMULATOR_TOKEN;
   const app = new Hono();
+  let extractionStreamActive = false;
 
   if (token.length === 0) {
     throw new Error("The simulator bearer token must not be empty.");
@@ -106,6 +111,7 @@ export function createSimulator(
   app.use("/api/v2/profiles", requireBearerV2);
   app.use("/api/v2/extractions/start", requireBearerV2);
   app.use("/api/v2/extractions/stop", requireBearerV2);
+  app.use("/api/v2/extractions/stream", requireBearerV2);
   app.use("/api/v2/cooldowns/start", requireBearerV2);
   app.use("/api/v2/cooldowns/stop", requireBearerV2);
   app.use("/api/v2/temperature-calibration", requireBearerV2);
@@ -635,6 +641,143 @@ export function createSimulator(
     c.json(machine.stopExtraction()),
   );
 
+  app.get("/api/v2/extractions/stream", (c) => {
+    const cursor = extractionTelemetryCursor(c.req.url);
+    if (!cursor.ok) {
+      return contractV2Error(
+        c,
+        400,
+        "malformed_request",
+        "The extraction telemetry cursor is malformed.",
+      );
+    }
+    if (extractionStreamActive) {
+      return contractV2Error(
+        c,
+        409,
+        "stream_busy",
+        "Another authenticated extraction telemetry subscriber is active.",
+      );
+    }
+    const initial = machine.getExtractionTelemetryPage(cursor.value);
+    if (!initial.ok) {
+      return contractV2Error(
+        c,
+        409,
+        "stream_unavailable",
+        initial.reason === "unavailable"
+          ? "No retained extraction telemetry is available."
+          : "The extraction telemetry cursor is outside the retained sequence.",
+      );
+    }
+
+    extractionStreamActive = true;
+    let unsubscribe: (() => void) | null = null;
+    let heartbeat: ReturnType<typeof setInterval> | null = null;
+    let released = false;
+    let activeCursor = cursor.value;
+    let controller: ReadableStreamDefaultController<Uint8Array> | null = null;
+    let lastSendAt = Date.now();
+    const encoder = new TextEncoder();
+
+    const release = () => {
+      if (released) {
+        return;
+      }
+      released = true;
+      extractionStreamActive = false;
+      unsubscribe?.();
+      unsubscribe = null;
+      if (heartbeat !== null) {
+        clearInterval(heartbeat);
+        heartbeat = null;
+      }
+    };
+    const sendPage = (page: ExtractionTelemetryPage) => {
+      if (controller !== null && (controller.desiredSize ?? 0) <= 0) {
+        release();
+        controller.error(new Error("The extraction telemetry subscriber is too slow."));
+        return;
+      }
+      controller?.enqueue(
+        encoder.encode(`event: telemetry\ndata: ${JSON.stringify(page)}\n\n`),
+      );
+      lastSendAt = Date.now();
+      activeCursor = page.nextCursor;
+    };
+    const drain = () => {
+      while (!released) {
+        const result = machine.getExtractionTelemetryPage(activeCursor);
+        if (!result.ok) {
+          release();
+          controller?.error(new Error("Extraction telemetry became unavailable."));
+          return;
+        }
+        if (result.page === null) {
+          return;
+        }
+        sendPage(result.page);
+        if (released) {
+          return;
+        }
+        if (!result.page.hasMore) {
+          if (result.page.status === "terminal") {
+            release();
+            controller?.close();
+          }
+          return;
+        }
+      }
+    };
+
+    const body = new ReadableStream<Uint8Array>({
+      start(streamController) {
+        controller = streamController;
+        if (initial.page !== null) {
+          sendPage(initial.page);
+          if (initial.page.hasMore) {
+            drain();
+          }
+          if (released) {
+            return;
+          }
+          if (initial.page.status === "terminal" && !initial.page.hasMore) {
+            release();
+            streamController.close();
+            return;
+          }
+        }
+        unsubscribe = machine.subscribeExtractionTelemetry(drain);
+        heartbeat = setInterval(() => {
+          if (
+            !released &&
+            Date.now() - lastSendAt >=
+              EXTRACTION_TELEMETRY_HEARTBEAT_INTERVAL_MS
+          ) {
+            streamController.enqueue(encoder.encode(": heartbeat\n\n"));
+            lastSendAt = Date.now();
+          }
+        }, EXTRACTION_TELEMETRY_HEARTBEAT_INTERVAL_MS);
+      },
+      cancel() {
+        release();
+      },
+    }, {
+      highWaterMark: 320,
+      size: () => 1,
+    });
+
+    return new Response(body, {
+      status: 200,
+      headers: {
+        "Cache-Control": "no-cache, no-transform",
+        Connection: "keep-alive",
+        "Content-Type": "text/event-stream",
+        "X-Accel-Buffering": "no",
+      },
+    });
+  });
+
   app.post("/api/v2/cooldowns/start", async (c) => {
     const body = await readJson(c);
     if (!body.ok) {
@@ -900,6 +1043,44 @@ function weightedTraceCursor(
     return { ok: false };
   }
   const parsed = WeightedExtractionTraceCursorSchema.safeParse({
+    extractionId,
+    bootId,
+    afterSequence: Number(sequenceText),
+  });
+  return parsed.success ? { ok: true, value: parsed.data } : { ok: false };
+}
+
+function extractionTelemetryCursor(
+  requestUrl: string,
+):
+  | { ok: true; value: ExtractionTelemetryCursor | undefined }
+  | { ok: false } {
+  const parameters = new URL(requestUrl).searchParams;
+  const allowed = new Set(["extractionId", "bootId", "afterSequence"]);
+  for (const key of parameters.keys()) {
+    if (!allowed.has(key) || parameters.getAll(key).length !== 1) {
+      return { ok: false };
+    }
+  }
+  const extractionId = parameters.get("extractionId");
+  const bootId = parameters.get("bootId");
+  const sequenceText = parameters.get("afterSequence");
+  if (
+    extractionId === null &&
+    bootId === null &&
+    sequenceText === null
+  ) {
+    return { ok: true, value: undefined };
+  }
+  if (
+    extractionId === null ||
+    bootId === null ||
+    sequenceText === null ||
+    !/^(0|[1-9][0-9]*)$/.test(sequenceText)
+  ) {
+    return { ok: false };
+  }
+  const parsed = ExtractionTelemetryCursorSchema.safeParse({
     extractionId,
     bootId,
     afterSequence: Number(sequenceText),

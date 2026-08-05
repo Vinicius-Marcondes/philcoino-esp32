@@ -1,8 +1,8 @@
 import { File, Paths } from "expo-file-system";
 import * as Sharing from "expo-sharing";
 
-import { weightedShotHistoryToCsv } from "./shot-history";
-import { weightedShotTraceToCsv } from "./weighted-shot-trace";
+import { extractionHistoryToCsv } from "./shot-history";
+import { extractionTraceToCsv } from "./extraction-trace";
 import type { ShotHistoryExporter } from "./shot-history-export";
 
 export const shotHistoryExporter: ShotHistoryExporter = {
@@ -10,12 +10,12 @@ export const shotHistoryExporter: ShotHistoryExporter = {
     if (!(await Sharing.isAvailableAsync())) {
       throw new Error("Sharing is unavailable.");
     }
-    const file = new File(Paths.cache, "philcoino-weighted-shots.csv");
+    const file = new File(Paths.cache, "philcoino-extractions.csv");
     try {
       file.create({ overwrite: true });
-      file.write(weightedShotHistoryToCsv(samples));
+      file.write(extractionHistoryToCsv(samples));
       await Sharing.shareAsync(file.uri, {
-        dialogTitle: "Export Philcoino weighted shots",
+        dialogTitle: "Export Philcoino extractions",
         mimeType: "text/csv",
         UTI: "public.comma-separated-values-text",
       });
@@ -35,9 +35,9 @@ export const shotHistoryExporter: ShotHistoryExporter = {
     );
     try {
       file.create({ overwrite: true });
-      file.write(weightedShotTraceToCsv(trace));
+      file.write(extractionTraceToCsv(trace));
       await Sharing.shareAsync(file.uri, {
-        dialogTitle: "Export Philcoino shot trace",
+        dialogTitle: "Export Philcoino extraction trace",
         mimeType: "text/csv",
         UTI: "public.comma-separated-values-text",
       });

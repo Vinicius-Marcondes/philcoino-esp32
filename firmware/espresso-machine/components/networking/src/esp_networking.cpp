@@ -25,6 +25,7 @@
 #include "sdkconfig.h"
 #include "philcoino/api_routes.hpp"
 #include "philcoino/config.hpp"
+#include "philcoino/extraction_telemetry.hpp"
 #include "philcoino/performance_diagnostics.hpp"
 
 namespace philcoino::networking {
@@ -162,10 +163,17 @@ class AtomicFlagReset final {
 EspNetworkServer::EspNetworkServer(FirmwareApi& api,
                                    const DeviceIdentity& identity,
                                    diagnostics::PerformanceDiagnostics*
-                                       performance_diagnostics)
+                                       performance_diagnostics,
+                                   ExtractionTelemetryBuffer*
+                                       extraction_telemetry)
     : api_(api),
       identity_(identity),
-      performance_diagnostics_(performance_diagnostics) {}
+      performance_diagnostics_(performance_diagnostics),
+      extraction_telemetry_(extraction_telemetry) {
+  if (extraction_telemetry_ != nullptr) {
+    extraction_telemetry_->set_notification(notify_extraction_stream, this);
+  }
+}
 
 bool EspNetworkServer::start(const char* ssid, const char* password) {
   if (!start_wifi(ssid, password) || !start_http()) {
@@ -386,7 +394,7 @@ bool EspNetworkServer::start_http() {
   configuration.server_port = kHttpPort;
   configuration.stack_size = 6144;
   configuration.max_uri_handlers =
-      static_cast<std::uint16_t>(kApiRoutes.size());
+      static_cast<std::uint16_t>(kApiRoutes.size() + 1U);
   configuration.recv_wait_timeout = 1;
   configuration.send_wait_timeout = 2;
   httpd_handle_t server = nullptr;
@@ -394,6 +402,22 @@ bool EspNetworkServer::start_http() {
     return false;
   }
   http_server_ = server;
+
+  auto stream_handler = [](httpd_req_t* request) -> esp_err_t {
+    return static_cast<esp_err_t>(
+        static_cast<EspNetworkServer*>(request->user_ctx)
+            ->handle_extraction_stream(request));
+  };
+  httpd_uri_t stream_uri{};
+  stream_uri.uri = "/api/v2/extractions/stream";
+  stream_uri.method = HTTP_GET;
+  stream_uri.handler = stream_handler;
+  stream_uri.user_ctx = this;
+  if (httpd_register_uri_handler(server, &stream_uri) != ESP_OK) {
+    httpd_stop(server);
+    http_server_ = nullptr;
+    return false;
+  }
 
   auto handler = [](httpd_req_t* request) -> esp_err_t {
     return static_cast<esp_err_t>(
@@ -479,6 +503,171 @@ int EspNetworkServer::handle_http_request(void* opaque_request) {
           ? api_.handle(method, path, authorization_value, body, uptime_ms())
           : api_.handle_resolved(*route, path, body, uptime_ms());
   return send_http_response(request, response, path);
+}
+
+int EspNetworkServer::handle_extraction_stream(void* opaque_request) {
+  auto* request = static_cast<httpd_req_t*>(opaque_request);
+  std::array<char, kMaximumAuthorizationLength + 1U> authorization{};
+  const std::size_t header_length =
+      httpd_req_get_hdr_value_len(request, "Authorization");
+  const char* authorization_value = nullptr;
+  if (header_length > 0U && header_length <= kMaximumAuthorizationLength &&
+      httpd_req_get_hdr_value_str(request, "Authorization",
+                                  authorization.data(),
+                                  header_length + 1U) == ESP_OK) {
+    authorization_value = authorization.data();
+  }
+  if (!api_.authorized(authorization_value)) {
+    return send_http_response(
+        request,
+        {401,
+         "{\"error\":{\"code\":\"unauthorized\",\"message\":\"A valid bearer token is required.\"}}",
+         true},
+        "/api/v2/extractions/stream");
+  }
+  ExtractionTelemetryCursor cursor{};
+  const std::size_t query_length = httpd_req_get_url_query_len(request);
+  if (query_length > 256U) {
+    return send_http_response(
+        request,
+        {400,
+         "{\"error\":{\"code\":\"malformed_request\",\"message\":\"The extraction telemetry cursor is malformed.\"}}",
+         false},
+        "/api/v2/extractions/stream");
+  }
+  std::array<char, 257> query{};
+  if (query_length > 0U &&
+      httpd_req_get_url_query_str(request, query.data(),
+                                  query_length + 1U) != ESP_OK) {
+    return ESP_FAIL;
+  }
+  if (!parse_extraction_telemetry_cursor(query.data(), cursor)) {
+    return send_http_response(
+        request,
+        {400,
+         "{\"error\":{\"code\":\"malformed_request\",\"message\":\"The extraction telemetry cursor is malformed.\"}}",
+         false},
+        "/api/v2/extractions/stream");
+  }
+  if (extraction_telemetry_ == nullptr ||
+      !extraction_telemetry_->cursor_available(cursor)) {
+    return send_http_response(
+        request,
+        {409,
+         "{\"error\":{\"code\":\"stream_unavailable\",\"message\":\"The extraction telemetry cursor is unavailable.\"}}",
+         false},
+        "/api/v2/extractions/stream");
+  }
+
+  bool expected = false;
+  if (!extraction_stream_active_.compare_exchange_strong(
+          expected, true, std::memory_order_acq_rel)) {
+    return send_http_response(
+        request,
+        {409,
+         "{\"error\":{\"code\":\"stream_busy\",\"message\":\"Another authenticated extraction telemetry subscriber is active.\"}}",
+         false},
+        "/api/v2/extractions/stream");
+  }
+
+  httpd_req_t* asynchronous_request = nullptr;
+  if (httpd_req_async_handler_begin(request, &asynchronous_request) != ESP_OK) {
+    extraction_stream_active_.store(false, std::memory_order_release);
+    return ESP_FAIL;
+  }
+  extraction_stream_request_ = asynchronous_request;
+  extraction_stream_cursor_supplied_ = cursor.supplied;
+  extraction_stream_boot_id_ = cursor.boot_id;
+  extraction_stream_extraction_id_ = cursor.extraction_id;
+  extraction_stream_after_sequence_ = cursor.after_sequence;
+  if (xTaskCreate(extraction_stream_task, "philcoino-sse", 6144, this, 4,
+                  nullptr) != pdPASS) {
+    httpd_req_async_handler_complete(asynchronous_request);
+    extraction_stream_request_ = nullptr;
+    extraction_stream_active_.store(false, std::memory_order_release);
+    return ESP_FAIL;
+  }
+  return ESP_OK;
+}
+
+void EspNetworkServer::extraction_stream_task(void* context) {
+  auto* server = static_cast<EspNetworkServer*>(context);
+  server->extraction_stream_task_handle_.store(xTaskGetCurrentTaskHandle(),
+                                                std::memory_order_release);
+  server->run_extraction_stream();
+  server->extraction_stream_task_handle_.store(nullptr,
+                                                std::memory_order_release);
+  server->extraction_stream_active_.store(false, std::memory_order_release);
+  vTaskDelete(nullptr);
+}
+
+void EspNetworkServer::notify_extraction_stream(void* context) {
+  auto* server = static_cast<EspNetworkServer*>(context);
+  const auto task = static_cast<TaskHandle_t>(
+      server->extraction_stream_task_handle_.load(std::memory_order_acquire));
+  if (task != nullptr) {
+    xTaskNotifyGive(task);
+  }
+}
+
+void EspNetworkServer::run_extraction_stream() {
+  auto* request = static_cast<httpd_req_t*>(extraction_stream_request_);
+  if (request == nullptr || extraction_telemetry_ == nullptr) return;
+
+  ExtractionTelemetryCursor cursor{};
+  cursor.supplied = extraction_stream_cursor_supplied_;
+  cursor.boot_id = extraction_stream_boot_id_;
+  cursor.extraction_id = extraction_stream_extraction_id_;
+  cursor.after_sequence = extraction_stream_after_sequence_;
+  httpd_resp_set_status(request, "200 OK");
+  httpd_resp_set_type(request, "text/event-stream");
+  httpd_resp_set_hdr(request, "Cache-Control", "no-cache, no-transform");
+  httpd_resp_set_hdr(request, "Connection", "keep-alive");
+  httpd_resp_set_hdr(request, "X-Accel-Buffering", "no");
+
+  bool connected = true;
+  bool terminal = false;
+  while (connected && !terminal) {
+    while (connected) {
+      ExtractionTelemetryPage page{};
+      page.status = ExtractionTelemetryStatus::kRunning;
+      if (!extraction_telemetry_->page(cursor, uptime_ms(), page)) {
+        if (page.status == ExtractionTelemetryStatus::kTerminal) {
+          terminal = true;
+        }
+        break;
+      }
+      const auto json =
+          serialize_extraction_telemetry_page(identity_.device_id, page);
+      if (json.empty()) {
+        connected = false;
+        break;
+      }
+      const std::string frame = "event: telemetry\ndata: " + json + "\n\n";
+      connected = httpd_resp_send_chunk(request, frame.data(), frame.size()) ==
+                  ESP_OK;
+      cursor.supplied = true;
+      cursor.boot_id = page.boot_id;
+      cursor.extraction_id = page.extraction_id;
+      cursor.after_sequence = page.next_sequence;
+      terminal = page.status == ExtractionTelemetryStatus::kTerminal &&
+                 !page.has_more;
+      if (!page.has_more || terminal) break;
+    }
+    if (!connected || terminal) break;
+    if (ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(kExtractionTelemetryHeartbeatMs)) ==
+        0U) {
+      constexpr char heartbeat[] = ": heartbeat\n\n";
+      connected =
+          httpd_resp_send_chunk(request, heartbeat, sizeof(heartbeat) - 1U) ==
+          ESP_OK;
+    }
+  }
+  if (connected) {
+    httpd_resp_send_chunk(request, nullptr, 0U);
+  }
+  httpd_req_async_handler_complete(request);
+  extraction_stream_request_ = nullptr;
 }
 
 }  // namespace philcoino::networking

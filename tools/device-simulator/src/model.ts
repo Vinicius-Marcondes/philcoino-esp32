@@ -6,6 +6,12 @@ import {
   CompensationStateSchema,
   CooldownStateSchema,
   DeviceResponseSchema,
+  EXTRACTION_MAX_DURATION_MS,
+  EXTRACTION_TELEMETRY_PAGE_SIZE,
+  EXTRACTION_TELEMETRY_RETENTION_SAMPLES,
+  EXTRACTION_TELEMETRY_SAMPLE_INTERVAL_MS,
+  EXTRACTION_TELEMETRY_SETTLING_LIMIT_MS,
+  ExtractionTelemetryPageSchema,
   ExtractionStateSchema,
   HeaterSettingsResponseSchema,
   HealthResponseSchema,
@@ -61,6 +67,9 @@ import {
   type ExtractionOutcome,
   type ExtractionSelection,
   type ExtractionState,
+  type ExtractionTelemetryCursor,
+  type ExtractionTelemetryPage,
+  type ExtractionTelemetrySample,
   type ProfileSet,
   type RunningExtractionState,
   type ScaleState,
@@ -236,6 +245,22 @@ interface WeightedTraceRecord {
   terminalCaptured: boolean;
 }
 
+interface ExtractionTelemetryRecord {
+  baselineWeightDecigrams: number | null;
+  extractionId: string;
+  lastCaptureUptimeMs: number;
+  samples: ExtractionTelemetrySample[];
+  selection: ExtractionSelection;
+  sequence: number;
+  terminalAtUptimeMs: number | null;
+  terminalCaptured: boolean;
+  weightControl: WeightControl | null;
+}
+
+export type ExtractionTelemetryReadResult =
+  | { ok: true; page: ExtractionTelemetryPage | null }
+  | { ok: false; reason: "unavailable" | "cursor-ahead" };
+
 interface CooldownRecord {
   cooldownId: string;
   idempotencyKey: string;
@@ -321,6 +346,8 @@ export class SimulatorMachine {
   private terminalWeight: TerminalWeightRecord | null = null;
   private scaleWarningExtractionId: string | null = null;
   private weightedTrace: WeightedTraceRecord | null = null;
+  private extractionTelemetry: ExtractionTelemetryRecord | null = null;
+  private readonly extractionTelemetryListeners = new Set<() => void>();
   private extractionCounter = 0;
   private cooldown: CooldownRecord | null = null;
   private cooldownCounter = 0;
@@ -800,6 +827,94 @@ export class SimulatorMachine {
     });
   }
 
+  getExtractionTelemetryPage(
+    cursor?: ExtractionTelemetryCursor,
+  ): ExtractionTelemetryReadResult {
+    const trace = this.extractionTelemetry;
+    if (trace === null || trace.samples.length === 0) {
+      return { ok: false, reason: "unavailable" };
+    }
+
+    const oldestSequence = trace.samples[0].sequence;
+    const latestSequence = trace.samples.at(-1)!.sequence;
+    let afterSequence = cursor?.afterSequence ?? 0;
+    let continuity: ExtractionTelemetryPage["continuity"] = "initial";
+
+    if (cursor !== undefined) {
+      if (
+        cursor.bootId !== this.bootId ||
+        cursor.extractionId !== trace.extractionId
+      ) {
+        continuity = "reset";
+        afterSequence = oldestSequence - 1;
+      } else if (afterSequence > latestSequence) {
+        return { ok: false, reason: "cursor-ahead" };
+      } else if (afterSequence < oldestSequence - 1) {
+        continuity = "truncated";
+        afterSequence = oldestSequence - 1;
+      } else {
+        continuity = "continuous";
+      }
+    }
+
+    const samples = trace.samples
+      .filter((sample) => sample.sequence > afterSequence)
+      .slice(0, EXTRACTION_TELEMETRY_PAGE_SIZE);
+    if (samples.length === 0) {
+      return { ok: true, page: null };
+    }
+    const nextSequence = samples.at(-1)!.sequence;
+    const status = this.extractionTelemetryStatus(trace);
+    const terminalWeight =
+      trace.weightControl !== null &&
+      this.terminalWeight?.extractionId === trace.extractionId
+        ? this.getScaleState().terminalExtraction
+        : null;
+    const outcome =
+      status === "running"
+        ? null
+        : this.terminalExtraction?.extractionId === trace.extractionId
+          ? this.terminalExtraction.outcome
+          : "failed";
+    return {
+      ok: true,
+      page: ExtractionTelemetryPageSchema.parse({
+        version: 1,
+        deviceId: this.device.deviceId,
+        extractionId: trace.extractionId,
+        bootId: this.bootId,
+        capturedAtUptimeMs: this.uptimeMs,
+        selection: trace.selection,
+        controlMode:
+          trace.selection.kind === "manual"
+            ? "manual"
+            : trace.weightControl === null
+              ? "timed"
+              : "weight",
+        weightControl: trace.weightControl,
+        baselineWeightDecigrams: trace.baselineWeightDecigrams,
+        status,
+        outcome,
+        terminalWeight,
+        oldestSequence,
+        latestSequence,
+        nextCursor: {
+          extractionId: trace.extractionId,
+          bootId: this.bootId,
+          afterSequence: nextSequence,
+        },
+        hasMore: nextSequence < latestSequence,
+        continuity,
+        samples,
+      }),
+    };
+  }
+
+  subscribeExtractionTelemetry(listener: () => void): () => void {
+    this.extractionTelemetryListeners.add(listener);
+    return () => this.extractionTelemetryListeners.delete(listener);
+  }
+
   startScaleCalibration(): "ok" | "active" | "unavailable" | "unstable" {
     if (this.hasActiveWorkflow()) {
       return "active";
@@ -974,6 +1089,24 @@ export class SimulatorMachine {
       weightControl,
       weightFallback: false,
     };
+    const baselineWeightDecigrams =
+      weightControl !== null
+        ? this.activeExtraction.tareWeightDecigrams
+        : this.scaleCalibrated && this.scaleAvailable && this.scaleStable
+          ? this.scaleWeightDecigrams
+          : null;
+    this.extractionTelemetry = {
+      baselineWeightDecigrams,
+      extractionId: this.activeExtraction.extractionId,
+      lastCaptureUptimeMs:
+        this.uptimeMs - EXTRACTION_TELEMETRY_SAMPLE_INTERVAL_MS,
+      samples: [],
+      selection: this.activeExtraction.selection,
+      sequence: 0,
+      terminalAtUptimeMs: null,
+      terminalCaptured: false,
+      weightControl,
+    };
     if (weightControl !== null) {
       this.weightedTrace = {
         extractionId: this.activeExtraction.extractionId,
@@ -985,6 +1118,7 @@ export class SimulatorMachine {
       };
       this.captureWeightedTraceIfDue();
     }
+    this.captureExtractionTelemetryIfDue();
     return {
       ok: true,
       extraction: RunningExtractionStateSchema.parse(this.getExtractionState()),
@@ -995,6 +1129,7 @@ export class SimulatorMachine {
     if (this.activeExtraction !== null) {
       if (this.activeExtraction.weightControl !== null) {
         this.finishWeightedExtraction("stopped");
+        this.captureExtractionTelemetryNow();
         return this.getExtractionState();
       }
       this.terminalExtraction = {
@@ -1005,6 +1140,7 @@ export class SimulatorMachine {
         selection: this.activeExtraction.selection,
       };
       this.activeExtraction = null;
+      this.captureExtractionTelemetryNow();
     }
     return this.getExtractionState();
   }
@@ -1341,12 +1477,23 @@ export class SimulatorMachine {
               1,
               this.weightedTrace.lastCaptureUptimeMs +
                 WEIGHTED_TRACE_SAMPLE_INTERVAL_MS -
+              this.uptimeMs,
+            );
+      const telemetryDelayMs =
+        this.extractionTelemetry === null ||
+        this.extractionTelemetry.terminalCaptured
+          ? Number.POSITIVE_INFINITY
+          : Math.max(
+              1,
+              this.extractionTelemetry.lastCaptureUptimeMs +
+                EXTRACTION_TELEMETRY_SAMPLE_INTERVAL_MS -
                 this.uptimeMs,
             );
       const stepMs = Math.min(
         remainingMs,
         MAX_SIMULATION_STEP_MS,
         traceDelayMs,
+        telemetryDelayMs,
         this.steamTimeoutRemainingMs ?? Number.POSITIVE_INFINITY,
       );
       this.advanceStep(stepMs);
@@ -1424,6 +1571,7 @@ export class SimulatorMachine {
     this.advanceExtraction(milliseconds);
     this.advanceScaleSettling(milliseconds);
     this.captureWeightedTraceIfDue();
+    this.captureExtractionTelemetryIfDue();
     this.advanceCooldown(milliseconds);
     if (
       this.activeMode !== "steam" &&
@@ -1784,6 +1932,109 @@ export class SimulatorMachine {
       : "terminal";
   }
 
+  private captureExtractionTelemetryIfDue(): void {
+    const trace = this.extractionTelemetry;
+    if (
+      trace === null ||
+      trace.terminalCaptured ||
+      this.uptimeMs - trace.lastCaptureUptimeMs <
+        EXTRACTION_TELEMETRY_SAMPLE_INTERVAL_MS
+    ) {
+      return;
+    }
+
+    const running =
+      this.activeExtraction?.extractionId === trace.extractionId;
+    if (!running && trace.terminalAtUptimeMs === null) {
+      trace.terminalAtUptimeMs = this.uptimeMs;
+    }
+    const extraction = this.getExtractionState();
+    const terminalElapsedMs =
+      this.terminalExtraction?.extractionId === trace.extractionId
+        ? this.terminalExtraction.elapsedMs
+        : 0;
+    const settlingElapsedMs = running
+      ? 0
+      : Math.min(
+          EXTRACTION_TELEMETRY_SETTLING_LIMIT_MS,
+          this.uptimeMs - (trace.terminalAtUptimeMs ?? this.uptimeMs),
+        );
+    const extractionElapsedMs = running
+      ? this.activeExtraction!.elapsedMs
+      : terminalElapsedMs;
+    const phase = running
+      ? extraction.phase === "manual" ||
+        extraction.phase === "pre-infusion" ||
+        extraction.phase === "soak" ||
+        extraction.phase === "main-extraction"
+        ? extraction.phase
+        : trace.selection.kind === "manual"
+          ? "manual"
+          : "main-extraction"
+      : "settling";
+    const availability = !this.scaleAvailable
+      ? "unavailable"
+      : this.scaleStable
+        ? "ready"
+        : "unstable";
+    const netWeightDecigrams =
+      this.scaleAvailable && trace.baselineWeightDecigrams !== null
+        ? this.scaleWeightDecigrams - trace.baselineWeightDecigrams
+        : null;
+
+    trace.sequence += 1;
+    trace.lastCaptureUptimeMs = this.uptimeMs;
+    trace.samples.push({
+      sequence: trace.sequence,
+      uptimeMs: this.uptimeMs,
+      elapsedMs: Math.min(
+        EXTRACTION_MAX_DURATION_MS + EXTRACTION_TELEMETRY_SETTLING_LIMIT_MS,
+        extractionElapsedMs + settlingElapsedMs,
+      ),
+      extractionElapsedMs,
+      phase,
+      boilerTemperatureC: roundTemperature(this.effectiveTemperature()),
+      activeTargetC: this.brewTargetC,
+      heaterActive: this.isHeaterActive(),
+      pumpCommand: running ? extraction.pumpCommand : "off",
+      scaleAvailability: availability,
+      netWeightDecigrams,
+    });
+    if (trace.samples.length > EXTRACTION_TELEMETRY_RETENTION_SAMPLES) {
+      trace.samples.splice(
+        0,
+        trace.samples.length - EXTRACTION_TELEMETRY_RETENTION_SAMPLES,
+      );
+    }
+    if (
+      !running &&
+      settlingElapsedMs >= EXTRACTION_TELEMETRY_SETTLING_LIMIT_MS
+    ) {
+      trace.terminalCaptured = true;
+    }
+    for (const listener of this.extractionTelemetryListeners) {
+      listener();
+    }
+  }
+
+  private captureExtractionTelemetryNow(): void {
+    if (this.extractionTelemetry === null) {
+      return;
+    }
+    this.extractionTelemetry.lastCaptureUptimeMs =
+      this.uptimeMs - EXTRACTION_TELEMETRY_SAMPLE_INTERVAL_MS;
+    this.captureExtractionTelemetryIfDue();
+  }
+
+  private extractionTelemetryStatus(
+    trace: ExtractionTelemetryRecord,
+  ): ExtractionTelemetryPage["status"] {
+    if (this.activeExtraction?.extractionId === trace.extractionId) {
+      return "running";
+    }
+    return trace.terminalCaptured ? "terminal" : "settling";
+  }
+
   private advanceCooldown(milliseconds: number): void {
     const cooldown = this.cooldown;
     if (cooldown?.status === "pumping") {
@@ -2097,6 +2348,8 @@ export class SimulatorMachine {
     this.terminalWeight = null;
     this.scaleWarningExtractionId = null;
     this.weightedTrace = null;
+    this.extractionTelemetry = null;
+    this.extractionTelemetryListeners.clear();
     this.extractionCounter = 0;
     this.cooldown = null;
     this.cooldownCounter = 0;

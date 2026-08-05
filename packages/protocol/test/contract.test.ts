@@ -28,7 +28,14 @@ import {
   ErrorResponseSchema,
   EXTRACTION_MAX_DURATION_MS,
   EXTRACTION_MAX_DURATION_SECONDS,
+  EXTRACTION_TELEMETRY_HEARTBEAT_INTERVAL_MS,
+  EXTRACTION_TELEMETRY_PAGE_SIZE,
+  EXTRACTION_TELEMETRY_RETENTION_SAMPLES,
+  EXTRACTION_TELEMETRY_SAMPLE_INTERVAL_MS,
+  EXTRACTION_TELEMETRY_SETTLING_LIMIT_MS,
   ExtractionActiveConflictResponseSchema,
+  ExtractionOutcomeSchema,
+  ExtractionTelemetryPageSchema,
   ExtractionPhaseSchema,
   ExtractionProfileSchema,
   ExtractionStateSchema,
@@ -164,6 +171,7 @@ const documentedSchemas: Record<string, ZodType> = {
   StartExtractionRequest: StartExtractionRequestSchema,
   ScaleState: ScaleStateSchema,
   ScaleTraceResponse: ScaleTraceResponseSchema,
+  ExtractionTelemetryPage: ExtractionTelemetryPageSchema,
   CompleteScaleCalibrationRequest: CompleteScaleCalibrationRequestSchema,
   ApiV2ErrorResponse: ApiV2ErrorResponseSchema,
   ExtractionActiveConflictResponse: ExtractionActiveConflictResponseSchema,
@@ -225,6 +233,7 @@ const validFixtures = [
   ],
   ["valid/scale-state.json", ScaleStateSchema],
   ["valid/scale-trace-response.json", ScaleTraceResponseSchema],
+  ["valid/extraction-telemetry-page.json", ExtractionTelemetryPageSchema],
   [
     "valid/scale-calibration-complete-request.json",
     CompleteScaleCalibrationRequestSchema,
@@ -258,6 +267,10 @@ const invalidFixtures = [
   [
     "invalid/scale-trace-cursor-mismatch.json",
     ScaleTraceResponseSchema,
+  ],
+  [
+    "invalid/extraction-telemetry-page-inconsistent.json",
+    ExtractionTelemetryPageSchema,
   ],
   ["invalid/state-legacy-temperatures.json", MachineStateSchema],
   ["invalid/state-fault-heater-active.json", MachineStateSchema],
@@ -447,6 +460,9 @@ describe("documented OpenAPI examples", () => {
         await fixture("valid/extraction-start-weight-request.json"),
       ],
       ScaleState: [await fixture("valid/scale-state.json")],
+      ExtractionTelemetryPage: [
+        await fixture("valid/extraction-telemetry-page.json"),
+      ],
       CompleteScaleCalibrationRequest: [
         await fixture("valid/scale-calibration-complete-request.json"),
       ],
@@ -900,6 +916,7 @@ describe("API v2 thermal workflow boundaries", () => {
       "/api/v2/cooldowns/stop",
       "/api/v2/extractions/start",
       "/api/v2/extractions/stop",
+      "/api/v2/extractions/stream",
       "/api/v2/history",
       "/api/v2/profiles",
       "/api/v2/scale",
@@ -916,6 +933,43 @@ describe("API v2 thermal workflow boundaries", () => {
       "/api/v2/temperature-calibration/save",
       "/api/v2/temperature-calibration/start",
     ]);
+  });
+
+  test("documents the bounded authenticated extraction telemetry stream", () => {
+    expect(EXTRACTION_TELEMETRY_PAGE_SIZE).toBe(16);
+    expect(EXTRACTION_TELEMETRY_RETENTION_SAMPLES).toBe(320);
+    expect(EXTRACTION_TELEMETRY_SAMPLE_INTERVAL_MS).toBe(250);
+    expect(EXTRACTION_TELEMETRY_SETTLING_LIMIT_MS).toBe(10_000);
+    expect(EXTRACTION_TELEMETRY_HEARTBEAT_INTERVAL_MS).toBe(2_000);
+
+    const operation = openApi.paths["/api/v2/extractions/stream"]?.get as {
+      security?: Array<Record<string, unknown>>;
+      parameters?: Array<{ name?: string; required?: boolean }>;
+      responses?: Record<
+        string,
+        { content?: Record<string, { schema?: { type?: string } }> }
+      >;
+    };
+    expect(operation.security).toEqual([{ bearerAuth: [] }]);
+    expect(operation.parameters?.map(({ name, required }) => ({ name, required }))).toEqual([
+      { name: "extractionId", required: false },
+      { name: "bootId", required: false },
+      { name: "afterSequence", required: false },
+    ]);
+    expect(operation.responses?.["200"]?.content?.["text/event-stream"]?.schema).toEqual({
+      type: "string",
+    });
+    expect(operation.responses?.["409"]).toBeDefined();
+    expect(ApiV2ErrorCodeSchema.options).toContain("stream_unavailable");
+    expect(ApiV2ErrorCodeSchema.options).toContain("stream_busy");
+    const telemetryPage = openApi.components.schemas.ExtractionTelemetryPage as {
+      properties?: {
+        outcome?: { oneOf?: Array<{ enum?: string[] }> };
+      };
+    };
+    expect(telemetryPage.properties?.outcome?.oneOf?.[0]?.enum).toEqual(
+      ExtractionOutcomeSchema.options,
+    );
   });
 
   test("keeps temperature calibration conflicts and failures distinguishable", () => {

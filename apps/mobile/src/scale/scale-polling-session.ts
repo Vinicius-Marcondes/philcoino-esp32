@@ -1,6 +1,8 @@
 import type { ScaleState } from "@philcoino/protocol";
 
-export const SCALE_FAST_POLL_INTERVAL_MS = 250;
+// Extraction telemetry owns the 250 ms path. REST scale diagnostics never run
+// faster than one Hertz, including while the Scale page is visible.
+export const SCALE_FAST_POLL_INTERVAL_MS = 1_000;
 export const SCALE_IDLE_POLL_INTERVAL_MS = 1_000;
 
 export interface ScalePollingClient {

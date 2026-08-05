@@ -34,6 +34,8 @@ calibration details are exposed only by the additive calibration resource.
 - `POST /api/v2/extractions/start` starts Manual or one persisted slot with a
   client idempotency key.
 - `POST /api/v2/extractions/stop` idempotently commands off and returns idle.
+- `GET /api/v2/extractions/stream` authenticates one local SSE subscriber and
+  streams retained plus live telemetry for every extraction control mode.
 - `POST /api/v2/cooldowns/start` idempotently starts or replays the
   firmware-owned cooldown workflow.
 - `POST /api/v2/cooldowns/stop` idempotently requests pump off and returns the
@@ -41,7 +43,9 @@ calibration details are exposed only by the additive calibration resource.
 - `GET /api/v2/scale` returns calibration, availability, live weight, active
   weighted extraction, warning, and retained terminal state.
 - `GET /api/v2/scale/trace` returns current scale state plus a nullable page
-  from the latest RAM-retained weighted-profile extraction.
+  from the latest RAM-retained weighted-profile extraction. It remains
+  wire-compatible for older consumers but is not used by the current mobile
+  extraction runtime.
 - `POST /api/v2/scale/calibration/start`, `/complete`, and `/cancel` implement
   the strict two-step calibration workflow.
 - `POST /api/v2/scale/warnings/acknowledge` clears the weighted-start gate
@@ -90,13 +94,24 @@ current boot ID, capture uptime, available sequence bounds, next durable cursor,
 `hasMore`, the selected controller plus compile-time gains/filter/window, and
 complete graph command/status/fault/controller context.
 
-Scale-trace cursors require exactly one `extractionId`, `bootId`, and
-`afterSequence`. Pages contain at most sixteen ordered 250 ms observation
-samples and expose running, settling, or terminal state plus continuity and
-sequence bounds. Sequence jumps are real gaps and clients must not synthesize
-samples. Firmware without the additive route returns 404; clients retain
-current weight and the existing temperature graph without flow or trace
-history.
+Extraction-stream cursors require either no cursor fields or exactly one
+`bootId`, `extractionId`, and `afterSequence`. Partial, duplicate, malformed,
+evicted, and future cursors are rejected with strict `409 stream_unavailable`;
+a second authenticated subscriber receives `409 stream_busy`. Each `telemetry`
+event contains a strict page of at most sixteen ascending observations with
+device/boot/extraction/selection/control-mode identity, `running`, `settling`,
+or `terminal` state, terminal outcome, both elapsed clocks, phase, boiler and
+target temperatures, firmware heater/pump commands, scale availability,
+nullable net weight, applicable weight-control/terminal details, continuity,
+retention bounds, cursor, and `hasMore`.
+
+The server sends catch-up pages first and then one-sample live pages at 250 ms.
+After two seconds without a sample it sends an SSE comment heartbeat. The
+separate ring retains 320 observations, which covers the 60-second maximum
+extraction plus its ten-second settling tail. Sequence jumps are real gaps and
+clients must not synthesize samples. Firmware without the route returns 404;
+the current mobile session presents an update-required message and provides no
+polling fallback.
 
 ## Authority and timing
 
@@ -155,6 +170,16 @@ samples or cursors to NVS. Missing samples are not synthesized. History reads
 copy a bounded page under their own guard and serialize after release; history
 never supplies input to temperature, heater, pump, readiness, timeout, fault,
 or mutation decisions.
+
+Extraction telemetry is a separate volatile observation path. Firmware
+attempts a zero-wait capture every 250 ms for Manual, timed, and weighted shots,
+then continues for ten seconds after the terminal pump-off transition. For
+Manual/timed starts, the first calibrated available scale value is latched as a
+best-effort baseline; absence never blocks Start and leaves net weight/flow
+nullable. Weighted shots reuse the extraction controller's authoritative net
+weight. An asynchronous networking task serializes and sends copied pages
+outside the workflow mutex, and disconnects a slow or failed client rather than
+queueing without bound.
 
 Controller diagnostics report raw/filtered temperature, base/private target,
 PI error and contributions, PI/legacy requested duty, integral state,

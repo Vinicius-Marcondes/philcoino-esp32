@@ -462,3 +462,22 @@ resource evidence prove software behavior only. A pinned ESP-IDF build plus
 supervised instrumented legacy-vs-PI A/B runs with an independent thermometer,
 SSR/current observation, and independent over-temperature protection remain
 required. No energized test was performed or authorized by this software task.
+
+## PRD-019 local extraction telemetry streaming
+
+Status: IMPLEMENTED — PINNED TARGET AND CONNECTED ACCEPTANCE PENDING
+
+The repository now defines authenticated `GET /api/v2/extractions/stream` SSE,
+a separate zero-wait 320-sample firmware ring, deterministic simulator
+streaming, and an Expo 54 incremental client. Extraction telemetry is captured
+for Manual, timed-profile, and weighted-profile shots at 250 ms plus a
+ten-second settling tail. The one-second combined-state poll and REST mutations
+remain authoritative; there is no high-frequency polling fallback.
+
+On 2026-08-05, OpenAPI validation, protocol and simulator typechecks/tests,
+mobile typecheck/lint/tests, and the complete native plus ASan/UBSan firmware
+host suites passed. `idf.py` was not available in the agent environment and was
+not installed. Therefore the ESP-IDF 6.0.2 target build and connected iOS/
+Android measurements of request rate, HTTP latency, heap/stack, workflow-mutex
+timing, stream gaps, Wi-Fi recovery, and control-loop deadlines remain pending.
+No energized or physical-safety test was performed or authorized.

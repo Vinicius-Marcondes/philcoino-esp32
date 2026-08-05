@@ -9,10 +9,7 @@ import type {
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AppState } from "react-native";
 
-import {
-  shotSummaryFromTerminal,
-  type WeightedShotSummary,
-} from "@/src/history/shot-history";
+import type { ExtractionSummary } from "@/src/history/shot-history";
 import { shotHistoryExporter } from "@/src/history/shot-history-export";
 import { shotHistoryRepository } from "@/src/history/shot-history-repository";
 import {
@@ -22,8 +19,12 @@ import {
 import { scalePreferencesRepository } from "@/src/scale/scale-preferences-repository";
 import { scaleMutationErrorMessage } from "@/src/scale/scale-mutation-error";
 import { ScalePollingSession } from "@/src/scale/scale-polling-session";
-import { WeightedTraceSyncSession } from "@/src/scale/weighted-trace-sync-session";
-import type { StoredWeightedShotTrace } from "@/src/history/weighted-shot-trace";
+import type { StoredExtractionTrace } from "@/src/history/extraction-trace";
+import {
+  ExtractionStreamSession,
+  type ExtractionStreamClient,
+  type ExtractionStreamStatus,
+} from "@/src/telemetry/extraction-stream-session";
 
 interface ScaleClient {
   acknowledgeScaleWarning(options?: { signal?: AbortSignal }): Promise<ScaleState>;
@@ -52,11 +53,13 @@ export function useScale({
   deviceId,
   extraction,
   scalePageVisible,
+  streamClient,
 }: {
   client: ScaleClient;
   deviceId: string;
   extraction: ExtractionState | null;
   scalePageVisible: boolean;
+  streamClient: ExtractionStreamClient | null;
 }) {
   const [scale, setScale] = useState<ScaleState | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -64,14 +67,15 @@ export function useScale({
   const [defaults, setDefaults] = useState<ScaleProfileDefaults>(
     defaultScaleProfileDefaults,
   );
-  const [history, setHistory] = useState<WeightedShotSummary[]>([]);
+  const [history, setHistory] = useState<ExtractionSummary[]>([]);
   const [historyError, setHistoryError] = useState<string | null>(null);
-  const [trace, setTrace] = useState<StoredWeightedShotTrace | null>(null);
+  const [trace, setTrace] = useState<StoredExtractionTrace | null>(null);
   const [traceSupported, setTraceSupported] = useState<boolean | null>(null);
-  const storedTerminal = useRef<string | null>(null);
+  const [streamStatus, setStreamStatus] =
+    useState<ExtractionStreamStatus>("idle");
   const extractionRef = useRef(extraction);
   const pollingRef = useRef<ScalePollingSession | null>(null);
-  const traceSyncRef = useRef<WeightedTraceSyncSession | null>(null);
+  const streamRef = useRef<ExtractionStreamSession | null>(null);
   extractionRef.current = extraction;
 
   useEffect(() => {
@@ -83,48 +87,42 @@ export function useScale({
           setError("Scale data is unavailable.");
         }
       },
-      onSnapshot: async (next) => {
+      onSnapshot: (next) => {
         if (!active) return;
         setScale(next);
         setError(null);
-        const terminal = next.terminalExtraction;
-        const currentExtraction = extractionRef.current;
-        if (
-          terminal !== null &&
-          storedTerminal.current !== terminal.extractionId &&
-          currentExtraction?.selection?.kind === "profile"
-        ) {
-          const summary = shotSummaryFromTerminal(
-            deviceId,
-            currentExtraction.selection.profileId,
-            terminal,
-            currentExtraction.elapsedMs,
-          );
-          await shotHistoryRepository.append(summary);
-          storedTerminal.current = terminal.extractionId;
-          if (active) {
-            setHistory(await shotHistoryRepository.load(deviceId));
-          }
-        }
       },
       scalePageVisible,
     });
     pollingRef.current = polling;
-    const traceSync = new WeightedTraceSyncSession({
-      client,
-      deviceId,
-      onSupportChanged: setTraceSupported,
-      onTrace: (nextTrace) => {
-        setTrace(nextTrace);
-        if (nextTrace !== null && nextTrace.completeness !== "live") {
-          void shotHistoryRepository.load(deviceId).then((value) => {
-            if (active) setHistory(value);
-          });
-        }
-      },
-      repository: shotHistoryRepository,
-    });
-    traceSyncRef.current = traceSync;
+    const stream = streamClient === null
+      ? null
+      : new ExtractionStreamSession({
+          client: streamClient,
+          deviceId,
+          onStatus: (status) => {
+            setStreamStatus(status);
+            if (status === "stale") {
+              setError("Extraction telemetry is unavailable or stale. Start and Stop remain available.");
+            } else if (status === "unsupported") {
+              setError("Extraction streaming requires a firmware update. No polling fallback is used.");
+            } else if (status === "live") {
+              setError(null);
+            }
+          },
+          onSupportChanged: setTraceSupported,
+          onTrace: (nextTrace) => {
+            if (nextTrace === null) return;
+            setTrace(nextTrace);
+            if (nextTrace.completeness !== "live") {
+              void shotHistoryRepository.load(deviceId).then((value) => {
+                if (active) setHistory(value);
+              });
+            }
+          },
+          repository: shotHistoryRepository,
+        });
+    streamRef.current = stream;
     void Promise.all([
       scalePreferencesRepository.load(deviceId).then((value) => {
         if (active) setDefaults(value);
@@ -136,25 +134,47 @@ export function useScale({
       if (active) setHistoryError("Local scale data could not be loaded.");
     });
     polling.start();
-    traceSync.start();
+    if (AppState.currentState === "active") stream?.start();
     const appStateSubscription = AppState.addEventListener(
       "change",
       (state) => {
-        if (state === "active") traceSync.start();
-        else traceSync.stop();
+        if (state === "active") {
+          stream?.start();
+          if (extractionRef.current?.status !== "running") polling.start();
+        } else {
+          stream?.stop();
+          polling.stop();
+        }
       },
     );
     return () => {
       active = false;
       polling.stop();
-      traceSync.stop();
+      stream?.stop();
       appStateSubscription.remove();
       if (pollingRef.current === polling) {
         pollingRef.current = null;
       }
-      if (traceSyncRef.current === traceSync) traceSyncRef.current = null;
+      if (streamRef.current === stream) streamRef.current = null;
     };
-  }, [client, deviceId]);
+  }, [client, deviceId, streamClient]);
+
+  useEffect(() => {
+    const streamingExpected =
+      streamClient !== null &&
+      (extraction?.status === "running" ||
+        streamStatus === "connecting" ||
+        streamStatus === "live" ||
+        streamStatus === "stale");
+    if (streamingExpected) {
+      pollingRef.current?.stop();
+      if (extraction?.status === "running") {
+        streamRef.current?.observeExtraction(extraction.extractionId);
+      }
+    } else if (AppState.currentState === "active") {
+      pollingRef.current?.start();
+    }
+  }, [extraction?.extractionId, extraction?.status, streamClient, streamStatus]);
 
   useEffect(() => {
     pollingRef.current?.setScalePageVisible(scalePageVisible);
@@ -207,7 +227,7 @@ export function useScale({
         setHistoryError("Shot history could not be exported.");
       }
     },
-    exportTrace: async (selectedTrace: StoredWeightedShotTrace) => {
+    exportTrace: async (selectedTrace: StoredExtractionTrace) => {
       try {
         await shotHistoryExporter.shareTrace(selectedTrace);
       } catch {
@@ -219,11 +239,12 @@ export function useScale({
     mutation,
     saveDefault,
     scale,
-    selectTrace: async (extractionId: string) =>
-      await shotHistoryRepository.loadTrace(deviceId, extractionId),
+    selectTrace: async (extractionId: string, bootId?: string | null) =>
+      await shotHistoryRepository.loadTrace(deviceId, extractionId, bootId),
     startCalibration: () =>
       run("calibration-start", () => client.startScaleCalibration()),
     trace,
     traceSupported,
+    streamStatus,
   };
 }

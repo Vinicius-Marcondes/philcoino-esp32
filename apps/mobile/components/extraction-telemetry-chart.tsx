@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Pressable, Text, useWindowDimensions } from "react-native";
 import Svg, { Circle, Line, Path, Rect } from "react-native-svg";
 
-import type { StoredWeightedShotTrace } from "@/src/history/weighted-shot-trace";
+import type { StoredExtractionTrace } from "@/src/history/extraction-trace";
 import { translate } from "@/src/localization/i18n";
 import {
   TELEMETRY_COLORS,
@@ -29,7 +29,7 @@ import {
 interface WeightedTraceChartProps {
   compact?: boolean;
   cutoffDecigrams?: number | null;
-  trace: StoredWeightedShotTrace;
+  trace: StoredExtractionTrace;
   variant?: TelemetryChartVariant;
 }
 
@@ -136,9 +136,9 @@ function WeightedTraceSvg({
   width,
 }: {
   height: number;
-  latest: StoredWeightedShotTrace["samples"][number] | null;
+  latest: StoredExtractionTrace["samples"][number] | null;
   plot: WeightedTracePlot;
-  selected: StoredWeightedShotTrace["samples"][number] | null;
+  selected: StoredExtractionTrace["samples"][number] | null;
   width: number;
 }) {
   return (

@@ -31,6 +31,8 @@ import {
   TemperatureCalibrationStateSchema,
   UpdateTemperatureCalibrationCandidateRequestSchema,
   type DeviceResponse,
+  type ExtractionTelemetryCursor,
+  type ExtractionTelemetryPage,
   type HeaterSettingsRequest,
   type HeaterSettingsResponse,
   type HealthResponse,
@@ -63,6 +65,10 @@ import {
 
 import { ApiClientError } from "./api-client-error";
 import { normalizeDeviceAddress } from "./device-address";
+import {
+  ExtractionSseParser,
+  ExtractionSseProtocolError,
+} from "../telemetry/extraction-sse-parser";
 
 const DEFAULT_TIMEOUT_MS = 5_000;
 const MAX_TIMEOUT_MS = 30_000;
@@ -83,6 +89,7 @@ export interface DeviceFetchRequestInit {
 }
 
 export interface DeviceFetchResponse {
+  body?: ReadableStream<Uint8Array> | null;
   json(): Promise<unknown>;
   ok: boolean;
   status: number;
@@ -266,6 +273,77 @@ export class DeviceApiClient {
       { authenticated: true, errorVersion: "v2", method: "POST" },
       options,
     );
+  }
+
+  async streamExtractionTelemetry(
+    cursor: ExtractionTelemetryCursor | undefined,
+    options: RequestOptions & {
+      onPage(page: ExtractionTelemetryPage): Promise<void> | void;
+    },
+  ): Promise<void> {
+    const query =
+      cursor === undefined
+        ? ""
+        : `?extractionId=${encodeURIComponent(cursor.extractionId)}&bootId=${encodeURIComponent(cursor.bootId)}&afterSequence=${cursor.afterSequence}`;
+    const endpoint = `/api/v2/extractions/stream${query}`;
+    const controller = new AbortController();
+    const cancel = () => controller.abort();
+    options.signal?.addEventListener("abort", cancel, { once: true });
+    if (options.signal?.aborted) controller.abort();
+    try {
+      const headers: Record<string, string> = { Accept: "text/event-stream" };
+      if (this.token !== undefined) {
+        headers.Authorization = `Bearer ${this.token}`;
+      }
+      const response = await this.fetch(`${this.address}${endpoint}`, {
+        headers,
+        method: "GET",
+        signal: controller.signal,
+      });
+      if (!response.ok) {
+        await throwResponseError(response, "v2", endpoint);
+      }
+      if (response.body === undefined || response.body === null) {
+        throw new ApiClientError(
+          "protocol",
+          "The device did not return a readable telemetry stream.",
+          { endpoint, status: response.status },
+        );
+      }
+      const reader = response.body.getReader();
+      const parser = new ExtractionSseParser();
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          const pages = done ? parser.finish() : parser.push(value);
+          for (const page of pages) {
+            await options.onPage(page);
+          }
+          if (done) return;
+        }
+      } finally {
+        reader.releaseLock();
+      }
+    } catch (error) {
+      if (controller.signal.aborted) {
+        throw new ApiClientError(
+          "cancelled",
+          "The extraction telemetry stream was cancelled.",
+          { endpoint },
+        );
+      }
+      if (error instanceof ExtractionSseProtocolError) {
+        throw new ApiClientError("protocol", error.message, { endpoint });
+      }
+      if (error instanceof ApiClientError) throw error;
+      throw new ApiClientError(
+        "offline",
+        "The extraction telemetry stream disconnected.",
+        { endpoint },
+      );
+    } finally {
+      options.signal?.removeEventListener("abort", cancel);
+    }
   }
 
   async startCooldown(

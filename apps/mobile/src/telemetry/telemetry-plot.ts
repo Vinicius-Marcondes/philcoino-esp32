@@ -4,7 +4,7 @@ import {
   type TemperatureHistorySample,
   type TemperatureHistoryWindow,
 } from "../history/temperature-history";
-import type { StoredWeightedShotTrace } from "../history/weighted-shot-trace";
+import type { StoredExtractionTrace } from "../history/extraction-trace";
 import {
   telemetryBandValueY,
   telemetryPlotFrame,
@@ -63,7 +63,7 @@ export function weightedTracePlot({
 }: {
   cutoffDecigrams?: number | null;
   height: number;
-  trace: StoredWeightedShotTrace;
+  trace: StoredExtractionTrace;
   width: number;
 }): WeightedTracePlot {
   const maxElapsed = Math.max(

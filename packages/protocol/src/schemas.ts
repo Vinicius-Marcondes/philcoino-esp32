@@ -38,6 +38,11 @@ export const WEIGHTED_TRACE_PAGE_SIZE = 16;
 export const WEIGHTED_TRACE_RETENTION_SAMPLES = 320;
 export const WEIGHTED_TRACE_SAMPLE_INTERVAL_MS = 250;
 export const WEIGHTED_TRACE_SETTLING_LIMIT_MS = 10_000;
+export const EXTRACTION_TELEMETRY_PAGE_SIZE = 16;
+export const EXTRACTION_TELEMETRY_RETENTION_SAMPLES = 320;
+export const EXTRACTION_TELEMETRY_SAMPLE_INTERVAL_MS = 250;
+export const EXTRACTION_TELEMETRY_SETTLING_LIMIT_MS = 10_000;
+export const EXTRACTION_TELEMETRY_HEARTBEAT_INTERVAL_MS = 2_000;
 export const WEIGHT_TARGET_MIN_DECIGRAMS = 50;
 export const WEIGHT_TARGET_MAX_DECIGRAMS = 1_000;
 export const WEIGHT_COMPENSATION_MIN_DECIGRAMS = 0;
@@ -891,6 +896,164 @@ export const ScaleTraceResponseSchema = z.strictObject({
   scale: ScaleStateSchema,
   trace: WeightedExtractionTracePageSchema.nullable(),
 });
+
+export const ExtractionTelemetryControlModeSchema = z.enum([
+  "manual",
+  "timed",
+  "weight",
+]);
+export const ExtractionTelemetryStatusSchema = z.enum([
+  "running",
+  "settling",
+  "terminal",
+]);
+export const ExtractionTelemetryPhaseSchema = z.enum([
+  "manual",
+  "pre-infusion",
+  "soak",
+  "main-extraction",
+  "settling",
+]);
+export const ExtractionTelemetryCursorSchema = z.strictObject({
+  extractionId: ExtractionIdSchema,
+  bootId: WeightedExtractionTraceCursorSchema.shape.bootId,
+  afterSequence: WeightedExtractionTraceSequenceSchema,
+});
+export const ExtractionTelemetrySampleSchema = z.strictObject({
+  sequence: WeightedExtractionTraceSequenceSchema,
+  uptimeMs: z.number().int().nonnegative().safe(),
+  elapsedMs: z
+    .number()
+    .int()
+    .nonnegative()
+    .max(EXTRACTION_MAX_DURATION_MS + EXTRACTION_TELEMETRY_SETTLING_LIMIT_MS),
+  extractionElapsedMs: ExtractionElapsedMsSchema,
+  phase: ExtractionTelemetryPhaseSchema,
+  boilerTemperatureC: z.number().finite(),
+  activeTargetC: BrewTargetSchema,
+  heaterActive: z.boolean(),
+  pumpCommand: PumpCommandSchema,
+  scaleAvailability: ScaleAvailabilitySchema,
+  netWeightDecigrams: ScaleWeightDecigramsSchema.nullable(),
+});
+export const ExtractionTelemetryPageSchema = z
+  .strictObject({
+    version: z.literal(1),
+    deviceId: DeviceResponseSchema.shape.deviceId,
+    extractionId: ExtractionIdSchema,
+    bootId: ExtractionTelemetryCursorSchema.shape.bootId,
+    capturedAtUptimeMs: z.number().int().nonnegative().safe(),
+    selection: ExtractionSelectionSchema,
+    controlMode: ExtractionTelemetryControlModeSchema,
+    weightControl: WeightControlSchema.nullable(),
+    baselineWeightDecigrams: ScaleWeightDecigramsSchema.nullable(),
+    status: ExtractionTelemetryStatusSchema,
+    outcome: ExtractionOutcomeSchema.nullable(),
+    terminalWeight: TerminalWeightExtractionSchema.nullable(),
+    oldestSequence: WeightedExtractionTraceSequenceSchema,
+    latestSequence: WeightedExtractionTraceSequenceSchema,
+    nextCursor: ExtractionTelemetryCursorSchema,
+    hasMore: z.boolean(),
+    continuity: z.enum(["initial", "continuous", "truncated", "reset"]),
+    samples: z
+      .array(ExtractionTelemetrySampleSchema)
+      .min(1)
+      .max(EXTRACTION_TELEMETRY_PAGE_SIZE),
+  })
+  .superRefine((page, context) => {
+    if (
+      page.nextCursor.bootId !== page.bootId ||
+      page.nextCursor.extractionId !== page.extractionId
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["nextCursor"],
+        message: "The telemetry cursor must identify the returned boot and extraction.",
+      });
+    }
+    if (page.oldestSequence > page.latestSequence) {
+      context.addIssue({
+        code: "custom",
+        path: ["oldestSequence"],
+        message: "The oldest telemetry sequence cannot exceed the latest sequence.",
+      });
+    }
+    for (let index = 1; index < page.samples.length; index += 1) {
+      if (page.samples[index].sequence <= page.samples[index - 1].sequence) {
+        context.addIssue({
+          code: "custom",
+          path: ["samples", index, "sequence"],
+          message: "Telemetry samples must be strictly sequence ordered.",
+        });
+      }
+    }
+    const first = page.samples[0];
+    const last = page.samples.at(-1)!;
+    if (
+      first.sequence < page.oldestSequence ||
+      last.sequence > page.latestSequence
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["samples"],
+        message: "Telemetry samples must remain within the retained sequence bounds.",
+      });
+    }
+    if (page.nextCursor.afterSequence !== last.sequence) {
+      context.addIssue({
+        code: "custom",
+        path: ["nextCursor", "afterSequence"],
+        message: "The next telemetry cursor must acknowledge the last returned sample.",
+      });
+    }
+    if (page.hasMore !== (last.sequence < page.latestSequence)) {
+      context.addIssue({
+        code: "custom",
+        path: ["hasMore"],
+        message: "Telemetry hasMore must match the returned and latest sequences.",
+      });
+    }
+    const expectedMode =
+      page.selection.kind === "manual"
+        ? "manual"
+        : page.weightControl === null
+          ? "timed"
+          : "weight";
+    if (page.controlMode !== expectedMode) {
+      context.addIssue({
+        code: "custom",
+        path: ["controlMode"],
+        message: "Telemetry control mode must match the extraction selection and weight control.",
+      });
+    }
+    if (page.controlMode !== "weight" && page.terminalWeight !== null) {
+      context.addIssue({
+        code: "custom",
+        path: ["terminalWeight"],
+        message: "Only weighted extraction telemetry may include a terminal weight result.",
+      });
+    }
+    if (
+      page.terminalWeight !== null &&
+      page.terminalWeight.extractionId !== page.extractionId
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["terminalWeight", "extractionId"],
+        message: "The terminal weight result must identify the returned extraction.",
+      });
+    }
+    if (
+      (page.status === "running" && page.outcome !== null) ||
+      (page.status !== "running" && page.outcome === null)
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["outcome"],
+        message: "Running telemetry has no outcome; settling and terminal telemetry require one.",
+      });
+    }
+  });
 export const CompleteScaleCalibrationRequestSchema = z.strictObject({
   referenceWeightDecigrams: CalibrationReferenceDecigramsSchema,
 });
@@ -1142,6 +1305,8 @@ export const ApiV2ErrorCodeSchema = z.enum([
   "temperature_calibration_session_mismatch",
   "temperature_calibration_expired",
   "temperature_target_unsafe",
+  "stream_unavailable",
+  "stream_busy",
   "persistence_failure",
   "internal_error",
 ]);
@@ -1248,6 +1413,24 @@ export type TerminalWeightExtraction = z.infer<
 >;
 export type ScaleState = z.infer<typeof ScaleStateSchema>;
 export type ScaleTraceResponse = z.infer<typeof ScaleTraceResponseSchema>;
+export type ExtractionTelemetryControlMode = z.infer<
+  typeof ExtractionTelemetryControlModeSchema
+>;
+export type ExtractionTelemetryStatus = z.infer<
+  typeof ExtractionTelemetryStatusSchema
+>;
+export type ExtractionTelemetryPhase = z.infer<
+  typeof ExtractionTelemetryPhaseSchema
+>;
+export type ExtractionTelemetryCursor = z.infer<
+  typeof ExtractionTelemetryCursorSchema
+>;
+export type ExtractionTelemetrySample = z.infer<
+  typeof ExtractionTelemetrySampleSchema
+>;
+export type ExtractionTelemetryPage = z.infer<
+  typeof ExtractionTelemetryPageSchema
+>;
 export type WeightedExtractionTraceCursor = z.infer<
   typeof WeightedExtractionTraceCursorSchema
 >;

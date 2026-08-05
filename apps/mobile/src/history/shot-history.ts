@@ -1,5 +1,9 @@
 import type {
   ProfileSlotId,
+  ExtractionOutcome,
+  ExtractionSelection,
+  ExtractionTelemetryControlMode,
+  ExtractionTelemetryPage,
   ScaleCompletionReason,
   TerminalWeightExtraction,
 } from "@philcoino/protocol";
@@ -20,6 +24,59 @@ export interface WeightedShotSummary {
   targetDecigrams: number;
   traceCompleteness?: TraceCompleteness | null;
   traceSampleCount?: number;
+}
+
+export interface ExtractionSummary {
+  bootId: string | null;
+  compensationDecigrams: number | null;
+  controlMode: ExtractionTelemetryControlMode;
+  cutoffDecigrams: number | null;
+  deviceId: string;
+  durationMs: number | null;
+  extractionId: string;
+  fallbackOccurred: boolean | null;
+  finalWeightDecigrams: number | null;
+  outcome: ExtractionOutcome;
+  profileId: ProfileSlotId | null;
+  recordedAtMs: number;
+  selection: ExtractionSelection;
+  settled: boolean | null;
+  targetDecigrams: number | null;
+  traceCompleteness?: TraceCompleteness | null;
+  traceSampleCount?: number;
+}
+
+export function extractionSummaryFromPage(
+  deviceId: string,
+  page: ExtractionTelemetryPage,
+  recordedAtMs = Date.now(),
+): ExtractionSummary {
+  if (page.status !== "terminal" || page.outcome === null) {
+    throw new TypeError("Only terminal extraction telemetry can be summarized.");
+  }
+  const terminal = page.terminalWeight;
+  return {
+    bootId: page.bootId,
+    compensationDecigrams: terminal?.compensationDecigrams ?? null,
+    controlMode: page.controlMode,
+    cutoffDecigrams: terminal?.cutoffWeightDecigrams ?? null,
+    deviceId,
+    durationMs: page.samples.at(-1)?.extractionElapsedMs ?? null,
+    extractionId: page.extractionId,
+    fallbackOccurred: terminal?.fallbackOccurred ?? null,
+    finalWeightDecigrams:
+      terminal?.finalWeightDecigrams ??
+      page.samples.at(-1)?.netWeightDecigrams ??
+      null,
+    outcome: page.outcome,
+    profileId: page.selection.kind === "profile" ? page.selection.profileId : null,
+    recordedAtMs,
+    selection: page.selection,
+    settled: terminal?.settled ?? null,
+    targetDecigrams: terminal?.targetWeightDecigrams ?? null,
+    traceCompleteness: null,
+    traceSampleCount: page.latestSequence - page.oldestSequence + 1,
+  };
 }
 
 export function shotSummaryFromTerminal(
@@ -63,7 +120,7 @@ const HEADERS = [
 ] as const;
 
 export function weightedShotHistoryToCsv(
-  samples: WeightedShotSummary[],
+  samples: (WeightedShotSummary | ExtractionSummary)[],
 ): string {
   const rows = [HEADERS.join(",")];
   for (const sample of samples) {
@@ -72,10 +129,10 @@ export function weightedShotHistoryToCsv(
         new Date(sample.recordedAtMs).toISOString(),
         sample.deviceId,
         sample.extractionId,
-        sample.profileId,
-        decigrams(sample.targetDecigrams),
-        decigrams(sample.compensationDecigrams),
-        decigrams(sample.cutoffDecigrams),
+        sample.profileId ?? "",
+        nullableDecigrams(sample.targetDecigrams),
+        nullableDecigrams(sample.compensationDecigrams),
+        nullableDecigrams(sample.cutoffDecigrams),
         sample.finalWeightDecigrams === null
           ? ""
           : decigrams(sample.finalWeightDecigrams),
@@ -87,6 +144,48 @@ export function weightedShotHistoryToCsv(
     );
   }
   return `${rows.join("\r\n")}\r\n`;
+}
+
+export function extractionHistoryToCsv(samples: ExtractionSummary[]): string {
+  const headers = [
+    "timestamp_utc",
+    "device_id",
+    "extraction_id",
+    "boot_id",
+    "control_mode",
+    "selection",
+    "duration_ms",
+    "outcome",
+    "target_g",
+    "compensation_g",
+    "cutoff_g",
+    "final_weight_g",
+    "settled",
+    "fallback_occurred",
+  ];
+  const rows = samples.map((sample) =>
+    [
+      new Date(sample.recordedAtMs).toISOString(),
+      sample.deviceId,
+      sample.extractionId,
+      sample.bootId ?? "",
+      sample.controlMode,
+      sample.selection.kind === "manual" ? "manual" : sample.selection.profileId,
+      sample.durationMs ?? "",
+      sample.outcome,
+      nullableDecigrams(sample.targetDecigrams),
+      nullableDecigrams(sample.compensationDecigrams),
+      nullableDecigrams(sample.cutoffDecigrams),
+      nullableDecigrams(sample.finalWeightDecigrams),
+      sample.settled ?? "",
+      sample.fallbackOccurred ?? "",
+    ].join(","),
+  );
+  return `${[headers.join(","), ...rows].join("\r\n")}\r\n`;
+}
+
+function nullableDecigrams(value: number | null): string {
+  return value === null ? "" : decigrams(value);
 }
 
 function decigrams(value: number): string {

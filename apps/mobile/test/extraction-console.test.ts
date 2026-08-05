@@ -18,7 +18,7 @@ describe("extraction console screen", () => {
   test("plots the shot with the console chart and falls back to temperature", () => {
     expect(screen).toContain("<WeightedTraceChart");
     expect(screen).toContain('variant="console"');
-    expect(screen).toContain("key={consoleTrace.extractionId}");
+    expect(screen).toContain("key={displayedTrace.extractionId}");
     expect(screen).toContain("<TemperatureHistoryChart");
     expect(screen).toContain("bands={2}");
   });

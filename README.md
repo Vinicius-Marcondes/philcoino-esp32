@@ -70,7 +70,7 @@ Para entender ownership e fluxos de falha em detalhes, leia [Architecture](docs/
 
 | Caminho | Responsabilidade |
 | --- | --- |
-| [`apps/mobile`](apps/mobile) | Cliente Expo 54 / React Native, discovery, pairing, persistência segura, polling, controles e UI |
+| [`apps/mobile`](apps/mobile) | Cliente Expo 54 / React Native, discovery, pairing, persistência segura, polling de estado, streaming de extração, controles e UI |
 | [`packages/protocol`](packages/protocol) | Contrato OpenAPI autoritativo, schemas Zod estritos, fixtures e contract tests |
 | [`tools/device-simulator`](tools/device-simulator) | Simulador determinístico da API em Bun/Hono e controles de desenvolvimento |
 | [`tools/thermal-modeling`](tools/thermal-modeling) | Análise offline de CSV, modelos térmicos, simulação, tuning e export versionado para revisão manual |
@@ -128,9 +128,11 @@ A API v2 adiciona, sem remover v1:
 - `GET` e `PUT /api/v2/profiles`
 - `POST /api/v2/extractions/start`
 - `POST /api/v2/extractions/stop`
+- `GET /api/v2/extractions/stream`
 - `POST /api/v2/cooldowns/start`
 - `POST /api/v2/cooldowns/stop`
 - `GET /api/v2/scale`
+- `GET /api/v2/scale/trace` (compatibilidade; não usado pelo runtime mobile atual)
 - `POST /api/v2/scale/calibration/start`
 - `POST /api/v2/scale/calibration/complete`
 - `POST /api/v2/scale/calibration/cancel`
@@ -159,6 +161,9 @@ A estimativa transitória de Steam não altera essa leitura nem esses caps.
 - O firmware, não o celular, é responsável pelo loop de tempo real e segurança.
 - Alterações solicitadas não aparecem como estado real até chegar um acknowledgement válido do firmware.
 - O polling pausa durante uma mutation para impedir que um snapshot antigo sobrescreva o acknowledgement.
+- Durante uma extração reconhecida, o mobile usa SSE autenticado a 250 ms para
+  telemetria e mantém o poll combinado de estado a um segundo; não há fallback
+  de polling de alta frequência.
 - Todo payload de discovery, storage, request, response e error é validado na sua boundary.
 - Snapshots de fault informam o comando do heater como inativo; a certeza sobre a saída física ainda depende do hardware e dos findings de segurança não resolvidos.
 - O simulador ajuda nos testes de contrato/UI e não comprova que o timing ou o controle do heater no firmware sejam seguros.
@@ -174,7 +179,7 @@ A estimativa transitória de Steam não altera essa leitura nem esses caps.
 - [Descrição da API v2](docs/protocol/api-v2-outline.md)
 - [Ligação do hardware](docs/hardware/esp32-c3-wiring.md)
 - [Ajuste do controle de temperatura](docs/hardware/temperature-control-tuning.md)
-- [Tracker da PRD-001](docs/TRACKER.md)
+- [Tracker da PRD ativa](docs/TRACKER.md)
 - [Findings da revisão do codebase](CODEBASE_REVIEW_REPORT.md)
 
 ## Como contribuir

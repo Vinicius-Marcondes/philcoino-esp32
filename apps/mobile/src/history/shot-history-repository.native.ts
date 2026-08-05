@@ -1,14 +1,17 @@
 import * as SQLite from "expo-sqlite";
 import type {
   ProfileSlotId,
-  ScaleCompletionReason,
+  ExtractionOutcome,
+  ExtractionTelemetryControlMode,
+  ExtractionTelemetryPage,
+  ExtractionTelemetryPhase,
   WeightedExtractionTracePage,
-  WeightedExtractionTracePhase,
   ScaleAvailability,
   PumpCommand,
+  TerminalWeightExtraction,
 } from "@philcoino/protocol";
 
-import type { WeightedShotSummary } from "./shot-history";
+import type { ExtractionSummary, WeightedShotSummary } from "./shot-history";
 import type { ShotHistoryRepository } from "./shot-history-repository";
 import {
   mergeTracePage,
@@ -16,33 +19,50 @@ import {
   type TraceCompleteness,
   type TraceGapStatus,
 } from "./weighted-shot-trace";
+import {
+  mergeExtractionTracePage,
+  type StoredExtractionTrace,
+} from "./extraction-trace";
 
 const DATABASE_NAME = "philcoino-mobile.db";
-const RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
-
 class SQLiteShotHistoryRepository implements ShotHistoryRepository {
   private databasePromise: Promise<SQLite.SQLiteDatabase> | null = null;
 
-  async append(summary: WeightedShotSummary): Promise<void> {
+  async append(summary: ExtractionSummary | WeightedShotSummary): Promise<void> {
+    const record = normalizeSummary(summary);
     const database = await this.database();
     await database.runAsync(
-      `INSERT OR REPLACE INTO weighted_shot_history (
-        device_id, extraction_id, recorded_at_ms, profile_id,
+      `INSERT OR REPLACE INTO extraction_history (
+        device_id, boot_id, extraction_id, recorded_at_ms, control_mode,
+        selection_kind, profile_id,
         target_decigrams, compensation_decigrams, cutoff_decigrams,
         final_weight_decigrams, settled, duration_ms, outcome, fallback_occurred
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      summary.deviceId, summary.extractionId, summary.recordedAtMs,
-      summary.profileId, summary.targetDecigrams, summary.compensationDecigrams,
-      summary.cutoffDecigrams, summary.finalWeightDecigrams,
-      summary.settled ? 1 : 0, summary.durationMs, summary.outcome,
-      summary.fallbackOccurred ? 1 : 0,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      record.deviceId, record.bootId ?? `legacy-${record.recordedAtMs}`,
+      record.extractionId, record.recordedAtMs,
+      record.controlMode, record.selection.kind, record.profileId,
+      record.targetDecigrams, record.compensationDecigrams,
+      record.cutoffDecigrams, record.finalWeightDecigrams,
+      nullableBoolean(record.settled), record.durationMs, record.outcome,
+      nullableBoolean(record.fallbackOccurred),
     );
-    await this.prune(summary.recordedAtMs);
   }
 
   async clearDevice(deviceId: string): Promise<void> {
     const database = await this.database();
     await database.withTransactionAsync(async () => {
+      await database.runAsync(
+        "DELETE FROM extraction_trace_samples WHERE device_id = ?",
+        deviceId,
+      );
+      await database.runAsync(
+        "DELETE FROM extraction_traces WHERE device_id = ?",
+        deviceId,
+      );
+      await database.runAsync(
+        "DELETE FROM extraction_history WHERE device_id = ?",
+        deviceId,
+      );
       await database.runAsync(
         "DELETE FROM weighted_shot_trace_samples WHERE device_id = ?",
         deviceId,
@@ -58,13 +78,84 @@ class SQLiteShotHistoryRepository implements ShotHistoryRepository {
     });
   }
 
+  async commitExtractionTracePage(
+    deviceId: string,
+    page: ExtractionTelemetryPage,
+  ): Promise<StoredExtractionTrace> {
+    const database = await this.database();
+    const previous = await this.loadTrace(
+      deviceId,
+      page.extractionId,
+      page.bootId,
+    );
+    const trace = mergeExtractionTracePage(previous, deviceId, page);
+    const retainedSequence = trace.samples.at(-1)?.sequence ?? 0;
+    await database.withTransactionAsync(async () => {
+      await database.runAsync(
+        `INSERT OR REPLACE INTO extraction_traces (
+          device_id, extraction_id, boot_id, completeness, control_mode,
+          selection_kind, profile_id, baseline_weight_decigrams, outcome,
+          weight_target_decigrams, weight_compensation_decigrams,
+          terminal_final_weight_decigrams, terminal_settled,
+          terminal_completion_reason, terminal_fallback
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        trace.deviceId, trace.extractionId, trace.bootId, trace.completeness,
+        trace.controlMode ?? page.controlMode, page.selection.kind,
+        page.selection.kind === "profile" ? page.selection.profileId : null,
+        trace.baselineWeightDecigrams ?? null, trace.outcome ?? null,
+        trace.weightControl?.targetWeightDecigrams ?? null,
+        trace.weightControl?.compensationDecigrams ?? null,
+        trace.terminalWeight?.finalWeightDecigrams ?? null,
+        trace.terminalWeight === null || trace.terminalWeight === undefined
+          ? null
+          : trace.terminalWeight.settled ? 1 : 0,
+        trace.terminalWeight?.completionReason ?? null,
+        trace.terminalWeight === null || trace.terminalWeight === undefined
+          ? null
+          : trace.terminalWeight.fallbackOccurred ? 1 : 0,
+      );
+      await database.runAsync(
+        `DELETE FROM extraction_trace_samples
+         WHERE device_id = ? AND extraction_id = ?
+           AND (boot_id != ? OR sequence > ?)`,
+        trace.deviceId, trace.extractionId, trace.bootId, retainedSequence,
+      );
+      for (const sample of trace.samples) {
+        await database.runAsync(
+          `INSERT OR REPLACE INTO extraction_trace_samples (
+            device_id, extraction_id, boot_id, sequence, uptime_ms, elapsed_ms,
+            extraction_elapsed_ms, phase, boiler_temperature_c, active_target_c,
+            heater_active, net_weight_decigrams, scale_availability, pump_command,
+            derived_flow_g_per_s, gap_status
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          trace.deviceId, trace.extractionId, trace.bootId, sample.sequence,
+          sample.uptimeMs, sample.elapsedMs,
+          sample.extractionElapsedMs ?? sample.elapsedMs, sample.phase,
+          sample.boilerTemperatureC, sample.activeTargetC,
+          sample.heaterActive === undefined ? null : sample.heaterActive ? 1 : 0,
+          sample.netWeightDecigrams, sample.scaleAvailability,
+          sample.pumpCommand, sample.derivedFlowGPerS, sample.gapStatus,
+        );
+      }
+    });
+    return trace;
+  }
+
   async commitTracePage(
     deviceId: string,
     page: WeightedExtractionTracePage,
   ): Promise<StoredWeightedShotTrace> {
     const database = await this.database();
-    const previous = await this.loadTrace(deviceId, page.extractionId);
-    const trace = mergeTracePage(previous, deviceId, page);
+    const previous = await this.loadTrace(
+      deviceId,
+      page.extractionId,
+      page.bootId,
+    );
+    const trace = mergeTracePage(
+      previous === null ? null : legacyTrace(previous),
+      deviceId,
+      page,
+    );
     const retainedSequence = trace.samples.at(-1)?.sequence ?? 0;
     await database.withTransactionAsync(async () => {
       await database.runAsync(
@@ -107,38 +198,45 @@ class SQLiteShotHistoryRepository implements ShotHistoryRepository {
   async load(
     deviceId: string,
     nowMs = Date.now(),
-  ): Promise<WeightedShotSummary[]> {
-    await this.prune(nowMs);
+  ): Promise<ExtractionSummary[]> {
+    void nowMs;
     const rows = await (await this.database()).getAllAsync<Record<string, unknown>>(
       `SELECT h.*, t.completeness AS trace_completeness,
-              (SELECT COUNT(*) FROM weighted_shot_trace_samples s
+              (SELECT COUNT(*) FROM extraction_trace_samples s
                WHERE s.device_id = h.device_id
                  AND s.extraction_id = h.extraction_id
-                 AND (t.boot_id IS NULL OR s.boot_id = t.boot_id))
+                 AND s.boot_id = h.boot_id)
                 AS trace_sample_count
-       FROM weighted_shot_history h
-       LEFT JOIN weighted_shot_traces t
-         ON t.device_id = h.device_id
+       FROM extraction_history h
+       LEFT JOIN extraction_traces t
+        ON t.device_id = h.device_id
+        AND t.boot_id = h.boot_id
         AND t.extraction_id = h.extraction_id
        WHERE h.device_id = ? ORDER BY h.recorded_at_ms DESC`,
       deviceId,
     );
     return rows.map((row) => ({
-      compensationDecigrams: Number(row.compensation_decigrams),
-      cutoffDecigrams: Number(row.cutoff_decigrams),
+      compensationDecigrams: nullableNumber(row.compensation_decigrams),
+      bootId: String(row.boot_id),
+      controlMode: String(row.control_mode) as ExtractionTelemetryControlMode,
+      cutoffDecigrams: nullableNumber(row.cutoff_decigrams),
       deviceId: String(row.device_id),
       durationMs: row.duration_ms === null ? null : Number(row.duration_ms),
       extractionId: String(row.extraction_id),
-      fallbackOccurred: Number(row.fallback_occurred) === 1,
+      fallbackOccurred: nullableStoredBoolean(row.fallback_occurred),
       finalWeightDecigrams:
         row.final_weight_decigrams === null
           ? null
           : Number(row.final_weight_decigrams),
-      outcome: String(row.outcome) as ScaleCompletionReason,
-      profileId: String(row.profile_id) as ProfileSlotId,
+      outcome: String(row.outcome) as ExtractionOutcome,
+      profileId:
+        row.profile_id === null ? null : String(row.profile_id) as ProfileSlotId,
       recordedAtMs: Number(row.recorded_at_ms),
-      settled: Number(row.settled) === 1,
-      targetDecigrams: Number(row.target_decigrams),
+      selection: row.selection_kind === "manual"
+        ? { kind: "manual" }
+        : { kind: "profile", profileId: String(row.profile_id) as ProfileSlotId },
+      settled: nullableStoredBoolean(row.settled),
+      targetDecigrams: nullableNumber(row.target_decigrams),
       traceCompleteness:
         row.trace_completeness === null
           ? null
@@ -148,47 +246,34 @@ class SQLiteShotHistoryRepository implements ShotHistoryRepository {
   }
 
   async prune(nowMs = Date.now()): Promise<void> {
-    const database = await this.database();
-    const cutoff = nowMs - RETENTION_MS;
-    await database.withTransactionAsync(async () => {
-      await database.runAsync(
-        `DELETE FROM weighted_shot_trace_samples
-         WHERE (device_id, extraction_id) IN (
-           SELECT device_id, extraction_id FROM weighted_shot_history
-           WHERE recorded_at_ms < ?
-         )`,
-        cutoff,
-      );
-      await database.runAsync(
-        `DELETE FROM weighted_shot_traces
-         WHERE (device_id, extraction_id) IN (
-           SELECT device_id, extraction_id FROM weighted_shot_history
-           WHERE recorded_at_ms < ?
-         )`,
-        cutoff,
-      );
-      await database.runAsync(
-        "DELETE FROM weighted_shot_history WHERE recorded_at_ms < ?",
-        cutoff,
-      );
-    });
+    void nowMs;
   }
 
   async loadTrace(
     deviceId: string,
     extractionId: string,
-  ): Promise<StoredWeightedShotTrace | null> {
+    requestedBootId?: string | null,
+  ): Promise<StoredExtractionTrace | null> {
     const database = await this.database();
-    const metadata = await database.getFirstAsync<Record<string, unknown>>(
-      `SELECT * FROM weighted_shot_traces
-       WHERE device_id = ? AND extraction_id = ?`,
-      deviceId,
-      extractionId,
-    );
+    const metadata = requestedBootId === undefined
+      ? await database.getFirstAsync<Record<string, unknown>>(
+          `SELECT * FROM extraction_traces
+           WHERE device_id = ? AND extraction_id = ?
+           ORDER BY rowid DESC LIMIT 1`,
+          deviceId,
+          extractionId,
+        )
+      : await database.getFirstAsync<Record<string, unknown>>(
+          `SELECT * FROM extraction_traces
+           WHERE device_id = ? AND extraction_id = ? AND boot_id = ?`,
+          deviceId,
+          extractionId,
+          requestedBootId ?? "legacy",
+        );
     if (metadata === null) return null;
     const bootId = String(metadata.boot_id);
     const rows = await database.getAllAsync<Record<string, unknown>>(
-      `SELECT * FROM weighted_shot_trace_samples
+      `SELECT * FROM extraction_trace_samples
        WHERE device_id = ? AND extraction_id = ? AND boot_id = ?
        ORDER BY sequence`,
       deviceId,
@@ -196,10 +281,18 @@ class SQLiteShotHistoryRepository implements ShotHistoryRepository {
       bootId,
     );
     return {
+      baselineWeightDecigrams: nullableNumber(metadata.baseline_weight_decigrams),
       bootId,
       completeness: String(metadata.completeness) as TraceCompleteness,
+      controlMode: String(metadata.control_mode) as ExtractionTelemetryControlMode,
       deviceId,
       extractionId,
+      outcome: metadata.outcome === null
+        ? null
+        : String(metadata.outcome) as ExtractionOutcome,
+      selection: metadata.selection_kind === "manual"
+        ? { kind: "manual" }
+        : { kind: "profile", profileId: String(metadata.profile_id) as ProfileSlotId },
       samples: rows.map((row) => ({
         activeTargetC: Number(row.active_target_c),
         boilerTemperatureC: Number(row.boiler_temperature_c),
@@ -208,17 +301,51 @@ class SQLiteShotHistoryRepository implements ShotHistoryRepository {
             ? null
             : Number(row.derived_flow_g_per_s),
         elapsedMs: Number(row.elapsed_ms),
+        extractionElapsedMs: Number(row.extraction_elapsed_ms),
         gapStatus: String(row.gap_status) as TraceGapStatus,
         netWeightDecigrams:
           row.net_weight_decigrams === null
             ? null
             : Number(row.net_weight_decigrams),
-        phase: String(row.phase) as WeightedExtractionTracePhase,
+        heaterActive:
+          row.heater_active === null ? undefined : Number(row.heater_active) === 1,
+        phase: String(row.phase) as ExtractionTelemetryPhase,
         pumpCommand: String(row.pump_command) as PumpCommand,
         scaleAvailability: String(row.scale_availability) as ScaleAvailability,
         sequence: Number(row.sequence),
         uptimeMs: Number(row.uptime_ms),
       })),
+      terminalWeight:
+        metadata.terminal_completion_reason === null
+          ? null
+          : {
+              compensationDecigrams: Number(
+                metadata.weight_compensation_decigrams,
+              ),
+              completionReason: String(
+                metadata.terminal_completion_reason,
+              ) as TerminalWeightExtraction["completionReason"],
+              cutoffWeightDecigrams:
+                Number(metadata.weight_target_decigrams) -
+                Number(metadata.weight_compensation_decigrams),
+              extractionId,
+              fallbackOccurred: Number(metadata.terminal_fallback) === 1,
+              finalWeightDecigrams: nullableNumber(
+                metadata.terminal_final_weight_decigrams,
+              ),
+              settled: Number(metadata.terminal_settled) === 1,
+              targetWeightDecigrams: Number(metadata.weight_target_decigrams),
+            },
+      weightControl:
+        metadata.weight_target_decigrams === null ||
+        metadata.weight_compensation_decigrams === null
+          ? null
+          : {
+              compensationDecigrams: Number(
+                metadata.weight_compensation_decigrams,
+              ),
+              targetWeightDecigrams: Number(metadata.weight_target_decigrams),
+            },
     };
   }
 
@@ -231,6 +358,65 @@ class SQLiteShotHistoryRepository implements ShotHistoryRepository {
     const database = await SQLite.openDatabaseAsync(DATABASE_NAME);
     await database.execAsync(`
       PRAGMA journal_mode = WAL;
+      CREATE TABLE IF NOT EXISTS extraction_history (
+        device_id TEXT NOT NULL,
+        boot_id TEXT NOT NULL,
+        extraction_id TEXT NOT NULL,
+        recorded_at_ms INTEGER NOT NULL,
+        control_mode TEXT NOT NULL,
+        selection_kind TEXT NOT NULL,
+        profile_id TEXT,
+        target_decigrams INTEGER,
+        compensation_decigrams INTEGER,
+        cutoff_decigrams INTEGER,
+        final_weight_decigrams INTEGER,
+        settled INTEGER,
+        duration_ms INTEGER,
+        outcome TEXT NOT NULL,
+        fallback_occurred INTEGER,
+        PRIMARY KEY(device_id, boot_id, extraction_id)
+      );
+      CREATE INDEX IF NOT EXISTS extraction_history_device_time
+        ON extraction_history(device_id, recorded_at_ms);
+      CREATE TABLE IF NOT EXISTS extraction_traces (
+        device_id TEXT NOT NULL,
+        extraction_id TEXT NOT NULL,
+        boot_id TEXT NOT NULL,
+        completeness TEXT NOT NULL,
+        control_mode TEXT NOT NULL,
+        selection_kind TEXT NOT NULL,
+        profile_id TEXT,
+        baseline_weight_decigrams INTEGER,
+        outcome TEXT,
+        weight_target_decigrams INTEGER,
+        weight_compensation_decigrams INTEGER,
+        terminal_final_weight_decigrams INTEGER,
+        terminal_settled INTEGER,
+        terminal_completion_reason TEXT,
+        terminal_fallback INTEGER,
+        PRIMARY KEY(device_id, boot_id, extraction_id)
+      );
+      CREATE TABLE IF NOT EXISTS extraction_trace_samples (
+        device_id TEXT NOT NULL,
+        extraction_id TEXT NOT NULL,
+        boot_id TEXT NOT NULL,
+        sequence INTEGER NOT NULL,
+        uptime_ms INTEGER NOT NULL,
+        elapsed_ms INTEGER NOT NULL,
+        extraction_elapsed_ms INTEGER NOT NULL,
+        phase TEXT NOT NULL,
+        boiler_temperature_c REAL NOT NULL,
+        active_target_c INTEGER NOT NULL,
+        heater_active INTEGER,
+        net_weight_decigrams INTEGER,
+        scale_availability TEXT NOT NULL,
+        pump_command TEXT NOT NULL,
+        derived_flow_g_per_s REAL,
+        gap_status TEXT NOT NULL,
+        PRIMARY KEY(device_id, extraction_id, boot_id, sequence)
+      );
+      CREATE INDEX IF NOT EXISTS extraction_trace_lookup
+        ON extraction_trace_samples(device_id, extraction_id, sequence);
       CREATE TABLE IF NOT EXISTS weighted_shot_history (
         device_id TEXT NOT NULL,
         extraction_id TEXT NOT NULL,
@@ -279,8 +465,122 @@ class SQLiteShotHistoryRepository implements ShotHistoryRepository {
          SELECT device_id, extraction_id, boot_id FROM weighted_shot_traces
        );
     `);
+    await database.withTransactionAsync(async () => {
+      await database.execAsync(`
+        INSERT OR IGNORE INTO extraction_history (
+          device_id, boot_id, extraction_id, recorded_at_ms, control_mode,
+          selection_kind, profile_id, target_decigrams,
+          compensation_decigrams, cutoff_decigrams, final_weight_decigrams,
+          settled, duration_ms, outcome, fallback_occurred
+        ) SELECT h.device_id,
+                 COALESCE(t.boot_id, 'legacy-' || h.recorded_at_ms),
+                 h.extraction_id, h.recorded_at_ms, 'weight',
+                 'profile', h.profile_id, h.target_decigrams,
+                 h.compensation_decigrams, h.cutoff_decigrams,
+                 h.final_weight_decigrams, h.settled, h.duration_ms,
+                 CASE WHEN h.outcome = 'stopped' THEN 'stopped'
+                      WHEN h.outcome = 'safety-cutoff' THEN 'failed'
+                      ELSE 'completed' END,
+                 h.fallback_occurred
+            FROM weighted_shot_history h
+            LEFT JOIN weighted_shot_traces t
+              ON t.device_id = h.device_id
+             AND t.extraction_id = h.extraction_id;
+        INSERT OR IGNORE INTO extraction_traces (
+          device_id, extraction_id, boot_id, completeness, control_mode,
+          selection_kind, profile_id, baseline_weight_decigrams, outcome,
+          weight_target_decigrams, weight_compensation_decigrams,
+          terminal_final_weight_decigrams, terminal_settled,
+          terminal_completion_reason, terminal_fallback
+        ) SELECT t.device_id, t.extraction_id, t.boot_id, t.completeness,
+                 'weight', 'profile', h.profile_id, NULL,
+                 CASE WHEN h.outcome = 'stopped' THEN 'stopped'
+                      WHEN h.outcome = 'safety-cutoff' THEN 'failed'
+                      ELSE 'completed' END,
+                 h.target_decigrams, h.compensation_decigrams,
+                 h.final_weight_decigrams, h.settled, h.outcome,
+                 h.fallback_occurred
+            FROM weighted_shot_traces t
+            LEFT JOIN weighted_shot_history h
+              ON h.device_id = t.device_id
+             AND h.extraction_id = t.extraction_id;
+        INSERT OR IGNORE INTO extraction_trace_samples (
+          device_id, extraction_id, boot_id, sequence, uptime_ms, elapsed_ms,
+          extraction_elapsed_ms, phase, boiler_temperature_c, active_target_c,
+          heater_active, net_weight_decigrams, scale_availability, pump_command,
+          derived_flow_g_per_s, gap_status
+        ) SELECT device_id, extraction_id, boot_id, sequence, uptime_ms,
+                 elapsed_ms, MIN(elapsed_ms, 60000), phase,
+                 boiler_temperature_c, active_target_c, NULL,
+                 net_weight_decigrams, scale_availability, pump_command,
+                 derived_flow_g_per_s, gap_status
+            FROM weighted_shot_trace_samples;
+        DELETE FROM extraction_trace_samples
+         WHERE (device_id, extraction_id, boot_id) NOT IN (
+           SELECT device_id, extraction_id, boot_id FROM extraction_traces
+         );
+      `);
+    });
     return database;
   }
+}
+
+function normalizeSummary(
+  summary: ExtractionSummary | WeightedShotSummary,
+): ExtractionSummary {
+  if ("controlMode" in summary) return summary;
+  return {
+    ...summary,
+    bootId: null,
+    controlMode: "weight",
+    outcome:
+      summary.outcome === "stopped"
+        ? "stopped"
+        : summary.outcome === "safety-cutoff"
+          ? "failed"
+          : "completed",
+    selection: { kind: "profile", profileId: summary.profileId },
+  };
+}
+
+function legacyTrace(trace: StoredExtractionTrace): StoredWeightedShotTrace {
+  return {
+    bootId: trace.bootId,
+    completeness: trace.completeness,
+    deviceId: trace.deviceId,
+    extractionId: trace.extractionId,
+    samples: trace.samples
+      .filter(
+        (sample): sample is typeof sample & {
+          phase: Exclude<typeof sample.phase, "manual">;
+        } => sample.phase !== "manual",
+      )
+      .map((sample) => ({
+        activeTargetC: sample.activeTargetC,
+        boilerTemperatureC: sample.boilerTemperatureC,
+        derivedFlowGPerS: sample.derivedFlowGPerS,
+        elapsedMs: sample.elapsedMs,
+        gapStatus: sample.gapStatus,
+        netWeightDecigrams: sample.netWeightDecigrams,
+        phase: sample.phase,
+        pumpCommand: sample.pumpCommand,
+        scaleAvailability: sample.scaleAvailability,
+        sequence: sample.sequence,
+        uptimeMs: sample.uptimeMs,
+      })),
+  };
+}
+
+function nullableBoolean(value: boolean | null): number | null {
+  return value === null ? null : value ? 1 : 0;
+}
+
+function nullableStoredBoolean(value: unknown): boolean | null {
+  return value === null ? null : Number(value) === 1;
+}
+
+function nullableNumber(value: unknown): number | null {
+  return value === null ? null : Number(value);
 }
 
 export const shotHistoryRepository = new SQLiteShotHistoryRepository();

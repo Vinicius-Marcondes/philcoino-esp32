@@ -38,6 +38,14 @@ equilibrium duration, top-of-boiler temperature, SSR current, or thermostat
 interruption. Its defaults remain pending repeated supervised instrumented
 acceptance.
 
+PRD-019 replaces high-frequency mobile extraction polling with one
+authenticated local SSE subscriber and generalizes local extraction history.
+The stream is observational and preserves the one-second authoritative state
+poll plus REST commands. Passing protocol, simulator, mobile, and firmware host
+tests does not prove the ESP-IDF asynchronous adapter's target resource/timing
+behavior, Wi-Fi recovery, physical current, pump flow, or heater safety. Its
+pinned target build and connected iOS/Android acceptance remain pending.
+
 The project remains a prototype. Do not infer production, unattended, or
 energized authorization from passing software checks or earlier owner-reported
 acceptance of a different tested configuration.

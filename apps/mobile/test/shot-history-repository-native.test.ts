@@ -5,6 +5,18 @@ const source = await Bun.file(
 ).text();
 
 describe("native shot history repository trace storage", () => {
+  test("atomically migrates weighted rows into generalized extraction tables", () => {
+    expect(source).toContain("INSERT OR IGNORE INTO extraction_history");
+    expect(source).toContain("INSERT OR IGNORE INTO extraction_traces");
+    expect(source).toContain("INSERT OR IGNORE INTO extraction_trace_samples");
+    expect(source).toContain("database.withTransactionAsync(async () =>");
+  });
+
+  test("does not automatically prune retained extraction history", () => {
+    expect(source).not.toContain("recorded_at_ms < ?");
+    expect(source).not.toContain("RETENTION_MS");
+  });
+
   test("reads trace samples scoped to the stored boot", () => {
     expect(source).toContain(
       "WHERE device_id = ? AND extraction_id = ? AND boot_id = ?",
@@ -34,6 +46,7 @@ describe("native shot history repository trace storage", () => {
   });
 
   test("counts history trace samples for the stored boot only", () => {
-    expect(source).toContain("AND (t.boot_id IS NULL OR s.boot_id = t.boot_id)");
+    expect(source).toContain("AND s.boot_id = h.boot_id");
+    expect(source).toContain("AND t.boot_id = h.boot_id");
   });
 });

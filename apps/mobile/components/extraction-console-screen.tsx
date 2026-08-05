@@ -6,7 +6,7 @@ import type {
   ScaleState,
   WeightControl,
 } from "@philcoino/protocol";
-import type { Dispatch, SetStateAction } from "react";
+import { useState, type Dispatch, type SetStateAction } from "react";
 import {
   Modal,
   Pressable,
@@ -34,7 +34,8 @@ import {
   type ExtractionConsolePhase,
 } from "@/src/dashboard/extraction-console-model";
 import type { TemperatureHistorySample } from "@/src/history/temperature-history";
-import type { StoredWeightedShotTrace } from "@/src/history/weighted-shot-trace";
+import type { StoredExtractionTrace } from "@/src/history/extraction-trace";
+import type { ExtractionSummary } from "@/src/history/shot-history";
 import { translate } from "@/src/localization/i18n";
 import { formatWeightReadout } from "@/src/telemetry/telemetry-readouts";
 
@@ -51,10 +52,15 @@ export interface ExtractionConsoleScreenProps {
   cutoffDecigrams: number | null;
   deviceName: string;
   extraction: ExtractionState | null;
+  extractionHistory: ExtractionSummary[];
   landscape: boolean;
   live: boolean;
   onBrewControlModeChange: (mode: "timed" | "weight") => void;
   onClose: () => void;
+  onSelectHistoryTrace: (
+    extractionId: string,
+    bootId?: string | null,
+  ) => Promise<StoredExtractionTrace | null>;
   onStateChange: Dispatch<SetStateAction<ExtractionPreviewState>>;
   onWeightControlChange: (value: WeightControl) => void;
   scale: ScaleState | null;
@@ -64,7 +70,7 @@ export interface ExtractionConsoleScreenProps {
   state: ExtractionPreviewState;
   stopPending: boolean;
   temperatureHistory: ExtractionConsoleTemperatureHistory;
-  trace: StoredWeightedShotTrace | null;
+  trace: StoredExtractionTrace | null;
   visible: boolean;
   workflowBlock: "cooldown" | "steam" | null;
 }
@@ -74,10 +80,12 @@ export function ExtractionConsoleScreen({
   cutoffDecigrams,
   deviceName,
   extraction,
+  extractionHistory,
   landscape,
   live,
   onBrewControlModeChange,
   onClose,
+  onSelectHistoryTrace,
   onStateChange,
   onWeightControlChange,
   scale,
@@ -92,7 +100,13 @@ export function ExtractionConsoleScreen({
   workflowBlock,
 }: ExtractionConsoleScreenProps) {
   const safeAreaInsets = useSafeAreaInsets();
+  const [historyTrace, setHistoryTrace] = useState<StoredExtractionTrace | null>(null);
+  const [historySelection, setHistorySelection] = useState<ExtractionSummary | null>(null);
   const consoleTrace = extractionConsoleTrace(trace, extraction);
+  const displayedTrace = historyTrace ?? consoleTrace;
+  const heaterCommand =
+    displayedTrace?.samples.at(-1)?.heaterActive ??
+    (historyTrace === null ? snapshot?.heaterActive : undefined);
   const readouts = extractionConsoleReadouts({
     extraction,
     scale,
@@ -106,7 +120,7 @@ export function ExtractionConsoleScreen({
   const controlsDisabled = !live || running || mutationPending;
 
   const chart =
-    consoleTrace === null ? (
+    displayedTrace === null ? (
       <TemperatureHistoryChart
         bands={2}
         compact={landscape}
@@ -120,15 +134,58 @@ export function ExtractionConsoleScreen({
     ) : (
       <WeightedTraceChart
         compact={landscape}
-        cutoffDecigrams={cutoffDecigrams}
-        key={consoleTrace.extractionId}
-        trace={consoleTrace}
+        cutoffDecigrams={historySelection?.cutoffDecigrams ?? cutoffDecigrams}
+        key={displayedTrace.extractionId}
+        trace={displayedTrace}
         variant="console"
       />
     );
 
   const controls = (
     <View style={styles.controls}>
+      <View style={styles.controlPanel}>
+        <Text selectable style={styles.stripLabel}>
+          {translate("extractionConsole.historyTitle")}
+        </Text>
+        {historyTrace === null ? null : (
+          <Pressable
+            onPress={() => {
+              setHistorySelection(null);
+              setHistoryTrace(null);
+            }}
+            style={styles.close}>
+            <Text style={styles.closeText}>
+              {translate("extractionConsole.historyLive")}
+            </Text>
+          </Pressable>
+        )}
+        {extractionHistory.slice(0, 5).map((shot) => (
+          <Pressable
+            accessibilityRole="button"
+            key={`${shot.bootId ?? "legacy"}:${shot.extractionId}`}
+            onPress={() => {
+              void onSelectHistoryTrace(shot.extractionId, shot.bootId).then((nextTrace) => {
+                setHistorySelection(nextTrace === null ? null : shot);
+                setHistoryTrace(nextTrace);
+              });
+            }}
+            style={({ pressed }) => [styles.historyRow, pressed && styles.pressed]}>
+            <Text selectable style={styles.contextTitle}>
+              {translate(
+                shot.controlMode === "manual"
+                  ? "extractionConsole.historyManual"
+                  : shot.controlMode === "timed"
+                    ? "extractionConsole.historyTimedProfile"
+                    : "extractionConsole.historyWeightProfile",
+                { profile: shot.profileId ?? "" },
+              ).trim()}
+            </Text>
+            <Text selectable style={styles.contextText}>
+              {new Date(shot.recordedAtMs).toLocaleString()} · {shot.outcome}
+            </Text>
+          </Pressable>
+        ))}
+      </View>
       <ProfileStrip
         disabled={controlsDisabled}
         onSelect={(selected) =>
@@ -242,6 +299,20 @@ export function ExtractionConsoleScreen({
                   : "extractionConsole.pumpOff",
               )}
             </Text>
+            <Text
+              selectable
+              style={[
+                styles.pill,
+                heaterCommand && styles.pillActive,
+              ]}>
+              {translate(
+                heaterCommand === undefined
+                  ? "scale.heaterCommandUnavailable"
+                  : heaterCommand
+                    ? "scale.heaterCommandOn"
+                    : "scale.heaterCommandOff",
+              )}
+            </Text>
           </View>
         </View>
         <View style={styles.readoutRow}>
@@ -302,7 +373,7 @@ export function ExtractionConsoleEntry({
   onPress: () => void;
   scale: ScaleState | null;
   snapshot: MachineState | null;
-  trace: StoredWeightedShotTrace | null;
+  trace: StoredExtractionTrace | null;
 }) {
   const readouts = extractionConsoleReadouts({
     extraction,
@@ -535,7 +606,10 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
     padding: 12,
   },
+  contextText: { color: "#5D5048", fontSize: 12, lineHeight: 17 },
+  contextTitle: { color: "#332A25", fontSize: 13, fontWeight: "800" },
   controls: { gap: 10 },
+  historyRow: { borderTopColor: "#DDD3C7", borderTopWidth: StyleSheet.hairlineWidth, gap: 2, paddingVertical: 8 },
   entry: {
     backgroundColor: "#FFFCF7",
     borderColor: "#DDD3C7",

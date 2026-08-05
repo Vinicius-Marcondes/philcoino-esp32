@@ -160,6 +160,11 @@ Não conecte, desconecte, modifique ou energize a fiação da rede elétrica com
 
 As APIs v1 e v2 usam HTTP plaintext local e o mesmo bearer token. A identidade pública é anunciada por mDNS. Isso pode ser aceitável para desenvolvimento restrito em uma LAN confiável e isolada, mas não protege contra um peer local hostil capaz de observar o tráfego, clonar a identidade, roubar/reutilizar um token ou executar brute force contra um token fraco. API v2 amplia o impacto de uma credencial roubada para comandos de extração.
 
+O SSE de extração mantém uma conexão HTTP autenticada aberta e carrega as
+mesmas limitações: ele não adiciona confidencialidade, identidade criptográfica
+ou proteção contra replay do bearer token. A limitação a um subscriber reduz o
+budget de recursos do firmware, não transforma a LAN em um canal confiável.
+
 Enquanto os findings conhecidos não forem resolvidos:
 
 - use uma rede dedicada e isolada para desenvolvimento;
@@ -179,6 +184,12 @@ calibração da balança, operação da bomba, massa da bebida, desenergização
 segurança elétrica. A telemetria nunca pode bloquear, atrasar, retomar ou
 alterar decisões de temperatura, aquecedor, bomba, extração, timeout ou falha.
 Amostras ausentes permanecem lacunas explícitas.
+
+No stream, `heaterCommand` e `pumpCommand` continuam sendo apenas comandos
+reconhecidos pelo firmware, não feedback de corrente, movimento, pressão ou
+desenergização física. Falha, lentidão, background ou firmware sem suporte ao
+stream devem degradar somente a observação no mobile; Start e Stop REST e toda
+a autoridade de segurança permanecem no firmware.
 
 | Evidência | O que sustenta | O que não sustenta |
 | --- | --- | --- |
