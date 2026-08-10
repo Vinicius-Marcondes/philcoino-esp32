@@ -5,7 +5,6 @@ import type {
   HeaterSettingsResponse,
   MachineState,
   Mode,
-  ProfileSet,
   StartExtractionRequest,
   TemperatureSettingsResponse,
 } from "@philcoino/protocol";
@@ -26,6 +25,17 @@ import {
   createSimulator,
   DEFAULT_SIMULATOR_TOKEN,
 } from "../../../tools/device-simulator/src/app.ts";
+
+const PROFILE_SELECTION = {
+  kind: "profile" as const,
+  profileId: "profile-1" as const,
+  profile: {
+    name: "Test profile",
+    preInfusionSeconds: 5,
+    soakSeconds: 5,
+    mainExtractionSeconds: 30,
+  },
+};
 
 describe("DashboardMutationSession", () => {
   test("shows pending and applies target values only after acknowledgement", async () => {
@@ -357,7 +367,7 @@ describe("DashboardMutationSession", () => {
         return {
           status: "running",
           extractionId: "weighted-run-1",
-          selection: { kind: "profile", profileId: "profile-1" },
+          selection: PROFILE_SELECTION,
           phase: "main-extraction",
           elapsedMs: 0,
           remainingMs: 60_000,
@@ -369,7 +379,7 @@ describe("DashboardMutationSession", () => {
     harness.session.start();
 
     harness.session.startExtraction(
-      { kind: "profile", profileId: "profile-1" },
+      PROFILE_SELECTION,
       {
         targetWeightDecigrams: 355,
         compensationDecigrams: 15,
@@ -384,7 +394,7 @@ describe("DashboardMutationSession", () => {
     expect(requests).toEqual([
       {
         idempotencyKey: "weighted-start-key-1",
-        selection: { kind: "profile", profileId: "profile-1" },
+        selection: PROFILE_SELECTION,
         weightControl: {
           targetWeightDecigrams: 355,
           compensationDecigrams: 15,
@@ -532,23 +542,10 @@ describe("DashboardMutationSession", () => {
     expect(harness.acknowledgedCooldowns).toHaveLength(1);
   });
 
-  test("serializes profile export, Start, and Stop with acknowledged state", async () => {
+  test("serializes Start and Stop with acknowledged state", async () => {
     const client = mutationClient({});
     const harness = createHarness(client, () => "serialized-start-01");
     harness.session.start();
-
-    harness.session.replaceProfiles({
-      profiles: [
-        { id: "profile-1", profile: null },
-        { id: "profile-2", profile: null },
-        { id: "profile-3", profile: null },
-        { id: "profile-4", profile: null },
-      ],
-    });
-    harness.session.startExtraction({ kind: "manual" });
-    await settle();
-    expect(harness.acknowledgedProfiles).toHaveLength(1);
-    expect(harness.acknowledgedExtractions).toHaveLength(0);
 
     harness.session.startExtraction({ kind: "manual" });
     await settle();
@@ -617,7 +614,6 @@ function createHarness(
   const acknowledgedHeaterSettings: HeaterSettingsResponse[] = [];
   const acknowledgedModes: Mode[] = [];
   const acknowledgedSettings: TemperatureSettingsResponse[] = [];
-  const acknowledgedProfiles: ProfileSet[] = [];
   const connections: ConnectionState[] = [];
   const dismissedFaults: MachineState[] = [];
   const outcomes: {
@@ -646,7 +642,6 @@ function createHarness(
     onModeAcknowledged: (mode) => acknowledgedModes.push(mode),
     onMutationChange: (kind, state) => outcomes.push({ kind, state }),
     onOverTemperatureDismissed: (snapshot) => dismissedFaults.push(snapshot),
-    onProfilesAcknowledged: (profiles) => acknowledgedProfiles.push(profiles),
     onTemperatureSettingsAcknowledged: (settings) =>
       acknowledgedSettings.push(settings),
     polling,
@@ -659,7 +654,6 @@ function createHarness(
     acknowledgedExtractions,
     acknowledgedHeaterSettings,
     acknowledgedModes,
-    acknowledgedProfiles,
     acknowledgedSettings,
     connections,
     dismissedFaults,
@@ -706,7 +700,6 @@ function mutationClient(
       steamControl: inactiveSteamControl,
       uptimeMs: 190_000,
     }),
-    replaceProfiles: async (profiles) => profiles,
     startExtraction: async ({ selection }) =>
       selection.kind === "manual"
         ? {

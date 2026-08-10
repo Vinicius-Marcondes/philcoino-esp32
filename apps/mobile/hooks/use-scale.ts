@@ -9,7 +9,10 @@ import type {
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AppState } from "react-native";
 
-import type { ExtractionSummary } from "@/src/history/shot-history";
+import {
+  extractionSummaryFromState,
+  type ExtractionSummary,
+} from "@/src/history/shot-history";
 import { shotHistoryExporter } from "@/src/history/shot-history-export";
 import { shotHistoryRepository } from "@/src/history/shot-history-repository";
 import {
@@ -74,6 +77,7 @@ export function useScale({
   const [streamStatus, setStreamStatus] =
     useState<ExtractionStreamStatus>("idle");
   const extractionRef = useRef(extraction);
+  const recordedExtractionRef = useRef<string | null>(null);
   const pollingRef = useRef<ScalePollingSession | null>(null);
   const streamRef = useRef<ExtractionStreamSession | null>(null);
   extractionRef.current = extraction;
@@ -160,15 +164,91 @@ export function useScale({
   }, [client, deviceId, streamClient]);
 
   useEffect(() => {
+    if (extraction === null) return;
+    const retainedExtractionId = extraction.extractionId;
+    const recordKey = JSON.stringify({
+      extractionId: retainedExtractionId,
+      status: extraction.status,
+      selection: extraction.selection,
+      activeWeight:
+        scale?.activeExtraction?.extractionId === retainedExtractionId
+          ? scale.activeExtraction
+          : null,
+      terminalWeight:
+        scale?.terminalExtraction?.extractionId === retainedExtractionId
+          ? scale.terminalExtraction
+          : null,
+    });
+    if (recordedExtractionRef.current === recordKey) return;
+    recordedExtractionRef.current = recordKey;
+    let active = true;
+    void (async () => {
+      await shotHistoryRepository.markUnfinishedIncomplete(
+        deviceId,
+        retainedExtractionId,
+      );
+      if (
+        retainedExtractionId !== null &&
+        extraction.selection !== null
+      ) {
+        const activeWeight =
+          scale?.activeExtraction?.extractionId === retainedExtractionId
+            ? {
+                compensationDecigrams:
+                  scale.activeExtraction.compensationDecigrams,
+                targetWeightDecigrams:
+                  scale.activeExtraction.targetWeightDecigrams,
+              }
+            : undefined;
+        const terminalWeight =
+          scale?.terminalExtraction?.extractionId === retainedExtractionId
+            ? scale.terminalExtraction
+            : null;
+        const weightControl = activeWeight ?? (terminalWeight === null
+          ? undefined
+          : {
+              compensationDecigrams: terminalWeight.compensationDecigrams,
+              targetWeightDecigrams: terminalWeight.targetWeightDecigrams,
+            });
+        const summary = extractionSummaryFromState(
+          deviceId,
+          extraction,
+          weightControl,
+        );
+        await shotHistoryRepository.append(
+          terminalWeight === null
+            ? summary
+            : {
+                ...summary,
+                compensationDecigrams: terminalWeight.compensationDecigrams,
+                cutoffDecigrams: terminalWeight.cutoffWeightDecigrams,
+                fallbackOccurred: terminalWeight.fallbackOccurred,
+                finalWeightDecigrams: terminalWeight.finalWeightDecigrams,
+                settled: terminalWeight.settled,
+                targetDecigrams: terminalWeight.targetWeightDecigrams,
+              },
+        );
+      }
+      const nextHistory = await shotHistoryRepository.load(deviceId);
+      if (active) setHistory(nextHistory);
+    })().catch(() => {
+      if (active) setHistoryError("Local shot data could not be saved.");
+    });
+    return () => {
+      active = false;
+    };
+  }, [deviceId, extraction, scale?.activeExtraction, scale?.terminalExtraction]);
+
+  useEffect(() => {
     const streamingExpected =
       streamClient !== null &&
-      (extraction?.status === "running" ||
+      (extraction?.extractionId !== null ||
         streamStatus === "connecting" ||
         streamStatus === "live" ||
         streamStatus === "stale");
     if (streamingExpected) {
       pollingRef.current?.stop();
-      if (extraction?.status === "running") {
+      if (extraction?.extractionId !== null && extraction?.extractionId !== undefined) {
         streamRef.current?.observeExtraction(extraction.extractionId);
       }
     } else if (AppState.currentState === "active") {

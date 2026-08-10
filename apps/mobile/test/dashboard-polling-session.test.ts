@@ -2,7 +2,6 @@ import { describe, expect, test } from "bun:test";
 import type {
   MachineState,
   MachineStateV2,
-  ProfileSet,
 } from "@philcoino/protocol";
 
 import { ApiClientError } from "../src/networking/api-client-error";
@@ -67,15 +66,6 @@ const validStateV2: MachineStateV2 = {
     outcome: null,
   },
 };
-const profiles: ProfileSet = {
-  profiles: [
-    { id: "profile-1", profile: null },
-    { id: "profile-2", profile: null },
-    { id: "profile-3", profile: null },
-    { id: "profile-4", profile: null },
-  ],
-};
-
 describe("DashboardPollingSession", () => {
   test("polls immediately and schedules the next request one second after completion", async () => {
     const scheduler = new FakeScheduler();
@@ -84,7 +74,6 @@ describe("DashboardPollingSession", () => {
     const snapshots: (MachineStateV2 | null)[] = [];
     const session = new DashboardPollingSession({
       client: {
-        getProfiles: async () => profiles,
         getStateV2: async () => {
           requests += 1;
           return validStateV2;
@@ -117,7 +106,6 @@ describe("DashboardPollingSession", () => {
     let aborted = false;
     const pending = deferred<MachineStateV2>();
     const client: DashboardStateClient = {
-      getProfiles: async () => profiles,
       getStateV2: ({ signal } = {}) => {
         requests += 1;
         activeRequests += 1;
@@ -159,7 +147,6 @@ describe("DashboardPollingSession", () => {
     let restarts = 0;
     const session = new DashboardPollingSession({
       client: {
-        getProfiles: async () => profiles,
         getStateV2: async () => ({
           ...validStateV2,
           machine: {
@@ -192,7 +179,6 @@ describe("DashboardPollingSession", () => {
     const snapshots: (MachineStateV2 | null)[] = [];
     let requests = 0;
     const client: DashboardStateClient = {
-      getProfiles: async () => profiles,
       getStateV2: ({ signal } = {}) => {
         requests += 1;
         if (requests === 1) {
@@ -236,7 +222,6 @@ describe("DashboardPollingSession", () => {
     let request = 0;
     const session = new DashboardPollingSession({
       client: {
-        getProfiles: async () => profiles,
         getStateV2: async () => {
           request += 1;
           if (request === 1) {

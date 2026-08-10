@@ -80,14 +80,12 @@ const expectedOperations = {
   "/api/v2/temperature-calibration/candidate": "put",
   "/api/v2/temperature-calibration/save": "post",
   "/api/v2/temperature-calibration/cancel": "post",
-  "/api/v2/history": "get",
   "/api/v2/scale": "get",
   "/api/v2/scale/trace": "get",
   "/api/v2/scale/calibration/start": "post",
   "/api/v2/scale/calibration/complete": "post",
   "/api/v2/scale/calibration/cancel": "post",
   "/api/v2/scale/warnings/acknowledge": "post",
-  "/api/v2/profiles": "get",
   "/api/v2/extractions/start": "post",
   "/api/v2/extractions/stop": "post",
   "/api/v2/extractions/stream": "get",
@@ -96,7 +94,6 @@ const expectedOperations = {
 } as const;
 
 const expectedAdditionalOperations = {
-  "/api/v2/profiles": "put",
   "/api/v2/settings/steam-control": "patch",
 } as const;
 

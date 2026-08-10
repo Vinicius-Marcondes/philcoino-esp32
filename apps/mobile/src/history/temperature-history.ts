@@ -4,8 +4,7 @@ import type {
   MachineState,
   MachineStatus,
   Mode,
-  ControllerConfiguration,
-  ControllerDiagnostics,
+  PumpCommand,
   SteamControlState,
 } from "@philcoino/protocol";
 
@@ -25,12 +24,8 @@ export interface TemperatureHistorySample {
   heaterActive: boolean;
   heaterEnabled: boolean;
   machineStatus: MachineStatus;
-  pumpActive: boolean | null;
-  controllerConfiguration: ControllerConfiguration | null;
-  controllerDiagnostics: ControllerDiagnostics | null;
+  pumpCommand: PumpCommand | null;
   recordedAtMs: number;
-  sourceBootId: string | null;
-  sourceSequence: number | null;
   startsAfterHistoryGap: boolean;
   steamControl?: SteamControlState | null;
   steamTargetC: number;
@@ -72,12 +67,8 @@ export function createTemperatureHistorySample(
     heaterActive: snapshot.heaterActive,
     heaterEnabled: snapshot.heaterEnabled,
     machineStatus: snapshot.status,
-    pumpActive: extraction.pumpCommand === "running",
-    controllerConfiguration: null,
-    controllerDiagnostics: null,
+    pumpCommand: extraction.pumpCommand,
     recordedAtMs,
-    sourceBootId: null,
-    sourceSequence: null,
     startsAfterHistoryGap: false,
     steamControl: snapshot.steamControl,
     steamTargetC: snapshot.steamTargetC,
@@ -270,15 +261,7 @@ export function isTemperatureHistoryGap(
     next.uptimeMs <= previous.uptimeMs ||
     next.uptimeMs - previous.uptimeMs > HISTORY_GAP_THRESHOLD_MS ||
     next.deviceId !== previous.deviceId ||
-    next.startsAfterHistoryGap ||
-    (previous.sourceBootId !== null &&
-      next.sourceBootId !== null &&
-      previous.sourceBootId !== next.sourceBootId) ||
-    (previous.sourceBootId !== null &&
-      previous.sourceBootId === next.sourceBootId &&
-      previous.sourceSequence !== null &&
-      next.sourceSequence !== null &&
-      next.sourceSequence !== previous.sourceSequence + 1)
+    next.startsAfterHistoryGap
   );
 }
 

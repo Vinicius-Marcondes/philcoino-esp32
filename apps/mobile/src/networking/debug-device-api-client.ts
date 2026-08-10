@@ -5,7 +5,6 @@ import {
   HeaterSettingsRequestSchema,
   MachineStateV2Schema,
   ModeRequestSchema,
-  ProfileSetSchema,
   RAW_BOILER_OVER_TEMPERATURE_C,
   STEAM_TARGET_MAX_C,
   STEAM_TARGET_MIN_C,
@@ -27,14 +26,11 @@ import {
   type HeaterSettingsRequest,
   type HeaterSettingsResponse,
   type HealthResponse,
-  type HistoryCursor,
-  type HistoryPage,
   type MachineState,
   type MachineStateV2,
   type ModeRequest,
   type ModeResponse,
   type OverTemperatureDismissResponse,
-  type ProfileSet,
   type StartExtractionRequest,
   type StartExtractionResponse,
   type StartCooldownRequest,
@@ -55,14 +51,10 @@ import {
 
 import type { DashboardMutationClient } from "../dashboard/dashboard-mutation-session";
 import type { DashboardStateClient } from "../dashboard/dashboard-polling-session";
-import {
-  cloneProfileSet,
-  DEFAULT_MOBILE_PROFILE_SET,
-} from "../profiles/profile-set";
 import { ApiClientError } from "./api-client-error";
 
 export const debugDeviceIdentity: DeviceResponse = {
-  apiVersion: "1",
+  apiVersion: "2",
   deviceId: "philcoino-debug",
   firmwareVersion: "debug",
   model: "debug-device",
@@ -79,7 +71,6 @@ export class DebugDeviceApiClient
   implements DashboardStateClient, DashboardMutationClient
 {
   private state: MachineState = createDebugState();
-  private profiles = cloneProfileSet(DEFAULT_MOBILE_PROFILE_SET);
   private extraction = ExtractionStateSchema.parse({
     status: "idle",
     extractionId: null,
@@ -187,53 +178,6 @@ export class DebugDeviceApiClient
     });
   }
 
-  async getHistory(
-    _cursor?: HistoryCursor,
-    options: { signal?: AbortSignal } = {},
-  ): Promise<HistoryPage> {
-    throwIfAborted(options.signal);
-    throw new ApiClientError(
-      "not-found",
-      "The debug device does not expose retained history.",
-      { endpoint: "/api/v2/history", status: 404 },
-    );
-  }
-
-  async getProfiles(
-    options: { signal?: AbortSignal } = {},
-  ): Promise<ProfileSet> {
-    throwIfAborted(options.signal);
-    return cloneProfileSet(this.profiles);
-  }
-
-  async replaceProfiles(
-    profiles: ProfileSet,
-    options: { signal?: AbortSignal } = {},
-  ): Promise<ProfileSet> {
-    throwIfAborted(options.signal);
-    const parsed = ProfileSetSchema.safeParse(profiles);
-    if (!parsed.success) {
-      throw new ApiClientError("invalid-request", "The profile set is invalid.");
-    }
-    if (this.extraction.status === "running") {
-      throw new ApiClientError("http", "Extraction is active.", {
-        response: {
-          error: {
-            code: "extraction_active",
-            message: "Profiles cannot be replaced while extraction is active.",
-          },
-          activeExtraction: this.extraction,
-        },
-        status: 409,
-      });
-    }
-    if (this.cooldown.status !== "idle") {
-      throw cooldownActiveError(this.cooldown);
-    }
-    this.profiles = cloneProfileSet(parsed.data);
-    return cloneProfileSet(this.profiles);
-  }
-
   async startExtraction(
     request: StartExtractionRequest,
     options: { signal?: AbortSignal } = {},
@@ -274,23 +218,7 @@ export class DebugDeviceApiClient
     }
 
     const selection = parsed.data.selection;
-    const profile =
-      selection.kind === "profile"
-        ? (this.profiles.profiles.find(
-            (slot) => slot.id === selection.profileId,
-          )?.profile ?? null)
-        : null;
-    if (selection.kind === "profile" && profile === null) {
-      throw new ApiClientError("http", "The profile slot is empty.", {
-        response: {
-          error: {
-            code: "profile_not_configured",
-            message: "The selected custom profile slot is empty.",
-          },
-        },
-        status: 409,
-      });
-    }
+    const profile = selection.kind === "profile" ? selection.profile : null;
 
     const profileDurationMs =
       profile === null

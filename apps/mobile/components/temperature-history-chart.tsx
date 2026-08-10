@@ -53,8 +53,6 @@ export interface TemperatureHistoryChartProps {
   history: TemperatureHistorySample[];
   loading: boolean;
   scale: ScaleState | null;
-  syncStatus: "idle" | "restoring" | "warning";
-  syncWarning: "device" | "network" | "protocol" | "storage" | null;
 }
 
 export function TemperatureHistoryChart({
@@ -64,8 +62,6 @@ export function TemperatureHistoryChart({
   history,
   loading,
   scale,
-  syncStatus,
-  syncWarning,
 }: TemperatureHistoryChartProps) {
   const [livePage, setLivePage] = useState<HistoryPage | null>(null);
   const [jumpToLatestRequest, setJumpToLatestRequest] = useState(0);
@@ -133,22 +129,9 @@ export function TemperatureHistoryChart({
     setSelectedTimestampMs(null);
   }, [visibleLiveWindow?.startMs]);
 
-  const warning =
-    syncStatus === "warning"
-      ? translate(
-          syncWarning === "protocol"
-            ? "dashboard.historySyncProtocolWarning"
-            : syncWarning === "network"
-              ? "dashboard.historySyncNetworkWarning"
-              : syncWarning === "device"
-                ? "dashboard.historySyncDeviceWarning"
-                : "dashboard.historySyncStorageWarning",
-        )
-      : syncStatus === "restoring"
-        ? translate("dashboard.historySyncRestoring")
-        : error !== null
-          ? translate("dashboard.historyStorageError")
-          : null;
+  const warning = error === null
+    ? null
+    : translate("dashboard.historyStorageError");
 
   return (
     <TelemetrySurface
@@ -161,9 +144,7 @@ export function TemperatureHistoryChart({
             accessibilityLiveRegion="polite"
             selectable
             style={
-              syncStatus === "warning" || error !== null
-                ? styles.historyError
-                : styles.historyStatus
+              styles.historyError
             }>
             {warning}
           </Text>

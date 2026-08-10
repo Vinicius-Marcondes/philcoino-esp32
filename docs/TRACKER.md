@@ -1,34 +1,32 @@
-# PRD-019 Tracker
+# PRD-020 Tracker
 
-PRD Status: Implemented — Connected and Human acceptance pending
-Current Task: [STRM-007](prds/PRD-019/tasks/STRM-007.md) — Verify connected behavior
+PRD Status: Implemented — Native and connected Human acceptance pending
+Current Task: [SIMP-006](prds/PRD-020/tasks/SIMP-006.md) — Verify and document the simplified system
 
-Implementation Boundary: Replace extraction-time scale/trace polling with one
-authenticated local SSE stream for every extraction while retaining firmware
-authority, one-Hertz combined-state polling, and acknowledged REST mutations.
+Implementation Boundary: Remove machine-history backfill and firmware profile
+persistence while preserving one-Hertz state polling, firmware-owned extraction,
+short stream replay, and local-only durable histories.
 
 ## Summary
 
-Stream resumable 250 ms temperature, command, phase, timing, and nullable scale
-telemetry; preserve real gaps; derive flow on mobile; and generalize local
-history without cloud services or automatic pruning.
+Profiles become mobile-only inline Start data, foreground state samples remain
+local until clear, and every extraction is presented through one Shots surface.
 
-PRD: `docs/prds/PRD-019/PRD-019.md`
+PRD: `docs/prds/PRD-020/PRD-020.md`
 
 ## Compatibility and Safety Boundary
 
-- `/api/v2/extractions/stream` is additive; existing REST and
-  `/api/v2/scale/trace` shapes remain compatible.
-- The new mobile requires streaming and does not fall back to high-frequency
-  trace polling, but keeps one-Hertz state/fault polling and REST Stop usable.
-- Telemetry is observation-only. Heater/pump fields remain firmware commands,
-  flow remains phone-derived, and none prove physical state.
-- Capture, serialization, transmission, storage, and UI remain outside firmware
-  control/safety authority and physical acceptance.
+- API generation 2 is a coordinated mobile/firmware cutover with no legacy shim.
+- Firmware latches and executes inline profiles; connectivity and telemetry never
+  own timing, cutoff, faults, heater, or pump safety.
+- The extraction replay ring remains observational and bounded. Connected and
+  software evidence do not establish energized physical safety.
+- PRD-019 remains Implemented with connected/Human acceptance pending; its
+  outstanding extraction-stream evidence is carried into SIMP-006, not marked complete.
 
 ## Git
 
-- Planned branch: `feature/PRD-019-local-extraction-streaming`
+- Branch: `codex/PRD-020-system-simplification`
 - Base: `main`
 - Merge target: `main`
 
@@ -36,10 +34,9 @@ PRD: `docs/prds/PRD-019/PRD-019.md`
 
 | Task | Review | Status | Evidence | Decision Log | Commit | Blocked Reason | Requested Decision |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| [STRM-001](prds/PRD-019/tasks/STRM-001.md) | Agent | Done | OpenAPI validation; protocol typecheck; 169 tests | Additive SSE; `/scale/trace` compatible | Pending | None | None |
-| [STRM-002](prds/PRD-019/tasks/STRM-002.md) | Agent | Done | Simulator typecheck; 99 tests | Manual time publishes without sleeps | Pending | None | None |
-| [STRM-003](prds/PRD-019/tasks/STRM-003.md) | Agent | Done | Native and ASan/UBSan host suites: 11/11 | Separate 320-sample zero-wait ring | Pending | None | None |
-| [STRM-004](prds/PRD-019/tasks/STRM-004.md) | Agent | In Review | Host suites pass; ESP-IDF 6.0.2 ESP32-C3 build passes (`0x120cb0`, 25% partition free) | One async subscriber; disconnect on send failure | Pending | Connected budgets unmeasured | Run connected worksheet |
-| [STRM-005](prds/PRD-019/tasks/STRM-005.md) | Agent | Done | Mobile typecheck; parser/session/integration tests | 404 unsupported; no polling fallback | Pending | None | None |
-| [STRM-006](prds/PRD-019/tasks/STRM-006.md) | Agent | Done | Migration/history/CSV/UI tests; lint | Unlimited retention until explicit clear | Pending | Native visual review is part of STRM-007 | None |
-| [STRM-007](prds/PRD-019/tasks/STRM-007.md) | Human | In Review | Automated matrix and pinned target build recorded in side notes | Connected evidence remains separate from safety | Pending | Native devices and instrumentation unavailable | Review native UI and connected target metrics |
+| [SIMP-001](prds/PRD-020/tasks/SIMP-001.md) | Agent | Done | [Software verification](prds/PRD-020/evidence/SOFTWARE-VERIFICATION.md) | Coordinated API generation 2 cutover | Pending | None | None |
+| [SIMP-002](prds/PRD-020/tasks/SIMP-002.md) | Agent | Done | [Software verification](prds/PRD-020/evidence/SOFTWARE-VERIFICATION.md) | No persisted simulator profiles/history | Pending | None | None |
+| [SIMP-003](prds/PRD-020/tasks/SIMP-003.md) | Agent | Done | [Software verification](prds/PRD-020/evidence/SOFTWARE-VERIFICATION.md) | Inline profile remains firmware-latched | Pending | None | None |
+| [SIMP-004](prds/PRD-020/tasks/SIMP-004.md) | Agent | Done | [Software verification](prds/PRD-020/evidence/SOFTWARE-VERIFICATION.md) | Status retained until explicit clear | Pending | None | None |
+| [SIMP-005](prds/PRD-020/tasks/SIMP-005.md) | Agent | Done | [Software verification](prds/PRD-020/evidence/SOFTWARE-VERIFICATION.md) | One durable Shots surface | Pending | None | None |
+| [SIMP-006](prds/PRD-020/tasks/SIMP-006.md) | Human | Implemented — Review pending | [Software verification](prds/PRD-020/evidence/SOFTWARE-VERIFICATION.md) | Physical acceptance remains separate | Pending | Native lifecycle/visual and connected-target evidence | Review five-tab UI, lifecycle, export/clear, latency/timing, heap/stack, SSE, and REST Stop |

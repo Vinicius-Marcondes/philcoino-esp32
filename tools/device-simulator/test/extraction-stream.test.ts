@@ -15,6 +15,12 @@ const authorization = {
   Authorization: `Bearer ${DEFAULT_SIMULATOR_TOKEN}`,
   "Content-Type": "application/json",
 };
+const classicProfile = {
+  name: "Classic30",
+  preInfusionSeconds: 0,
+  soakSeconds: 0,
+  mainExtractionSeconds: 30,
+} as const;
 
 describe("extraction telemetry stream", () => {
   it("requires authentication, retained telemetry, and one subscriber", async () => {
@@ -86,7 +92,7 @@ describe("extraction telemetry stream", () => {
     simulator.machine.setScaleState({ weightDecigrams: 800 });
     const timed = simulator.machine.startExtraction(
       "timed-stream-00001",
-      { kind: "profile", profileId: "profile-1" },
+      { kind: "profile", profileId: "profile-1", profile: classicProfile },
     );
     expect(timed.ok).toBe(true);
     simulator.machine.setScaleState({ weightDecigrams: 900 });
@@ -106,7 +112,7 @@ describe("extraction telemetry stream", () => {
     weightedSimulator.machine.setScaleState({ weightDecigrams: 700 });
     const weighted = weightedSimulator.machine.startExtraction(
       "weight-stream-0001",
-      { kind: "profile", profileId: "profile-1" },
+      { kind: "profile", profileId: "profile-1", profile: classicProfile },
       { targetWeightDecigrams: 350, compensationDecigrams: 20 },
     );
     expect(weighted.ok).toBe(true);

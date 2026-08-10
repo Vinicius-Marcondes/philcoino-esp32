@@ -17,8 +17,6 @@ import {
   COOLDOWN_STABILIZATION_MS,
   CompensationPhaseSchema,
   CompensationStateSchema,
-  ControllerConfigurationSchema,
-  ControllerDiagnosticsSchema,
   CooldownActiveConflictResponseSchema,
   CooldownOutcomeSchema,
   CooldownStateSchema,
@@ -43,11 +41,6 @@ import {
   HeaterSettingsRequestSchema,
   HeaterSettingsResponseSchema,
   HealthResponseSchema,
-  HISTORY_PAGE_SIZE,
-  HistoryContinuitySchema,
-  HistoryCursorSchema,
-  HistoryPageSchema,
-  HistorySampleSchema,
   IdempotencyKeySchema,
   IdleCooldownStateSchema,
   IdleExtractionStateSchema,
@@ -62,7 +55,6 @@ import {
   PROFILE_NAME_MAX_LENGTH,
   PROFILE_SLOT_IDS,
   ProfileNameSchema,
-  ProfileSetSchema,
   ProfileSlotIdSchema,
   PumpCommandSchema,
   PumpingCooldownStateSchema,
@@ -70,7 +62,6 @@ import {
   RAW_BOILER_OVER_TEMPERATURE_C,
   ScaleStateSchema,
   ScaleTraceResponseSchema,
-  SelectedControllerSchema,
   TerminalExtractionStateSchema,
   STEAM_TARGET_MAX_C,
   STEAM_TARGET_MIN_C,
@@ -136,7 +127,6 @@ const openApi = JSON.parse(
 
 const documentedSchemas: Record<string, ZodType> = {
   HealthResponse: HealthResponseSchema,
-  HistoryPage: HistoryPageSchema,
   DeviceResponse: DeviceResponseSchema,
   MachineState: MachineStateSchema,
   SteamControlSettings: SteamControlSettingsSchema,
@@ -161,13 +151,10 @@ const documentedSchemas: Record<string, ZodType> = {
   HeaterSettingsResponse: HeaterSettingsResponseSchema,
   OverTemperatureDismissResponse: OverTemperatureDismissResponseSchema,
   ErrorResponse: ErrorResponseSchema,
-  ProfileSet: ProfileSetSchema,
   IdleExtractionState: IdleExtractionStateSchema,
   RunningExtractionState: RunningExtractionStateSchema,
   TerminalExtractionState: TerminalExtractionStateSchema,
   MachineStateV2: MachineStateV2Schema,
-  ControllerConfiguration: ControllerConfigurationSchema,
-  ControllerDiagnostics: ControllerDiagnosticsSchema,
   StartExtractionRequest: StartExtractionRequestSchema,
   ScaleState: ScaleStateSchema,
   ScaleTraceResponse: ScaleTraceResponseSchema,
@@ -186,7 +173,6 @@ const documentedSchemas: Record<string, ZodType> = {
 
 const validFixtures = [
   ["valid/health.json", HealthResponseSchema],
-  ["valid/history-page.json", HistoryPageSchema],
   ["valid/device.json", DeviceResponseSchema],
   ["valid/state.json", MachineStateSchema],
   ["valid/state-fault.json", MachineStateSchema],
@@ -222,7 +208,6 @@ const validFixtures = [
   ["valid/heater-request.json", HeaterSettingsRequestSchema],
   ["valid/heater-response.json", HeaterSettingsResponseSchema],
   ["valid/error.json", ErrorResponseSchema],
-  ["valid/profile-set.json", ProfileSetSchema],
   ["valid/extraction-idle.json", IdleExtractionStateSchema],
   ["valid/extraction-running.json", RunningExtractionStateSchema],
   ["valid/extraction-terminal-replay.json", TerminalExtractionStateSchema],
@@ -252,7 +237,6 @@ const validFixtures = [
   ["valid/cooldown-start-request.json", StartCooldownRequestSchema],
   ["valid/cooldown-active-conflict.json", CooldownActiveConflictResponseSchema],
   ["valid/brew-mode-required-error.json", ApiV2ErrorResponseSchema],
-  ["valid/profile-not-configured-error.json", ApiV2ErrorResponseSchema],
   ["valid/cooldown-not-required-error.json", ApiV2ErrorResponseSchema],
   ["valid/cooldown-sensor-unavailable-error.json", ApiV2ErrorResponseSchema],
   ["valid/cooldown-machine-faulted-error.json", ApiV2ErrorResponseSchema],
@@ -262,7 +246,6 @@ const validFixtures = [
 
 const invalidFixtures = [
   ["invalid/device-api-version.json", DeviceResponseSchema],
-  ["invalid/history-page-unordered.json", HistoryPageSchema],
   ["invalid/state-extra-property.json", MachineStateSchema],
   [
     "invalid/scale-trace-cursor-mismatch.json",
@@ -311,8 +294,6 @@ const invalidFixtures = [
   ["invalid/profile-fractional-duration.json", ExtractionProfileSchema],
   ["invalid/profile-soak-without-preinfusion.json", ExtractionProfileSchema],
   ["invalid/profile-duration-overflow.json", ExtractionProfileSchema],
-  ["invalid/profile-set-duplicate-slot.json", ProfileSetSchema],
-  ["invalid/profile-set-extra-slot.json", ProfileSetSchema],
   ["invalid/extraction-start-key-short.json", StartExtractionRequestSchema],
   [
     "invalid/extraction-start-weight-manual.json",
@@ -389,7 +370,6 @@ describe("documented OpenAPI examples", () => {
   test("examples remain aligned with valid fixtures", async () => {
     const fixturesBySchema = {
       HealthResponse: [await fixture("valid/health.json")],
-      HistoryPage: [await fixture("valid/history-page.json")],
       DeviceResponse: [await fixture("valid/device.json")],
       MachineState: [
         await fixture("valid/state.json"),
@@ -436,7 +416,6 @@ describe("documented OpenAPI examples", () => {
         openApi.components.schemas.OverTemperatureDismissResponse.examples?.[0],
       ],
       ErrorResponse: [await fixture("valid/error.json")],
-      ProfileSet: [await fixture("valid/profile-set.json")],
       IdleExtractionState: [await fixture("valid/extraction-idle.json")],
       RunningExtractionState: [await fixture("valid/extraction-running.json")],
       TerminalExtractionState: [
@@ -444,16 +423,6 @@ describe("documented OpenAPI examples", () => {
       ],
       MachineStateV2: [
         openApi.components.schemas.MachineStateV2.examples?.[0],
-      ],
-      ControllerConfiguration: [
-        (await fixture("valid/history-page.json") as {
-          controllerConfiguration: unknown;
-        }).controllerConfiguration,
-      ],
-      ControllerDiagnostics: [
-        (await fixture("valid/history-page.json") as {
-          samples: Array<{ controllerDiagnostics: unknown }>;
-        }).samples[0]?.controllerDiagnostics,
       ],
       StartExtractionRequest: [
         await fixture("valid/extraction-start-request.json"),
@@ -467,7 +436,6 @@ describe("documented OpenAPI examples", () => {
         await fixture("valid/scale-calibration-complete-request.json"),
       ],
       ApiV2ErrorResponse: [
-        await fixture("valid/profile-not-configured-error.json"),
         await fixture("valid/brew-mode-required-error.json"),
         await fixture("valid/cooldown-not-required-error.json"),
         await fixture("valid/cooldown-sensor-unavailable-error.json"),
@@ -679,7 +647,7 @@ describe("strict payload handling", () => {
         deviceId: "device-1",
         name: "Machine",
         model: "philcoino-esp32-c3",
-        apiVersion: "1",
+        apiVersion: "2",
         firmwareVersion: "1.0.0",
         token: "must-not-leak",
       }).success,
@@ -781,13 +749,42 @@ describe("API v2 extraction acknowledgement boundaries", () => {
       RunningExtractionStateSchema.safeParse({
         status: "running",
         extractionId: "run-1",
-        selection: { kind: "profile", profileId: "profile-1" },
+        selection: {
+          kind: "profile",
+          profileId: "profile-1",
+          profile: {
+            name: "Classic30",
+            preInfusionSeconds: 0,
+            soakSeconds: 0,
+            mainExtractionSeconds: 30,
+          },
+        },
         phase: "soak",
         elapsedMs: 5000,
         remainingMs: EXTRACTION_MAX_DURATION_MS - 5000,
         pumpCommand: "off",
       }).success,
     ).toBe(true);
+  });
+
+  test("requires a complete immutable inline profile", () => {
+    const request = {
+      idempotencyKey: "start-inline-0001",
+      selection: { kind: "profile", profileId: "profile-1" },
+    };
+    expect(StartExtractionRequestSchema.safeParse(request).success).toBe(false);
+    expect(StartExtractionRequestSchema.safeParse({
+      ...request,
+      selection: {
+        ...request.selection,
+        profile: {
+          name: "Classic30",
+          preInfusionSeconds: 0,
+          soakSeconds: 0,
+          mainExtractionSeconds: 30,
+        },
+      },
+    }).success).toBe(true);
   });
 
   test("keeps v1 paths temperature-control-only while adding v2", () => {
@@ -917,8 +914,6 @@ describe("API v2 thermal workflow boundaries", () => {
       "/api/v2/extractions/start",
       "/api/v2/extractions/stop",
       "/api/v2/extractions/stream",
-      "/api/v2/history",
-      "/api/v2/profiles",
       "/api/v2/scale",
       "/api/v2/scale/calibration/cancel",
       "/api/v2/scale/calibration/complete",
@@ -988,7 +983,7 @@ describe("API v2 thermal workflow boundaries", () => {
   });
 });
 
-describe("API v2 rolling history", () => {
+describe("API v2 local state", () => {
   test("exposes only the strict queryless machine state", () => {
     const operation = openApi.paths["/api/v2/state"]?.get as {
       parameters?: unknown[];
@@ -1012,108 +1007,10 @@ describe("API v2 rolling history", () => {
     expect(operation.responses?.["400"]).toBeDefined();
   });
 
-  test("defines bounded strict cursor and continuity values", () => {
-    expect(HISTORY_PAGE_SIZE).toBe(8);
-    expect(HistoryContinuitySchema.options).toEqual([
-      "initial",
-      "continuous",
-      "truncated",
-      "reset",
-    ]);
-    expect(
-      HistoryCursorSchema.safeParse({
-        bootId: "00112233445566778899aabbccddeeff",
-        afterSequence: 2,
-      }).success,
-    ).toBe(true);
-    expect(
-      HistoryCursorSchema.safeParse({ afterSequence: 2 }).success,
-    ).toBe(false);
-  });
-
-  test("rejects fault and page-order inconsistencies", async () => {
-    const page = HistoryPageSchema.parse(await fixture("valid/history-page.json"));
-    const sample = page.samples[0];
-    if (sample === undefined) throw new Error("Missing history sample");
-    expect(
-      HistorySampleSchema.safeParse({
-        ...sample,
-        heaterActive: true,
-        machineStatus: "fault",
-        faultCode: "sensor_failure"
-      }).success,
-    ).toBe(false);
-  });
-
-  test("requires strict bounded controller diagnostics and rejects removed prediction fields", async () => {
-    const page = HistoryPageSchema.parse(await fixture("valid/history-page.json"));
-    const diagnostics = page.samples[0]?.controllerDiagnostics;
-    expect(diagnostics).toBeDefined();
-    if (diagnostics === undefined) {
-      throw new Error("Missing controller diagnostics fixture");
-    }
-    expect(SelectedControllerSchema.options).toEqual(["legacy_curve", "pi"]);
-    expect(
-      ControllerDiagnosticsSchema.safeParse({
-        ...diagnostics,
-        errorC: diagnostics.errorC + 1,
-      }).success,
-    ).toBe(false);
-    expect(
-      ControllerDiagnosticsSchema.safeParse({
-        ...diagnostics,
-        unexpected: true,
-      }).success,
-    ).toBe(false);
-    expect(
-      HistorySampleSchema.safeParse({
-        ...page.samples[0],
-        predictiveTemperature: {},
-      }).success,
-    ).toBe(false);
-    expect(
-      HistoryPageSchema.safeParse({
-        ...page,
-        controllerConfiguration: {
-          ...page.controllerConfiguration,
-          selectedController: "pi",
-        },
-      }).success,
-    ).toBe(false);
-  });
-
-  test("caps matched-version history pages at eight samples", async () => {
-    const page = HistoryPageSchema.parse(await fixture("valid/history-page.json"));
-    const sample = page.samples[1];
-    if (sample === undefined) throw new Error("Missing history sample");
-    const samples = Array.from(
-      { length: HISTORY_PAGE_SIZE + 1 },
-      (_, index) => ({
-        ...sample,
-        sequence: index + 1,
-        uptimeMs: (index + 1) * 1_000,
-      }),
-    );
-
-    expect(
-      HistoryPageSchema.safeParse({
-        ...page,
-        oldestSequence: 1,
-        latestSequence: HISTORY_PAGE_SIZE + 1,
-        nextCursor: {
-          ...page.nextCursor,
-          afterSequence: HISTORY_PAGE_SIZE + 1,
-        },
-        samples,
-      }).success,
-    ).toBe(false);
-  });
-
-  test("documents the history endpoint as additive and protected", () => {
-    const operation = openApi.paths["/api/v2/history"]?.get;
-    expect(operation?.security).toEqual([{ bearerAuth: [] }]);
-    expect(operation?.responses).toHaveProperty("400");
-    expect(operation?.responses).toHaveProperty("401");
-    expect(operation?.responses).toHaveProperty("500");
+  test("removes the machine-history endpoint", () => {
+    expect(openApi.paths["/api/v2/history"]).toBeUndefined();
+    expect(openApi.paths["/api/v2/profiles"]).toBeUndefined();
+    expect(openApi.components.schemas).not.toHaveProperty("HistoryPage");
+    expect(openApi.components.schemas).not.toHaveProperty("ProfileSet");
   });
 });

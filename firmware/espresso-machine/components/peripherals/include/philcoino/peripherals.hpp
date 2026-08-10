@@ -243,31 +243,7 @@ struct ExtractionProfile {
   std::uint8_t main_extraction_seconds{0};
 };
 
-using ExtractionProfiles = std::array<ExtractionProfile, kProfileSlotCount>;
-
-ExtractionProfiles default_extraction_profiles();
 bool extraction_profile_is_valid(const ExtractionProfile& profile);
-bool extraction_profiles_are_valid(const ExtractionProfiles& profiles);
-
-class ProfileBackend {
- public:
-  virtual ~ProfileBackend() = default;
-  virtual BackendLoadResult load(ExtractionProfiles& profiles) = 0;
-  virtual bool save(const ExtractionProfiles& profiles) = 0;
-};
-
-enum class ProfileLoadResult { kOk, kInitializedDefaults, kCorrupt, kError };
-
-class ProfileStorage {
- public:
-  explicit ProfileStorage(ProfileBackend& backend);
-
-  ProfileLoadResult load(ExtractionProfiles& profiles);
-  bool save(const ExtractionProfiles& profiles);
-
- private:
-  ProfileBackend& backend_;
-};
 
 class DigitalOutput {
  public:

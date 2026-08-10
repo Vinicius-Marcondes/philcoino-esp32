@@ -47,8 +47,6 @@ bool parse_temperature_calibration_session(const std::string& body,
 std::string serialize_temperature_calibration(
     const control::TemperatureCalibrationSnapshot& snapshot);
 
-bool parse_profiles(const std::string& body,
-                    peripherals::ExtractionProfiles& profiles);
 bool parse_start(const std::string& body, std::string& idempotency_key,
                  control::ExtractionSelection& selection);
 bool parse_start(const std::string& body, std::string& idempotency_key,
@@ -65,8 +63,6 @@ std::string serialize_cooldown(const control::CooldownSnapshot& snapshot);
 std::string serialize_compensation(
     bool compensation_active,
     const control::ExtractionSnapshot& extraction);
-std::string serialize_profiles(
-    const peripherals::ExtractionProfiles& profiles);
 std::string serialize_scale(const control::ScaleSnapshot& scale,
                             const control::WeightExtractionSnapshot& weight);
 

@@ -20,7 +20,6 @@
 #include "philcoino/control.hpp"
 #include "philcoino/esp_networking.hpp"
 #include "philcoino/esp_peripherals.hpp"
-#include "philcoino/history.hpp"
 #include "philcoino/performance_diagnostics.hpp"
 #include "philcoino/weighted_trace.hpp"
 #include "philcoino/extraction_telemetry.hpp"
@@ -620,27 +619,10 @@ extern "C" void app_main() {
     return;
   }
 
-  static EspNvsProfileBackend profile_backend;
-  if (!profile_backend.initialize()) {
-    ESP_LOGE(kLogTag, "NVS profile storage initialization failed");
-    pump.force_off();
-    ssr.force_off();
-    return;
-  }
-  static ProfileStorage profile_storage(profile_backend);
-  ExtractionProfiles profiles{};
-  const auto profile_result = profile_storage.load(profiles);
-  if (profile_result == ProfileLoadResult::kCorrupt ||
-      profile_result == ProfileLoadResult::kError) {
-    ESP_LOGE(kLogTag, "Persisted extraction profiles are unavailable or invalid");
-    pump.force_off();
-    ssr.force_off();
-    return;
-  }
   static philcoino::control::TemperatureController controller(
       targets, temperature_calibration, steam_control_settings, ssr);
   static philcoino::control::ExtractionController extraction_controller(
-      profiles, pump);
+      pump);
   static philcoino::control::CooldownController cooldown_controller(controller,
                                                                     pump);
   if (!cooldown_controller.reset(uptime_ms())) {
@@ -701,18 +683,17 @@ extern "C" void app_main() {
   vTaskDelay(pdMS_TO_TICKS(kMax6675SampleIntervalMs));
   auto snapshot = controller.update(thermocouple.read(uptime_ms()), uptime_ms());
 
-  std::array<char, 33> history_boot_id{};
-  std::snprintf(history_boot_id.data(), history_boot_id.size(),
+  std::array<char, 33> boot_id{};
+  std::snprintf(boot_id.data(), boot_id.size(),
                 "%08lx%08lx%08lx%08lx",
                 static_cast<unsigned long>(esp_random()),
                 static_cast<unsigned long>(esp_random()),
                 static_cast<unsigned long>(esp_random()),
                 static_cast<unsigned long>(esp_random()));
-  static philcoino::networking::HistoryBuffer history(history_boot_id.data());
   static philcoino::networking::WeightedTraceBuffer weighted_trace(
-      history_boot_id.data());
+      boot_id.data());
   static philcoino::networking::ExtractionTelemetryBuffer extraction_telemetry(
-      history_boot_id.data());
+      boot_id.data());
 
   static WorkflowTaskContext workflow_context{
       &controller, &extraction_controller, &cooldown_controller,
@@ -749,8 +730,8 @@ extern "C" void app_main() {
   static philcoino::networking::FirmwareApi api(
       identity, CONFIG_PHILCOINO_BEARER_TOKEN, controller, target_storage,
       temperature_calibration_storage, extraction_controller,
-      cooldown_controller, profile_storage, scale_calibration_storage,
-      synchronization, &history, &scale_controller, &weighted_trace,
+      cooldown_controller, scale_calibration_storage,
+      synchronization, &scale_controller, &weighted_trace,
       &steam_control_settings_storage);
   static philcoino::networking::EspNetworkServer network(
       api, identity, performance_diagnostics, &extraction_telemetry);
@@ -826,8 +807,6 @@ extern "C" void app_main() {
     }
     snapshot = controller.update(reading, pump.command(), uptime_ms());
     synchronization.unlock(philcoino::networking::ApiDomain::kTemperature);
-    history.record(static_cast<std::uint64_t>(esp_timer_get_time() / 1000),
-                   snapshot, pump.command());
     if constexpr (philcoino::config::kPerformanceDiagnosticsEnabled) {
       performance_diagnostics->record(
           philcoino::diagnostics::DurationMetric::kTemperatureWorkUs,

@@ -3,7 +3,7 @@
   "jsonSchemaDialect": "https://spec.openapis.org/oas/3.1/dialect/base",
   "info": {
     "title": "Philcoino ESP32 API",
-    "version": "1.0.0",
+    "version": "2.0.0",
     "description": "Local-network API for monitoring and configuring one Philcoino espresso machine."
   },
   "servers": [
@@ -386,41 +386,6 @@
         }
       }
     },
-    "/api/v2/history": {
-      "get": {
-        "operationId": "getTemperatureHistory",
-        "summary": "Read a bounded page of volatile device history",
-        "description": "Returns observational one-Hertz samples from the current boot. Supply neither cursor parameter for an initial page or supply both for continuation.",
-        "security": [{ "bearerAuth": [] }],
-        "parameters": [
-          {
-            "name": "bootId",
-            "in": "query",
-            "required": false,
-            "schema": { "$ref": "#/components/schemas/HistoryBootId" }
-          },
-          {
-            "name": "afterSequence",
-            "in": "query",
-            "required": false,
-            "schema": { "$ref": "#/components/schemas/HistorySequence" }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "One ordered history page and the cursor for the next page.",
-            "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/HistoryPage" }
-              }
-            }
-          },
-          "400": { "$ref": "#/components/responses/V2BadRequest" },
-          "401": { "$ref": "#/components/responses/V2Unauthorized" },
-          "500": { "$ref": "#/components/responses/V2InternalError" }
-        }
-      }
-    },
     "/api/v2/scale": {
       "get": {
         "operationId": "getScaleState",
@@ -453,13 +418,13 @@
             "name": "bootId",
             "in": "query",
             "required": false,
-            "schema": { "$ref": "#/components/schemas/HistoryBootId" }
+            "schema": { "$ref": "#/components/schemas/ReplayBootId" }
           },
           {
             "name": "afterSequence",
             "in": "query",
             "required": false,
-            "schema": { "$ref": "#/components/schemas/HistorySequence" }
+            "schema": { "$ref": "#/components/schemas/ReplaySequence" }
           }
         ],
         "responses": {
@@ -544,69 +509,10 @@
         }
       }
     },
-    "/api/v2/profiles": {
-      "get": {
-        "operationId": "getExtractionProfiles",
-        "summary": "Read all four persisted custom profile slots",
-        "security": [{ "bearerAuth": [] }],
-        "responses": {
-          "200": {
-            "description": "The complete persisted machine profile set.",
-            "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/ProfileSet" }
-              }
-            }
-          },
-          "401": { "$ref": "#/components/responses/V2Unauthorized" },
-          "500": { "$ref": "#/components/responses/V2InternalError" }
-        }
-      },
-      "put": {
-        "operationId": "replaceExtractionProfiles",
-        "summary": "Atomically replace all four custom profile slots while idle",
-        "description": "The previous complete set remains persisted if validation or persistence fails.",
-        "security": [{ "bearerAuth": [] }],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": { "$ref": "#/components/schemas/ProfileSet" }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "The complete acknowledged persisted profile set.",
-            "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/ProfileSet" }
-              }
-            }
-          },
-          "400": { "$ref": "#/components/responses/V2BadRequest" },
-          "401": { "$ref": "#/components/responses/V2Unauthorized" },
-          "409": {
-            "description": "An extraction or cooldown is active; no profile slot was changed.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "oneOf": [
-                    { "$ref": "#/components/schemas/ExtractionActiveConflictResponse" },
-                    { "$ref": "#/components/schemas/CooldownActiveConflictResponse" }
-                  ]
-                }
-              }
-            }
-          },
-          "500": { "$ref": "#/components/responses/V2InternalError" }
-        }
-      }
-    },
     "/api/v2/extractions/start": {
       "post": {
         "operationId": "startExtraction",
-        "summary": "Start Manual or one persisted profile idempotently",
+        "summary": "Start Manual or one inline profile snapshot idempotently",
         "description": "Start is accepted only in acknowledged Brew mode and while cooldown is idle. Replaying the same idempotency key and normalized selection returns the retained active or terminal extraction without issuing another pump-high command. Reusing a retained key with a different selection is rejected as idempotency_mismatch. A terminal record remains volatile until another key is successfully accepted or the device reboots.",
         "security": [{ "bearerAuth": [] }],
         "requestBody": {
@@ -692,13 +598,13 @@
             "name": "bootId",
             "in": "query",
             "required": false,
-            "schema": { "$ref": "#/components/schemas/HistoryBootId" }
+            "schema": { "$ref": "#/components/schemas/ReplayBootId" }
           },
           {
             "name": "afterSequence",
             "in": "query",
             "required": false,
-            "schema": { "$ref": "#/components/schemas/HistorySequence" }
+            "schema": { "$ref": "#/components/schemas/ReplaySequence" }
           }
         ],
         "responses": {
@@ -932,7 +838,7 @@
           },
           "name": { "type": "string", "minLength": 1, "maxLength": 64 },
           "model": { "type": "string", "minLength": 1, "maxLength": 64 },
-          "apiVersion": { "const": "1" },
+          "apiVersion": { "const": "2" },
           "firmwareVersion": { "type": "string", "minLength": 1, "maxLength": 32 }
         },
         "examples": [
@@ -940,7 +846,7 @@
             "deviceId": "philcoino-c3-a1b2c3",
             "name": "Kitchen espresso machine",
             "model": "philcoino-esp32-c3",
-            "apiVersion": "1",
+            "apiVersion": "2",
             "firmwareVersion": "1.0.0"
           }
         ]
@@ -1584,103 +1490,6 @@
           }
         ]
       },
-      "ProfileSet": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["profiles"],
-        "properties": {
-          "profiles": {
-            "type": "array",
-            "minItems": 4,
-            "maxItems": 4,
-            "prefixItems": [
-              {
-                "type": "object",
-                "additionalProperties": false,
-                "required": ["id", "profile"],
-                "properties": {
-                  "id": { "const": "profile-1" },
-                  "profile": {
-                    "oneOf": [
-                      { "$ref": "#/components/schemas/ExtractionProfile" },
-                      { "type": "null" }
-                    ]
-                  }
-                }
-              },
-              {
-                "type": "object",
-                "additionalProperties": false,
-                "required": ["id", "profile"],
-                "properties": {
-                  "id": { "const": "profile-2" },
-                  "profile": {
-                    "oneOf": [
-                      { "$ref": "#/components/schemas/ExtractionProfile" },
-                      { "type": "null" }
-                    ]
-                  }
-                }
-              },
-              {
-                "type": "object",
-                "additionalProperties": false,
-                "required": ["id", "profile"],
-                "properties": {
-                  "id": { "const": "profile-3" },
-                  "profile": {
-                    "oneOf": [
-                      { "$ref": "#/components/schemas/ExtractionProfile" },
-                      { "type": "null" }
-                    ]
-                  }
-                }
-              },
-              {
-                "type": "object",
-                "additionalProperties": false,
-                "required": ["id", "profile"],
-                "properties": {
-                  "id": { "const": "profile-4" },
-                  "profile": {
-                    "oneOf": [
-                      { "$ref": "#/components/schemas/ExtractionProfile" },
-                      { "type": "null" }
-                    ]
-                  }
-                }
-              }
-            ],
-            "items": false
-          }
-        },
-        "examples": [
-          {
-            "profiles": [
-              {
-                "id": "profile-1",
-                "profile": {
-                  "name": "Classic30",
-                  "preInfusionSeconds": 0,
-                  "soakSeconds": 0,
-                  "mainExtractionSeconds": 30
-                }
-              },
-              {
-                "id": "profile-2",
-                "profile": {
-                  "name": "Pre5Soak5",
-                  "preInfusionSeconds": 5,
-                  "soakSeconds": 5,
-                  "mainExtractionSeconds": 25
-                }
-              },
-              { "id": "profile-3", "profile": null },
-              { "id": "profile-4", "profile": null }
-            ]
-          }
-        ]
-      },
       "ManualExtractionSelection": {
         "type": "object",
         "additionalProperties": false,
@@ -1690,10 +1499,11 @@
       "ProfileExtractionSelection": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["kind", "profileId"],
+        "required": ["kind", "profileId", "profile"],
         "properties": {
           "kind": { "const": "profile" },
-          "profileId": { "$ref": "#/components/schemas/ProfileSlotId" }
+          "profileId": { "$ref": "#/components/schemas/ProfileSlotId" },
+          "profile": { "$ref": "#/components/schemas/ExtractionProfile" }
         }
       },
       "ExtractionSelection": {
@@ -1807,7 +1617,11 @@
           {
             "status": "running",
             "extractionId": "run-184220",
-            "selection": { "kind": "profile", "profileId": "profile-2" },
+            "selection": {
+              "kind": "profile",
+              "profileId": "profile-2",
+              "profile": { "name": "Pre5Soak5", "preInfusionSeconds": 5, "soakSeconds": 5, "mainExtractionSeconds": 25 }
+            },
             "phase": "soak",
             "elapsedMs": 7000,
             "remainingMs": 28000,
@@ -1857,7 +1671,11 @@
           {
             "status": "idle",
             "extractionId": "run-184220",
-            "selection": { "kind": "profile", "profileId": "profile-2" },
+            "selection": {
+              "kind": "profile",
+              "profileId": "profile-2",
+              "profile": { "name": "Pre5Soak5", "preInfusionSeconds": 5, "soakSeconds": 5, "mainExtractionSeconds": 25 }
+            },
             "phase": "idle",
             "elapsedMs": 35000,
             "remainingMs": null,
@@ -2166,251 +1984,16 @@
           }
         ]
       },
-      "HistoryBootId": {
+      "ReplayBootId": {
         "type": "string",
         "minLength": 32,
         "maxLength": 32,
         "pattern": "^[0-9a-f]{32}$"
       },
-      "HistorySequence": {
+      "ReplaySequence": {
         "type": "integer",
         "minimum": 0,
         "maximum": 9007199254740991
-      },
-      "HistoryContinuity": {
-        "type": "string",
-        "enum": ["initial", "continuous", "truncated", "reset"]
-      },
-      "HistoryCursor": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["bootId", "afterSequence"],
-        "properties": {
-          "bootId": { "$ref": "#/components/schemas/HistoryBootId" },
-          "afterSequence": { "$ref": "#/components/schemas/HistorySequence" }
-        }
-      },
-      "ControllerConfiguration": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["firmwareVersion", "selectedController", "piKp", "piKi", "filterAlpha", "controllerIntervalMs", "ssrWindowMs"],
-        "properties": {
-          "firmwareVersion": { "type": "string", "minLength": 1, "maxLength": 32, "description": "Firmware build version that produced the page." },
-          "selectedController": { "type": "string", "enum": ["legacy_curve", "pi"], "description": "Compile-time Brew requested-duty authority. Steam retains its existing controller in either build." },
-          "piKp": { "type": "number", "minimum": 0, "maximum": 16 },
-          "piKi": { "type": "number", "minimum": 0, "maximum": 16 },
-          "filterAlpha": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 },
-          "controllerIntervalMs": { "type": "integer", "enum": [500] },
-          "ssrWindowMs": { "type": "integer", "enum": [10000] }
-        },
-        "description": "Compile-time Brew controller identity and tuning metadata for A/B comparison. It is observational configuration, not a runtime control surface.",
-        "examples": [
-          {
-            "firmwareVersion": "0.4.0",
-            "selectedController": "legacy_curve",
-            "piKp": 0.08,
-            "piKi": 0.01,
-            "filterAlpha": 0.25,
-            "controllerIntervalMs": 500,
-            "ssrWindowMs": 10000
-          }
-        ]
-      },
-      "ControllerDiagnostics": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["temperatureRawC", "temperatureFilteredC", "baseTargetC", "privateTargetC", "errorC", "selectedController", "legacyRequestedDuty", "piRequestedDuty", "proportionalContribution", "integralContribution", "integralState", "piSaturation", "piAntiWindupActive", "heaterCommandActive", "deliveredCommandDuty1s", "pumpCommand", "extractionPhase", "operatingMode"],
-        "properties": {
-          "temperatureRawC": { "type": "number", "minimum": -40, "maximum": 160, "description": "Validated thermocouple reading before the persisted global temperature-calibration offset." },
-          "temperatureFilteredC": { "type": "number", "minimum": -40, "maximum": 180, "description": "Controller-owned temperature used for duty calculations: filtered globally calibrated temperature in Brew, or globally calibrated temperature plus the transient positive-only heat-soak compensation in Steam." },
-          "baseTargetC": { "type": "number", "minimum": 0, "maximum": 135, "description": "Persisted active-mode target used by readiness, limits, and public state." },
-          "privateTargetC": { "type": "number", "minimum": 0, "maximum": 135, "description": "Private duty target after the fixed Brew extraction bias; it never mutates persisted/public targets." },
-          "errorC": { "type": "number", "minimum": -200, "maximum": 200, "description": "privateTargetC minus temperatureFilteredC." },
-          "selectedController": { "type": "string", "enum": ["legacy_curve", "pi"], "description": "Compile-time Brew requested-duty authority for the build." },
-          "legacyRequestedDuty": { "type": "number", "minimum": 0, "maximum": 1 },
-          "piRequestedDuty": { "type": "number", "minimum": 0, "maximum": 1 },
-          "proportionalContribution": { "type": "number", "minimum": -16, "maximum": 16 },
-          "integralContribution": { "type": "number", "minimum": -16, "maximum": 16 },
-          "integralState": { "type": "number", "minimum": -10000, "maximum": 10000, "description": "Bounded PI integral state in degree-seconds." },
-          "piSaturation": { "type": "string", "enum": ["none", "lower", "upper"] },
-          "piAntiWindupActive": { "type": "boolean", "description": "True when the current integration step was rejected because it would drive a saturated output farther into saturation." },
-          "heaterCommandActive": { "type": "boolean", "description": "Acknowledged firmware heater command only; not GPIO voltage, SSR current, or physical heater power." },
-          "deliveredCommandDuty1s": { "type": "number", "minimum": 0, "maximum": 1, "description": "Recent commanded-on fraction, not measured SSR current or physical power." },
-          "pumpCommand": { "$ref": "#/components/schemas/PumpCommand", "description": "Acknowledged firmware pump command only; not proof of flow." },
-          "extractionPhase": { "$ref": "#/components/schemas/ExtractionPhase" },
-          "operatingMode": { "type": "string", "enum": ["warmup", "idle_stable", "brewing", "post_brew_recovery", "steam", "inhibited", "fault"] }
-        },
-        "description": "Bounded observational Brew controller and command diagnostics. None of these fields is measured heater power, measured SSR current, or a mobile control input.",
-        "examples": [
-          {
-            "temperatureRawC": 92.75,
-            "temperatureFilteredC": 92.5,
-            "baseTargetC": 93,
-            "privateTargetC": 93,
-            "errorC": 0.5,
-            "selectedController": "legacy_curve",
-            "legacyRequestedDuty": 0.2,
-            "piRequestedDuty": 0.08,
-            "proportionalContribution": 0.04,
-            "integralContribution": 0.04,
-            "integralState": 4,
-            "piSaturation": "none",
-            "piAntiWindupActive": false,
-            "heaterCommandActive": true,
-            "deliveredCommandDuty1s": 0.5,
-            "pumpCommand": "off",
-            "extractionPhase": "idle",
-            "operatingMode": "warmup"
-          }
-        ]
-      },
-      "HistorySample": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["sequence", "uptimeMs", "boilerTemperatureC", "brewTargetC", "steamTargetC", "activeMode", "heaterEnabled", "heaterActive", "pumpActive", "machineStatus", "faultCode", "steamControl", "controllerDiagnostics"],
-        "properties": {
-          "sequence": { "$ref": "#/components/schemas/HistorySequence" },
-          "uptimeMs": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
-          "boilerTemperatureC": { "type": "number" },
-          "brewTargetC": { "$ref": "#/components/schemas/BrewTarget" },
-          "steamTargetC": { "$ref": "#/components/schemas/SteamTarget" },
-          "activeMode": { "$ref": "#/components/schemas/Mode" },
-          "heaterEnabled": { "type": "boolean" },
-          "heaterActive": { "type": "boolean" },
-          "pumpActive": { "type": "boolean", "description": "Firmware pump command state only; not proof of flow or physical operation." },
-          "machineStatus": { "$ref": "#/components/schemas/MachineStatus" },
-          "faultCode": { "oneOf": [{ "$ref": "#/components/schemas/FaultCode" }, { "type": "null" }] },
-          "steamControl": { "$ref": "#/components/schemas/SteamControlState" },
-          "controllerDiagnostics": { "$ref": "#/components/schemas/ControllerDiagnostics" }
-        }
-      },
-      "HistoryPage": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["deviceId", "bootId", "capturedAtUptimeMs", "oldestSequence", "latestSequence", "nextCursor", "hasMore", "continuity", "controllerConfiguration", "samples"],
-        "properties": {
-          "deviceId": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$" },
-          "bootId": { "$ref": "#/components/schemas/HistoryBootId" },
-          "capturedAtUptimeMs": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
-          "oldestSequence": { "oneOf": [{ "$ref": "#/components/schemas/HistorySequence" }, { "type": "null" }] },
-          "latestSequence": { "oneOf": [{ "$ref": "#/components/schemas/HistorySequence" }, { "type": "null" }] },
-          "nextCursor": { "$ref": "#/components/schemas/HistoryCursor" },
-          "hasMore": { "type": "boolean" },
-          "continuity": { "$ref": "#/components/schemas/HistoryContinuity" },
-          "controllerConfiguration": { "$ref": "#/components/schemas/ControllerConfiguration" },
-          "samples": { "type": "array", "maxItems": 8, "description": "Firmware and matched consumers use at most eight diagnostic samples per page to stay within the ESP32 transport budget.", "items": { "$ref": "#/components/schemas/HistorySample" } }
-        },
-        "examples": [
-          {
-            "deviceId": "philcoino-c3-a1b2c3",
-            "bootId": "00112233445566778899aabbccddeeff",
-            "capturedAtUptimeMs": 184220,
-            "oldestSequence": 1,
-            "latestSequence": 2,
-            "nextCursor": { "bootId": "00112233445566778899aabbccddeeff", "afterSequence": 2 },
-            "hasMore": false,
-            "continuity": "initial",
-            "controllerConfiguration": {
-              "firmwareVersion": "0.4.0",
-              "selectedController": "legacy_curve",
-              "piKp": 0.08,
-              "piKi": 0.01,
-              "filterAlpha": 0.25,
-              "controllerIntervalMs": 500,
-              "ssrWindowMs": 10000
-            },
-            "samples": [
-              {
-                "sequence": 1,
-                "uptimeMs": 183000,
-                "boilerTemperatureC": 92.75,
-                "brewTargetC": 93,
-                "steamTargetC": 115,
-                "activeMode": "brew",
-                "heaterEnabled": true,
-                "heaterActive": true,
-                "pumpActive": false,
-                "machineStatus": "heating",
-                "faultCode": null,
-                "steamControl": {
-                  "settings": {
-                    "initialCompensationC": 12,
-                    "decayDurationMs": 720000,
-                    "readyTimeoutMs": 300000
-                  },
-                  "compensationActive": false,
-                  "appliedCompensationC": 0,
-                  "controlTemperatureC": null,
-                  "heatSoakElapsedMs": null
-                },
-                "controllerDiagnostics": {
-                  "temperatureRawC": 92.75,
-                  "temperatureFilteredC": 92.5,
-                  "baseTargetC": 93,
-                  "privateTargetC": 93,
-                  "errorC": 0.5,
-                  "selectedController": "legacy_curve",
-                  "legacyRequestedDuty": 0.2,
-                  "piRequestedDuty": 0.08,
-                  "proportionalContribution": 0.04,
-                  "integralContribution": 0.04,
-                  "integralState": 4,
-                  "piSaturation": "none",
-                  "piAntiWindupActive": false,
-                  "heaterCommandActive": true,
-                  "deliveredCommandDuty1s": 0.5,
-                  "pumpCommand": "off",
-                  "extractionPhase": "idle",
-                  "operatingMode": "warmup"
-                }
-              },
-              {
-                "sequence": 2,
-                "uptimeMs": 184000,
-                "boilerTemperatureC": 93,
-                "brewTargetC": 93,
-                "steamTargetC": 115,
-                "activeMode": "brew",
-                "heaterEnabled": true,
-                "heaterActive": false,
-                "pumpActive": false,
-                "machineStatus": "ready",
-                "faultCode": null,
-                "steamControl": {
-                  "settings": {
-                    "initialCompensationC": 12,
-                    "decayDurationMs": 720000,
-                    "readyTimeoutMs": 300000
-                  },
-                  "compensationActive": false,
-                  "appliedCompensationC": 0,
-                  "controlTemperatureC": null,
-                  "heatSoakElapsedMs": null
-                },
-                "controllerDiagnostics": {
-                  "temperatureRawC": 93,
-                  "temperatureFilteredC": 92.9,
-                  "baseTargetC": 93,
-                  "privateTargetC": 93,
-                  "errorC": 0.1,
-                  "selectedController": "legacy_curve",
-                  "legacyRequestedDuty": 0,
-                  "piRequestedDuty": 0.02,
-                  "proportionalContribution": 0.008,
-                  "integralContribution": 0.012,
-                  "integralState": 1.2,
-                  "piSaturation": "none",
-                  "piAntiWindupActive": false,
-                  "heaterCommandActive": false,
-                  "deliveredCommandDuty1s": 0.5,
-                  "pumpCommand": "off",
-                  "extractionPhase": "idle",
-                  "operatingMode": "idle_stable"
-                }
-              }
-            ]
-          }
-        ]
       },
       "WeightControl": {
         "type": "object",
@@ -2522,8 +2105,8 @@
         "required": ["extractionId", "bootId", "afterSequence"],
         "properties": {
           "extractionId": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$" },
-          "bootId": { "$ref": "#/components/schemas/HistoryBootId" },
-          "afterSequence": { "$ref": "#/components/schemas/HistorySequence" }
+          "bootId": { "$ref": "#/components/schemas/ReplayBootId" },
+          "afterSequence": { "$ref": "#/components/schemas/ReplaySequence" }
         }
       },
       "WeightedExtractionTraceSample": {
@@ -2531,7 +2114,7 @@
         "additionalProperties": false,
         "required": ["sequence", "uptimeMs", "elapsedMs", "phase", "boilerTemperatureC", "activeTargetC", "netWeightDecigrams", "scaleAvailability", "pumpCommand"],
         "properties": {
-          "sequence": { "$ref": "#/components/schemas/HistorySequence" },
+          "sequence": { "$ref": "#/components/schemas/ReplaySequence" },
           "uptimeMs": { "type": "integer", "minimum": 0 },
           "elapsedMs": { "type": "integer", "minimum": 0, "maximum": 70000 },
           "phase": { "type": "string", "enum": ["pre-infusion", "soak", "main-extraction", "settling"] },
@@ -2549,11 +2132,11 @@
         "properties": {
           "deviceId": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$" },
           "extractionId": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$" },
-          "bootId": { "$ref": "#/components/schemas/HistoryBootId" },
+          "bootId": { "$ref": "#/components/schemas/ReplayBootId" },
           "capturedAtUptimeMs": { "type": "integer", "minimum": 0 },
           "status": { "type": "string", "enum": ["running", "settling", "terminal"] },
-          "oldestSequence": { "$ref": "#/components/schemas/HistorySequence" },
-          "latestSequence": { "$ref": "#/components/schemas/HistorySequence" },
+          "oldestSequence": { "$ref": "#/components/schemas/ReplaySequence" },
+          "latestSequence": { "$ref": "#/components/schemas/ReplaySequence" },
           "nextCursor": { "$ref": "#/components/schemas/WeightedExtractionTraceCursor" },
           "hasMore": { "type": "boolean" },
           "continuity": { "type": "string", "enum": ["initial", "continuous", "truncated", "reset"] },
@@ -2629,8 +2212,8 @@
         "required": ["extractionId", "bootId", "afterSequence"],
         "properties": {
           "extractionId": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$" },
-          "bootId": { "$ref": "#/components/schemas/HistoryBootId" },
-          "afterSequence": { "$ref": "#/components/schemas/HistorySequence" }
+          "bootId": { "$ref": "#/components/schemas/ReplayBootId" },
+          "afterSequence": { "$ref": "#/components/schemas/ReplaySequence" }
         }
       },
       "ExtractionTelemetrySample": {
@@ -2638,7 +2221,7 @@
         "additionalProperties": false,
         "required": ["sequence", "uptimeMs", "elapsedMs", "extractionElapsedMs", "phase", "boilerTemperatureC", "activeTargetC", "heaterActive", "pumpCommand", "scaleAvailability", "netWeightDecigrams"],
         "properties": {
-          "sequence": { "$ref": "#/components/schemas/HistorySequence" },
+          "sequence": { "$ref": "#/components/schemas/ReplaySequence" },
           "uptimeMs": { "type": "integer", "minimum": 0 },
           "elapsedMs": { "type": "integer", "minimum": 0, "maximum": 70000 },
           "extractionElapsedMs": { "type": "integer", "minimum": 0, "maximum": 60000 },
@@ -2659,7 +2242,7 @@
           "version": { "const": 1 },
           "deviceId": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$" },
           "extractionId": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$" },
-          "bootId": { "$ref": "#/components/schemas/HistoryBootId" },
+          "bootId": { "$ref": "#/components/schemas/ReplayBootId" },
           "capturedAtUptimeMs": { "type": "integer", "minimum": 0 },
           "selection": { "$ref": "#/components/schemas/ExtractionSelection" },
           "controlMode": { "type": "string", "enum": ["manual", "timed", "weight"] },
@@ -2668,8 +2251,8 @@
           "status": { "type": "string", "enum": ["running", "settling", "terminal"] },
           "outcome": { "oneOf": [{ "type": "string", "enum": ["completed", "stopped", "failed"] }, { "type": "null" }] },
           "terminalWeight": { "oneOf": [{ "$ref": "#/components/schemas/TerminalWeightExtraction" }, { "type": "null" }] },
-          "oldestSequence": { "$ref": "#/components/schemas/HistorySequence" },
-          "latestSequence": { "$ref": "#/components/schemas/HistorySequence" },
+          "oldestSequence": { "$ref": "#/components/schemas/ReplaySequence" },
+          "latestSequence": { "$ref": "#/components/schemas/ReplaySequence" },
           "nextCursor": { "$ref": "#/components/schemas/ExtractionTelemetryCursor" },
           "hasMore": { "type": "boolean" },
           "continuity": { "type": "string", "enum": ["initial", "continuous", "truncated", "reset"] },
@@ -2688,7 +2271,11 @@
             "extractionId": "sim-run-1",
             "bootId": "00000000000000000000000000000001",
             "capturedAtUptimeMs": 1250,
-            "selection": { "kind": "profile", "profileId": "profile-1" },
+            "selection": {
+              "kind": "profile",
+              "profileId": "profile-1",
+              "profile": { "name": "Classic30", "preInfusionSeconds": 0, "soakSeconds": 0, "mainExtractionSeconds": 30 }
+            },
             "controlMode": "weight",
             "weightControl": { "targetWeightDecigrams": 350, "compensationDecigrams": 20 },
             "baselineWeightDecigrams": 800,
@@ -2752,11 +2339,19 @@
         "examples": [
           {
             "idempotencyKey": "start-01J2ABCDEF1234",
-            "selection": { "kind": "profile", "profileId": "profile-2" }
+            "selection": {
+              "kind": "profile",
+              "profileId": "profile-2",
+              "profile": { "name": "Pre5Soak5", "preInfusionSeconds": 5, "soakSeconds": 5, "mainExtractionSeconds": 25 }
+            }
           },
           {
             "idempotencyKey": "start-weight-01J2ABCDEF",
-            "selection": { "kind": "profile", "profileId": "profile-1" },
+            "selection": {
+              "kind": "profile",
+              "profileId": "profile-1",
+              "profile": { "name": "Classic30", "preInfusionSeconds": 0, "soakSeconds": 0, "mainExtractionSeconds": 30 }
+            },
             "weightControl": { "targetWeightDecigrams": 350, "compensationDecigrams": 60 }
           }
         ]
@@ -2788,7 +2383,6 @@
           "cooldown_not_required",
           "sensor_unavailable",
           "machine_faulted",
-          "profile_not_configured",
           "idempotency_mismatch",
           "scale_not_calibrated",
           "scale_not_stable",
@@ -2823,12 +2417,6 @@
           }
         },
         "examples": [
-          {
-            "error": {
-              "code": "profile_not_configured",
-              "message": "The selected custom profile slot is empty."
-            }
-          },
           {
             "error": {
               "code": "brew_mode_required",

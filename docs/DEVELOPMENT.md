@@ -146,8 +146,8 @@ Local HTTP is deliberately enabled for this device protocol. Do not generalize t
 
 ## Device simulator
 
-Production-compatible routes include the temperature-only API v1 and additive
-profile/extraction/compensation/cooldown/history API v2. Development controls are
+Production-compatible routes include the temperature-only API v1 and the
+breaking extraction/compensation/cooldown API v2. Development controls are
 separate:
 
 ```text
@@ -156,7 +156,6 @@ PUT  /_simulator/raw-temperature
 PUT  /_simulator/fault
 POST /_simulator/power-cycle
 POST /_simulator/reset
-POST /_simulator/fail-next-profile-save
 POST /_simulator/fail-next-temperature-calibration-save
 POST /_simulator/corrupt-temperature-calibration
 POST /_simulator/fail-next-steam-control-save
@@ -179,18 +178,10 @@ curl http://localhost:3000/api/v1/state \
 ```
 
 Manual time never advances in the background. Power-cycle clears volatile state
-and preserves targets, profiles, the signed temperature offset, and Steam
+and preserves targets, the signed temperature offset, and Steam
 control settings; reset restores all persisted defaults and removes the
 calibration record. The simple temperature model is for deterministic
 app/contract scenarios only.
-
-Every manually crossed one-second boundary adds one history sample, capped at
-600. Fetch retained pages with the development bearer token:
-
-```bash
-curl http://localhost:3000/api/v2/history \
-  -H 'Authorization: Bearer philcoino-dev-token'
-```
 
 The mobile live poll uses only the strict queryless state shape:
 
@@ -219,12 +210,10 @@ uses this stream for extraction telemetry and keeps the queryless one-second
 combined-state poll for authoritative workflow/fault/connection state; it does
 not fall back to high-frequency REST polling.
 
-Use the returned `nextCursor.bootId` and `nextCursor.afterSequence` together for
-the next page. Strict pages contain at most eight samples, one controller/build
-configuration, and per-sample controller diagnostics. Power-cycle changes the
-boot ID and clears retained history. Simulator diagnostics are deterministic
-logical values for contract/UI testing; they do not reproduce firmware PI
-timing, SSR delivery, or physical temperature response.
+Power-cycle changes the extraction replay boot ID and clears retained stream
+pages. Simulator diagnostics are deterministic logical values for contract/UI
+testing; they do not reproduce firmware PI timing, SSR delivery, or physical
+temperature response.
 
 The simulator stores the injected raw temperature and applies the one persisted
 signed global offset exactly once to produce effective
@@ -235,15 +224,14 @@ above either cap.
 In Steam, the simulator deterministically adds the persisted linearly decaying
 heat-soak estimate to the effective sensor value for control/readiness while
 keeping `boilerTemperatureC` and its safety checks unchanged. It exposes the
-estimate and settings in state/history and implements authenticated
+estimate and settings in state and implements authenticated
 `GET`/`PATCH /api/v2/settings/steam-control`. This does not model separate
 boiler-base and upper-boiler temperatures, establish the real lag, or validate
 a user-observed physical boiling point.
 
-The simulator also serves authenticated API v2 state, complete profile-set
-read/replace, extraction Start/Stop, cooldown Start/Stop, and the scale
-diagnostic/calibration/warning endpoints. Manual time owns
-extraction and cooldown progress; power-cycle preserves profiles but always
+The simulator also serves authenticated API v2 state, inline-profile extraction
+Start/Stop, cooldown Start/Stop, and the scale diagnostic/calibration/warning
+endpoints. Manual time owns extraction and cooldown progress; power-cycle always
 returns both workflows to idle. Cooldown deterministically stops at the first
 sample at/below its target snapshot, at 45 seconds, or on Stop, followed by five
 seconds of stabilization. Failure controls and temperature injection support
@@ -312,11 +300,11 @@ bun run firmware/espresso-machine/host-tests/validate_contract.ts \
 Use a temporary build directory outside the repository to avoid generated output in the worktree.
 
 The generated capture set includes unchanged API v1 and queryless API v2 state
-responses plus strict API v2 extraction,
+responses plus strict inline-profile API v2 extraction,
 compensation, cooldown Start/replay/conflict/Stop/terminal,
 Steam-control settings/state,
-temperature-calibration status/Start/candidate/Save/Cancel,
-controller-diagnostic history, eligibility errors, and failed terminal state.
+temperature-calibration status/Start/candidate/Save/Cancel, eligibility errors,
+and failed terminal state.
 Capture validation proves only that independent C++ serialization matches the
 wire schemas.
 

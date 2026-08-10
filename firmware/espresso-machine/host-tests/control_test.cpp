@@ -89,26 +89,6 @@ class FakeDigitalOutput final : public DigitalOutput {
   bool running_started_after_heater_inhibit{false};
 };
 
-class FakeProfileBackend final : public ProfileBackend {
- public:
-  BackendLoadResult load(ExtractionProfiles& profiles) override {
-    profiles = saved;
-    return BackendLoadResult::kOk;
-  }
-  bool save(const ExtractionProfiles& profiles) override {
-    ++save_count;
-    if (fail_save) {
-      return false;
-    }
-    saved = profiles;
-    return true;
-  }
-
-  ExtractionProfiles saved{default_extraction_profiles()};
-  int save_count{0};
-  bool fail_save{false};
-};
-
 class FakeScaleCalibrationBackend final : public ScaleCalibrationBackend {
  public:
   BackendLoadResult load(ScaleCalibration& calibration) override {
@@ -243,7 +223,7 @@ struct ControllerHarness {
 struct ExtractionHarness {
   ExtractionHarness()
       : pump(output, critical_section),
-        controller(default_extraction_profiles(), pump) {
+        controller(pump) {
     assert(pump.initialize());
   }
 
@@ -274,7 +254,7 @@ struct WorkflowHarness {
   WorkflowHarness()
       : temperature({93, 115}),
         pump(pump_output, critical_section),
-        extraction(default_extraction_profiles(), pump),
+        extraction(pump),
         cooldown(temperature.controller, pump) {
     assert(pump.initialize());
     pump_output.cooldown_guard = &temperature.controller;
@@ -296,6 +276,30 @@ CooldownInput cooldown_input(float temperature_c,
 
 constexpr char kStartKey[] = "start-01J2ABCDEF1234";
 constexpr char kOtherStartKey[] = "start-01J2OTHERKEY99";
+
+ExtractionProfile configured_profile(const char* name, std::uint8_t pre,
+                                     std::uint8_t soak, std::uint8_t main) {
+  ExtractionProfile profile{};
+  profile.configured = true;
+  for (std::size_t index = 0;
+       name[index] != '\0' && index + 1U < profile.name.size(); ++index) {
+    profile.name[index] = name[index];
+  }
+  profile.pre_infusion_seconds = pre;
+  profile.soak_seconds = soak;
+  profile.main_extraction_seconds = main;
+  return profile;
+}
+
+ExtractionSelection profile_selection(std::size_t index) {
+  return index == 0U
+             ? ExtractionSelection{ExtractionSelectionKind::kProfile, index,
+                                   configured_profile("Classic30", 0U, 0U,
+                                                      30U)}
+             : ExtractionSelection{ExtractionSelectionKind::kProfile, index,
+                                   configured_profile("Pre5Soak5", 5U, 5U,
+                                                      25U)};
+}
 
 void test_boot_selects_brew_and_keeps_targets() {
   MemoryState state;
@@ -1342,7 +1346,7 @@ void test_manual_extraction_cutoff_replay_conflict_and_stop() {
          StartExtractionResult::kReplay);
   assert(harness.output.events.size() == events_before_replay);
   assert(harness.controller.start(kStartKey,
-                                  {ExtractionSelectionKind::kProfile, 0}, 62000) ==
+                                  profile_selection(0), 62000) ==
          StartExtractionResult::kIdempotencyMismatch);
   assert(harness.controller.start(kOtherStartKey,
                                   {ExtractionSelectionKind::kManual, 0}, 62000) ==
@@ -1356,7 +1360,7 @@ void test_manual_extraction_cutoff_replay_conflict_and_stop() {
 void test_profile_phases_exact_deadlines_and_delayed_completion() {
   ExtractionHarness harness;
   assert(harness.controller.start(
-             kStartKey, {ExtractionSelectionKind::kProfile, 1}, 500) ==
+             kStartKey, profile_selection(1), 500) ==
          StartExtractionResult::kStarted);
   assert(harness.controller.snapshot(5499).phase ==
          ExtractionPhase::kPreInfusion);
@@ -1375,7 +1379,7 @@ void test_profile_phases_exact_deadlines_and_delayed_completion() {
   assert(!harness.output.level);
 
   assert(harness.controller.start(
-             kOtherStartKey, {ExtractionSelectionKind::kProfile, 0}, 40000) ==
+             kOtherStartKey, profile_selection(0), 40000) ==
          StartExtractionResult::kStarted);
   assert(harness.controller.snapshot(40000).phase ==
          ExtractionPhase::kMainExtraction);
@@ -1384,27 +1388,27 @@ void test_profile_phases_exact_deadlines_and_delayed_completion() {
   assert(!harness.output.level);
 }
 
-void test_profile_snapshot_export_and_empty_slot_rules() {
+void test_inline_profile_snapshot_and_validation() {
   ExtractionHarness harness;
-  auto replacement = default_extraction_profiles();
-  replacement[0].main_extraction_seconds = 20U;
-  assert(harness.controller.adopt_persisted_profiles(replacement));
+  auto supplied = ExtractionSelection{
+      ExtractionSelectionKind::kProfile, 0,
+      configured_profile("Short20", 0U, 0U, 20U)};
   assert(harness.controller.start(
-             kStartKey, {ExtractionSelectionKind::kProfile, 0}, 0) ==
+             kStartKey, supplied, 0) ==
          StartExtractionResult::kStarted);
 
-  auto later = replacement;
-  later[0].main_extraction_seconds = 10U;
-  assert(!harness.controller.adopt_persisted_profiles(later));
+  supplied.profile.main_extraction_seconds = 10U;
+  assert(harness.controller.start(kStartKey, supplied, 1000) ==
+         StartExtractionResult::kIdempotencyMismatch);
   assert(harness.controller.update(10000) == ExtractionUpdateResult::kOk);
   assert(harness.controller.snapshot(10000).remaining_ms == 10000U);
   assert(harness.controller.stop());
 
-  assert(harness.controller.adopt_persisted_profiles(replacement));
-  assert(harness.controller.profiles()[0].main_extraction_seconds == 20U);
+  auto invalid = profile_selection(2);
+  invalid.profile = {};
   assert(harness.controller.start(
-             kOtherStartKey, {ExtractionSelectionKind::kProfile, 2}, 0) ==
-         StartExtractionResult::kProfileNotConfigured);
+             kOtherStartKey, invalid, 0) ==
+         StartExtractionResult::kInvalidRequest);
 }
 
 void test_extraction_wraparound_disconnect_and_heater_fault_independence() {
@@ -1412,7 +1416,7 @@ void test_extraction_wraparound_disconnect_and_heater_fault_independence() {
   ControllerHarness heater;
   constexpr std::uint32_t started = UINT32_MAX - 2999U;
   assert(extraction.controller.start(
-             kStartKey, {ExtractionSelectionKind::kProfile, 1}, started) ==
+             kStartKey, profile_selection(1), started) ==
          StartExtractionResult::kStarted);
   heater.controller.set_extraction_phase(ExtractionPhase::kPreInfusion,
                                          started);
@@ -1443,7 +1447,7 @@ void test_pump_output_failures_end_extraction_off() {
 
   ExtractionHarness transition_failure;
   assert(transition_failure.controller.start(
-             kStartKey, {ExtractionSelectionKind::kProfile, 1}, 0) ==
+             kStartKey, profile_selection(1), 0) ==
          StartExtractionResult::kStarted);
   transition_failure.output.fail_low = true;
   assert(transition_failure.controller.update(5000) ==
@@ -1626,14 +1630,14 @@ void test_weighted_extraction_tare_cutoff_fallback_and_acknowledgement() {
   unstable.availability = ScaleAvailability::kUnstable;
   assert(harness.controller.start(
              "weighted-start-key1",
-             {ExtractionSelectionKind::kProfile, 1}, 1000, &control,
+             profile_selection(1), 1000, &control,
              &unstable) == StartExtractionResult::kScaleNotStable);
   assert(!harness.controller.active());
   assert(!harness.output.level);
 
   assert(harness.controller.start(
              "weighted-start-key1",
-             {ExtractionSelectionKind::kProfile, 1}, 1000, &control,
+             profile_selection(1), 1000, &control,
              &stable) == StartExtractionResult::kStarted);
   assert(harness.output.level);
   auto at_cutoff = stable;
@@ -1648,7 +1652,7 @@ void test_weighted_extraction_tare_cutoff_fallback_and_acknowledgement() {
 
   assert(harness.controller.start(
              "weighted-fallback-1",
-             {ExtractionSelectionKind::kProfile, 1}, 10000, &control,
+             profile_selection(1), 10000, &control,
              &stable) == StartExtractionResult::kStarted);
   ScaleSnapshot unavailable{};
   assert(harness.controller.update(11000, &unavailable) ==
@@ -1660,13 +1664,13 @@ void test_weighted_extraction_tare_cutoff_fallback_and_acknowledgement() {
   assert(weight.completion_reason == WeightCompletionReason::kTimerFallback);
   assert(harness.controller.start(
              "weighted-blocked-01",
-             {ExtractionSelectionKind::kProfile, 1}, 50000, &control,
+             profile_selection(1), 50000, &control,
              &stable) ==
          StartExtractionResult::kScaleWarningUnacknowledged);
   harness.controller.acknowledge_scale_warning();
   assert(harness.controller.start(
              "weighted-after-ack",
-             {ExtractionSelectionKind::kProfile, 1}, 50000, &control,
+             profile_selection(1), 50000, &control,
              &stable) == StartExtractionResult::kStarted);
 }
 
@@ -2053,7 +2057,7 @@ int main() {
   test_internal_output_failure_latches_fault();
   test_manual_extraction_cutoff_replay_conflict_and_stop();
   test_profile_phases_exact_deadlines_and_delayed_completion();
-  test_profile_snapshot_export_and_empty_slot_rules();
+  test_inline_profile_snapshot_and_validation();
   test_extraction_wraparound_disconnect_and_heater_fault_independence();
   test_pump_output_failures_end_extraction_off();
   test_scale_filter_calibration_timeout_and_saturation();

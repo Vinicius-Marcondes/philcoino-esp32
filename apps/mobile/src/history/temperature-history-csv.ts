@@ -1,6 +1,6 @@
 import type { TemperatureHistorySample } from "./temperature-history";
 
-const CSV_HEADERS = [
+export const TEMPERATURE_HISTORY_CSV_HEADER = [
   "recorded_at_utc",
   "device_id",
   "machine_uptime_ms",
@@ -13,105 +13,48 @@ const CSV_HEADERS = [
   "steam_applied_compensation_c",
   "steam_compensation_active",
   "steam_heat_soak_elapsed_ms",
-  "steam_initial_compensation_c",
-  "steam_decay_duration_ms",
-  "steam_ready_timeout_ms",
   "heater_enabled",
   "heater_active",
-  "pump_active",
+  "pump_command",
   "machine_status",
   "fault_code",
-  "controller_firmware_version",
-  "controller_selected",
-  "controller_pi_kp",
-  "controller_pi_ki",
-  "controller_filter_alpha",
-  "controller_interval_ms",
-  "ssr_window_ms",
-  "temperature_raw_c",
-  "temperature_filtered_c",
-  "controller_base_target_c",
-  "controller_private_target_c",
-  "controller_error_c",
-  "legacy_requested_duty",
-  "pi_requested_duty",
-  "pi_proportional_contribution",
-  "pi_integral_contribution",
-  "pi_integral_state",
-  "pi_saturation",
-  "pi_anti_windup_active",
-  "heater_command_active",
-  "delivered_command_duty_1s",
-  "pump_command",
-  "extraction_phase",
-  "controller_operating_mode",
-] as const;
+].join(",");
+
+export function temperatureHistoryCsvRow(
+  sample: TemperatureHistorySample,
+): string {
+  return [
+    new Date(sample.recordedAtMs).toISOString(),
+    sample.deviceId,
+    sample.uptimeMs,
+    sample.boilerTemperatureC,
+    sample.brewTargetC,
+    sample.steamTargetC,
+    sample.activeMode,
+    sample.activeTargetC,
+    sample.steamControl?.controlTemperatureC ?? "",
+    sample.steamControl?.appliedCompensationC ?? "",
+    sample.steamControl?.compensationActive ?? "",
+    sample.steamControl?.heatSoakElapsedMs ?? "",
+    sample.heaterEnabled,
+    sample.heaterActive,
+    sample.pumpCommand ?? "",
+    sample.machineStatus,
+    sample.faultCode ?? "",
+  ].map(csvCell).join(",");
+}
 
 export function temperatureHistoryToCsv(
   samples: TemperatureHistorySample[],
 ): string {
-  const lines = [CSV_HEADERS.join(",")];
-  for (const sample of samples) {
-    const configuration = sample.controllerConfiguration;
-    const diagnostics = sample.controllerDiagnostics;
-    lines.push(
-      [
-        new Date(sample.recordedAtMs).toISOString(),
-        sample.deviceId,
-        sample.uptimeMs,
-        sample.boilerTemperatureC,
-        sample.brewTargetC,
-        sample.steamTargetC,
-        sample.activeMode,
-        sample.activeTargetC,
-        sample.steamControl?.controlTemperatureC ?? "",
-        sample.steamControl?.appliedCompensationC ?? "",
-        sample.steamControl?.compensationActive ?? "",
-        sample.steamControl?.heatSoakElapsedMs ?? "",
-        sample.steamControl?.settings.initialCompensationC ?? "",
-        sample.steamControl?.settings.decayDurationMs ?? "",
-        sample.steamControl?.settings.readyTimeoutMs ?? "",
-        sample.heaterEnabled,
-        sample.heaterActive,
-        sample.pumpActive ?? "",
-        sample.machineStatus,
-        sample.faultCode ?? "",
-        configuration?.firmwareVersion ?? "",
-        configuration?.selectedController ?? "",
-        configuration?.piKp ?? "",
-        configuration?.piKi ?? "",
-        configuration?.filterAlpha ?? "",
-        configuration?.controllerIntervalMs ?? "",
-        configuration?.ssrWindowMs ?? "",
-        diagnostics?.temperatureRawC ?? "",
-        diagnostics?.temperatureFilteredC ?? "",
-        diagnostics?.baseTargetC ?? "",
-        diagnostics?.privateTargetC ?? "",
-        diagnostics?.errorC ?? "",
-        diagnostics?.legacyRequestedDuty ?? "",
-        diagnostics?.piRequestedDuty ?? "",
-        diagnostics?.proportionalContribution ?? "",
-        diagnostics?.integralContribution ?? "",
-        diagnostics?.integralState ?? "",
-        diagnostics?.piSaturation ?? "",
-        diagnostics?.piAntiWindupActive ?? "",
-        diagnostics?.heaterCommandActive ?? "",
-        diagnostics?.deliveredCommandDuty1s ?? "",
-        diagnostics?.pumpCommand ?? "",
-        diagnostics?.extractionPhase ?? "",
-        diagnostics?.operatingMode ?? "",
-      ]
-        .map(csvCell)
-        .join(","),
-    );
-  }
-  return `${lines.join("\r\n")}\r\n`;
+  return `${[
+    TEMPERATURE_HISTORY_CSV_HEADER,
+    ...samples.map(temperatureHistoryCsvRow),
+  ].join("\r\n")}\r\n`;
 }
 
 function csvCell(value: boolean | number | string): string {
   let text = String(value);
-  if (typeof value === "string" && /^[=+\-@]/.test(text)) {
-    text = `'${text}`;
-  }
+  if (typeof value === "string" && /^[=+\-@]/.test(text)) text = `'${text}`;
   return /[",\r\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
 }

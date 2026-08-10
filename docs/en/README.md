@@ -22,9 +22,9 @@ The phone discovers and authenticates one machine, displays live state, and subm
 - Cached-address restore and stable-ID rediscovery after address changes.
 - Strict API v1/v2 runtime validation and explicit offline, unauthorized, not-found, timeout, and protocol-error states.
 - Completion-driven one-second dashboard polling while the screen/app is active.
-- Current-day SQLite history with automatic backfill from up to ten minutes of
-  ESP32 RAM history, controller diagnostics, and horizontally paged 30-second
-  Live windows.
+- Every validated foreground state is stored locally in SQLite without
+  backfill. Dashboard graphs only the current local day; older days remain
+  exportable until an explicit clear.
 - Firmware-acknowledged brew/steam targets, active mode, heater permission, and over-temperature dismissal.
 - Guided Machine-page temperature calibration with a raw `90–120°C` target,
   manual steam-wand operation, explicit Save, and one persisted global offset
@@ -34,9 +34,10 @@ The phone discovers and authenticates one machine, displays live state, and subm
   authoritative while comparing bounded PI in shadow; active-PI builds still
   require a target build and supervised physical A/B acceptance.
 - Deterministic Bun/Hono simulator for mobile and contract development.
-- Manual plus four local profile slots, explicit whole-set export, and
-  firmware-acknowledged pre-infusion/soak/main extraction, Stop, and 60-second
-  Manual cutoff.
+- Manual plus four app-wide profile slots stored only on the phone. Each Start
+  sends an immutable complete profile snapshot for autonomous firmware timing.
+- A fifth `Shots` tab holds every Manual, timed, and weighted shot—including
+  stopped, failed, and incomplete records—with trace review and export.
 
 The product is still a prototype. Human review of the tested configuration was
 accepted on 2026-07-16, while PHIL-012 automated resilience work and the known
@@ -123,17 +124,24 @@ Authenticated endpoints require `Authorization: Bearer <token>`:
 API v2 adds without removing v1:
 
 - `GET /api/v2/state`
-- `GET /api/v2/history`
-- `GET` and `PUT /api/v2/profiles`
 - `POST /api/v2/extractions/start`
 - `POST /api/v2/extractions/stop`
+- `GET /api/v2/extractions/stream`
 - `POST /api/v2/cooldowns/start`
 - `POST /api/v2/cooldowns/stop`
+- `GET /api/v2/scale`
+- `GET /api/v2/scale/trace` (compatibility; unused by current mobile runtime)
+- `POST /api/v2/scale/calibration/start`
+- `POST /api/v2/scale/calibration/complete`
+- `POST /api/v2/scale/calibration/cancel`
+- `POST /api/v2/scale/warnings/acknowledge`
 - `GET /api/v2/temperature-calibration`
 - `POST /api/v2/temperature-calibration/start`
 - `PUT /api/v2/temperature-calibration/candidate`
 - `POST /api/v2/temperature-calibration/save`
 - `POST /api/v2/temperature-calibration/cancel`
+- `GET /api/v2/settings/steam-control`
+- `PATCH /api/v2/settings/steam-control`
 
 Historical and current `running`/`off` values describe firmware commands, not
 current, flow, series

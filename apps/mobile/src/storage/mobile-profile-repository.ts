@@ -1,8 +1,8 @@
-import { ProfileSetSchema, type ProfileSet } from "@philcoino/protocol";
-
 import {
   cloneProfileSet,
   DEFAULT_MOBILE_PROFILE_SET,
+  ProfileSetSchema,
+  type ProfileSet,
 } from "../profiles/profile-set";
 
 const MOBILE_PROFILES_KEY = "philcoino.mobile-profiles.v2";

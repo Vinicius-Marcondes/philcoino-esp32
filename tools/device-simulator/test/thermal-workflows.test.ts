@@ -5,7 +5,6 @@ import {
   CooldownStateSchema,
   ExtractionActiveConflictResponseSchema,
   MachineStateV2Schema,
-  ProfileSetSchema,
 } from "@philcoino/protocol";
 
 import {
@@ -15,6 +14,12 @@ import {
 } from "../src/app.ts";
 
 const authorization = { Authorization: `Bearer ${DEFAULT_SIMULATOR_TOKEN}` };
+const preSoakProfile = {
+  name: "Pre5Soak5",
+  preInfusionSeconds: 5,
+  soakSeconds: 5,
+  mainExtractionSeconds: 25,
+} as const;
 let simulator: SimulatorApplication;
 
 beforeEach(() => {
@@ -42,6 +47,7 @@ describe("API v2 extraction thermal eligibility and compensation", () => {
     await startExtraction("profile-compensation-1", {
       kind: "profile",
       profileId: "profile-2",
+      profile: preSoakProfile,
     });
     expect((await getStateV2()).compensation).toEqual({
       status: "inactive",
@@ -242,7 +248,7 @@ describe("API v2 deterministic cooldown", () => {
     });
   });
 
-  it("enforces workflow mutual exclusion for extraction, profiles, and Steam", async () => {
+  it("enforces workflow mutual exclusion for extraction and Steam", async () => {
     await setMode("steam");
     await setTemperature(120);
     await startCooldown("cooldown-conflict-1");
@@ -253,16 +259,6 @@ describe("API v2 deterministic cooldown", () => {
         idempotencyKey: "extract-during-cd-1",
         selection: { kind: "manual" },
       }),
-    );
-    expect(response.status).toBe(409);
-    expect(
-      CooldownActiveConflictResponseSchema.parse(await response.json()).error.code,
-    ).toBe("cooldown_active");
-
-    const profiles = await getProfiles();
-    response = await simulator.app.request(
-      "/api/v2/profiles",
-      jsonRequest("PUT", profiles),
     );
     expect(response.status).toBe(409);
     expect(
@@ -467,16 +463,15 @@ async function getStateV2() {
   return MachineStateV2Schema.parse(await response.json());
 }
 
-async function getProfiles() {
-  const response = await simulator.app.request("/api/v2/profiles", {
-    headers: authorization,
-  });
-  return ProfileSetSchema.parse(await response.json());
-}
-
 async function startExtraction(
   idempotencyKey: string,
-  selection: { kind: "manual" } | { kind: "profile"; profileId: "profile-2" },
+  selection:
+    | { kind: "manual" }
+    | {
+        kind: "profile";
+        profileId: "profile-2";
+        profile: typeof preSoakProfile;
+      },
 ) {
   const response = await simulator.app.request(
     "/api/v2/extractions/start",

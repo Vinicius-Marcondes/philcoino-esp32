@@ -63,9 +63,11 @@ O firmware controla o temperature-control loop e não depende da conectividade d
 - aplica o bias fixo de extração somente ao duty em Manual/main, sem alterar
   targets, readiness, deadlines, limits ou profiles;
 - faz latch de faults e comanda a saída do SSR para off;
-- persiste targets, conjuntos completos de profiles validados, o offset de
-  calibração e os ajustes de compensação Steam em registros NVS separados;
-- executa Manual e profiles em um controller monotônico dedicado, inicializa GPIO10 como `off` e não restaura `running` no boot;
+- persiste targets, o offset de calibração e os ajustes de compensação Steam em
+  registros NVS separados; profiles não são lidos nem gravados pelo firmware;
+- valida o profile completo recebido no Start, mantém esse snapshot somente em
+  RAM e executa Manual/profiles em um controller monotônico dedicado, inicializa
+  GPIO10 como `off` e não restaura `running` no boot;
 - amostra o HX711 fora do loop crítico e só inicia uma extração por peso após
   calibração, disponibilidade, estabilidade e tara automática; falha de tara
   mantém a pump desligada;
@@ -78,9 +80,9 @@ O firmware controla o temperature-control loop e não depende da conectividade d
 - executa cooldown mutuamente exclusivo em uma task de workflow de 10 ms,
   ordena inhibit/off do heater antes do Start da pump e nunca restaura cooldown
   no boot;
-- registra até 600 snapshots observacionais em RAM e os expõe em páginas de no
-  máximo 8; esse histórico não alimenta nenhuma decisão de heater, pump,
-  readiness, timeout, fault ou mutation;
+- mantém somente o ring independente de 320 amostras da extração para replay de
+  telemetria; ele não alimenta decisões de heater, pump, readiness, timeout,
+  fault ou mutation;
 - calcula diagnósticos bounded de requested duty do PI Brew e da curva legacy
   no intervalo fixo de 500 ms; o build default mantém PI somente em shadow,
   enquanto um build explicitamente habilitado seleciona PI apenas em Brew pela
@@ -106,8 +108,8 @@ física calibrada ou o ponto de ebulição local, que `+2°C` melhora a extraç�
 ou que um comando de cooldown produz fluxo ou resfriamento. Também não
 substitui medição independente, cutoff térmico ou revisão energizada.
 
-Da mesma forma, valores históricos de `heaterActive` e `pumpActive` descrevem
-o último comando conhecido do firmware. Backfill, SQLite, gráfico e CSV não
+Da mesma forma, valores locais de `heaterActive` e `pumpActive` descrevem
+o último comando conhecido do firmware. SQLite, gráfico e CSV não
 provam operação física, fluxo, cooling ou desenergização, e nunca devem ser
 usados como feedback para o control loop.
 

@@ -10,7 +10,7 @@ import { cleanupZeroconfScan } from "../src/discovery/zeroconf-scan-cleanup";
 
 const discoveredDevice: DiscoveredDevice = {
   address: "http://192.168.1.20",
-  apiVersion: "1",
+  apiVersion: "2",
   deviceId: "philcoino-c3-a1b2c3",
   firmwareVersion: "1.0.0",
   model: "espresso-c3",
@@ -58,7 +58,7 @@ describe("device discovery", () => {
         host: "philcoino-c3-a1b2c3.local.",
         port: 80,
         txt: {
-          apiVersion: "1",
+          apiVersion: "2",
           deviceId: "philcoino-c3-a1b2c3",
           firmwareVersion: "1.0.0",
           model: "espresso-c3",
@@ -73,7 +73,7 @@ describe("device discovery", () => {
       parseResolvedService({
         addresses: ["192.168.1.20"],
         port: 80,
-        txt: { ...discoveredDevice, address: undefined, apiVersion: "2" },
+        txt: { ...discoveredDevice, address: undefined, apiVersion: "1" },
       }),
     ).toBeNull();
     expect(

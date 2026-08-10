@@ -140,12 +140,6 @@ void test_machine_request_codecs() {
 }
 
 void test_workflow_codecs() {
-  const auto profiles = default_extraction_profiles();
-  const std::string body = serialize_profiles(profiles);
-  ExtractionProfiles parsed{};
-  assert(parse_profiles(body, parsed));
-  assert(serialize_profiles(parsed) == body);
-
   std::string key;
   ExtractionSelection selection{};
   assert(parse_start(
@@ -154,10 +148,11 @@ void test_workflow_codecs() {
   assert(key == "abcdefghijklmnop" &&
          selection.kind == ExtractionSelectionKind::kManual);
   assert(parse_start(
-      "{\"idempotencyKey\":\"abcdefghijklmnop\",\"selection\":{\"profileId\":\"profile-4\",\"kind\":\"profile\"}}",
+      "{\"idempotencyKey\":\"abcdefghijklmnop\",\"selection\":{\"profileId\":\"profile-4\",\"profile\":{\"name\":\"Classic30\",\"preInfusionSeconds\":0,\"soakSeconds\":0,\"mainExtractionSeconds\":30},\"kind\":\"profile\"}}",
       key, selection));
   assert(selection.kind == ExtractionSelectionKind::kProfile &&
-         selection.profile_index == 3U);
+         selection.profile_index == 3U &&
+         selection.profile.main_extraction_seconds == 30U);
   assert(!parse_start(
       "{\"idempotencyKey\":\"abcdefghijklmnop\",\"selection\":{\"kind\":\"manual\",\"extra\":true}}",
       key, selection));
@@ -165,7 +160,7 @@ void test_workflow_codecs() {
   WeightControl weight_control{};
   bool weighted = false;
   assert(parse_start(
-      "{\"idempotencyKey\":\"weighted-shot-1\",\"selection\":{\"kind\":\"profile\",\"profileId\":\"profile-2\"},\"weightControl\":{\"targetWeightDecigrams\":350,\"compensationDecigrams\":20}}",
+      "{\"idempotencyKey\":\"weighted-shot-1\",\"selection\":{\"kind\":\"profile\",\"profileId\":\"profile-2\",\"profile\":{\"name\":\"Pre5Soak5\",\"preInfusionSeconds\":5,\"soakSeconds\":5,\"mainExtractionSeconds\":25}},\"weightControl\":{\"targetWeightDecigrams\":350,\"compensationDecigrams\":20}}",
       key, selection, weight_control, weighted));
   assert(weighted && selection.profile_index == 1U &&
          weight_control.target_decigrams == 350 &&
@@ -174,7 +169,7 @@ void test_workflow_codecs() {
       "{\"idempotencyKey\":\"weighted-manual\",\"selection\":{\"kind\":\"manual\"},\"weightControl\":{\"targetWeightDecigrams\":350,\"compensationDecigrams\":20}}",
       key, selection, weight_control, weighted));
   assert(!parse_start(
-      "{\"idempotencyKey\":\"weighted-invalid\",\"selection\":{\"kind\":\"profile\",\"profileId\":\"profile-2\"},\"weightControl\":{\"targetWeightDecigrams\":100,\"compensationDecigrams\":100}}",
+      "{\"idempotencyKey\":\"weighted-invalid\",\"selection\":{\"kind\":\"profile\",\"profileId\":\"profile-2\",\"profile\":{\"name\":\"Pre5Soak5\",\"preInfusionSeconds\":5,\"soakSeconds\":5,\"mainExtractionSeconds\":25}},\"weightControl\":{\"targetWeightDecigrams\":100,\"compensationDecigrams\":100}}",
       key, selection, weight_control, weighted));
 
   std::int32_t reference_decigrams = 0;
@@ -209,7 +204,7 @@ void test_workflow_codecs() {
 }
 
 void test_authoritative_route_matrix() {
-  assert(kApiRoutes.size() == 28U);
+  assert(kApiRoutes.size() == 25U);
   std::size_t protected_count = 0;
   for (std::size_t index = 0; index < kApiRoutes.size(); ++index) {
     const auto& route = kApiRoutes[index];
@@ -220,7 +215,7 @@ void test_authoritative_route_matrix() {
              std::string(route.path) != kApiRoutes[other].path);
     }
   }
-  assert(protected_count == 26U);
+  assert(protected_count == 23U);
   assert(!request_requires_auth(HttpMethod::kGet, "/healthz"));
   assert(request_requires_auth(HttpMethod::kPost,
                                "/api/v2/cooldowns/stop"));

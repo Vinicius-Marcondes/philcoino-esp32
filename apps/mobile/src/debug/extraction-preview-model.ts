@@ -2,12 +2,10 @@ import {
   EXTRACTION_MAX_DURATION_MS,
   ExtractionProfileSchema,
   IdleExtractionStateSchema,
-  ProfileSetSchema,
   StartExtractionRequestSchema,
   type ExtractionProfile,
   type ExtractionSelection,
   type ExtractionState,
-  type ProfileSet,
   type ProfileSlotId,
   type RunningExtractionState,
   type StartExtractionRequest,
@@ -16,16 +14,16 @@ import {
 import {
   cloneProfileSet,
   DEFAULT_MOBILE_PROFILE_SET,
-  profileSetsEqual,
+  ProfileSetSchema,
+  type ProfileSet,
 } from "../profiles/profile-set";
 
 export const previewProfileSet = DEFAULT_MOBILE_PROFILE_SET;
 
 export interface ExtractionPreviewState {
   extraction: ExtractionState;
-  machineProfiles: ProfileSet;
   mobileProfiles: ProfileSet;
-  notice: "exported" | "export-blocked" | "started" | "stopped" | null;
+  notice: "started" | "stopped" | null;
   selected: ExtractionSelection;
 }
 
@@ -40,15 +38,10 @@ export function createExtractionPreviewState(): ExtractionPreviewState {
       remainingMs: null,
       pumpCommand: "off",
     }),
-    machineProfiles: cloneProfileSet(previewProfileSet),
     mobileProfiles: cloneProfileSet(previewProfileSet),
     notice: null,
     selected: { kind: "manual" },
   };
-}
-
-export function profilesAreSynchronized(state: ExtractionPreviewState): boolean {
-  return profileSetsEqual(state.mobileProfiles, state.machineProfiles);
 }
 
 export function selectedProfile(
@@ -72,7 +65,7 @@ export function canStartPreview(state: ExtractionPreviewState): boolean {
   if (state.selected.kind === "manual") {
     return true;
   }
-  return selectedProfile(state) !== null && profilesAreSynchronized(state);
+  return selectedProfile(state) !== null;
 }
 
 export function selectPreview(
@@ -103,20 +96,13 @@ export function saveMobileProfile(
   return {
     ...state,
     mobileProfiles: ProfileSetSchema.parse(candidate),
+    selected:
+      state.selected.kind === "profile" &&
+      state.selected.profileId === profileId &&
+      parsedProfile !== null
+        ? { kind: "profile", profileId, profile: parsedProfile }
+        : state.selected,
     notice: null,
-  };
-}
-
-export function exportProfilesPreview(
-  state: ExtractionPreviewState,
-): ExtractionPreviewState {
-  if (state.extraction.status === "running") {
-    return { ...state, notice: "export-blocked" };
-  }
-  return {
-    ...state,
-    machineProfiles: cloneProfileSet(state.mobileProfiles),
-    notice: "exported",
   };
 }
 
@@ -180,13 +166,7 @@ export function advanceExtractionPreview(
     return stopExtractionPreview(state);
   }
 
-  const profile = profileForSelection(
-    state.machineProfiles,
-    state.extraction.selection,
-  );
-  if (profile === null) {
-    return stopExtractionPreview(state);
-  }
+  const profile = state.extraction.selection.profile;
   const totalMs = profileDurationMs(profile);
   const extractionBase = {
     status: "running" as const,
@@ -246,10 +226,7 @@ function runningStateForSelection(
     };
   }
 
-  const profile = profileForSelection(state.machineProfiles, selection);
-  if (profile === null) {
-    throw new Error("A configured synchronized profile is required to start.");
-  }
+  const profile = selection.profile;
   const totalMs = profileDurationMs(profile);
   if (profile.preInfusionSeconds > 0) {
     return {
@@ -277,7 +254,7 @@ function mainExtractionState(
   extractionBase: Pick<
     RunningExtractionState,
     "status" | "extractionId" | "selection"
-  > & { selection: { kind: "profile"; profileId: ProfileSlotId } },
+  > & { selection: Extract<ExtractionSelection, { kind: "profile" }> },
   profile: ExtractionProfile,
   totalMs: number,
 ): RunningExtractionState {
@@ -292,15 +269,6 @@ function mainExtractionState(
   };
 }
 
-function profileForSelection(
-  profiles: ProfileSet,
-  selection: { kind: "profile"; profileId: ProfileSlotId },
-): ExtractionProfile | null {
-  return (
-    profiles.profiles.find((slot) => slot.id === selection.profileId)?.profile ??
-    null
-  );
-}
 
 function profileDurationMs(profile: ExtractionProfile): number {
   return profileDurationSeconds(profile) * 1_000;

@@ -38,21 +38,6 @@ bool ascii_alphanumeric(char value) {
          (value >= '0' && value <= '9');
 }
 
-ExtractionProfile make_profile(const char* name, std::uint8_t pre_infusion,
-                               std::uint8_t soak,
-                               std::uint8_t main_extraction) {
-  ExtractionProfile profile{};
-  profile.configured = true;
-  for (std::size_t index = 0;
-       name[index] != '\0' && index + 1U < profile.name.size(); ++index) {
-    profile.name[index] = name[index];
-  }
-  profile.pre_infusion_seconds = pre_infusion;
-  profile.soak_seconds = soak;
-  profile.main_extraction_seconds = main_extraction;
-  return profile;
-}
-
 }  // namespace
 
 Max6675::Max6675(Max6675Transport& transport, std::uint32_t started_at_ms)
@@ -297,15 +282,6 @@ bool TargetStorage::save(const TemperatureTargets& targets) {
   return targets_are_valid(targets) && backend_.save(targets);
 }
 
-ExtractionProfiles default_extraction_profiles() {
-  return {
-      make_profile("Classic30", 0U, 0U, 30U),
-      make_profile("Pre5Soak5", 5U, 5U, 25U),
-      ExtractionProfile{},
-      ExtractionProfile{},
-  };
-}
-
 bool extraction_profile_is_valid(const ExtractionProfile& profile) {
   if (!profile.configured) {
     return std::all_of(profile.name.begin(), profile.name.end(),
@@ -339,31 +315,6 @@ bool extraction_profile_is_valid(const ExtractionProfile& profile) {
       static_cast<std::uint16_t>(profile.soak_seconds) +
       static_cast<std::uint16_t>(profile.main_extraction_seconds);
   return total_seconds <= kMaximumExtractionDurationSeconds;
-}
-
-bool extraction_profiles_are_valid(const ExtractionProfiles& profiles) {
-  return std::all_of(profiles.begin(), profiles.end(),
-                     extraction_profile_is_valid);
-}
-
-ProfileStorage::ProfileStorage(ProfileBackend& backend) : backend_(backend) {}
-
-ProfileLoadResult ProfileStorage::load(ExtractionProfiles& profiles) {
-  const auto result = backend_.load(profiles);
-  if (result == BackendLoadResult::kError) {
-    return ProfileLoadResult::kError;
-  }
-  if (result == BackendLoadResult::kNotFound) {
-    profiles = default_extraction_profiles();
-    return backend_.save(profiles) ? ProfileLoadResult::kInitializedDefaults
-                                   : ProfileLoadResult::kError;
-  }
-  return extraction_profiles_are_valid(profiles) ? ProfileLoadResult::kOk
-                                                  : ProfileLoadResult::kCorrupt;
-}
-
-bool ProfileStorage::save(const ExtractionProfiles& profiles) {
-  return extraction_profiles_are_valid(profiles) && backend_.save(profiles);
 }
 
 FailOffSsr::FailOffSsr(DigitalOutput& output, SsrSafetyLease& safety_lease,

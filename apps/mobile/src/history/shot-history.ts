@@ -4,6 +4,8 @@ import type {
   ExtractionSelection,
   ExtractionTelemetryControlMode,
   ExtractionTelemetryPage,
+  ExtractionState,
+  WeightControl,
   ScaleCompletionReason,
   TerminalWeightExtraction,
 } from "@philcoino/protocol";
@@ -36,9 +38,10 @@ export interface ExtractionSummary {
   extractionId: string;
   fallbackOccurred: boolean | null;
   finalWeightDecigrams: number | null;
-  outcome: ExtractionOutcome;
+  outcome: ExtractionOutcome | null;
   profileId: ProfileSlotId | null;
   recordedAtMs: number;
+  recordStatus?: "running" | "complete" | "incomplete";
   selection: ExtractionSelection;
   settled: boolean | null;
   targetDecigrams: number | null;
@@ -71,11 +74,55 @@ export function extractionSummaryFromPage(
     outcome: page.outcome,
     profileId: page.selection.kind === "profile" ? page.selection.profileId : null,
     recordedAtMs,
+    recordStatus: "complete",
     selection: page.selection,
     settled: terminal?.settled ?? null,
     targetDecigrams: terminal?.targetWeightDecigrams ?? null,
     traceCompleteness: null,
     traceSampleCount: page.latestSequence - page.oldestSequence + 1,
+  };
+}
+
+export function extractionSummaryFromState(
+  deviceId: string,
+  extraction: ExtractionState,
+  weightControl?: WeightControl,
+  recordedAtMs = Date.now(),
+): ExtractionSummary {
+  if (extraction.extractionId === null || extraction.selection === null) {
+    throw new TypeError("An identified extraction is required.");
+  }
+  const weighted =
+    extraction.selection.kind === "profile" && weightControl !== undefined;
+  return {
+    bootId: null,
+    compensationDecigrams: weightControl?.compensationDecigrams ?? null,
+    controlMode:
+      extraction.selection.kind === "manual"
+        ? "manual"
+        : weighted ? "weight" : "timed",
+    cutoffDecigrams: weightControl === undefined
+      ? null
+      : weightControl.targetWeightDecigrams - weightControl.compensationDecigrams,
+    deviceId,
+    durationMs: extraction.elapsedMs,
+    extractionId: extraction.extractionId,
+    fallbackOccurred: null,
+    finalWeightDecigrams: null,
+    outcome: extraction.status === "idle" ? extraction.outcome : null,
+    profileId:
+      extraction.selection.kind === "profile"
+        ? extraction.selection.profileId
+        : null,
+    recordedAtMs,
+    // A retained terminal state proves the outcome, but the record remains
+    // incomplete until the replay stream supplies the terminal trace page.
+    recordStatus: extraction.status === "running" ? "running" : "incomplete",
+    selection: extraction.selection,
+    settled: null,
+    targetDecigrams: weightControl?.targetWeightDecigrams ?? null,
+    traceCompleteness: null,
+    traceSampleCount: 0,
   };
 }
 
@@ -138,7 +185,7 @@ export function weightedShotHistoryToCsv(
           : decigrams(sample.finalWeightDecigrams),
         sample.settled,
         sample.durationMs ?? "",
-        sample.outcome,
+        sample.outcome ?? "incomplete",
         sample.fallbackOccurred,
       ].join(","),
     );
@@ -154,8 +201,15 @@ export function extractionHistoryToCsv(samples: ExtractionSummary[]): string {
     "boot_id",
     "control_mode",
     "selection",
+    "profile_name",
+    "pre_infusion_seconds",
+    "soak_seconds",
+    "main_extraction_seconds",
     "duration_ms",
     "outcome",
+    "record_status",
+    "trace_completeness",
+    "trace_sample_count",
     "target_g",
     "compensation_g",
     "cutoff_g",
@@ -171,8 +225,19 @@ export function extractionHistoryToCsv(samples: ExtractionSummary[]): string {
       sample.bootId ?? "",
       sample.controlMode,
       sample.selection.kind === "manual" ? "manual" : sample.selection.profileId,
+      sample.selection.kind === "profile" ? sample.selection.profile.name : "",
+      sample.selection.kind === "profile"
+        ? sample.selection.profile.preInfusionSeconds
+        : "",
+      sample.selection.kind === "profile" ? sample.selection.profile.soakSeconds : "",
+      sample.selection.kind === "profile"
+        ? sample.selection.profile.mainExtractionSeconds
+        : "",
       sample.durationMs ?? "",
-      sample.outcome,
+      sample.outcome ?? sample.recordStatus ?? "incomplete",
+      sample.recordStatus ?? (sample.outcome === null ? "incomplete" : "complete"),
+      sample.traceCompleteness ?? "",
+      sample.traceSampleCount ?? 0,
       nullableDecigrams(sample.targetDecigrams),
       nullableDecigrams(sample.compensationDecigrams),
       nullableDecigrams(sample.cutoffDecigrams),

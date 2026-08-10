@@ -63,17 +63,17 @@ Firmware owns the temperature-control loop and does not rely on app connectivity
   calculations while leaving targets, readiness, deadlines, limits, and
   profile data unchanged;
 - latches faults and commands the SSR output off;
-- persists validated targets, complete four-slot extraction profile sets,
-  temperature calibration, and Steam heat-soak settings in separate NVS
-  records;
-- runs Manual and persisted profiles in a dedicated monotonic controller,
+- persists validated targets, temperature calibration, and Steam heat-soak
+  settings in separate NVS records; firmware neither reads nor writes profiles;
+- validates the complete profile supplied with Start, keeps that snapshot only
+  in RAM, runs Manual/profile shots in a dedicated monotonic controller,
   initializes GPIO10 `off`, and never restores `running` at boot;
 - runs mutually exclusive cooldown through a bounded 10 ms workflow task,
   orders heater inhibit/off before pump Start, and never restores cooldown at
   boot;
-- records up to 600 observational snapshots in RAM and exposes pages of at
-  most 8; history supplies no input to heater, pump, readiness, timeout,
-  fault, or mutation decisions;
+- retains only the independent 320-sample extraction telemetry replay ring; it
+  supplies no input to heater, pump, readiness, timeout, fault, or mutation
+  decisions;
 - calculates bounded Brew PI and legacy requested-duty diagnostics at the
   fixed 500 ms interval; the default build keeps PI shadow-only, while an
   explicitly enabled build selects PI only for Brew through the unchanged
@@ -98,8 +98,8 @@ temperature or the local boiling point, that `+2°C` improves extraction, or
 that a cooldown command produces flow or cooling. It does not replace
 independent measurement, a thermal cutoff, or energized review.
 
-Likewise, historical `heaterActive` and `pumpActive` values describe the last
-known firmware command. Backfill, SQLite, graph, and CSV data do not prove
+Likewise, locally stored `heaterActive` and `pumpActive` values describe the last
+known firmware command. SQLite, graph, and CSV data do not prove
 physical operation, flow, cooling, or de-energization and must never be used as
 control-loop feedback.
 

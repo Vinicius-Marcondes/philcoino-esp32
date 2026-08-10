@@ -9,7 +9,6 @@ import type {
   Mode,
   ModeResponse,
   OverTemperatureDismissResponse,
-  ProfileSet,
   StartExtractionResponse,
   StartExtractionRequest,
   StopExtractionResponse,
@@ -33,7 +32,6 @@ export type DashboardMutationKind =
   | "fault"
   | "heater"
   | "mode"
-  | "profiles"
   | "temperatures";
 export type DashboardMutationStatus =
   | "idle"
@@ -60,7 +58,6 @@ const mutationKinds: DashboardMutationKind[] = [
   "fault",
   "heater",
   "mode",
-  "profiles",
   "temperatures",
 ];
 
@@ -73,10 +70,6 @@ export interface DashboardMutationClient {
   dismissOverTemperature(
     options?: { signal?: AbortSignal },
   ): Promise<OverTemperatureDismissResponse>;
-  replaceProfiles(
-    profiles: ProfileSet,
-    options?: { signal?: AbortSignal },
-  ): Promise<ProfileSet>;
   startExtraction(
     request: StartExtractionRequest,
     options?: { signal?: AbortSignal },
@@ -115,7 +108,6 @@ interface DashboardMutationSessionOptions {
     state: DashboardMutationState,
   ) => void;
   onOverTemperatureDismissed: (snapshot: MachineState) => void;
-  onProfilesAcknowledged: (profiles: ProfileSet) => void;
   onTemperatureSettingsAcknowledged: (
     settings: TemperatureSettingsResponse,
   ) => void;
@@ -133,7 +125,6 @@ export class DashboardMutationSession {
   private readonly onModeAcknowledged: (mode: Mode) => void;
   private readonly onMutationChange: DashboardMutationSessionOptions["onMutationChange"];
   private readonly onOverTemperatureDismissed: DashboardMutationSessionOptions["onOverTemperatureDismissed"];
-  private readonly onProfilesAcknowledged: (profiles: ProfileSet) => void;
   private readonly onTemperatureSettingsAcknowledged: DashboardMutationSessionOptions["onTemperatureSettingsAcknowledged"];
   private readonly polling: DashboardPollingControl;
   private readonly startKeyFactory: () => string;
@@ -157,7 +148,6 @@ export class DashboardMutationSession {
     this.onModeAcknowledged = options.onModeAcknowledged;
     this.onMutationChange = options.onMutationChange;
     this.onOverTemperatureDismissed = options.onOverTemperatureDismissed;
-    this.onProfilesAcknowledged = options.onProfilesAcknowledged;
     this.onTemperatureSettingsAcknowledged =
       options.onTemperatureSettingsAcknowledged;
     this.polling = options.polling;
@@ -278,18 +268,6 @@ export class DashboardMutationSession {
         return translate("mutation.faultDismissed");
       },
       translate("mutation.faultPending"),
-    );
-  }
-
-  replaceProfiles(profiles: ProfileSet): void {
-    void this.perform(
-      "profiles",
-      (signal) => this.client.replaceProfiles(profiles, { signal }),
-      (response) => {
-        this.onProfilesAcknowledged(response);
-        return translate("mutation.profilesExported");
-      },
-      translate("mutation.profilesExportPending"),
     );
   }
 
@@ -542,8 +520,6 @@ function localizedRejectionMessage(
       return translate("mutation.rejections.malformedRequest");
     case "persistence_failure":
       return translate("mutation.rejections.persistenceFailure");
-    case "profile_not_configured":
-      return translate("mutation.rejections.profileNotConfigured");
     case "scale_not_calibrated":
       return translate("mutation.rejections.scaleNotCalibrated");
     case "scale_not_stable":

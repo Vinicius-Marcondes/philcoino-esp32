@@ -166,12 +166,15 @@ timestamp
 measured_temperature
 target_temperature
 heater_active
-pump_active
+pump_command
 status
 fault
 ```
 
 Column aliases should be configurable because export names may change.
+The current mobile status-history export uses `pump_command` values `running`
+and `off`; the importer continues to accept legacy `pump_active` and
+`pump_state` columns.
 
 ### 7.2 Strongly Recommended New Fields
 

@@ -438,8 +438,12 @@ HIST-007 work.
 
 Status: SOFTWARE COMPLETE — TARGET/PHYSICAL A/B PENDING
 
-PRD-016 intentionally breaks the prediction-enriched API v2/mobile history
-surface as one matched firmware/mobile change. Current firmware has no
+> Historical runtime note: PRD-020 removed the firmware history endpoint and
+> controller-history diagnostics on 2026-08-06. The following history wording
+> records the PRD-016 completion boundary rather than current behavior.
+
+PRD-016 intentionally broke the prediction-enriched API v2/mobile history
+surface as one matched firmware/mobile change. That firmware had no
 predictor runtime or model artifact dependency, `/api/v2/state` is queryless,
 history pages are strictly limited to eight samples with controller
 configuration/diagnostics, and SQLite migration discards old prediction JSON
@@ -483,3 +487,28 @@ partition. Connected iOS/Android measurements of request rate, HTTP latency,
 heap/stack, workflow-mutex timing, stream gaps, Wi-Fi recovery, and control-loop
 deadlines remain pending. No flashing, energized, or physical-safety test was
 performed or authorized.
+
+## PRD-020 simplified telemetry, profiles, and shot history
+
+Status: SOFTWARE COMPLETE — NATIVE/CONNECTED HUMAN ACCEPTANCE PENDING
+
+On 2026-08-06, the coordinated API generation-2 implementation removed the
+ten-minute machine-history route/ring and firmware profile persistence/routes.
+The phone now stores only validated foreground state polls, retains them until
+clear, and sends complete local profile snapshots with Start. Firmware latches
+the supplied profile in RAM and remains autonomous after acknowledgement.
+
+The mobile navigation now has Dashboard, Profiles, Machine, Scale, and Shots.
+Shots is the sole all-mode history surface; missing or overwritten terminal
+replay remains an incomplete record. Status export iterates all SQLite rows in
+batches, and both status and shot histories have confirmed clear-all actions.
+
+OpenAPI/typechecks/lint, 156 protocol tests, 90 simulator tests, 239 mobile
+tests, both native and ASan/UBSan 11-test firmware suites, 34 C++ contract
+captures, resource budgets, and the pinned ESP-IDF 6.0.2 ESP32-C3 build passed.
+The image is `0x11da80` bytes with 26% of the smallest app partition free.
+
+Native iOS/Android lifecycle/visual review and connected measurements of API
+latency, loop timing, heap/stack, SSE gaps/delivery, Wi-Fi recovery, and REST
+Stop remain pending. No flashing, energized test, or physical-safety approval
+was performed or inferred.

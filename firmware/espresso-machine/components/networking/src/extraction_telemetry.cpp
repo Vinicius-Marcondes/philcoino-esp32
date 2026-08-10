@@ -430,7 +430,18 @@ std::string serialize_extraction_telemetry_page(
     output << "{\"kind\":\"manual\"}";
   } else {
     output << "{\"kind\":\"profile\",\"profileId\":\"profile-"
-           << page.selection.profile_index + 1U << "\"}";
+           << page.selection.profile_index + 1U
+           << "\",\"profile\":{\"name\":\""
+           << page.selection.profile.name.data()
+           << "\",\"preInfusionSeconds\":"
+           << static_cast<unsigned>(
+                  page.selection.profile.pre_infusion_seconds)
+           << ",\"soakSeconds\":"
+           << static_cast<unsigned>(page.selection.profile.soak_seconds)
+           << ",\"mainExtractionSeconds\":"
+           << static_cast<unsigned>(
+                  page.selection.profile.main_extraction_seconds)
+           << "}}";
   }
   output << ",\"controlMode\":\""
          << (page.selection.kind == control::ExtractionSelectionKind::kManual

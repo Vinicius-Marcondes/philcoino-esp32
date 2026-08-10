@@ -325,6 +325,7 @@ enum class ExtractionSelectionKind { kManual, kProfile };
 struct ExtractionSelection {
   ExtractionSelectionKind kind{ExtractionSelectionKind::kManual};
   std::size_t profile_index{0};
+  peripherals::ExtractionProfile profile{};
 };
 
 struct WeightControl {
@@ -432,7 +433,6 @@ enum class StartExtractionResult {
   kReplay,
   kIdempotencyMismatch,
   kConflict,
-  kProfileNotConfigured,
   kInvalidRequest,
   kOutputFailure,
   kScaleNotCalibrated,
@@ -469,10 +469,8 @@ struct WeightExtractionSnapshot {
 
 class ExtractionController {
  public:
-  ExtractionController(peripherals::ExtractionProfiles profiles,
-                       peripherals::FailOffPump& pump);
+  explicit ExtractionController(peripherals::FailOffPump& pump);
 
-  const peripherals::ExtractionProfiles& profiles() const;
   bool active() const;
   ExtractionReplayStatus replay_status(
       const std::string& idempotency_key,
@@ -483,8 +481,6 @@ class ExtractionController {
       const ScaleSnapshot& scale,
       std::uint32_t now_ms) const;
 
-  bool adopt_persisted_profiles(
-      const peripherals::ExtractionProfiles& profiles);
   StartExtractionResult start(const std::string& idempotency_key,
                               ExtractionSelection selection,
                               std::uint32_t now_ms,
@@ -510,7 +506,6 @@ class ExtractionController {
   static bool weight_controls_equal(const WeightControl* left,
                                     const WeightControl* right);
 
-  peripherals::ExtractionProfiles profiles_{};
   peripherals::FailOffPump& pump_;
   bool active_{false};
   std::uint32_t started_at_ms_{0};

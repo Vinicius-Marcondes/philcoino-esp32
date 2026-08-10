@@ -29,6 +29,10 @@ export interface ShotHistoryRepository {
     extractionId: string,
     bootId?: string | null,
   ): Promise<StoredExtractionTrace | null>;
+  markUnfinishedIncomplete(
+    deviceId: string,
+    retainedExtractionId?: string | null,
+  ): Promise<void>;
   prune(nowMs?: number): Promise<void>;
 }
 
@@ -38,14 +42,29 @@ export class InMemoryShotHistoryRepository implements ShotHistoryRepository {
 
   async append(summary: ExtractionSummary | WeightedShotSummary): Promise<void> {
     const normalized = normalizeSummary(summary);
-    const index = this.records.findIndex(
+    let index = this.records.findIndex(
       (record) =>
         record.deviceId === normalized.deviceId &&
         record.extractionId === normalized.extractionId &&
         record.bootId === normalized.bootId,
     );
+    if (index < 0 && normalized.bootId !== null) {
+      index = this.records.findIndex(
+        (record) =>
+          record.deviceId === normalized.deviceId &&
+          record.extractionId === normalized.extractionId &&
+          record.bootId === null &&
+          record.recordStatus === "running",
+      );
+    }
     if (index >= 0) {
-      this.records[index] = normalized;
+      this.records[index] = {
+        ...normalized,
+        recordedAtMs: Math.min(
+          this.records[index].recordedAtMs,
+          normalized.recordedAtMs,
+        ),
+      };
     } else {
       this.records.push(normalized);
     }
@@ -128,6 +147,19 @@ export class InMemoryShotHistoryRepository implements ShotHistoryRepository {
     }
     return null;
   }
+
+  async markUnfinishedIncomplete(
+    deviceId: string,
+    retainedExtractionId?: string | null,
+  ): Promise<void> {
+    this.records = this.records.map((record) =>
+      record.deviceId === deviceId &&
+      record.recordStatus === "running" &&
+      record.extractionId !== retainedExtractionId
+        ? { ...record, recordStatus: "incomplete", outcome: null }
+        : record,
+    );
+  }
 }
 
 function normalizeSummary(
@@ -144,7 +176,17 @@ function normalizeSummary(
         : summary.outcome === "safety-cutoff"
           ? "failed"
           : "completed",
-    selection: { kind: "profile", profileId: summary.profileId },
+    selection: {
+      kind: "profile",
+      profileId: summary.profileId,
+      profile: {
+        name: "Legacy",
+        preInfusionSeconds: 0,
+        soakSeconds: 0,
+        mainExtractionSeconds: 60,
+      },
+    },
+    recordStatus: "complete",
   };
 }
 

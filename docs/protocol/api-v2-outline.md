@@ -3,8 +3,11 @@
 Status: IMPLEMENTED; CALIBRATION UI HUMAN ACCEPTED 2026-07-30; PHYSICAL ACCEPTANCE PENDING
 
 The authoritative wire contract is
-[`packages/protocol/openapi.yaml`](../../packages/protocol/openapi.yaml). API v2
-is additive: every API v1 temperature endpoint remains available and unchanged.
+[`packages/protocol/openapi.yaml`](../../packages/protocol/openapi.yaml). The
+device advertises `apiVersion: "2"`; incompatible version-1 mobile or firmware
+is rejected during inspection/pairing. API v1 temperature endpoints remain
+available and unchanged, while the v2 workflow contract is intentionally
+breaking.
 
 PRD-017 supersedes the former mode-dependent `+5°C` Steam correction.
 `machine.boilerTemperatureC` is now defined as the firmware-authoritative
@@ -24,15 +27,9 @@ calibration details are exposed only by the additive calibration resource.
 - `GET /api/v2/state` returns one acknowledged
   machine/extraction/compensation/cooldown snapshot. The endpoint is queryless;
   prediction opt-in requests are rejected as malformed.
-- `GET /api/v2/history` returns up to eight ascending RAM-retained samples with
-  boot/sequence continuity metadata, one strict controller/build configuration,
-  and required per-sample controller diagnostics. The prior sixty-sample and
-  prediction-enriched page variants are intentionally unsupported.
-- `GET /api/v2/profiles` returns all four ordered custom slots.
-- `PUT /api/v2/profiles` atomically persists and acknowledges the complete set
-  only while extraction and cooldown are idle.
-- `POST /api/v2/extractions/start` starts Manual or one persisted slot with a
-  client idempotency key.
+- `POST /api/v2/extractions/start` starts Manual or an inline profile snapshot
+  with a client idempotency key. Weighted profile requests also include strict
+  weight control.
 - `POST /api/v2/extractions/stop` idempotently commands off and returns idle.
 - `GET /api/v2/extractions/stream` authenticates one local SSE subscriber and
   streams retained plus live telemetry for every extraction control mode.
@@ -64,8 +61,9 @@ calibration details are exposed only by the additive calibration resource.
   restores ordinary Brew control without changing persisted targets.
 
 All endpoints require the same bearer authentication as API v1. Unknown fields,
-invalid slot order/IDs, invalid names or durations, malformed selections, and
-invalid idempotency keys are rejected independently by firmware C++.
+invalid slot IDs, invalid names or durations, missing inline profiles,
+malformed selections, and invalid idempotency keys are rejected independently
+by firmware C++.
 Extraction Start requires acknowledged Brew mode and idle cooldown. Steam mode
 is rejected during extraction or cooldown. Conflict bodies include the active
 workflow snapshot when the contract requires it.
@@ -83,16 +81,6 @@ above the independent `135°C` raw cap; it never clamps. Steam target
 `135°C`, effective Steam `135°C`, and raw temperature `135°C` are permitted.
 A reading strictly above either effective or raw cap independently latches
 `over_temperature` and commands the heater off.
-
-History authentication is resolved before query parsing. A request either has
-no cursor or has exactly one `bootId` plus one `afterSequence`; unknown,
-duplicate, partial, malformed, evicted, and future cursor cases follow the
-strict contract. No cursor begins at the oldest retained sample. A matching
-cursor is `continuous`, an evicted cursor is `truncated`, and a different boot
-ID is `reset`; `initial` identifies the no-cursor start. Each page includes the
-current boot ID, capture uptime, available sequence bounds, next durable cursor,
-`hasMore`, the selected controller plus compile-time gains/filter/window, and
-complete graph command/status/fault/controller context.
 
 Extraction-stream cursors require either no cursor fields or exactly one
 `bootId`, `extractionId`, and `afterSequence`. Partial, duplicate, malformed,
@@ -115,7 +103,7 @@ polling fallback.
 
 ## Authority and timing
 
-Firmware snapshots a selected profile at Start and owns pre-infusion pump-on,
+Firmware validates and snapshots the supplied inline profile at Start and owns pre-infusion pump-on,
 soak pump-off, main extraction pump-on, completion, and the 60-second Manual
 cutoff using wrap-safe monotonic time. A same-key retry returns the original
 active extraction without restarting it; another key conflicts. Stop is
@@ -130,8 +118,8 @@ profile phase at `target - compensation`. If scale input fails after Start,
 firmware switches to the selected profile's original monotonic deadline,
 records a degraded terminal result, and blocks another weighted Start until
 acknowledgement. The independent 60-second extraction cutoff remains in force.
-Same-key retries compare the exact weight parameters and never repeat tare or
-restart an acknowledged extraction. The latest weighted terminal result is
+Same-key retries compare the exact profile contents and weight parameters and
+never repeat tare or restart an acknowledged extraction. The latest weighted terminal result is
 retained until the next weighted Start or reboot.
 
 The fixed extraction compensation is not a request value. Firmware reports it
@@ -159,17 +147,12 @@ an active extraction. If a cooldown pump-off write itself fails, the terminal
 failed acknowledgement may retain `pumpCommand: "running"` to report the last
 successful command instead of falsely claiming off.
 
-Profile and target persistence occur outside the single bounded workflow mutex.
-Phone disconnection cannot interrupt an acknowledged extraction or cooldown.
-Reset or power loss clears volatile workflow/idempotency state and boot never
-restores a running command.
-
-History is also volatile. Firmware retains at most ten minutes at one sample
-per second, assigns a new ephemeral 128-bit boot ID on startup, and never writes
-samples or cursors to NVS. Missing samples are not synthesized. History reads
-copy a bounded page under their own guard and serialize after release; history
-never supplies input to temperature, heater, pump, readiness, timeout, fault,
-or mutation decisions.
+Target persistence occurs outside the single bounded workflow mutex. Profiles
+exist only as the validated RAM snapshot of an acknowledged shot; firmware does
+not load, save, default, synchronize, or clean up profile NVS data. Phone
+disconnection cannot interrupt an acknowledged extraction or cooldown. Reset
+or power loss clears volatile workflow/idempotency state and boot never restores
+a running command.
 
 Extraction telemetry is a separate volatile observation path. Firmware
 attempts a zero-wait capture every 250 ms for Manual, timed, and weighted shots,
@@ -181,17 +164,10 @@ weight. An asynchronous networking task serializes and sends copied pages
 outside the workflow mutex, and disconnects a slow or failed client rather than
 queueing without bound.
 
-Controller diagnostics report raw/filtered temperature, base/private target,
-PI error and contributions, PI/legacy requested duty, integral state,
-saturation/anti-windup state, selected authority, delivered one-second command
-fraction, acknowledged heater/pump commands, extraction phase, and operating
-mode. Page configuration reports firmware version, selected controller,
-compile-time Kp/Ki/filter alpha, the 500 ms controller interval, and ten-second
-SSR window. Heater and pump values remain command-derived and are not physical
-feedback. The mobile app stores these diagnostics only on recovered firmware
-history rows; foreground-only rows keep them nullable. CSV exports use the new
-controller columns and contain no prediction/model fields. Retained history is
-used to recover detected gaps, not as control-loop feedback.
+Every validated foreground state poll is stored locally by the mobile app.
+Inactive, locked, offline, and closed periods remain gaps; no backfill or
+background polling occurs. Firmware retains only the independent 320-sample
+extraction replay ring described above.
 
 ## Command-state boundary
 

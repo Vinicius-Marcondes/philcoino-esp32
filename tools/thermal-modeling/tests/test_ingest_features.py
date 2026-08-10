@@ -32,7 +32,7 @@ def test_minimum_current_export_and_legacy_prediction_columns_are_non_authoritat
         "boiler_temperature_c": [89 + 0.1 * index for index in range(rows)],
         "active_target_c": [93] * rows,
         "heater_active": [1] * 20 + [0] * 20,
-        "pump_active": [0] * rows,
+        "pump_command": ["off"] * 20 + ["running"] * 20,
         "active_mode": ["brew"] * rows,
         "machine_status": ["heating"] * rows,
         "fault_code": [""] * rows,
@@ -61,6 +61,8 @@ def test_minimum_current_export_and_legacy_prediction_columns_are_non_authoritat
     )
 
     assert len(dataset.frame) == rows
+    assert dataset.files[0]["aliases"]["pump"] == "pump_command"
+    assert dataset.frame["pump"].tolist() == [0.0] * 20 + [1.0] * 20
     assert set(default_features["feature_source"]) == {"reconstructed"}
     assert legacy_opt_in.iloc[-1]["feature_source"] == "logged_firmware"
     assert default_features.iloc[-1]["temperature_filtered_c"] != 120
