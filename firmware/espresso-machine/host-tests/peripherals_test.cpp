@@ -80,13 +80,6 @@ struct TemperatureCalibrationMemoryState {
   TemperatureCalibration calibration{};
 };
 
-struct ProfileMemoryState {
-  bool present{false};
-  bool fail_load{false};
-  bool fail_save{false};
-  ExtractionProfiles profiles{};
-};
-
 struct SteamControlMemoryState {
   bool present{false};
   bool fail_load{false};
@@ -117,34 +110,6 @@ class SteamControlMemoryBackend final : public SteamControlSettingsBackend {
 
  private:
   SteamControlMemoryState& state_;
-};
-
-class ProfileMemoryBackend final : public ProfileBackend {
- public:
-  explicit ProfileMemoryBackend(ProfileMemoryState& state) : state_(state) {}
-
-  BackendLoadResult load(ExtractionProfiles& profiles) override {
-    if (state_.fail_load) {
-      return BackendLoadResult::kError;
-    }
-    if (!state_.present) {
-      return BackendLoadResult::kNotFound;
-    }
-    profiles = state_.profiles;
-    return BackendLoadResult::kOk;
-  }
-
-  bool save(const ExtractionProfiles& profiles) override {
-    if (state_.fail_save) {
-      return false;
-    }
-    state_.profiles = profiles;
-    state_.present = true;
-    return true;
-  }
-
- private:
-  ProfileMemoryState& state_;
 };
 
 class MemoryBackend final : public TargetBackend {
@@ -595,79 +560,21 @@ ExtractionProfile configured_profile(const char* name, std::uint8_t pre,
   return profile;
 }
 
-bool profiles_equal(const ExtractionProfiles& left,
-                    const ExtractionProfiles& right) {
-  for (std::size_t index = 0; index < left.size(); ++index) {
-    if (left[index].configured != right[index].configured ||
-        left[index].name != right[index].name ||
-        left[index].pre_infusion_seconds !=
-            right[index].pre_infusion_seconds ||
-        left[index].soak_seconds != right[index].soak_seconds ||
-        left[index].main_extraction_seconds !=
-            right[index].main_extraction_seconds) {
-      return false;
-    }
-  }
-  return true;
-}
-
-void test_profile_storage() {
-  ProfileMemoryState state;
-  ExtractionProfiles profiles{};
-  {
-    ProfileMemoryBackend backend(state);
-    ProfileStorage storage(backend);
-    assert(storage.load(profiles) == ProfileLoadResult::kInitializedDefaults);
-    assert(profiles_equal(profiles, default_extraction_profiles()));
-    assert(profiles[0].configured);
-    assert(profiles[1].configured);
-    assert(!profiles[2].configured);
-    assert(!profiles[3].configured);
-
-    auto replacement = profiles;
-    replacement[2] = configured_profile("Long40", 5U, 5U, 30U);
-    assert(storage.save(replacement));
-    assert(profiles_equal(state.profiles, replacement));
-
-    state.fail_save = true;
-    auto failed_replacement = replacement;
-    failed_replacement[0] = configured_profile("Short20", 0U, 0U, 20U);
-    assert(!storage.save(failed_replacement));
-    assert(profiles_equal(state.profiles, replacement));
-  }
-  {
-    ProfileMemoryBackend restarted_backend(state);
-    ProfileStorage restarted_storage(restarted_backend);
-    ExtractionProfiles restored{};
-    assert(restarted_storage.load(restored) == ProfileLoadResult::kOk);
-    assert(profiles_equal(restored, state.profiles));
-  }
-
-  auto invalid = default_extraction_profiles();
-  invalid[0] = configured_profile("Bad name", 0U, 0U, 30U);
-  assert(!extraction_profiles_are_valid(invalid));
-  invalid[0] = configured_profile("Valid", 0U, 0U, 30U);
-  invalid[0].name.fill('A');
-  assert(!extraction_profiles_are_valid(invalid));
-  invalid[0] = configured_profile("NoPre", 0U, 5U, 25U);
-  assert(!extraction_profiles_are_valid(invalid));
-  invalid[0] = configured_profile("TooLong", 30U, 20U, 11U);
-  assert(!extraction_profiles_are_valid(invalid));
-  invalid[0] = {};
-  invalid[0].name[0] = 'X';
-  assert(!extraction_profiles_are_valid(invalid));
-
-  state.fail_save = false;
-  state.profiles = invalid;
-  ProfileMemoryBackend corrupt_backend(state);
-  ProfileStorage corrupt_storage(corrupt_backend);
-  ExtractionProfiles corrupt{};
-  assert(corrupt_storage.load(corrupt) == ProfileLoadResult::kCorrupt);
-
-  state.fail_load = true;
-  ProfileMemoryBackend failed_backend(state);
-  ProfileStorage failed_storage(failed_backend);
-  assert(failed_storage.load(corrupt) == ProfileLoadResult::kError);
+void test_inline_profile_validation() {
+  assert(extraction_profile_is_valid(
+      configured_profile("Long40", 5U, 5U, 30U)));
+  assert(!extraction_profile_is_valid(
+      configured_profile("Bad name", 0U, 0U, 30U)));
+  auto invalid = configured_profile("Valid", 0U, 0U, 30U);
+  invalid.name.fill('A');
+  assert(!extraction_profile_is_valid(invalid));
+  assert(!extraction_profile_is_valid(
+      configured_profile("NoPre", 0U, 5U, 25U)));
+  assert(!extraction_profile_is_valid(
+      configured_profile("TooLong", 30U, 20U, 11U)));
+  invalid = {};
+  invalid.name[0] = 'X';
+  assert(!extraction_profile_is_valid(invalid));
 }
 
 void test_fail_off_pump() {
@@ -894,7 +801,7 @@ int main() {
   test_target_storage();
   test_temperature_calibration_storage_and_conversion();
   test_steam_control_settings_storage_defaults_validation_and_failures();
-  test_profile_storage();
+  test_inline_profile_validation();
   test_fail_off_pump();
   test_fail_off_ssr();
   test_emergency_inhibit_serializes_with_in_progress_high_commands();

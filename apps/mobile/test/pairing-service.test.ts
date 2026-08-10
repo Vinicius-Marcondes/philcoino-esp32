@@ -28,7 +28,7 @@ describe("pairing flow with the device simulator", () => {
     const candidate = await inspectDevice("127.0.0.1:3000", createClient);
     expect(candidate).toMatchObject({
       address: simulatorAddress,
-      apiVersion: "1",
+      apiVersion: "2",
       deviceId: "philcoino-simulator",
       firmwareVersion: "simulator-0.2.0",
       model: "philcoino-simulator",
@@ -102,7 +102,7 @@ describe("pairing flow with the device simulator", () => {
       createClient,
       findDeviceById: async (deviceId) => ({
         address: simulatorAddress,
-        apiVersion: "1",
+        apiVersion: "2",
         deviceId,
         firmwareVersion: "simulator-0.2.0",
         model: "philcoino-simulator",
@@ -147,7 +147,7 @@ describe("pairing flow with the device simulator", () => {
       createClient,
       findDeviceById: async () => ({
         address: simulatorAddress,
-        apiVersion: "1",
+        apiVersion: "2",
         deviceId: original.deviceId,
         firmwareVersion: "spoofed",
         model: "spoofed",

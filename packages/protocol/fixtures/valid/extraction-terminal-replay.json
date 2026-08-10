@@ -1,7 +1,11 @@
 {
   "status": "idle",
   "extractionId": "run-184220",
-  "selection": { "kind": "profile", "profileId": "profile-2" },
+  "selection": {
+    "kind": "profile",
+    "profileId": "profile-2",
+    "profile": { "name": "Pre5Soak5", "preInfusionSeconds": 5, "soakSeconds": 5, "mainExtractionSeconds": 25 }
+  },
   "phase": "idle",
   "elapsedMs": 35000,
   "remainingMs": null,

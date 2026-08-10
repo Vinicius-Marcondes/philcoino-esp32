@@ -7,13 +7,11 @@ import {
   HeaterSettingsRequestSchema,
   HeaterSettingsResponseSchema,
   HealthResponseSchema,
-  HistoryPageSchema,
   MachineStateSchema,
   MachineStateV2Schema,
   ModeRequestSchema,
   ModeResponseSchema,
   OverTemperatureDismissResponseSchema,
-  ProfileSetSchema,
   StartCooldownRequestSchema,
   StartCooldownResponseSchema,
   StartExtractionRequestSchema,
@@ -36,14 +34,11 @@ import {
   type HeaterSettingsRequest,
   type HeaterSettingsResponse,
   type HealthResponse,
-  type HistoryCursor,
-  type HistoryPage,
   type MachineState,
   type MachineStateV2,
   type ModeRequest,
   type ModeResponse,
   type OverTemperatureDismissResponse,
-  type ProfileSet,
   type StartCooldownRequest,
   type StartCooldownResponse,
   type StartExtractionRequest,
@@ -156,22 +151,6 @@ export class DeviceApiClient {
     );
   }
 
-  getHistory(
-    cursor?: HistoryCursor,
-    options: RequestOptions = {},
-  ): Promise<HistoryPage> {
-    const query =
-      cursor === undefined
-        ? ""
-        : `?bootId=${encodeURIComponent(cursor.bootId)}&afterSequence=${cursor.afterSequence}`;
-    return this.request(
-      `/api/v2/history${query}`,
-      HistoryPageSchema,
-      { authenticated: true, errorVersion: "v2" },
-      options,
-    );
-  }
-
   getSteamControlSettings(
     options: RequestOptions = {},
   ): Promise<SteamControlState> {
@@ -202,39 +181,6 @@ export class DeviceApiClient {
         body: parsed.data,
         errorVersion: "v2",
         method: "PATCH",
-      },
-      options,
-    );
-  }
-
-  getProfiles(options: RequestOptions = {}): Promise<ProfileSet> {
-    return this.request(
-      "/api/v2/profiles",
-      ProfileSetSchema,
-      { authenticated: true, errorVersion: "v2" },
-      options,
-    );
-  }
-
-  async replaceProfiles(
-    profiles: ProfileSet,
-    options: RequestOptions = {},
-  ): Promise<ProfileSet> {
-    const parsed = ProfileSetSchema.safeParse(profiles);
-    if (!parsed.success) {
-      throw new ApiClientError(
-        "invalid-request",
-        "The complete profile set is invalid.",
-      );
-    }
-    return await this.request(
-      "/api/v2/profiles",
-      ProfileSetSchema,
-      {
-        authenticated: true,
-        body: parsed.data,
-        errorVersion: "v2",
-        method: "PUT",
       },
       options,
     );

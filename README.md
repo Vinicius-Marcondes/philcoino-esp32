@@ -22,9 +22,9 @@ O celular descobre e autentica uma máquina, exibe o estado em tempo real e envi
 - Restauração pelo endereço salvo e redescoberta por stable ID após mudanças de endereço.
 - Validação estrita das APIs v1/v2 em runtime e estados explícitos para offline, unauthorized, not found, timeout e protocol error.
 - Polling do dashboard a cada segundo, orientado à conclusão, enquanto a tela e o app estão ativos.
-- Histórico atual em SQLite com backfill automático de até dez minutos do
-  buffer RAM do ESP32, diagnósticos de controller e Live paginado em janelas
-  horizontais de 30 s.
+- Cada estado validado de primeiro plano é salvo localmente em SQLite sem
+  backfill; o Dashboard mostra somente o dia local atual, enquanto dias
+  anteriores permanecem disponíveis para exportação até uma limpeza manual.
 - Targets de brew/steam, active mode, permissão do heater e dismissal de over-temperature confirmados pelo firmware.
 - Calibração guiada em Machine com target raw de `90–120°C`, operação manual
   da steam wand, Save explícito e um offset global persistido aplicado uma vez
@@ -37,9 +37,10 @@ O celular descobre e autentica uma máquina, exibe o estado em tempo real e envi
   autoridade e permite comparar um PI bounded em shadow; builds PI ativos
   continuam pendentes de target build e A/B físico supervisionado.
 - Simulador determinístico Bun/Hono para desenvolvimento mobile e do contrato.
-- Profiles locais Manual + quatro slots, importação revisada do ESP32, export
-  completo e extração reconhecida pelo firmware com pre-infusion, soak, main,
-  Stop e cutoff Manual de 60 s.
+- Manual + quatro profiles app-wide armazenados somente no celular. Cada Start
+  envia um snapshot completo e imutável para execução autônoma do firmware.
+- Uma quinta aba `Extrações` reúne todas as extrações Manual, temporizadas e por
+  peso, inclusive interrompidas, falhas e incompletas, com traço e exportação.
 
 O produto ainda é um protótipo. A aceitação da PRD-001 e a validação física estão incompletas; consulte o [tracker](docs/TRACKER.md) e os [findings conhecidos](CODEBASE_REVIEW_REPORT.md).
 
@@ -124,8 +125,6 @@ Endpoints autenticados exigem `Authorization: Bearer <token>`:
 A API v2 adiciona, sem remover v1:
 
 - `GET /api/v2/state`
-- `GET /api/v2/history`
-- `GET` e `PUT /api/v2/profiles`
 - `POST /api/v2/extractions/start`
 - `POST /api/v2/extractions/stop`
 - `GET /api/v2/extractions/stream`

@@ -1,7 +1,7 @@
 import type { TemperatureHistorySample } from "./temperature-history";
 
 export interface TemperatureHistoryExporter {
-  share(samples: TemperatureHistorySample[]): Promise<void>;
+  share(samples: AsyncIterable<TemperatureHistorySample>): Promise<void>;
 }
 
 class UnsupportedTemperatureHistoryExporter

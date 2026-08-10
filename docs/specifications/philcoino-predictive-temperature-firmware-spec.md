@@ -436,7 +436,7 @@ temperature_acceleration
 pid_output
 heater_command
 heater_actual
-pump_active
+pump_command
 heat_5s
 heat_15s
 heat_30s

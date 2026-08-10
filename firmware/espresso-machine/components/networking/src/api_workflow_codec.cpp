@@ -137,56 +137,6 @@ const char* cooldown_outcome_name(control::CooldownOutcome outcome) {
 
 }  // namespace
 
-bool parse_profiles(const std::string& body,
-                    peripherals::ExtractionProfiles& profiles) {
-  std::vector<JsonField> root;
-  JsonObjectParser parser(body);
-  if (!parser.parse(root) || root.size() != 1U ||
-      root[0].key != "profiles" ||
-      root[0].value.type != JsonValue::Type::kOther) {
-    return false;
-  }
-  std::vector<std::string> slots;
-  if (!json::split_array(root[0].value.string, slots) ||
-      slots.size() != profiles.size()) {
-    return false;
-  }
-  peripherals::ExtractionProfiles candidate{};
-  for (std::size_t index = 0; index < slots.size(); ++index) {
-    std::vector<JsonField> fields;
-    JsonObjectParser slot_parser(slots[index]);
-    if (!slot_parser.parse(fields) || fields.size() != 2U) {
-      return false;
-    }
-    bool id_seen = false;
-    bool profile_seen = false;
-    for (const auto& field : fields) {
-      if (field.key == "id" && field.value.type == JsonValue::Type::kString) {
-        id_seen = field.value.string ==
-                  (std::string("profile-") + std::to_string(index + 1U));
-      } else if (field.key == "profile" &&
-                 field.value.type == JsonValue::Type::kOther) {
-        if (field.value.string == "null") {
-          candidate[index] = {};
-          profile_seen = true;
-        } else {
-          profile_seen = parse_profile(field.value.string, candidate[index]);
-        }
-      } else {
-        return false;
-      }
-    }
-    if (!id_seen || !profile_seen) {
-      return false;
-    }
-  }
-  if (!peripherals::extraction_profiles_are_valid(candidate)) {
-    return false;
-  }
-  profiles = candidate;
-  return true;
-}
-
 bool parse_start(const std::string& body, std::string& idempotency_key,
                  control::ExtractionSelection& selection) {
   control::WeightControl ignored{};
@@ -238,11 +188,12 @@ bool parse_start(const std::string& body, std::string& idempotency_key,
     weighted = false;
     return true;
   }
-  if (selection_fields.size() != 2U) {
+  if (selection_fields.size() != 3U) {
     return false;
   }
   bool kind_seen = false;
   bool id_seen = false;
+  bool profile_seen = false;
   control::ExtractionSelection candidate_selection{};
   for (const auto& field : selection_fields) {
     if (field.key == "kind" && field.value.type == JsonValue::Type::kString) {
@@ -252,15 +203,19 @@ bool parse_start(const std::string& body, std::string& idempotency_key,
                field.value.string.size() == 9U &&
                field.value.string.compare(0, 8, "profile-") == 0 &&
                field.value.string[8] >= '1' && field.value.string[8] <= '4') {
-      candidate_selection = {
-          control::ExtractionSelectionKind::kProfile,
-          static_cast<std::size_t>(field.value.string[8] - '1')};
+      candidate_selection.kind = control::ExtractionSelectionKind::kProfile;
+      candidate_selection.profile_index =
+          static_cast<std::size_t>(field.value.string[8] - '1');
       id_seen = true;
+    } else if (field.key == "profile" &&
+               field.value.type == JsonValue::Type::kOther) {
+      profile_seen =
+          parse_profile(field.value.string, candidate_selection.profile);
     } else {
       return false;
     }
   }
-  if (!kind_seen || !id_seen) {
+  if (!kind_seen || !id_seen || !profile_seen) {
     return false;
   }
   idempotency_key = candidate_key;
@@ -319,7 +274,18 @@ std::string serialize_extraction(const control::ExtractionSnapshot& snapshot) {
     output << "\"kind\":\"manual\"";
   } else {
     output << "\"kind\":\"profile\",\"profileId\":\"profile-"
-           << snapshot.selection.profile_index + 1U << "\"";
+           << snapshot.selection.profile_index + 1U
+           << "\",\"profile\":{\"name\":\""
+           << snapshot.selection.profile.name.data()
+           << "\",\"preInfusionSeconds\":"
+           << static_cast<unsigned>(
+                  snapshot.selection.profile.pre_infusion_seconds)
+           << ",\"soakSeconds\":"
+           << static_cast<unsigned>(snapshot.selection.profile.soak_seconds)
+           << ",\"mainExtractionSeconds\":"
+           << static_cast<unsigned>(
+                  snapshot.selection.profile.main_extraction_seconds)
+           << '}';
   }
   output << "},\"phase\":\"" << phase_name(snapshot.phase)
          << "\",\"elapsedMs\":" << snapshot.elapsed_ms
@@ -413,33 +379,6 @@ HttpResponse extraction_conflict(
       std::string("{\"error\":{\"code\":\"extraction_active\",\"message\":\"") +
           message + "\"},\"activeExtraction\":" +
           serialize_extraction(extraction) + '}');
-}
-
-std::string serialize_profiles(
-    const peripherals::ExtractionProfiles& profiles) {
-  std::ostringstream output;
-  output << "{\"profiles\":[";
-  for (std::size_t index = 0; index < profiles.size(); ++index) {
-    if (index != 0U) {
-      output << ',';
-    }
-    output << "{\"id\":\"profile-" << index + 1U << "\",\"profile\":";
-    const auto& profile = profiles[index];
-    if (!profile.configured) {
-      output << "null";
-    } else {
-      output << "{\"name\":\"" << profile.name.data()
-             << "\",\"preInfusionSeconds\":"
-             << static_cast<unsigned>(profile.pre_infusion_seconds)
-             << ",\"soakSeconds\":"
-             << static_cast<unsigned>(profile.soak_seconds)
-             << ",\"mainExtractionSeconds\":"
-             << static_cast<unsigned>(profile.main_extraction_seconds) << '}';
-    }
-    output << '}';
-  }
-  output << "]}";
-  return output.str();
 }
 
 std::string serialize_scale(

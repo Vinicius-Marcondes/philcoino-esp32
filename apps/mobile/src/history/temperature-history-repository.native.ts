@@ -1,48 +1,16 @@
 import * as SQLite from "expo-sqlite";
+import { SteamControlStateSchema } from "@philcoino/protocol";
 
 import type { TemperatureHistorySample } from "./temperature-history";
 import { localDayRange } from "./temperature-history";
 import {
   createTemperatureHistoryTableSql,
-  rebuildTemperatureHistoryV5Sql,
+  rebuildTemperatureHistoryV7Sql,
   TEMPERATURE_HISTORY_DATABASE_VERSION,
 } from "./temperature-history-schema";
-import type {
-  RecoveredHistoryPage,
-  TemperatureHistoryRepository,
-} from "./temperature-history-repository";
-import {
-  ControllerConfigurationSchema,
-  ControllerDiagnosticsSchema,
-  SteamControlStateSchema,
-  type ControllerConfiguration,
-  type ControllerDiagnostics,
-  type HistoryCursor,
-  type SteamControlState,
-} from "@philcoino/protocol";
+import type { TemperatureHistoryRepository } from "./temperature-history-repository";
 
-interface TemperatureHistoryRow {
-  active_mode: unknown;
-  active_target_c: unknown;
-  boiler_temperature_c: unknown;
-  brew_target_c: unknown;
-  device_id: unknown;
-  fault_code: unknown;
-  heater_active: unknown;
-  heater_enabled: unknown;
-  machine_status: unknown;
-  pump_active: unknown;
-  controller_configuration_json: unknown;
-  controller_diagnostics_json: unknown;
-  steam_control_json: unknown;
-  recorded_at_ms: unknown;
-  source_boot_id: unknown;
-  source_sequence: unknown;
-  starts_after_history_gap: unknown;
-  steam_target_c: unknown;
-  uptime_ms: unknown;
-}
-
+type Row = Record<string, unknown>;
 const DATABASE_NAME = "philcoino-mobile.db";
 
 class SQLiteTemperatureHistoryRepository
@@ -52,25 +20,24 @@ class SQLiteTemperatureHistoryRepository
 
   async append(sample: TemperatureHistorySample): Promise<void> {
     const database = await this.database();
+    const previous = await database.getFirstAsync<{ recorded_at_ms: number; uptime_ms: number }>(
+      `SELECT recorded_at_ms, uptime_ms FROM temperature_history
+       WHERE device_id = ? ORDER BY recorded_at_ms DESC LIMIT 1`,
+      sample.deviceId,
+    );
+    const startsAfterGap =
+      sample.startsAfterHistoryGap ||
+      (previous !== null &&
+        (sample.recordedAtMs - previous.recorded_at_ms > 2_500 ||
+          sample.uptimeMs <= previous.uptime_ms ||
+          sample.uptimeMs - previous.uptime_ms > 2_500));
     await database.runAsync(
       `INSERT INTO temperature_history (
-        device_id,
-        recorded_at_ms,
-        uptime_ms,
-        boiler_temperature_c,
-        brew_target_c,
-        steam_target_c,
-        active_mode,
-        active_target_c,
-        heater_enabled,
-        heater_active,
-        pump_active,
-        machine_status,
-        fault_code,
-        controller_configuration_json,
-        controller_diagnostics_json,
-        steam_control_json
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        device_id, recorded_at_ms, uptime_ms, boiler_temperature_c,
+        brew_target_c, steam_target_c, active_mode, active_target_c,
+        heater_enabled, heater_active, pump_command, machine_status, fault_code,
+        steam_control_json, starts_after_history_gap
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(device_id, recorded_at_ms) DO UPDATE SET
         uptime_ms = excluded.uptime_ms,
         boiler_temperature_c = excluded.boiler_temperature_c,
@@ -80,13 +47,11 @@ class SQLiteTemperatureHistoryRepository
         active_target_c = excluded.active_target_c,
         heater_enabled = excluded.heater_enabled,
         heater_active = excluded.heater_active,
-        pump_active = excluded.pump_active,
+        pump_command = excluded.pump_command,
         machine_status = excluded.machine_status,
         fault_code = excluded.fault_code,
-        controller_configuration_json = excluded.controller_configuration_json,
-        controller_diagnostics_json = excluded.controller_diagnostics_json,
-        steam_control_json = excluded.steam_control_json
-      WHERE temperature_history.source_sequence IS NULL`,
+        steam_control_json = excluded.steam_control_json,
+        starts_after_history_gap = excluded.starts_after_history_gap`,
       sample.deviceId,
       sample.recordedAtMs,
       sample.uptimeMs,
@@ -97,61 +62,34 @@ class SQLiteTemperatureHistoryRepository
       sample.activeTargetC,
       sample.heaterEnabled ? 1 : 0,
       sample.heaterActive ? 1 : 0,
-      sample.pumpActive === null ? null : sample.pumpActive ? 1 : 0,
+      sample.pumpCommand,
       sample.machineStatus,
       sample.faultCode,
-      serializeControllerValue(sample.controllerConfiguration),
-      serializeControllerValue(sample.controllerDiagnostics),
-      serializeSteamControl(sample.steamControl ?? null),
+      sample.steamControl === null || sample.steamControl === undefined
+        ? null
+        : JSON.stringify(sample.steamControl),
+      startsAfterGap ? 1 : 0,
     );
-    await this.prune(sample.recordedAtMs);
   }
 
   async clearDevice(deviceId: string): Promise<void> {
-    const database = await this.database();
-    await database.withExclusiveTransactionAsync(async (transaction) => {
-      await transaction.runAsync(
-        "DELETE FROM temperature_history WHERE device_id = ?",
-        deviceId,
-      );
-      await transaction.runAsync(
-        "DELETE FROM temperature_history_sync WHERE device_id = ?",
-        deviceId,
-      );
-    });
-  }
-
-  async loadSyncCursor(deviceId: string): Promise<HistoryCursor | null> {
-    const database = await this.database();
-    const row = await database.getFirstAsync<{
-      after_sequence: unknown;
-      boot_id: unknown;
-    }>(
-      `SELECT boot_id, after_sequence
-       FROM temperature_history_sync
-       WHERE device_id = ?`,
+    await (await this.database()).runAsync(
+      "DELETE FROM temperature_history WHERE device_id = ?",
       deviceId,
     );
-    if (row === null) {
-      return null;
-    }
-    return {
-      afterSequence: nonNegativeInteger(row.after_sequence),
-      bootId: historyBootId(row.boot_id),
-    };
   }
 
-  async initialize(nowMs = Date.now()): Promise<void> {
+  async initialize(): Promise<void> {
     await this.database();
-    await this.prune(nowMs);
   }
 
-  async *iterateToday(
-    deviceId: string,
-    nowMs = Date.now(),
-  ): AsyncIterable<TemperatureHistorySample> {
-    for (const sample of await this.loadToday(deviceId, nowMs)) {
-      yield sample;
+  async *iterateAll(deviceId: string): AsyncIterable<TemperatureHistorySample> {
+    const database = await this.database();
+    for await (const row of database.getEachAsync<Row>(
+      `${selectColumns()} WHERE device_id = ? ORDER BY recorded_at_ms ASC`,
+      deviceId,
+    )) {
+      yield rowToSample(row);
     }
   }
 
@@ -159,119 +97,16 @@ class SQLiteTemperatureHistoryRepository
     deviceId: string,
     nowMs = Date.now(),
   ): Promise<TemperatureHistorySample[]> {
-    await this.prune(nowMs);
-    const database = await this.database();
     const range = localDayRange(nowMs);
-    const rows = await database.getAllAsync<TemperatureHistoryRow>(
-      `SELECT
-        device_id,
-        recorded_at_ms,
-        uptime_ms,
-        boiler_temperature_c,
-        brew_target_c,
-        steam_target_c,
-        active_mode,
-        active_target_c,
-        heater_enabled,
-        heater_active,
-        pump_active,
-        machine_status,
-        fault_code,
-        controller_configuration_json,
-        controller_diagnostics_json,
-        steam_control_json,
-        source_boot_id,
-        source_sequence,
-        starts_after_history_gap
-      FROM temperature_history
-      WHERE device_id = ? AND recorded_at_ms >= ? AND recorded_at_ms < ?
-      ORDER BY recorded_at_ms ASC`,
+    const rows = await (await this.database()).getAllAsync<Row>(
+      `${selectColumns()}
+       WHERE device_id = ? AND recorded_at_ms >= ? AND recorded_at_ms < ?
+       ORDER BY recorded_at_ms ASC`,
       deviceId,
       range.startMs,
       range.endMs,
     );
     return rows.map(rowToSample);
-  }
-
-  async prune(nowMs = Date.now()): Promise<void> {
-    const database = await this.database();
-    const range = localDayRange(nowMs);
-    await database.runAsync(
-      "DELETE FROM temperature_history WHERE recorded_at_ms < ? OR recorded_at_ms >= ?",
-      range.startMs,
-      range.endMs,
-    );
-  }
-
-  async storeRecoveredPage(
-    deviceId: string,
-    page: RecoveredHistoryPage,
-  ): Promise<void> {
-    const database = await this.database();
-    await database.withExclusiveTransactionAsync(async (transaction) => {
-      const first = page.samples[0];
-      const last = page.samples.at(-1);
-      if (first !== undefined && last !== undefined) {
-        await transaction.runAsync(
-          `DELETE FROM temperature_history
-           WHERE device_id = ?
-             AND source_sequence IS NULL
-             AND uptime_ms >= ?
-             AND uptime_ms <= ?
-             AND recorded_at_ms >= ?
-             AND recorded_at_ms <= ?`,
-          deviceId,
-          first.uptimeMs,
-          last.uptimeMs,
-          first.recordedAtMs - 5_000,
-          last.recordedAtMs + 5_000,
-        );
-      }
-
-      for (const sample of page.samples) {
-        await transaction.runAsync(
-          `INSERT OR REPLACE INTO temperature_history (
-            device_id, recorded_at_ms, uptime_ms,
-            boiler_temperature_c, brew_target_c, steam_target_c,
-            active_mode, active_target_c, heater_enabled, heater_active,
-            pump_active, machine_status, fault_code,
-            controller_configuration_json, controller_diagnostics_json,
-            steam_control_json,
-            source_boot_id, source_sequence, starts_after_history_gap
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          sample.deviceId,
-          sample.recordedAtMs,
-          sample.uptimeMs,
-          sample.boilerTemperatureC,
-          sample.brewTargetC,
-          sample.steamTargetC,
-          sample.activeMode,
-          sample.activeTargetC,
-          sample.heaterEnabled ? 1 : 0,
-          sample.heaterActive ? 1 : 0,
-          sample.pumpActive === null ? null : sample.pumpActive ? 1 : 0,
-          sample.machineStatus,
-          sample.faultCode,
-          serializeControllerValue(sample.controllerConfiguration),
-          serializeControllerValue(sample.controllerDiagnostics),
-          serializeSteamControl(sample.steamControl ?? null),
-          sample.sourceBootId,
-          sample.sourceSequence,
-          sample.startsAfterHistoryGap ? 1 : 0,
-        );
-      }
-
-      await transaction.runAsync(
-        `INSERT INTO temperature_history_sync (device_id, boot_id, after_sequence)
-         VALUES (?, ?, ?)
-         ON CONFLICT(device_id) DO UPDATE SET
-           boot_id = excluded.boot_id,
-           after_sequence = excluded.after_sequence`,
-        deviceId,
-        page.cursor.bootId,
-        page.cursor.afterSequence,
-      );
-    });
   }
 
   private database(): Promise<SQLite.SQLiteDatabase> {
@@ -284,208 +119,104 @@ class SQLiteTemperatureHistoryRepository
     await database.execAsync(`
       PRAGMA journal_mode = WAL;
       ${createTemperatureHistoryTableSql()}
-      CREATE TABLE IF NOT EXISTS temperature_history_sync (
-        device_id TEXT PRIMARY KEY,
-        boot_id TEXT NOT NULL,
-        after_sequence INTEGER NOT NULL
-      );
     `);
-    const columns = await database.getAllAsync<{ name: unknown }>(
+    const columns = await database.getAllAsync<{ name: string }>(
       "PRAGMA table_info(temperature_history)",
     );
-    if (!columns.some((column) => column.name === "pump_active")) {
-      await database.execAsync(`
-        ALTER TABLE temperature_history
-          ADD COLUMN pump_active INTEGER
-          CHECK(pump_active IS NULL OR pump_active IN (0, 1));
-      `);
+    const names = new Set(columns.map((column) => column.name));
+    if (!names.has("pump_command")) {
+      await database.execAsync("ALTER TABLE temperature_history ADD COLUMN pump_command TEXT;");
+      if (names.has("pump_active")) {
+        await database.execAsync(
+          `UPDATE temperature_history
+           SET pump_command = CASE pump_active
+             WHEN 1 THEN 'running' WHEN 0 THEN 'off' ELSE NULL END;`,
+        );
+      }
     }
-    if (!columns.some((column) => column.name === "source_boot_id")) {
+    if (!names.has("steam_control_json")) {
+      await database.execAsync("ALTER TABLE temperature_history ADD COLUMN steam_control_json TEXT;");
+    }
+    if (!names.has("starts_after_history_gap")) {
       await database.execAsync(
-        "ALTER TABLE temperature_history ADD COLUMN source_boot_id TEXT;",
+        "ALTER TABLE temperature_history ADD COLUMN starts_after_history_gap INTEGER NOT NULL DEFAULT 0;",
       );
     }
-    if (!columns.some((column) => column.name === "source_sequence")) {
-      await database.execAsync(
-        "ALTER TABLE temperature_history ADD COLUMN source_sequence INTEGER;",
+    if (
+      names.has("pump_active") ||
+      names.has("source_boot_id") ||
+      names.has("source_sequence") ||
+      names.has("controller_configuration_json") ||
+      names.has("controller_diagnostics_json") ||
+      names.has("predictive_temperature_json")
+    ) {
+      await database.withExclusiveTransactionAsync((transaction) =>
+        transaction.execAsync(rebuildTemperatureHistoryV7Sql()),
       );
-    }
-    if (!columns.some((column) => column.name === "starts_after_history_gap")) {
-      await database.execAsync(`
-        ALTER TABLE temperature_history
-          ADD COLUMN starts_after_history_gap INTEGER NOT NULL DEFAULT 0
-          CHECK(starts_after_history_gap IN (0, 1));
-      `);
-    }
-    if (!columns.some((column) => column.name === "steam_control_json")) {
-      await database.execAsync(
-        "ALTER TABLE temperature_history ADD COLUMN steam_control_json TEXT;",
-      );
-    }
-    const needsControllerMigration =
-      columns.some(
-        (column) => column.name === "predictive_temperature_json",
-      ) ||
-      !columns.some(
-        (column) => column.name === "controller_configuration_json",
-      ) ||
-      !columns.some(
-        (column) => column.name === "controller_diagnostics_json",
-      );
-    if (needsControllerMigration) {
-      await database.withExclusiveTransactionAsync(async (transaction) => {
-        await transaction.execAsync(rebuildTemperatureHistoryV5Sql());
-      });
     }
     await database.execAsync(`
+      DROP TABLE IF EXISTS temperature_history_sync;
       CREATE INDEX IF NOT EXISTS temperature_history_device_time
         ON temperature_history(device_id, recorded_at_ms);
-      CREATE UNIQUE INDEX IF NOT EXISTS temperature_history_device_source
-        ON temperature_history(device_id, source_boot_id, source_sequence)
-        WHERE source_boot_id IS NOT NULL AND source_sequence IS NOT NULL;
       PRAGMA user_version = ${TEMPERATURE_HISTORY_DATABASE_VERSION};
     `);
     return database;
   }
 }
 
-function rowToSample(row: TemperatureHistoryRow): TemperatureHistorySample {
-  const activeMode = enumValue(row.active_mode, ["brew", "steam"] as const);
-  const machineStatus = enumValue(
-    row.machine_status,
-    ["heating", "ready", "fault"] as const,
-  );
-  const faultCode =
-    row.fault_code === null
-      ? null
-      : enumValue(
-          row.fault_code,
-          [
-            "sensor_failure",
-            "over_temperature",
-            "heating_timeout",
-            "internal_error",
-          ] as const,
-        );
+function selectColumns(): string {
+  return `SELECT device_id, recorded_at_ms, uptime_ms, boiler_temperature_c,
+    brew_target_c, steam_target_c, active_mode, active_target_c,
+    heater_enabled, heater_active, pump_command, machine_status, fault_code,
+    steam_control_json, starts_after_history_gap FROM temperature_history`;
+}
 
+function rowToSample(row: Row): TemperatureHistorySample {
+  const activeMode = row.active_mode;
+  if (activeMode !== "brew" && activeMode !== "steam") {
+    throw new TypeError("Stored active mode is invalid.");
+  }
+  const status = row.machine_status;
+  if (status !== "heating" && status !== "ready" && status !== "fault") {
+    throw new TypeError("Stored machine status is invalid.");
+  }
+  const steamControl = row.steam_control_json === null
+    ? null
+    : SteamControlStateSchema.parse(JSON.parse(String(row.steam_control_json)));
+  const faultCode = row.fault_code;
+  if (
+    faultCode !== null &&
+    faultCode !== "sensor_failure" &&
+    faultCode !== "over_temperature" &&
+    faultCode !== "heating_timeout" &&
+    faultCode !== "internal_error"
+  ) {
+    throw new TypeError("Stored fault code is invalid.");
+  }
   return {
     activeMode,
-    activeTargetC: finiteNumber(row.active_target_c),
-    boilerTemperatureC: finiteNumber(row.boiler_temperature_c),
-    brewTargetC: finiteNumber(row.brew_target_c),
-    deviceId: nonEmptyString(row.device_id),
+    activeTargetC: Number(row.active_target_c),
+    boilerTemperatureC: Number(row.boiler_temperature_c),
+    brewTargetC: Number(row.brew_target_c),
+    deviceId: String(row.device_id),
     faultCode,
-    heaterActive: sqliteBoolean(row.heater_active),
-    heaterEnabled: sqliteBoolean(row.heater_enabled),
-    machineStatus,
-    pumpActive: nullableSqliteBoolean(row.pump_active),
-    controllerConfiguration: parseControllerValue(
-      row.controller_configuration_json,
-      ControllerConfigurationSchema,
-      "configuration",
-    ),
-    controllerDiagnostics: parseControllerValue(
-      row.controller_diagnostics_json,
-      ControllerDiagnosticsSchema,
-      "diagnostics",
-    ),
-    steamControl: parseControllerValue(
-      row.steam_control_json,
-      SteamControlStateSchema,
-      "steam control",
-    ),
-    recordedAtMs: nonNegativeInteger(row.recorded_at_ms),
-    sourceBootId:
-      row.source_boot_id === null ? null : historyBootId(row.source_boot_id),
-    sourceSequence:
-      row.source_sequence === null
-        ? null
-        : nonNegativeInteger(row.source_sequence),
-    startsAfterHistoryGap: sqliteBoolean(row.starts_after_history_gap),
-    steamTargetC: finiteNumber(row.steam_target_c),
-    uptimeMs: nonNegativeInteger(row.uptime_ms),
+    heaterActive: Number(row.heater_active) === 1,
+    heaterEnabled: Number(row.heater_enabled) === 1,
+    machineStatus: status,
+    pumpCommand: storedPumpCommand(row.pump_command),
+    recordedAtMs: Number(row.recorded_at_ms),
+    startsAfterHistoryGap: Number(row.starts_after_history_gap) === 1,
+    steamControl,
+    steamTargetC: Number(row.steam_target_c),
+    uptimeMs: Number(row.uptime_ms),
   };
 }
 
-function serializeControllerValue(
-  value: ControllerConfiguration | ControllerDiagnostics | null,
-): string | null {
-  return value === null ? null : JSON.stringify(value);
-}
-
-function serializeSteamControl(value: SteamControlState | null): string | null {
-  return value === null ? null : JSON.stringify(value);
-}
-
-function parseControllerValue<T>(
+function storedPumpCommand(
   value: unknown,
-  schema: { parse(value: unknown): T },
-  kind: string,
-): T | null {
-  if (value === null) {
-    return null;
-  }
-  if (typeof value !== "string") {
-    throw new Error(`Stored controller ${kind} is invalid.`);
-  }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(value);
-  } catch {
-    throw new Error(`Stored controller ${kind} is invalid.`);
-  }
-  return schema.parse(parsed);
-}
-
-function enumValue<const T extends readonly string[]>(
-  value: unknown,
-  allowed: T,
-): T[number] {
-  if (typeof value !== "string" || !allowed.includes(value)) {
-    throw new Error("Stored temperature history contains an invalid enum value.");
-  }
-  return value as T[number];
-}
-
-function finiteNumber(value: unknown): number {
-  if (typeof value !== "number" || !Number.isFinite(value)) {
-    throw new Error("Stored temperature history contains an invalid number.");
-  }
-  return value;
-}
-
-function nonNegativeInteger(value: unknown): number {
-  const number = finiteNumber(value);
-  if (!Number.isInteger(number) || number < 0) {
-    throw new Error("Stored temperature history contains an invalid integer.");
-  }
-  return number;
-}
-
-function nonEmptyString(value: unknown): string {
-  if (typeof value !== "string" || value.length === 0) {
-    throw new Error("Stored temperature history contains an invalid device ID.");
-  }
-  return value;
-}
-
-function historyBootId(value: unknown): string {
-  const bootId = nonEmptyString(value);
-  if (!/^[0-9a-f]{32}$/.test(bootId)) {
-    throw new Error("Stored temperature history contains an invalid boot ID.");
-  }
-  return bootId;
-}
-
-function sqliteBoolean(value: unknown): boolean {
-  if (value !== 0 && value !== 1) {
-    throw new Error("Stored temperature history contains an invalid boolean.");
-  }
-  return value === 1;
-}
-
-function nullableSqliteBoolean(value: unknown): boolean | null {
-  return value === null ? null : sqliteBoolean(value);
+): TemperatureHistorySample["pumpCommand"] {
+  if (value === null || value === "running" || value === "off") return value;
+  throw new TypeError("Stored pump command is invalid.");
 }
 
 export const temperatureHistoryRepository =

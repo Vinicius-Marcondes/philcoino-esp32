@@ -32,8 +32,6 @@ export const COOLDOWN_STABILIZATION_MS = 5_000;
 export const COOLDOWN_MAX_DURATION_MS =
   COOLDOWN_PUMP_LIMIT_MS + COOLDOWN_STABILIZATION_MS;
 export const PROFILE_NAME_MAX_LENGTH = 12;
-export const HISTORY_PAGE_SIZE = 8;
-export const HISTORY_RETENTION_SAMPLES = 600;
 export const WEIGHTED_TRACE_PAGE_SIZE = 16;
 export const WEIGHTED_TRACE_RETENTION_SAMPLES = 320;
 export const WEIGHTED_TRACE_SAMPLE_INTERVAL_MS = 250;
@@ -99,7 +97,7 @@ export const DeviceResponseSchema = z.strictObject({
     .regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/),
   name: z.string().min(1).max(64),
   model: z.string().min(1).max(64),
-  apiVersion: z.literal("1"),
+  apiVersion: z.literal("2"),
   firmwareVersion: z.string().min(1).max(32),
 });
 
@@ -406,24 +404,6 @@ export const ExtractionProfileSchema = z
     }
   });
 
-function profileSlotSchema<const Id extends (typeof PROFILE_SLOT_IDS)[number]>(
-  id: Id,
-) {
-  return z.strictObject({
-    id: z.literal(id),
-    profile: ExtractionProfileSchema.nullable(),
-  });
-}
-
-export const ProfileSetSchema = z.strictObject({
-  profiles: z.tuple([
-    profileSlotSchema("profile-1"),
-    profileSlotSchema("profile-2"),
-    profileSlotSchema("profile-3"),
-    profileSlotSchema("profile-4"),
-  ]),
-});
-
 export const ManualExtractionSelectionSchema = z.strictObject({
   kind: z.literal("manual"),
 });
@@ -431,6 +411,7 @@ export const ManualExtractionSelectionSchema = z.strictObject({
 export const ProfileExtractionSelectionSchema = z.strictObject({
   kind: z.literal("profile"),
   profileId: ProfileSlotIdSchema,
+  profile: ExtractionProfileSchema,
 });
 
 export const ExtractionSelectionSchema = z.discriminatedUnion("kind", [
@@ -1058,203 +1039,6 @@ export const CompleteScaleCalibrationRequestSchema = z.strictObject({
   referenceWeightDecigrams: CalibrationReferenceDecigramsSchema,
 });
 
-export const HistoryBootIdSchema = z
-  .string()
-  .length(32)
-  .regex(/^[0-9a-f]{32}$/);
-export const HistorySequenceSchema = z.number().int().nonnegative().safe();
-export const HistoryContinuitySchema = z.enum([
-  "initial",
-  "continuous",
-  "truncated",
-  "reset",
-]);
-export const HistoryCursorSchema = z.strictObject({
-  bootId: HistoryBootIdSchema,
-  afterSequence: HistorySequenceSchema,
-});
-
-export const SelectedControllerSchema = z.enum(["legacy_curve", "pi"]);
-export const ControllerSaturationSchema = z.enum(["none", "lower", "upper"]);
-export const ControllerOperatingModeSchema = z.enum([
-  "warmup",
-  "idle_stable",
-  "brewing",
-  "post_brew_recovery",
-  "steam",
-  "inhibited",
-  "fault",
-]);
-export const ControllerConfigurationSchema = z.strictObject({
-  firmwareVersion: DeviceResponseSchema.shape.firmwareVersion,
-  selectedController: SelectedControllerSchema,
-  piKp: z.number().finite().min(0).max(16),
-  piKi: z.number().finite().min(0).max(16),
-  filterAlpha: z.number().finite().gt(0).max(1),
-  controllerIntervalMs: z.literal(500),
-  ssrWindowMs: z.literal(10_000),
-});
-export const ControllerDiagnosticsSchema = z
-  .strictObject({
-    temperatureRawC: z.number().finite().min(-40).max(160),
-    temperatureFilteredC: z.number().finite().min(-40).max(180),
-    baseTargetC: z.number().finite().min(0).max(STEAM_TARGET_MAX_C),
-    privateTargetC: z.number().finite().min(0).max(STEAM_TARGET_MAX_C),
-    errorC: z.number().finite().min(-200).max(200),
-    selectedController: SelectedControllerSchema,
-    legacyRequestedDuty: z.number().finite().min(0).max(1),
-    piRequestedDuty: z.number().finite().min(0).max(1),
-    proportionalContribution: z.number().finite().min(-16).max(16),
-    integralContribution: z.number().finite().min(-16).max(16),
-    integralState: z.number().finite().min(-10_000).max(10_000),
-    piSaturation: ControllerSaturationSchema,
-    piAntiWindupActive: z.boolean(),
-    heaterCommandActive: z.boolean(),
-    deliveredCommandDuty1s: z.number().finite().min(0).max(1),
-    pumpCommand: PumpCommandSchema,
-    extractionPhase: ExtractionPhaseSchema,
-    operatingMode: ControllerOperatingModeSchema,
-  })
-  .superRefine((diagnostics, context) => {
-    const expectedError =
-      diagnostics.privateTargetC - diagnostics.temperatureFilteredC;
-    if (Math.abs(diagnostics.errorC - expectedError) > 0.011) {
-      context.addIssue({
-        code: "custom",
-        path: ["errorC"],
-        message:
-          "Controller error must equal the private target minus filtered temperature.",
-      });
-    }
-    if (
-      diagnostics.piAntiWindupActive &&
-      diagnostics.piSaturation === "none"
-    ) {
-      context.addIssue({
-        code: "custom",
-        path: ["piAntiWindupActive"],
-        message: "PI anti-windup requires a saturated PI output.",
-      });
-    }
-  });
-
-const historySampleShape = {
-  sequence: HistorySequenceSchema,
-  uptimeMs: z.number().int().nonnegative().safe(),
-  boilerTemperatureC: z.number().finite(),
-  brewTargetC: BrewTargetSchema,
-  steamTargetC: SteamTargetSchema,
-  activeMode: ModeSchema,
-  heaterEnabled: z.boolean(),
-  heaterActive: z.boolean(),
-  pumpActive: z.boolean(),
-  steamControl: SteamControlStateSchema,
-  controllerDiagnostics: ControllerDiagnosticsSchema,
-};
-
-export const HistorySampleSchema = z
-  .discriminatedUnion("machineStatus", [
-    z.strictObject({
-      ...historySampleShape,
-      machineStatus: z.literal("heating"),
-      faultCode: z.null(),
-    }),
-    z.strictObject({
-      ...historySampleShape,
-      machineStatus: z.literal("ready"),
-      faultCode: z.null(),
-    }),
-    z.strictObject({
-      ...historySampleShape,
-      machineStatus: z.literal("fault"),
-      heaterActive: z.literal(false),
-      faultCode: FaultCodeSchema,
-    }),
-  ])
-  .superRefine((sample, context) => {
-    if (
-      sample.controllerDiagnostics.heaterCommandActive !== sample.heaterActive
-    ) {
-      context.addIssue({
-        code: "custom",
-        path: ["controllerDiagnostics", "heaterCommandActive"],
-        message:
-          "Controller heater command must match the acknowledged history command.",
-      });
-    }
-    if (
-      (sample.controllerDiagnostics.pumpCommand === "running") !==
-      sample.pumpActive
-    ) {
-      context.addIssue({
-        code: "custom",
-        path: ["controllerDiagnostics", "pumpCommand"],
-        message:
-          "Controller pump command must match the acknowledged history command.",
-      });
-    }
-  });
-
-export const HistoryPageSchema = z
-  .strictObject({
-    deviceId: DeviceResponseSchema.shape.deviceId,
-    bootId: HistoryBootIdSchema,
-    capturedAtUptimeMs: z.number().int().nonnegative().safe(),
-    oldestSequence: HistorySequenceSchema.nullable(),
-    latestSequence: HistorySequenceSchema.nullable(),
-    nextCursor: HistoryCursorSchema,
-    hasMore: z.boolean(),
-    continuity: HistoryContinuitySchema,
-    controllerConfiguration: ControllerConfigurationSchema,
-    samples: z.array(HistorySampleSchema).max(HISTORY_PAGE_SIZE),
-  })
-  .superRefine((page, context) => {
-    if (page.nextCursor.bootId !== page.bootId) {
-      context.addIssue({
-        code: "custom",
-        path: ["nextCursor", "bootId"],
-        message: "The next cursor must use the page boot ID.",
-      });
-    }
-    if ((page.oldestSequence === null) !== (page.latestSequence === null)) {
-      context.addIssue({
-        code: "custom",
-        path: ["oldestSequence"],
-        message: "Oldest and latest sequence must both be null or both exist.",
-      });
-    }
-    for (let index = 1; index < page.samples.length; index += 1) {
-      if (page.samples[index].sequence <= page.samples[index - 1].sequence) {
-        context.addIssue({
-          code: "custom",
-          path: ["samples", index, "sequence"],
-          message: "History samples must be strictly sequence ordered.",
-        });
-      }
-    }
-    const last = page.samples.at(-1);
-    if (last !== undefined && page.nextCursor.afterSequence !== last.sequence) {
-      context.addIssue({
-        code: "custom",
-        path: ["nextCursor", "afterSequence"],
-        message: "The next cursor must acknowledge the last returned sample.",
-      });
-    }
-    for (const [index, sample] of page.samples.entries()) {
-      if (
-        sample.controllerDiagnostics.selectedController !==
-        page.controllerConfiguration.selectedController
-      ) {
-        context.addIssue({
-          code: "custom",
-          path: ["samples", index, "controllerDiagnostics", "selectedController"],
-          message:
-            "Every sample must identify the page's compile-time Brew controller.",
-        });
-      }
-    }
-  });
-
 const TimedExtractionStartRequestSchema = z.strictObject({
   idempotencyKey: IdempotencyKeySchema,
   selection: ExtractionSelectionSchema,
@@ -1292,7 +1076,6 @@ export const ApiV2ErrorCodeSchema = z.enum([
   "cooldown_not_required",
   "sensor_unavailable",
   "machine_faulted",
-  "profile_not_configured",
   "idempotency_mismatch",
   "scale_not_calibrated",
   "scale_not_stable",
@@ -1452,7 +1235,6 @@ export type CompleteScaleCalibrationRequest = z.infer<
 export type ProfileSlotId = z.infer<typeof ProfileSlotIdSchema>;
 export type ProfileName = z.infer<typeof ProfileNameSchema>;
 export type ExtractionProfile = z.infer<typeof ExtractionProfileSchema>;
-export type ProfileSet = z.infer<typeof ProfileSetSchema>;
 export type ExtractionSelection = z.infer<typeof ExtractionSelectionSchema>;
 export type PumpCommand = z.infer<typeof PumpCommandSchema>;
 export type ExtractionPhase = z.infer<typeof ExtractionPhaseSchema>;
@@ -1472,25 +1254,6 @@ export type IdleCooldownState = z.infer<typeof IdleCooldownStateSchema>;
 export type ActiveCooldownState = z.infer<typeof ActiveCooldownStateSchema>;
 export type CooldownState = z.infer<typeof CooldownStateSchema>;
 export type MachineStateV2 = z.infer<typeof MachineStateV2Schema>;
-export type HistoryBootId = z.infer<typeof HistoryBootIdSchema>;
-export type HistorySequence = z.infer<typeof HistorySequenceSchema>;
-export type HistoryContinuity = z.infer<typeof HistoryContinuitySchema>;
-export type HistoryCursor = z.infer<typeof HistoryCursorSchema>;
-export type SelectedController = z.infer<typeof SelectedControllerSchema>;
-export type ControllerSaturation = z.infer<
-  typeof ControllerSaturationSchema
->;
-export type ControllerOperatingMode = z.infer<
-  typeof ControllerOperatingModeSchema
->;
-export type ControllerConfiguration = z.infer<
-  typeof ControllerConfigurationSchema
->;
-export type ControllerDiagnostics = z.infer<
-  typeof ControllerDiagnosticsSchema
->;
-export type HistorySample = z.infer<typeof HistorySampleSchema>;
-export type HistoryPage = z.infer<typeof HistoryPageSchema>;
 export type StartExtractionRequest = z.infer<
   typeof StartExtractionRequestSchema
 >;

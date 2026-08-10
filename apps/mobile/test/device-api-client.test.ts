@@ -1,9 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import type { HistoryPage, MachineState } from "@philcoino/protocol";
+import type { MachineState } from "@philcoino/protocol";
 
 import { ApiClientError } from "../src/networking/api-client-error";
 import { connectionStateFromError } from "../src/networking/connection-state";
-import { DEFAULT_MOBILE_PROFILE_SET } from "../src/profiles/profile-set";
 import {
   DeviceApiClient,
   type FetchImplementation,
@@ -53,54 +52,6 @@ describe("DeviceApiClient", () => {
     expect(authorization as string | null).toBe("Bearer secret-token");
   });
 
-  test("requests and validates authenticated history cursors", async () => {
-    let requestedUrl = "";
-    let authorization: string | null = null;
-    const response: HistoryPage = {
-      bootId: "0123456789abcdef0123456789abcdef",
-      capturedAtUptimeMs: 12_000,
-      continuity: "continuous",
-      deviceId: "machine-1",
-      hasMore: false,
-      latestSequence: 12,
-      nextCursor: {
-        afterSequence: 12,
-        bootId: "0123456789abcdef0123456789abcdef",
-      },
-      oldestSequence: 1,
-      controllerConfiguration: {
-        controllerIntervalMs: 500,
-        filterAlpha: 0.25,
-        firmwareVersion: "0.4.0",
-        piKi: 0.01,
-        piKp: 0.08,
-        selectedController: "legacy_curve",
-        ssrWindowMs: 10_000,
-      },
-      samples: [],
-    };
-    const client = new DeviceApiClient({
-      address: "192.168.1.20",
-      token: "secret-token",
-      fetch: async (url, init) => {
-        requestedUrl = url;
-        authorization = new Headers(init.headers).get("Authorization");
-        return Response.json(response);
-      },
-    });
-
-    await expect(
-      client.getHistory({
-        afterSequence: 11,
-        bootId: "0123456789abcdef0123456789abcdef",
-      }),
-    ).resolves.toEqual(response);
-    expect(requestedUrl).toBe(
-      "http://192.168.1.20/api/v2/history?bootId=0123456789abcdef0123456789abcdef&afterSequence=11",
-    );
-    expect(authorization as string | null).toBe("Bearer secret-token");
-  });
-
   test("requests an authenticated weighted trace cursor", async () => {
     const simulator = createSimulator();
     let requestedUrl = "";
@@ -146,29 +97,6 @@ describe("DeviceApiClient", () => {
       machine: { status: "heating" },
     });
     expect(requestedUrl).toBe("http://127.0.0.1:3000/api/v2/state");
-  });
-
-  test("rejects malformed history pages as protocol errors", async () => {
-    const client = clientWithResponse(
-      Response.json({
-        bootId: "not-a-boot-id",
-        capturedAtUptimeMs: 0,
-        continuity: "initial",
-        deviceId: "machine-1",
-        hasMore: false,
-        latestSequence: null,
-        nextCursor: { afterSequence: 0, bootId: "not-a-boot-id" },
-        oldestSequence: null,
-        samples: [],
-      }),
-    );
-
-    const error = await captureError(client.getHistory());
-    expect(error).toMatchObject({
-      endpoint: "/api/v2/history",
-      kind: "protocol",
-      status: 200,
-    });
   });
 
   test("rejects malformed successful responses as protocol errors", async () => {
@@ -457,7 +385,7 @@ describe("DeviceApiClient", () => {
     ).rejects.toMatchObject({ kind: "invalid-request" });
   });
 
-  test("validates API v2 profile and acknowledged extraction operations against the simulator", async () => {
+  test("validates inline-profile extraction operations against the simulator", async () => {
     const simulator = createSimulator();
     const request = simulator.app.request.bind(simulator.app);
     const client = new DeviceApiClient({
@@ -474,16 +402,19 @@ describe("DeviceApiClient", () => {
       token: DEFAULT_SIMULATOR_TOKEN,
     });
 
-    await expect(client.getProfiles()).resolves.toEqual(
-      DEFAULT_MOBILE_PROFILE_SET,
-    );
-    await expect(
-      client.replaceProfiles(DEFAULT_MOBILE_PROFILE_SET),
-    ).resolves.toEqual(DEFAULT_MOBILE_PROFILE_SET);
-
+    const selection = {
+      kind: "profile" as const,
+      profileId: "profile-2" as const,
+      profile: {
+        name: "Integration",
+        preInfusionSeconds: 5,
+        soakSeconds: 5,
+        mainExtractionSeconds: 30,
+      },
+    };
     const started = await client.startExtraction({
       idempotencyKey: "mobile-integration-01",
-      selection: { kind: "profile", profileId: "profile-2" },
+      selection,
     });
     expect(started).toMatchObject({
       status: "running",
@@ -515,7 +446,7 @@ describe("DeviceApiClient", () => {
     });
     await expect(client.startExtraction({
       idempotencyKey: "mobile-integration-01",
-      selection: { kind: "profile", profileId: "profile-2" },
+      selection,
     })).resolves.toMatchObject({
       extractionId: started.extractionId,
       elapsedMs: 10_000,

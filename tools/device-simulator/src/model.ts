@@ -15,13 +15,8 @@ import {
   ExtractionStateSchema,
   HeaterSettingsResponseSchema,
   HealthResponseSchema,
-  HISTORY_PAGE_SIZE,
-  HISTORY_RETENTION_SAMPLES,
-  HistoryPageSchema,
-  HistorySampleSchema,
   MachineStateSchema,
   MachineStateV2Schema,
-  ProfileSetSchema,
   RunningExtractionStateSchema,
   ScaleStateSchema,
   ScaleTraceResponseSchema,
@@ -45,15 +40,11 @@ import {
   type DeviceResponse,
   type ActiveCooldownState,
   type CompensationState,
-  type ControllerDiagnostics,
   type CooldownOutcome,
   type CooldownState,
   type Fault,
   type FaultCode,
   type HealthResponse,
-  type HistoryCursor,
-  type HistoryPage,
-  type HistorySample,
   type HeaterSettingsResponse,
   type MachineState,
   type MachineStateV2,
@@ -70,7 +61,6 @@ import {
   type ExtractionTelemetryCursor,
   type ExtractionTelemetryPage,
   type ExtractionTelemetrySample,
-  type ProfileSet,
   type RunningExtractionState,
   type ScaleState,
   type ScaleTraceResponse,
@@ -96,31 +86,6 @@ const MANUAL_EXTRACTION_CUTOFF_MS = 60_000;
 const WEIGHT_EXTRACTION_CUTOFF_MS = 60_000;
 const SCALE_SETTLING_TIMEOUT_MS = 10_000;
 
-const DEFAULT_PROFILE_SET: ProfileSet = ProfileSetSchema.parse({
-  profiles: [
-    {
-      id: "profile-1",
-      profile: {
-        name: "Classic30",
-        preInfusionSeconds: 0,
-        soakSeconds: 0,
-        mainExtractionSeconds: 30,
-      },
-    },
-    {
-      id: "profile-2",
-      profile: {
-        name: "Pre5Soak5",
-        preInfusionSeconds: 5,
-        soakSeconds: 5,
-        mainExtractionSeconds: 25,
-      },
-    },
-    { id: "profile-3", profile: null },
-    { id: "profile-4", profile: null },
-  ],
-});
-
 const FAULT_MESSAGES: Record<FaultCode, string> = {
   sensor_failure: "A simulated thermocouple is unavailable.",
   over_temperature: "A simulated over-temperature cap was exceeded.",
@@ -133,20 +98,6 @@ export interface SimulatorMachineOptions {
   steamTargetC?: number;
   device?: Partial<DeviceResponse>;
 }
-
-export type ReplaceProfilesResult =
-  | { ok: true; profiles: ProfileSet }
-  | {
-      ok: false;
-      reason: "active";
-      activeExtraction: RunningExtractionState;
-    }
-  | {
-      ok: false;
-      reason: "cooldown-active";
-      activeCooldown: ActiveCooldownState;
-    }
-  | { ok: false; reason: "persistence" };
 
 export type StartExtractionResult =
   | { ok: true; extraction: RunningExtractionState | TerminalExtractionState }
@@ -164,7 +115,6 @@ export type StartExtractionResult =
       ok: false;
       reason:
         | "brew-mode-required"
-        | "profile-not-configured"
         | "idempotency-mismatch"
         | "scale-not-calibrated"
         | "scale-not-stable"
@@ -301,9 +251,6 @@ export type TemperatureCalibrationOperationResult =
 export class SimulatorMachine {
   private bootCounter = 1;
   private bootId = simulatorBootId(this.bootCounter);
-  private historySequence = 0;
-  private lastHistorySecond = 0;
-  private history: HistorySample[] = [];
   private readonly initialBrewTargetC: number;
   private readonly initialSteamTargetC: number;
   private readonly device: DeviceResponse;
@@ -335,7 +282,6 @@ export class SimulatorMachine {
   private readyElapsedMs = 0;
   private steamTimeoutRemainingMs: number | null = null;
   private uptimeMs = 0;
-  private profiles = cloneProfileSet(DEFAULT_PROFILE_SET);
   private activeExtraction: ActiveExtraction | null = null;
   private terminalExtraction: TerminalExtraction | null = null;
   private scaleCalibrated = false;
@@ -351,7 +297,6 @@ export class SimulatorMachine {
   private extractionCounter = 0;
   private cooldown: CooldownRecord | null = null;
   private cooldownCounter = 0;
-  private failNextProfileSave = false;
   private readonly failNextOutputCommands = new Set<SimulatedOutputCommand>();
 
   constructor(options: SimulatorMachineOptions = {}) {
@@ -380,7 +325,7 @@ export class SimulatorMachine {
       deviceId: "philcoino-simulator",
       name: "Philcoino simulator",
       model: "philcoino-simulator",
-      apiVersion: "1",
+      apiVersion: "2",
       firmwareVersion: "simulator-0.2.0",
       ...options.device,
     });
@@ -648,59 +593,6 @@ export class SimulatorMachine {
     };
   }
 
-  getHistoryPage(cursor?: HistoryCursor): HistoryPage | null {
-    const oldestSequence = this.history[0]?.sequence ?? null;
-    const latestSequence = this.history.at(-1)?.sequence ?? null;
-    let afterSequence = cursor?.afterSequence ?? 0;
-    let continuity: HistoryPage["continuity"] = "initial";
-
-    if (cursor !== undefined) {
-      if (cursor.bootId !== this.bootId) {
-        continuity = "reset";
-        afterSequence = (oldestSequence ?? 1) - 1;
-      } else if (latestSequence !== null && afterSequence > latestSequence) {
-        return null;
-      } else if (
-        oldestSequence !== null &&
-        afterSequence < oldestSequence - 1
-      ) {
-        continuity = "truncated";
-        afterSequence = oldestSequence - 1;
-      } else {
-        continuity = "continuous";
-      }
-    }
-
-    const samples = this.history
-      .filter((sample) => sample.sequence > afterSequence)
-      .slice(0, HISTORY_PAGE_SIZE);
-    const nextSequence = samples.at(-1)?.sequence ?? afterSequence;
-    return HistoryPageSchema.parse({
-      deviceId: this.device.deviceId,
-      bootId: this.bootId,
-      capturedAtUptimeMs: this.uptimeMs,
-      oldestSequence,
-      latestSequence,
-      nextCursor: { bootId: this.bootId, afterSequence: nextSequence },
-      hasMore: latestSequence !== null && nextSequence < latestSequence,
-      continuity,
-      controllerConfiguration: {
-        firmwareVersion: this.device.firmwareVersion,
-        selectedController: "legacy_curve",
-        piKp: 0.08,
-        piKi: 0.01,
-        filterAlpha: 0.25,
-        controllerIntervalMs: 500,
-        ssrWindowMs: 10_000,
-      },
-      samples,
-    });
-  }
-
-  getProfiles(): ProfileSet {
-    return cloneProfileSet(this.profiles);
-  }
-
   getScaleState(): ScaleState {
     const active = this.activeExtraction;
     const weighted =
@@ -966,36 +858,6 @@ export class SimulatorMachine {
     this.evaluateWeightedExtraction();
   }
 
-  replaceProfiles(profiles: ProfileSet): ReplaceProfilesResult {
-    const extraction = this.getExtractionState();
-    if (extraction.status === "running") {
-      return {
-        ok: false,
-        reason: "active",
-        activeExtraction: extraction,
-      };
-    }
-    const cooldown = this.getCooldownState();
-    if (cooldown.status !== "idle") {
-      return {
-        ok: false,
-        reason: "cooldown-active",
-        activeCooldown: cooldown,
-      };
-    }
-    if (this.failNextProfileSave) {
-      this.failNextProfileSave = false;
-      return { ok: false, reason: "persistence" };
-    }
-
-    this.profiles = cloneProfileSet(ProfileSetSchema.parse(profiles));
-    return { ok: true, profiles: this.getProfiles() };
-  }
-
-  injectNextProfileSaveFailure(): void {
-    this.failNextProfileSave = true;
-  }
-
   startExtraction(
     idempotencyKey: string,
     selection: ExtractionSelection,
@@ -1049,15 +911,7 @@ export class SimulatorMachine {
       return { ok: false, reason: "brew-mode-required" };
     }
 
-    const profile =
-      selection.kind === "profile"
-        ? (this.profiles.profiles.find(
-            (slot) => slot.id === selection.profileId,
-          )?.profile ?? null)
-        : null;
-    if (selection.kind === "profile" && profile === null) {
-      return { ok: false, reason: "profile-not-configured" };
-    }
+    const profile = selection.kind === "profile" ? selection.profile : null;
     if (weightControl !== null) {
       if (this.scaleWarningExtractionId !== null) {
         return { ok: false, reason: "scale-warning-unacknowledged" };
@@ -1083,7 +937,7 @@ export class SimulatorMachine {
       extractionId: `sim-run-${this.extractionCounter}`,
       idempotencyKey,
       profile: profile === null ? null : { ...profile },
-      selection,
+      selection: cloneSelection(selection),
       tareWeightDecigrams:
         weightControl === null ? null : this.scaleWeightDecigrams,
       weightControl,
@@ -1502,7 +1356,6 @@ export class SimulatorMachine {
   }
 
   powerCycle(): void {
-    this.failNextProfileSave = false;
     this.failNextTemperatureCalibrationSave = false;
     this.failNextSteamControlSave = false;
     this.failNextOutputCommands.clear();
@@ -1529,9 +1382,7 @@ export class SimulatorMachine {
   reset(): void {
     this.brewTargetC = this.initialBrewTargetC;
     this.steamTargetC = this.initialSteamTargetC;
-    this.profiles = cloneProfileSet(DEFAULT_PROFILE_SET);
     this.scaleCalibrated = false;
-    this.failNextProfileSave = false;
     this.savedTemperatureOffsetC = 0;
     this.temperatureCalibrationRecordPresent = false;
     this.temperatureCalibrationStorageCorrupt = false;
@@ -1612,114 +1463,6 @@ export class SimulatorMachine {
     }
     this.refreshSteamTimeout();
 
-    const currentSecond = Math.floor(this.uptimeMs / 1_000);
-    if (currentSecond > this.lastHistorySecond) {
-      this.lastHistorySecond = currentSecond;
-      this.captureHistorySample();
-    }
-  }
-
-  private captureHistorySample(): void {
-    const machine = this.getState();
-    const extraction = this.getExtractionState();
-    const cooldown = this.getCooldownState();
-    const pumpActive =
-      cooldown.status === "pumping" ||
-      (cooldown.status === "idle" && extraction.pumpCommand === "running");
-    this.historySequence += 1;
-    this.history.push(
-      HistorySampleSchema.parse({
-        sequence: this.historySequence,
-        uptimeMs: this.uptimeMs,
-        boilerTemperatureC: machine.boilerTemperatureC,
-        brewTargetC: machine.brewTargetC,
-        steamTargetC: machine.steamTargetC,
-        activeMode: machine.activeMode,
-        heaterEnabled: machine.heaterEnabled,
-        heaterActive: machine.heaterActive,
-        pumpActive,
-        machineStatus: machine.status,
-        faultCode: machine.fault?.code ?? null,
-        steamControl: machine.steamControl,
-        controllerDiagnostics: this.getControllerDiagnostics(
-          extraction,
-          cooldown,
-          pumpActive,
-        ),
-      }),
-    );
-    if (this.history.length > HISTORY_RETENTION_SAMPLES) {
-      this.history.splice(0, this.history.length - HISTORY_RETENTION_SAMPLES);
-    }
-  }
-
-  private getControllerDiagnostics(
-    extraction: ExtractionState,
-    cooldown: CooldownState,
-    pumpActive: boolean,
-  ): ControllerDiagnostics {
-    // Simulator controls may inject deliberately impossible temperatures to
-    // exercise cooldown/fault UI. Keep diagnostic telemetry within the wire
-    // contract without changing the simulator's independently reported state.
-    const rawTemperature = roundTemperature(
-      Math.max(-40, Math.min(160, this.boilerTemperatureRawC)),
-    );
-    const temperature = roundTemperature(
-      Math.max(-60, Math.min(170, this.effectiveTemperature())),
-    );
-    const baseTarget = this.activeTarget();
-    const privateTarget =
-      this.activeMode === "steam"
-        ? this.steamTargetC - this.appliedSteamCompensationC()
-        : this.controlTarget();
-    const error = privateTarget - temperature;
-    const proportionalContribution = roundTemperature(
-      Math.max(-16, Math.min(16, 0.08 * error)),
-    );
-    const piRequestedDuty = Math.max(
-      0,
-      Math.min(1, proportionalContribution),
-    );
-    const piSaturation =
-      proportionalContribution <= 0
-        ? "lower"
-        : proportionalContribution >= 1
-          ? "upper"
-          : "none";
-    const operatingMode =
-      this.fault !== null
-        ? "fault"
-        : cooldown.heaterInhibited
-          ? "inhibited"
-          : this.activeMode === "steam"
-            ? "steam"
-            : extraction.status === "running"
-              ? "brewing"
-              : this.terminalExtraction !== null &&
-                  Math.abs(temperature - privateTarget) > READY_BAND_C
-                ? "post_brew_recovery"
-                : machineOperatingMode(temperature, privateTarget);
-
-    return {
-      temperatureRawC: rawTemperature,
-      temperatureFilteredC: temperature,
-      baseTargetC: baseTarget,
-      privateTargetC: privateTarget,
-      errorC: error,
-      selectedController: "legacy_curve",
-      legacyRequestedDuty: this.isHeaterActive() ? 1 : 0,
-      piRequestedDuty,
-      proportionalContribution,
-      integralContribution: 0,
-      integralState: 0,
-      piSaturation,
-      piAntiWindupActive: false,
-      heaterCommandActive: this.isHeaterActive(),
-      deliveredCommandDuty1s: this.isHeaterActive() ? 1 : 0,
-      pumpCommand: pumpActive ? "running" : "off",
-      extractionPhase: extraction.phase,
-      operatingMode,
-    };
   }
 
   private advanceExtraction(milliseconds: number): void {
@@ -2330,9 +2073,6 @@ export class SimulatorMachine {
   private resetVolatileState(): void {
     this.bootCounter += 1;
     this.bootId = simulatorBootId(this.bootCounter);
-    this.historySequence = 0;
-    this.lastHistorySecond = 0;
-    this.history = [];
     this.activeMode = "brew";
     this.boilerTemperatureRawC = AMBIENT_TEMPERATURE_C;
     this.heaterEnabled = true;
@@ -2428,7 +2168,9 @@ function sameSelection(
   return (
     left.kind === right.kind &&
     (left.kind === "manual" ||
-      (right.kind === "profile" && left.profileId === right.profileId))
+      (right.kind === "profile" &&
+        left.profileId === right.profileId &&
+        profilesEqual(left.profile, right.profile)))
   );
 }
 
@@ -2454,8 +2196,26 @@ function weightCutoff(control: WeightControl): number {
   return control.targetWeightDecigrams - control.compensationDecigrams;
 }
 
-function cloneProfileSet(profiles: ProfileSet): ProfileSet {
-  return ProfileSetSchema.parse(JSON.parse(JSON.stringify(profiles)));
+function cloneSelection(selection: ExtractionSelection): ExtractionSelection {
+  return selection.kind === "manual"
+    ? { kind: "manual" }
+    : {
+        kind: "profile",
+        profileId: selection.profileId,
+        profile: { ...selection.profile },
+      };
+}
+
+function profilesEqual(
+  left: ExtractionProfile,
+  right: ExtractionProfile,
+): boolean {
+  return (
+    left.name === right.name &&
+    left.preInfusionSeconds === right.preInfusionSeconds &&
+    left.soakSeconds === right.soakSeconds &&
+    left.mainExtractionSeconds === right.mainExtractionSeconds
+  );
 }
 
 function moveToward(current: number, target: number, maximumDelta: number): number {
@@ -2463,15 +2223,6 @@ function moveToward(current: number, target: number, maximumDelta: number): numb
     return Math.min(target, current + maximumDelta);
   }
   return Math.max(target, current - maximumDelta);
-}
-
-function machineOperatingMode(
-  temperatureC: number,
-  targetC: number,
-): "warmup" | "idle_stable" {
-  return Math.abs(temperatureC - targetC) <= READY_BAND_C
-    ? "idle_stable"
-    : "warmup";
 }
 
 function roundTemperature(value: number): number {

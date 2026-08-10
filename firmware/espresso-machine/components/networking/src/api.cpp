@@ -8,7 +8,6 @@
 
 #include "philcoino/api_codec.hpp"
 #include "philcoino/api_routes.hpp"
-#include "philcoino/history.hpp"
 #include "philcoino/weighted_trace.hpp"
 
 namespace philcoino::networking {
@@ -22,7 +21,6 @@ using codec::kMalformedMessage;
 using codec::parse_cooldown_start;
 using codec::parse_heater_enabled;
 using codec::parse_mode;
-using codec::parse_profiles;
 using codec::parse_scale_calibration_complete;
 using codec::parse_steam_control_settings;
 using codec::parse_start;
@@ -37,7 +35,6 @@ using codec::serialize_extraction;
 using codec::serialize_health;
 using codec::serialize_heater_enabled;
 using codec::serialize_mode;
-using codec::serialize_profiles;
 using codec::serialize_scale;
 using codec::serialize_state;
 using codec::serialize_steam_control;
@@ -205,11 +202,9 @@ FirmwareApi::FirmwareApi(DeviceIdentity identity, std::string bearer_token,
                              temperature_calibration_storage,
                          control::ExtractionController& extraction_controller,
                          control::CooldownController& cooldown_controller,
-                         peripherals::ProfileStorage& profile_storage,
                          peripherals::ScaleCalibrationStorage&
                              scale_calibration_storage,
                          ApiSynchronization& synchronization,
-                         HistoryBuffer* history,
                          control::ScaleController* scale_controller,
                          WeightedTraceBuffer* weighted_trace,
                          peripherals::SteamControlSettingsStorage*
@@ -221,10 +216,8 @@ FirmwareApi::FirmwareApi(DeviceIdentity identity, std::string bearer_token,
       temperature_calibration_storage_(temperature_calibration_storage),
       extraction_controller_(extraction_controller),
       cooldown_controller_(cooldown_controller),
-      profile_storage_(profile_storage),
       scale_calibration_storage_(scale_calibration_storage),
       synchronization_(synchronization),
-      history_(history),
       scale_controller_(scale_controller),
       weighted_trace_(weighted_trace),
       steam_control_settings_storage_(steam_control_settings_storage) {}
@@ -257,8 +250,7 @@ HttpResponse FirmwareApi::handle_resolved(const ApiRouteDescriptor& route,
   const std::string query = query_separator == std::string::npos
                                 ? std::string{}
                                 : path.substr(query_separator + 1U);
-  if (route.id != ApiRouteId::kHistory &&
-      route.id != ApiRouteId::kStateV2 &&
+  if (route.id != ApiRouteId::kStateV2 &&
       route.id != ApiRouteId::kScaleTrace &&
       route.id != ApiRouteId::kTemperatureCalibrationGet &&
       query_separator != std::string::npos) {
@@ -286,7 +278,6 @@ HttpResponse FirmwareApi::handle_resolved(const ApiRouteDescriptor& route,
       return save_temperature_calibration(body, uptime_ms);
     case ApiRouteId::kTemperatureCalibrationCancel:
       return cancel_temperature_calibration(body, uptime_ms);
-    case ApiRouteId::kHistory: return history(query, uptime_ms);
     case ApiRouteId::kScaleGet: return scale(uptime_ms);
     case ApiRouteId::kScaleTrace: return scale_trace(query, uptime_ms);
     case ApiRouteId::kScaleCalibrationStart:
@@ -297,8 +288,6 @@ HttpResponse FirmwareApi::handle_resolved(const ApiRouteDescriptor& route,
       return cancel_scale_calibration(uptime_ms);
     case ApiRouteId::kScaleWarningAcknowledge:
       return acknowledge_scale_warning(uptime_ms);
-    case ApiRouteId::kProfilesGet: return profiles();
-    case ApiRouteId::kProfilesPut: return replace_profiles(body, uptime_ms);
     case ApiRouteId::kExtractionStart:
       return start_extraction(body, uptime_ms);
     case ApiRouteId::kExtractionStop: return stop_extraction(uptime_ms);
@@ -320,27 +309,6 @@ HttpResponse FirmwareApi::health(std::uint64_t uptime_ms) const {
 
 HttpResponse FirmwareApi::device() const {
   return json_response(200, serialize_device(identity_));
-}
-
-HttpResponse FirmwareApi::history(const std::string& query,
-                                  std::uint64_t uptime_ms) const {
-  if (history_ == nullptr) {
-    return error_response(500, "internal_error",
-                          "Temperature history is unavailable.");
-  }
-  HistoryCursor cursor{};
-  if (!parse_history_cursor(query, cursor)) {
-    return error_response(400, "malformed_request",
-                          "The history cursor is malformed.");
-  }
-  HistoryPage page{};
-  if (!history_->page(cursor, uptime_ms, page)) {
-    return error_response(400, "malformed_request",
-                          "The history cursor is outside the current sequence.");
-  }
-  return json_response(
-      200, serialize_history_page(identity_.device_id,
-                                  identity_.firmware_version, page));
 }
 
 HttpResponse FirmwareApi::state(std::uint64_t uptime_ms) const {
@@ -950,19 +918,6 @@ HttpResponse FirmwareApi::state_v2(const std::string& query,
   return json_response(200, std::move(response));
 }
 
-HttpResponse FirmwareApi::profiles() const {
-  peripherals::ExtractionProfiles current{};
-  {
-    ScopedApiLock lock(synchronization_, ApiDomain::kExtraction);
-    if (!lock.locked()) {
-      return error_response(500, "internal_error",
-                            "Extraction control synchronization failed.");
-    }
-    current = extraction_controller_.profiles();
-  }
-  return json_response(200, serialize_profiles(current));
-}
-
 HttpResponse FirmwareApi::scale(std::uint64_t uptime_ms) const {
   if (scale_controller_ == nullptr) {
     return error_response(500, "internal_error", "Scale support is unavailable.");
@@ -1181,55 +1136,6 @@ HttpResponse FirmwareApi::acknowledge_scale_warning(
       200, serialize_scale(current, weight));
 }
 
-HttpResponse FirmwareApi::replace_profiles(const std::string& body,
-                                           std::uint64_t uptime_ms) {
-  peripherals::ExtractionProfiles replacement{};
-  if (!parse_profiles(body, replacement)) {
-    return error_response(400, "malformed_request", kMalformedMessage);
-  }
-  bool cooldown_active = false;
-  bool extraction_active = false;
-  control::CooldownSnapshot cooldown{};
-  control::ExtractionSnapshot extraction{};
-  {
-    ScopedApiLock lock(synchronization_, ApiDomain::kExtraction);
-    if (!lock.locked()) {
-      return error_response(500, "internal_error",
-                            "Extraction control synchronization failed.");
-    }
-    const auto now_ms = static_cast<std::uint32_t>(uptime_ms);
-    cooldown_active = cooldown_controller_.active();
-    extraction_active = extraction_controller_.active();
-    if (cooldown_active) cooldown = cooldown_controller_.snapshot(now_ms);
-    if (extraction_active) {
-      extraction = extraction_controller_.snapshot(now_ms);
-    }
-  }
-  if (cooldown_active) {
-    return cooldown_conflict(
-        cooldown, "Profiles cannot be replaced while cooldown is active.");
-  }
-  if (extraction_active) {
-    return extraction_conflict(
-        extraction, "Profiles cannot be replaced while extraction is active.");
-  }
-  if (!profile_storage_.save(replacement)) {
-    return error_response(500, "persistence_failure",
-                          "The complete profile set could not be persisted.");
-  }
-  bool adopted = false;
-  {
-    ScopedApiLock lock(synchronization_, ApiDomain::kExtraction);
-    adopted = lock.locked() &&
-              extraction_controller_.adopt_persisted_profiles(replacement);
-  }
-  if (!adopted) {
-    return error_response(500, "internal_error",
-                          "Persisted profiles could not be acknowledged.");
-  }
-  return json_response(200, serialize_profiles(replacement));
-}
-
 HttpResponse FirmwareApi::start_extraction(const std::string& body,
                                            std::uint64_t uptime_ms) {
   std::string key;
@@ -1321,9 +1227,6 @@ HttpResponse FirmwareApi::start_extraction(const std::string& body,
       return error_response(
           409, "idempotency_mismatch",
           "The idempotency key was already used with a different selection.");
-    case control::StartExtractionResult::kProfileNotConfigured:
-      return error_response(409, "profile_not_configured",
-                            "The selected custom profile slot is empty.");
     case control::StartExtractionResult::kInvalidRequest:
       return error_response(400, "malformed_request", kMalformedMessage);
     case control::StartExtractionResult::kOutputFailure:

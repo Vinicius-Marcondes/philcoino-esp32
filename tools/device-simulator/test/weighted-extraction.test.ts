@@ -16,6 +16,12 @@ const authorization = {
   Authorization: `Bearer ${DEFAULT_SIMULATOR_TOKEN}`,
   "Content-Type": "application/json",
 };
+const classicProfile = {
+  name: "Classic30",
+  preInfusionSeconds: 0,
+  soakSeconds: 0,
+  mainExtractionSeconds: 30,
+} as const;
 
 describe("weighted extraction", () => {
   it("calibrates, automatically tares, and completes at compensated weight", async () => {
@@ -259,7 +265,11 @@ describe("weighted extraction", () => {
       headers: authorization,
       body: JSON.stringify({
         idempotencyKey: "timed-trace-none",
-        selection: { kind: "profile", profileId: "profile-1" },
+        selection: {
+          kind: "profile",
+          profileId: "profile-1",
+          profile: classicProfile,
+        },
       }),
     });
     expect(timed.status).toBe(200);
@@ -372,7 +382,11 @@ function startWeighted(
     headers: authorization,
     body: JSON.stringify({
       idempotencyKey,
-      selection: { kind: "profile", profileId: "profile-1" },
+      selection: {
+        kind: "profile",
+        profileId: "profile-1",
+        profile: classicProfile,
+      },
       weightControl: { targetWeightDecigrams, compensationDecigrams },
     }),
   });

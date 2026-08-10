@@ -1,7 +1,7 @@
 # PhilcoINO ESP32-C3 firmware
 
 ESP-IDF C++ firmware for the ESP32-C3 Super Mini. It owns sensor sampling,
-persisted targets/profiles/temperature calibration, brew/steam control state,
+persisted targets/temperature calibration, brew/steam control state,
 extraction/cooldown/calibration workflows, independent heater/pump command
 boundaries, bearer-authenticated API v1/v2 HTTP, and `_philcoino._tcp` mDNS
 advertising.
@@ -12,12 +12,12 @@ advertising.
 ## Architecture
 
 - `components/firmware_config`: identity, pins, target/safety constants, timeouts, and diagnostic flags.
-- `components/peripherals`: pure MAX6675/HX711, NVS target/profile/calibration, and independent fail-off heater/pump command policies plus ESP-IDF adapters.
+- `components/peripherals`: pure MAX6675/HX711, NVS target/calibration, and independent fail-off heater/pump command policies plus ESP-IDF adapters.
 - `components/control`: pure temperature controller, readiness, duty windows,
   timeouts, fault latching, a default-off Brew PI selector, and strict
   controller diagnostics.
 - `components/networking`: bounded JSON syntax, typed machine/workflow codecs,
-  compact 600-sample RAM history, response serializers, authoritative
+  the independent 320-sample extraction replay ring, response serializers, authoritative
   route/access metadata, API orchestration, and ESP-IDF Wi-Fi/HTTP/mDNS adapters.
 - `main`: fail-off startup ordering, shared-object wiring, control loop, mutex, and background networking.
 - `host-tests`: native C++ tests and protocol contract capture validation.
@@ -57,21 +57,19 @@ bun run firmware/espresso-machine/host-tests/validate_contract.ts \
   /tmp/philcoino-firmware-contract
 ```
 
-The suite covers identity/configuration, MAX6675 decoding, target/profile
-persistence policy, fail-off heater/pump command behavior,
+The suite covers identity/configuration, MAX6675 decoding, target persistence
+policy, strict inline-profile latching, fail-off heater/pump command behavior,
 control transitions/timeouts/faults, bounded PI/legacy authority isolation, the
-bounded history ring and cursor codec,
+bounded extraction replay and cursor codec,
 bearer/API parsing, the authenticated temperature-calibration transaction, and
 contract response captures. It does not exercise ESP-IDF scheduling, physical
 sensors, GPIO, SSRs, or thermal behavior.
 
-Firmware `0.4.1` emits at most eight controller-diagnostic history samples per
-response and keeps the serialized body within an 8 KiB host-tested transport
-budget. `/api/v2/state` is queryless; the removed prediction opt-in is an
-intentional matched API break. History includes build/controller configuration,
-raw/filtered temperature, base/private targets, PI and legacy requested duty,
-PI contribution/state/saturation, and acknowledged heater/pump command context.
-These are software command observations, not physical feedback.
+Firmware advertises device API version `2`. `/api/v2/state` is queryless, and
+machine-history/profile routes are absent. Each profile Start carries the exact
+profile snapshot, which is validated and retained only in RAM for the shot.
+Legacy profile NVS data is ignored without a cleanup write. These changes do
+not alter target/calibration persistence or heater and pump safety authority.
 
 `CONFIG_PHILCOINO_BREW_PI_CONTROL` defaults off. Disabled builds preserve the
 legacy Brew curve as authority while calculating bounded PI shadow diagnostics;

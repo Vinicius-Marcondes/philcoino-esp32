@@ -9,11 +9,10 @@
 
 namespace philcoino::networking {
 
-class HistoryBuffer;
 class WeightedTraceBuffer;
 struct ApiRouteDescriptor;
 
-inline constexpr char kApiVersion[] = "1";
+inline constexpr char kApiVersion[] = "2";
 inline constexpr char kMdnsServiceType[] = "_philcoino";
 inline constexpr char kMdnsProtocol[] = "_tcp";
 inline constexpr std::uint16_t kHttpPort = 80;
@@ -62,10 +61,8 @@ class FirmwareApi {
                   temperature_calibration_storage,
               control::ExtractionController& extraction_controller,
               control::CooldownController& cooldown_controller,
-              peripherals::ProfileStorage& profile_storage,
               peripherals::ScaleCalibrationStorage& scale_calibration_storage,
               ApiSynchronization& synchronization,
-              HistoryBuffer* history = nullptr,
               control::ScaleController* scale_controller = nullptr,
               WeightedTraceBuffer* weighted_trace = nullptr,
               peripherals::SteamControlSettingsStorage*
@@ -105,9 +102,6 @@ class FirmwareApi {
                                               std::uint64_t uptime_ms);
   HttpResponse state_v2(const std::string& query,
                         std::uint64_t uptime_ms) const;
-  HttpResponse history(const std::string& query,
-                       std::uint64_t uptime_ms) const;
-  HttpResponse profiles() const;
   HttpResponse scale(std::uint64_t uptime_ms) const;
   HttpResponse scale_trace(const std::string& query,
                            std::uint64_t uptime_ms) const;
@@ -116,8 +110,6 @@ class FirmwareApi {
                                           std::uint64_t uptime_ms);
   HttpResponse cancel_scale_calibration(std::uint64_t uptime_ms);
   HttpResponse acknowledge_scale_warning(std::uint64_t uptime_ms);
-  HttpResponse replace_profiles(const std::string& body,
-                                std::uint64_t uptime_ms);
   HttpResponse start_extraction(const std::string& body,
                                 std::uint64_t uptime_ms);
   HttpResponse stop_extraction(std::uint64_t uptime_ms);
@@ -133,10 +125,8 @@ class FirmwareApi {
       temperature_calibration_storage_;
   control::ExtractionController& extraction_controller_;
   control::CooldownController& cooldown_controller_;
-  peripherals::ProfileStorage& profile_storage_;
   peripherals::ScaleCalibrationStorage& scale_calibration_storage_;
   ApiSynchronization& synchronization_;
-  HistoryBuffer* history_;
   control::ScaleController* scale_controller_;
   WeightedTraceBuffer* weighted_trace_;
   peripherals::SteamControlSettingsStorage*

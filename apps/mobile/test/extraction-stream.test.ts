@@ -66,7 +66,16 @@ describe("extraction stream session", () => {
       ...telemetryPage(1, "terminal"),
       baselineWeightDecigrams: 800,
       controlMode: "weight",
-      selection: { kind: "profile", profileId: "profile-1" },
+      selection: {
+        kind: "profile",
+        profileId: "profile-1",
+        profile: {
+          name: "Test",
+          preInfusionSeconds: 5,
+          soakSeconds: 5,
+          mainExtractionSeconds: 30,
+        },
+      },
       terminalWeight: {
         compensationDecigrams: 10,
         completionReason: "stopped",
@@ -88,6 +97,8 @@ describe("extraction stream session", () => {
     expect(csv).toContain(
       "baseline_weight_g,weight_g,target_weight_g,compensation_g,cutoff_weight_g,terminal_weight_g,terminal_settled,weight_completion_reason,weight_fallback_occurred",
     );
+    expect(csv).toContain("profile_name,pre_infusion_seconds,soak_seconds,main_extraction_seconds");
+    expect(csv).toContain("profile-1,Test,5,5,30,");
     expect(csv).toContain(",on,off,unavailable,");
   });
 

@@ -85,17 +85,6 @@ class EspNvsSteamControlSettingsBackend final
   bool initialized_{false};
 };
 
-class EspNvsProfileBackend final : public ProfileBackend {
- public:
-  bool initialize();
-  BackendLoadResult load(ExtractionProfiles& profiles) override;
-  bool save(const ExtractionProfiles& profiles) override;
-
- private:
-  std::uint32_t handle_{0};
-  bool initialized_{false};
-};
-
 class EspNvsScaleCalibrationBackend final : public ScaleCalibrationBackend {
  public:
   bool initialize();

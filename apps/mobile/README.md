@@ -34,8 +34,10 @@ Key code boundaries:
 - `src/storage`: strict one-device record and Expo SecureStore adapter;
   strict app-local display preferences are stored separately and never cleared
   when a machine is forgotten;
-- `src/profiles`: seeded four-slot profile set and canonical comparison;
+- `src/profiles`: seeded app-wide four-slot profile set stored only on the phone;
 - `src/dashboard`: polling, acknowledged mutations, and pure view models;
+- `src/history`: indefinite local status/shot persistence, migration, and CSV export;
+- `src/telemetry`: persistent extraction-stream replay and shared plot geometry;
 - `test`: Bun tests for the above boundaries.
 
 ## Run
@@ -65,14 +67,16 @@ API integration work.
 
 Debug mode also supplies the PRD-002 API v2 dashboard through the same client
 boundary using deterministic in-memory acknowledgements rather than HTTP. The
-three-page bottom navigation keeps machine state and extraction controls on
-Dashboard, editing/export on Profiles, and temperature/heater/device/calibration
-controls on Machine. The full-screen calibration modal supports portrait and
-both landscape directions with its own live responsive dimensions.
+five-tab navigation separates Dashboard, Profiles, Machine, Scale, and Shots.
+Dashboard graphs today's locally stored state; Machine exports or clears all
+status rows; Scale owns diagnostics/calibration/defaults; Shots is the sole
+history list/detail/export/clear surface. The full-screen extraction console is
+Start/Stop plus live 250 ms telemetry and shows a simple ready state when idle.
 
-Outside debug mode the same approved pages use API v2 combined polling and
-acknowledged profile/Start/Stop mutations. Mobile profiles persist independently
-and custom Start is blocked until the complete machine set matches.
+Outside debug mode the same pages use API v2 combined polling and acknowledged
+Start/Stop mutations. Profiles persist only in mobile SecureStore, and each
+profile Start includes the exact selected snapshot; no machine profile read,
+synchronization, import, or export exists.
 
 ## Simulator integration
 

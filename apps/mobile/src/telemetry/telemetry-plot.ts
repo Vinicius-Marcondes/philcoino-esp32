@@ -217,7 +217,11 @@ export function temperatureHistoryPlot({
   return {
     ...frame,
     heaterRects: activityRects(samples, x, (sample) => sample.heaterActive),
-    pumpRects: activityRects(samples, x, (sample) => sample.pumpActive === true),
+    pumpRects: activityRects(
+      samples,
+      x,
+      (sample) => sample.pumpCommand === "running",
+    ),
     targetPaths: continuous.map((segment) =>
       linePath(
         segment,

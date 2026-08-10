@@ -179,6 +179,10 @@ export function extractionTraceToCsv(trace: StoredExtractionTrace): string {
       "firmware_uptime_ms",
       "control_mode",
       "selection",
+      "profile_name",
+      "pre_infusion_seconds",
+      "soak_seconds",
+      "main_extraction_seconds",
       "temperature_c",
       "target_c",
       "baseline_weight_g",
@@ -208,6 +212,14 @@ export function extractionTraceToCsv(trace: StoredExtractionTrace): string {
         trace.selection?.kind === "manual"
           ? "manual"
           : trace.selection?.profileId ?? "",
+        trace.selection?.kind === "profile" ? trace.selection.profile.name : "",
+        trace.selection?.kind === "profile"
+          ? trace.selection.profile.preInfusionSeconds
+          : "",
+        trace.selection?.kind === "profile" ? trace.selection.profile.soakSeconds : "",
+        trace.selection?.kind === "profile"
+          ? trace.selection.profile.mainExtractionSeconds
+          : "",
         sample.boilerTemperatureC,
         sample.activeTargetC,
         nullableDecigrams(trace.baselineWeightDecigrams ?? null),

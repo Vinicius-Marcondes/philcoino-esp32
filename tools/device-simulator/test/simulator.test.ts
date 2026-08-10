@@ -7,17 +7,14 @@ import {
   ExtractionStateSchema,
   HeaterSettingsResponseSchema,
   HealthResponseSchema,
-  HistoryPageSchema,
   MachineStateSchema,
   MachineStateV2Schema,
   ModeResponseSchema,
-  ProfileSetSchema,
   RunningExtractionStateSchema,
   StartExtractionResponseSchema,
   STEAM_TIMEOUT_MS,
   TemperatureSettingsResponseSchema,
   type ExtractionSelection,
-  type ProfileSet,
 } from "@philcoino/protocol";
 
 import {
@@ -27,6 +24,18 @@ import {
 } from "../src/app.ts";
 
 const authorization = { Authorization: `Bearer ${DEFAULT_SIMULATOR_TOKEN}` };
+const classicProfile = {
+  name: "Classic30",
+  preInfusionSeconds: 0,
+  soakSeconds: 0,
+  mainExtractionSeconds: 30,
+} as const;
+const preSoakProfile = {
+  name: "Pre5Soak5",
+  preInfusionSeconds: 5,
+  soakSeconds: 5,
+  mainExtractionSeconds: 25,
+} as const;
 let simulator: SimulatorApplication;
 
 beforeEach(() => {
@@ -46,7 +55,7 @@ describe("public endpoints", () => {
   it("returns contract-valid device identity without authentication", async () => {
     const response = await simulator.app.request("/api/v1/device");
     expect(response.status).toBe(200);
-    expect(DeviceResponseSchema.parse(await response.json()).apiVersion).toBe("1");
+    expect(DeviceResponseSchema.parse(await response.json()).apiVersion).toBe("2");
   });
 });
 
@@ -58,13 +67,10 @@ describe("bearer authentication", () => {
     ["PUT", "/api/v1/heater"],
     ["POST", "/api/v1/faults/over-temperature/dismiss"],
     ["GET", "/api/v2/state"],
-    ["GET", "/api/v2/history"],
     ["GET", "/api/v2/settings/steam-control"],
     ["PATCH", "/api/v2/settings/steam-control"],
     ["GET", "/api/v2/scale"],
     ["GET", "/api/v2/scale/trace"],
-    ["GET", "/api/v2/profiles"],
-    ["PUT", "/api/v2/profiles"],
     ["POST", "/api/v2/extractions/start"],
     ["POST", "/api/v2/extractions/stop"],
     ["POST", "/api/v2/cooldowns/start"],
@@ -123,197 +129,14 @@ describe("API v2 state", () => {
   });
 });
 
-describe("API v2 history", () => {
-  it("captures one-Hertz full-context samples and paginates", async () => {
-    simulator.machine.advance(65_000);
-    let response = await simulator.app.request("/api/v2/history", {
-      headers: authorization,
-    });
-    expect(response.status).toBe(200);
-    const first = HistoryPageSchema.parse(await response.json());
-    expect(first.continuity).toBe("initial");
-    expect(first.samples).toHaveLength(8);
-    expect(first.samples[0].uptimeMs).toBe(1_000);
-    expect(first.controllerConfiguration).toEqual({
-      firmwareVersion: "simulator-0.2.0",
-      selectedController: "legacy_curve",
-      piKp: 0.08,
-      piKi: 0.01,
-      filterAlpha: 0.25,
-      controllerIntervalMs: 500,
-      ssrWindowMs: 10_000,
-    });
-    expect(first.samples[0].controllerDiagnostics).toMatchObject({
-      selectedController: "legacy_curve",
-      temperatureRawC: first.samples[0].boilerTemperatureC,
-      temperatureFilteredC: first.samples[0].boilerTemperatureC,
-      heaterCommandActive: first.samples[0].heaterActive,
-      pumpCommand: first.samples[0].pumpActive ? "running" : "off",
-    });
-    expect(first.hasMore).toBe(true);
-
-    let page = first;
-    const samples = [...first.samples];
-    while (page.hasMore) {
-      const query = new URLSearchParams({
-        bootId: page.nextCursor.bootId,
-        afterSequence: String(page.nextCursor.afterSequence),
-      });
-      response = await simulator.app.request(`/api/v2/history?${query}`, {
-        headers: authorization,
-      });
-      page = HistoryPageSchema.parse(await response.json());
-      expect(page.continuity).toBe("continuous");
-      samples.push(...page.samples);
-    }
-    expect(samples).toHaveLength(65);
-    expect(samples.at(-1)?.sequence).toBe(65);
-    expect(page.samples).toHaveLength(1);
-  });
-
-  it("reports truncation and boot reset", async () => {
-    simulator.machine.advance(605_000);
-    const page = HistoryPageSchema.parse(
-      await (
-        await simulator.app.request(
-          "/api/v2/history?bootId=00000000000000000000000000000001&afterSequence=1",
-          { headers: authorization },
-        )
-      ).json(),
-    );
-    expect(page.continuity).toBe("truncated");
-    expect(page.oldestSequence).toBe(6);
-
-    const previousBoot = page.bootId;
-    simulator.machine.powerCycle();
-    simulator.machine.advance(1_000);
-    const reset = HistoryPageSchema.parse(
-      await (
-        await simulator.app.request(
-          `/api/v2/history?bootId=${previousBoot}&afterSequence=${page.nextCursor.afterSequence}`,
-          { headers: authorization },
-        )
-      ).json(),
-    );
-    expect(reset.continuity).toBe("reset");
-    expect(reset.bootId).not.toBe(previousBoot);
-    expect(reset.samples[0].sequence).toBe(1);
-  });
-
-  it("rejects malformed, partial, duplicate, and future cursors", async () => {
-    simulator.machine.advance(1_000);
-    for (const query of [
-      "?bootId=00000000000000000000000000000001",
-      "?afterSequence=0",
-      "?unknown=1",
-      "?bootId=00000000000000000000000000000001&bootId=00000000000000000000000000000001&afterSequence=0",
-      "?bootId=00000000000000000000000000000001&afterSequence=99",
-    ]) {
-      const response = await simulator.app.request(`/api/v2/history${query}`, {
-        headers: authorization,
-      });
-      expect(response.status).toBe(400);
-      expect(
-        ApiV2ErrorResponseSchema.parse(await response.json()).error.code,
-      ).toBe("malformed_request");
-    }
-  });
-});
-
-describe("API v2 profiles", () => {
-  it("returns the seeded complete four-slot profile set", async () => {
-    const profiles = await getProfiles();
-    expect(profiles.profiles.map((slot) => slot.id)).toEqual([
-      "profile-1",
-      "profile-2",
-      "profile-3",
-      "profile-4",
-    ]);
-    expect(profiles.profiles.map((slot) => slot.profile?.name ?? null)).toEqual([
-      "Classic30",
-      "Pre5Soak5",
-      null,
-      null,
-    ]);
-  });
-
-  it("atomically replaces the complete set and preserves it across power cycle", async () => {
-    const replacement = editedProfiles("Short20", 20);
-    const response = await simulator.app.request(
-      "/api/v2/profiles",
-      jsonRequest("PUT", replacement, authorization),
-    );
-    expect(response.status).toBe(200);
-    expect(ProfileSetSchema.parse(await response.json())).toEqual(replacement);
-
-    await simulator.app.request("/_simulator/power-cycle", { method: "POST" });
-    expect(await getProfiles()).toEqual(replacement);
-    expect((await getStateV2()).extraction.status).toBe("idle");
-  });
-
-  it("preserves the previous complete set after injected persistence failure", async () => {
-    const previous = await getProfiles();
-    await simulator.app.request("/_simulator/fail-next-profile-save", {
-      method: "POST",
-    });
-    let response = await simulator.app.request(
-      "/api/v2/profiles",
-      jsonRequest("PUT", editedProfiles("Short20", 20), authorization),
-    );
-    expect(response.status).toBe(500);
-    expect(ApiV2ErrorResponseSchema.parse(await response.json()).error.code).toBe(
-      "persistence_failure",
-    );
-    expect(await getProfiles()).toEqual(previous);
-
-    response = await simulator.app.request(
-      "/api/v2/profiles",
-      jsonRequest("PUT", editedProfiles("Short20", 20), authorization),
-    );
-    expect(response.status).toBe(200);
-  });
-
-  it("rejects invalid complete sets without changing persisted profiles", async () => {
-    const previous = await getProfiles();
-    const invalid = editedProfiles("Bad Profile", 20);
-    const response = await simulator.app.request(
-      "/api/v2/profiles",
-      jsonRequest("PUT", invalid, authorization),
-    );
-    expect(response.status).toBe(400);
-    expect(ApiV2ErrorResponseSchema.parse(await response.json()).error.code).toBe(
-      "malformed_request",
-    );
-    expect(await getProfiles()).toEqual(previous);
-  });
-
-  it("rejects replacement while active and preserves the previous set", async () => {
-    const previous = await getProfiles();
-    await startExtraction("profile-active-0001", {
-      kind: "profile",
-      profileId: "profile-1",
-    });
-    const response = await simulator.app.request(
-      "/api/v2/profiles",
-      jsonRequest("PUT", editedProfiles("Short20", 20), authorization),
-    );
-    expect(response.status).toBe(409);
-    const conflict = ExtractionActiveConflictResponseSchema.parse(
-      await response.json(),
-    );
-    expect(conflict.error.code).toBe("extraction_active");
-    expect(conflict.activeExtraction.status).toBe("running");
-    expect(await getProfiles()).toEqual(previous);
-  });
-
-  it("full reset restores seeded profiles", async () => {
-    await simulator.app.request(
-      "/api/v2/profiles",
-      jsonRequest("PUT", editedProfiles("Short20", 20), authorization),
-    );
-    await simulator.app.request("/_simulator/reset", { method: "POST" });
-    expect((await getProfiles()).profiles[0].profile?.name).toBe("Classic30");
-  });
+describe("removed API v2 surfaces", () => {
+  it.each(["/api/v2/history", "/api/v2/profiles"])(
+    "does not expose %s",
+    async (path) => {
+      const response = await simulator.app.request(path, { headers: authorization });
+      expect(response.status).toBe(404);
+    },
+  );
 });
 
 describe("API v2 deterministic extraction", () => {
@@ -321,6 +144,7 @@ describe("API v2 deterministic extraction", () => {
     let extraction = await startExtraction("classic-start-0001", {
       kind: "profile",
       profileId: "profile-1",
+      profile: classicProfile,
     });
     expect(extraction).toMatchObject({
       phase: "main-extraction",
@@ -348,6 +172,7 @@ describe("API v2 deterministic extraction", () => {
     await startExtraction("pre-soak-start-1", {
       kind: "profile",
       profileId: "profile-2",
+      profile: preSoakProfile,
     });
     await advance(4_999);
     expect((await getStateV2()).extraction).toMatchObject({
@@ -406,7 +231,11 @@ describe("API v2 deterministic extraction", () => {
         "POST",
         {
           idempotencyKey: "same-key-start-01",
-          selection: { kind: "profile", profileId: "profile-1" },
+          selection: {
+            kind: "profile",
+            profileId: "profile-1",
+            profile: classicProfile,
+          },
         },
         authorization,
       ),
@@ -480,7 +309,7 @@ describe("API v2 deterministic extraction", () => {
     }
   });
 
-  it("rejects Start for an empty custom slot", async () => {
+  it("rejects profile Start without an inline profile", async () => {
     const response = await simulator.app.request(
       "/api/v2/extractions/start",
       jsonRequest(
@@ -492,10 +321,54 @@ describe("API v2 deterministic extraction", () => {
         authorization,
       ),
     );
-    expect(response.status).toBe(409);
+    expect(response.status).toBe(400);
     expect(ApiV2ErrorResponseSchema.parse(await response.json()).error.code).toBe(
-      "profile_not_configured",
+      "malformed_request",
     );
+  });
+
+  it("latches the supplied profile and includes its contents in idempotency", async () => {
+    const started = await startExtraction("inline-profile-01", {
+      kind: "profile",
+      profileId: "profile-1",
+      profile: classicProfile,
+    });
+    expect(started.selection).toEqual({
+      kind: "profile",
+      profileId: "profile-1",
+      profile: classicProfile,
+    });
+
+    const changedProfileResponse = await simulator.app.request(
+      "/api/v2/extractions/start",
+      jsonRequest(
+        "POST",
+        {
+          idempotencyKey: "inline-profile-01",
+          selection: {
+            kind: "profile",
+            profileId: "profile-1",
+            profile: { ...classicProfile, mainExtractionSeconds: 20 },
+          },
+        },
+        authorization,
+      ),
+    );
+    expect(changedProfileResponse.status).toBe(409);
+    expect(
+      ApiV2ErrorResponseSchema.parse(await changedProfileResponse.json()).error.code,
+    ).toBe("idempotency_mismatch");
+
+    await advance(30_000);
+    expect((await getStateV2()).extraction).toMatchObject({
+      status: "idle",
+      outcome: "completed",
+      selection: {
+        kind: "profile",
+        profileId: "profile-1",
+        profile: classicProfile,
+      },
+    });
   });
 
   it("continues independently of temperature faults and resets idle on power cycle", async () => {
@@ -882,14 +755,6 @@ async function getStateV2() {
   return MachineStateV2Schema.parse(await response.json());
 }
 
-async function getProfiles() {
-  const response = await simulator.app.request("/api/v2/profiles", {
-    headers: authorization,
-  });
-  expect(response.status).toBe(200);
-  return ProfileSetSchema.parse(await response.json());
-}
-
 async function startExtraction(
   idempotencyKey: string,
   selection: ExtractionSelection,
@@ -904,33 +769,6 @@ async function startExtraction(
 
 async function advance(milliseconds: number) {
   await control("POST", "/_simulator/advance", { milliseconds });
-}
-
-function editedProfiles(name: string, mainExtractionSeconds: number): ProfileSet {
-  return {
-    profiles: [
-      {
-        id: "profile-1",
-        profile: {
-          name,
-          preInfusionSeconds: 0,
-          soakSeconds: 0,
-          mainExtractionSeconds,
-        },
-      },
-      {
-        id: "profile-2",
-        profile: {
-          name: "Pre5Soak5",
-          preInfusionSeconds: 5,
-          soakSeconds: 5,
-          mainExtractionSeconds: 25,
-        },
-      },
-      { id: "profile-3", profile: null },
-      { id: "profile-4", profile: null },
-    ],
-  };
 }
 
 async function setMode(mode: "brew" | "steam") {

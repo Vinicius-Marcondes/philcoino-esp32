@@ -60,7 +60,7 @@ describe("temperature calibration transaction", () => {
     }
   });
 
-  it("applies one saved offset to Brew, Steam, history, and power-cycle state", async () => {
+  it("applies one saved offset to Brew, Steam, and power-cycle state", async () => {
     const active = await startCalibration();
     await calibrationMutation("PUT", "candidate", {
       calibrationId: active.calibrationId,
@@ -79,22 +79,6 @@ describe("temperature calibration transaction", () => {
     await setMode("steam");
     state = await machineState();
     expect(state.boilerTemperatureC).toBe(93);
-
-    await advance(1_000);
-    const historyResponse = await simulator.app.request("/api/v2/history", {
-      headers: authorization,
-    });
-    const history = await historyResponse.json();
-    expect(history.samples[0]).toMatchObject({
-      boilerTemperatureC: 103,
-      steamControl: {
-        controlTemperatureC: 115,
-      },
-      controllerDiagnostics: {
-        temperatureRawC: 111,
-        temperatureFilteredC: 103,
-      },
-    });
 
     const calibration = await getCalibration();
     expect(calibration).toMatchObject({

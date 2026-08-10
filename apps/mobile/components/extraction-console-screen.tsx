@@ -6,7 +6,7 @@ import type {
   ScaleState,
   WeightControl,
 } from "@philcoino/protocol";
-import { useState, type Dispatch, type SetStateAction } from "react";
+import type { Dispatch, SetStateAction } from "react";
 import {
   Modal,
   Pressable,
@@ -19,7 +19,6 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { WeightedTraceChart } from "@/components/extraction-telemetry-chart";
 import { TELEMETRY_COLORS } from "@/components/telemetry-surface";
-import { TemperatureHistoryChart } from "@/components/temperature-history-chart";
 import { WeightModeCard } from "@/components/weight-mode-card";
 import {
   canStartPreview,
@@ -33,34 +32,19 @@ import {
   extractionConsoleTrace,
   type ExtractionConsolePhase,
 } from "@/src/dashboard/extraction-console-model";
-import type { TemperatureHistorySample } from "@/src/history/temperature-history";
 import type { StoredExtractionTrace } from "@/src/history/extraction-trace";
-import type { ExtractionSummary } from "@/src/history/shot-history";
 import { translate } from "@/src/localization/i18n";
 import { formatWeightReadout } from "@/src/telemetry/telemetry-readouts";
-
-export interface ExtractionConsoleTemperatureHistory {
-  error: "storage" | null;
-  samples: TemperatureHistorySample[];
-  status: "loading" | "ready";
-  syncStatus: "idle" | "restoring" | "warning";
-  syncWarning: "device" | "network" | "protocol" | "storage" | null;
-}
 
 export interface ExtractionConsoleScreenProps {
   brewControlMode: "timed" | "weight";
   cutoffDecigrams: number | null;
   deviceName: string;
   extraction: ExtractionState | null;
-  extractionHistory: ExtractionSummary[];
   landscape: boolean;
   live: boolean;
   onBrewControlModeChange: (mode: "timed" | "weight") => void;
   onClose: () => void;
-  onSelectHistoryTrace: (
-    extractionId: string,
-    bootId?: string | null,
-  ) => Promise<StoredExtractionTrace | null>;
   onStateChange: Dispatch<SetStateAction<ExtractionPreviewState>>;
   onWeightControlChange: (value: WeightControl) => void;
   scale: ScaleState | null;
@@ -69,7 +53,6 @@ export interface ExtractionConsoleScreenProps {
   startPending: boolean;
   state: ExtractionPreviewState;
   stopPending: boolean;
-  temperatureHistory: ExtractionConsoleTemperatureHistory;
   trace: StoredExtractionTrace | null;
   visible: boolean;
   workflowBlock: "cooldown" | "steam" | null;
@@ -80,12 +63,10 @@ export function ExtractionConsoleScreen({
   cutoffDecigrams,
   deviceName,
   extraction,
-  extractionHistory,
   landscape,
   live,
   onBrewControlModeChange,
   onClose,
-  onSelectHistoryTrace,
   onStateChange,
   onWeightControlChange,
   scale,
@@ -94,19 +75,16 @@ export function ExtractionConsoleScreen({
   startPending,
   state,
   stopPending,
-  temperatureHistory,
   trace,
   visible,
   workflowBlock,
 }: ExtractionConsoleScreenProps) {
   const safeAreaInsets = useSafeAreaInsets();
-  const [historyTrace, setHistoryTrace] = useState<StoredExtractionTrace | null>(null);
-  const [historySelection, setHistorySelection] = useState<ExtractionSummary | null>(null);
   const consoleTrace = extractionConsoleTrace(trace, extraction);
-  const displayedTrace = historyTrace ?? consoleTrace;
+  const displayedTrace = consoleTrace;
   const heaterCommand =
     displayedTrace?.samples.at(-1)?.heaterActive ??
-    (historyTrace === null ? snapshot?.heaterActive : undefined);
+    snapshot?.heaterActive;
   const readouts = extractionConsoleReadouts({
     extraction,
     scale,
@@ -121,20 +99,18 @@ export function ExtractionConsoleScreen({
 
   const chart =
     displayedTrace === null ? (
-      <TemperatureHistoryChart
-        bands={2}
-        compact={landscape}
-        error={temperatureHistory.error}
-        history={temperatureHistory.samples}
-        loading={temperatureHistory.status === "loading"}
-        scale={scale}
-        syncStatus={temperatureHistory.syncStatus}
-        syncWarning={temperatureHistory.syncWarning}
-      />
+      <View style={styles.controlPanel}>
+        <Text selectable style={styles.contextTitle}>
+          {translate("extractionConsole.readyTitle")}
+        </Text>
+        <Text selectable style={styles.contextText}>
+          {translate("extractionConsole.readyDetail")}
+        </Text>
+      </View>
     ) : (
       <WeightedTraceChart
         compact={landscape}
-        cutoffDecigrams={historySelection?.cutoffDecigrams ?? cutoffDecigrams}
+        cutoffDecigrams={cutoffDecigrams}
         key={displayedTrace.extractionId}
         trace={displayedTrace}
         variant="console"
@@ -143,49 +119,6 @@ export function ExtractionConsoleScreen({
 
   const controls = (
     <View style={styles.controls}>
-      <View style={styles.controlPanel}>
-        <Text selectable style={styles.stripLabel}>
-          {translate("extractionConsole.historyTitle")}
-        </Text>
-        {historyTrace === null ? null : (
-          <Pressable
-            onPress={() => {
-              setHistorySelection(null);
-              setHistoryTrace(null);
-            }}
-            style={styles.close}>
-            <Text style={styles.closeText}>
-              {translate("extractionConsole.historyLive")}
-            </Text>
-          </Pressable>
-        )}
-        {extractionHistory.slice(0, 5).map((shot) => (
-          <Pressable
-            accessibilityRole="button"
-            key={`${shot.bootId ?? "legacy"}:${shot.extractionId}`}
-            onPress={() => {
-              void onSelectHistoryTrace(shot.extractionId, shot.bootId).then((nextTrace) => {
-                setHistorySelection(nextTrace === null ? null : shot);
-                setHistoryTrace(nextTrace);
-              });
-            }}
-            style={({ pressed }) => [styles.historyRow, pressed && styles.pressed]}>
-            <Text selectable style={styles.contextTitle}>
-              {translate(
-                shot.controlMode === "manual"
-                  ? "extractionConsole.historyManual"
-                  : shot.controlMode === "timed"
-                    ? "extractionConsole.historyTimedProfile"
-                    : "extractionConsole.historyWeightProfile",
-                { profile: shot.profileId ?? "" },
-              ).trim()}
-            </Text>
-            <Text selectable style={styles.contextText}>
-              {new Date(shot.recordedAtMs).toLocaleString()} · {shot.outcome}
-            </Text>
-          </Pressable>
-        ))}
-      </View>
       <ProfileStrip
         disabled={controlsDisabled}
         onSelect={(selected) =>
@@ -490,9 +423,15 @@ function ProfileStrip({
             label={
               slot.profile?.name ?? translate("extractionPreview.emptySlot")
             }
-            onPress={() =>
-              onSelect({ kind: "profile", profileId: slot.id as ProfileSlotId })
-            }
+            onPress={() => {
+              if (slot.profile !== null) {
+                onSelect({
+                  kind: "profile",
+                  profileId: slot.id as ProfileSlotId,
+                  profile: { ...slot.profile },
+                });
+              }
+            }}
           />
         ))}
         <ProfileChip

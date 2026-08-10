@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cassert>
 #include <cstdint>
 #include <filesystem>
@@ -9,7 +10,6 @@
 
 #include "philcoino/api.hpp"
 #include "philcoino/config.hpp"
-#include "philcoino/history.hpp"
 #include "philcoino/weighted_trace.hpp"
 
 namespace {
@@ -75,24 +75,6 @@ class TemperatureCalibrationMemoryBackend final
   bool fail_save{false};
   int save_count{0};
   const bool* lock_held{nullptr};
-};
-
-class ProfileMemoryBackend final : public ProfileBackend {
- public:
-  BackendLoadResult load(ExtractionProfiles& profiles) override {
-    profiles = saved;
-    return BackendLoadResult::kOk;
-  }
-  bool save(const ExtractionProfiles& profiles) override {
-    if (fail_save) {
-      return false;
-    }
-    saved = profiles;
-    return true;
-  }
-
-  ExtractionProfiles saved{default_extraction_profiles()};
-  bool fail_save{false};
 };
 
 class ScaleMemoryBackend final : public ScaleCalibrationBackend {
@@ -199,6 +181,15 @@ ThermocoupleReading ok(float temperature_c) {
   return {ThermocoupleStatus::kOk, temperature_c, 0};
 }
 
+ExtractionSelection classic_profile_selection(std::size_t index = 0U) {
+  ExtractionProfile profile{};
+  profile.configured = true;
+  constexpr char name[] = "Classic30";
+  std::copy(std::begin(name), std::end(name), profile.name.begin());
+  profile.main_extraction_seconds = 30U;
+  return {ExtractionSelectionKind::kProfile, index, profile};
+}
+
 struct ApiHarness {
   explicit ApiHarness(TemperatureCalibration calibration = {},
                       TemperatureTargets targets = {})
@@ -209,9 +200,8 @@ struct ApiHarness {
         temperature_calibration_storage(temperature_calibration_backend),
         ssr(output, safety_lease, ssr_critical_section),
         controller(memory.targets, calibration, ssr),
-        profile_storage(profile_backend),
         pump(pump_output, pump_critical_section),
-        extraction(profile_backend.saved, pump),
+        extraction(pump),
         cooldown(controller, pump),
         steam_control_storage(steam_control_backend),
         scale_storage(scale_backend),
@@ -219,8 +209,8 @@ struct ApiHarness {
         api({"philcoino-0102AF", "PhilcoINO", "ESP32-C3 Super Mini", "0.2.0"},
             "test-secret", controller, storage,
             temperature_calibration_storage, extraction, cooldown,
-            profile_storage, scale_storage, synchronization, &history,
-            &scale, &weighted_trace, &steam_control_storage) {
+            scale_storage, synchronization, &scale, &weighted_trace,
+            &steam_control_storage) {
     assert(ssr.initialize());
     assert(pump.initialize());
     scale_backend.lock_held = &synchronization.held;
@@ -252,8 +242,6 @@ struct ApiHarness {
   FakeOutputCriticalSection ssr_critical_section;
   FailOffSsr ssr;
   TemperatureController controller;
-  ProfileMemoryBackend profile_backend;
-  ProfileStorage profile_storage;
   FakeDigitalOutput pump_output{};
   FakeOutputCriticalSection pump_critical_section;
   FailOffPump pump;
@@ -265,7 +253,6 @@ struct ApiHarness {
   ScaleCalibrationStorage scale_storage;
   ScaleController scale;
   FakeApiSynchronization synchronization;
-  HistoryBuffer history{"00112233445566778899aabbccddeeff"};
   WeightedTraceBuffer weighted_trace{"00112233445566778899aabbccddeeff"};
   FirmwareApi api;
 };
@@ -367,7 +354,7 @@ void test_public_contract_and_authentication() {
   assert(kHttpPort == 80);
   assert(txt[0].key == "deviceId" && txt[0].value == identity.device_id);
   assert(txt[1].key == "name" && txt[1].value == identity.name);
-  assert(txt[2].key == "apiVersion" && txt[2].value == "1");
+  assert(txt[2].key == "apiVersion" && txt[2].value == "2");
   assert(txt[3].key == "firmwareVersion" &&
          txt[3].value == identity.firmware_version);
   assert(txt[4].key == "model" && txt[4].value == identity.model);
@@ -614,19 +601,16 @@ void test_malformed_and_domain_failures_do_not_bypass_validation() {
                409, "sensor_unavailable");
 }
 
-void test_api_v2_profiles_and_extraction_contract() {
+void test_api_v2_inline_profile_and_extraction_contract() {
   ApiHarness harness;
   const char* authorization = "Bearer test-secret";
-  const char* profiles =
-      "{\"profiles\":[{\"id\":\"profile-1\",\"profile\":{\"name\":\"Short20\",\"preInfusionSeconds\":0,\"soakSeconds\":0,\"mainExtractionSeconds\":20}},{\"id\":\"profile-2\",\"profile\":{\"name\":\"Pre5Soak5\",\"preInfusionSeconds\":5,\"soakSeconds\":5,\"mainExtractionSeconds\":25}},{\"id\":\"profile-3\",\"profile\":null},{\"id\":\"profile-4\",\"profile\":null}]}";
+  const char* profile_start =
+      "{\"idempotencyKey\":\"start-01J2ABCDEF1234\",\"selection\":{\"kind\":\"profile\",\"profileId\":\"profile-2\",\"profile\":{\"name\":\"Pre5Soak5\",\"preInfusionSeconds\":5,\"soakSeconds\":5,\"mainExtractionSeconds\":25}}}";
 
   for (const auto& endpoint :
        std::vector<std::pair<HttpMethod, const char*>>{
            {HttpMethod::kGet, "/api/v2/state"},
-           {HttpMethod::kGet, "/api/v2/history"},
            {HttpMethod::kGet, "/api/v2/scale/trace"},
-           {HttpMethod::kGet, "/api/v2/profiles"},
-           {HttpMethod::kPut, "/api/v2/profiles"},
            {HttpMethod::kPost, "/api/v2/extractions/start"},
            {HttpMethod::kPost, "/api/v2/extractions/stop"},
            {HttpMethod::kPost, "/api/v2/cooldowns/start"},
@@ -653,15 +637,16 @@ void test_api_v2_profiles_and_extraction_contract() {
                                authorization),
                400, "malformed_request");
 
-  response = harness.request(HttpMethod::kPut, "/api/v2/profiles",
-                             authorization, profiles);
-  assert(response.status == 200);
-  assert(response.body == profiles);
-  assert(harness.extraction.profiles()[0].main_extraction_seconds == 20U);
+  expect_error(harness.request(HttpMethod::kGet, "/api/v2/history",
+                               authorization),
+               404, "internal_error");
+  expect_error(harness.request(HttpMethod::kGet, "/api/v2/profiles",
+                               authorization),
+               404, "internal_error");
 
   response = harness.request(
       HttpMethod::kPost, "/api/v2/extractions/start", authorization,
-      "{\"idempotencyKey\":\"start-01J2ABCDEF1234\",\"selection\":{\"kind\":\"profile\",\"profileId\":\"profile-2\"}}",
+      profile_start,
       1000);
   assert(response.status == 200);
   const auto original = response.body;
@@ -681,9 +666,6 @@ void test_api_v2_profiles_and_extraction_contract() {
   expect_error(response, 409, "extraction_active");
   assert(response.body.find("\"activeExtraction\":") != std::string::npos);
 
-  response = harness.request(HttpMethod::kPut, "/api/v2/profiles",
-                             authorization, profiles, 2000);
-  expect_error(response, 409, "extraction_active");
   assert(harness.extraction.update(6000) == ExtractionUpdateResult::kOk);
   response = harness.request(HttpMethod::kGet, "/api/v2/state", authorization,
                              "", 6000);
@@ -703,7 +685,7 @@ void test_api_v2_profiles_and_extraction_contract() {
 
   response = harness.request(
       HttpMethod::kPost, "/api/v2/extractions/start", authorization,
-      "{\"idempotencyKey\":\"start-01J2ABCDEF1234\",\"selection\":{\"kind\":\"profile\",\"profileId\":\"profile-2\"}}",
+      profile_start,
       6500);
   assert(response.status == 200);
   assert(response.body.find("\"extractionId\":\"run-1\"") !=
@@ -715,19 +697,15 @@ void test_api_v2_profiles_and_extraction_contract() {
       HttpMethod::kPost, "/api/v2/extractions/start", authorization,
       "{\"idempotencyKey\":\"start-01J2EMPTYKEY999\",\"selection\":{\"kind\":\"profile\",\"profileId\":\"profile-3\"}}",
       7000);
-  expect_error(response, 409, "profile_not_configured");
+  expect_error(response, 400, "malformed_request");
   response = harness.request(
       HttpMethod::kPost, "/api/v2/extractions/start", authorization,
-      "{\"idempotencyKey\":\"start-01J2ABCDEF1234\",\"selection\":{\"kind\":\"profile\",\"profileId\":\"profile-2\"}}",
+      profile_start,
       7000);
   assert(response.status == 200);
   assert(response.body.find("\"extractionId\":\"run-1\"") !=
          std::string::npos);
 
-  harness.profile_backend.fail_save = true;
-  response = harness.request(HttpMethod::kPut, "/api/v2/profiles",
-                             authorization, profiles);
-  expect_error(response, 500, "persistence_failure");
 }
 
 void test_api_v2_rejects_malformed_nested_shapes_and_lock_failure() {
@@ -744,10 +722,6 @@ void test_api_v2_rejects_malformed_nested_shapes_and_lock_failure() {
                                  body),
                  400, "malformed_request");
   }
-  expect_error(harness.request(
-                   HttpMethod::kPut, "/api/v2/profiles", authorization,
-                   "{\"profiles\":[{\"id\":\"profile-1\",\"profile\":null}]}"),
-               400, "malformed_request");
   harness.synchronization.fail_lock = true;
   expect_error(harness.request(HttpMethod::kGet, "/api/v2/state",
                                authorization),
@@ -1073,8 +1047,6 @@ void test_api_v2_cooldown_and_compensation_contract() {
   const char* authorization = "Bearer test-secret";
   constexpr char kCooldownStart[] =
       "{\"idempotencyKey\":\"cooldown-01J2APIROUTE1\"}";
-  constexpr char kProfiles[] =
-      "{\"profiles\":[{\"id\":\"profile-1\",\"profile\":null},{\"id\":\"profile-2\",\"profile\":null},{\"id\":\"profile-3\",\"profile\":null},{\"id\":\"profile-4\",\"profile\":null}]}";
 
   ApiHarness initial;
   auto response = initial.request(HttpMethod::kGet, "/api/v2/state",
@@ -1131,10 +1103,6 @@ void test_api_v2_cooldown_and_compensation_contract() {
   response = cooling.request(
       HttpMethod::kPost, "/api/v2/cooldowns/start", authorization,
       "{\"idempotencyKey\":\"cooldown-01J2OTHERKEY2\"}", 3000);
-  expect_error(response, 409, "cooldown_active");
-  assert(response.body.find("\"activeCooldown\":") != std::string::npos);
-  response = cooling.request(HttpMethod::kPut, "/api/v2/profiles",
-                             authorization, kProfiles, 3000);
   expect_error(response, 409, "cooldown_active");
   assert(response.body.find("\"activeCooldown\":") != std::string::npos);
   response = cooling.request(
@@ -1399,11 +1367,6 @@ void capture_contract_payloads(const std::filesystem::path& directory) {
                    "/api/v2/temperature-calibration/save",
                    authorization, calibration_session.c_str(), 3000)
           .body);
-  harness.history.record(184000, harness.controller.snapshot(184000),
-                         harness.pump.command());
-  write_capture(directory, "history-v2.json",
-                harness.request(HttpMethod::kGet, "/api/v2/history",
-                                authorization).body);
   ApiHarness steam_harness;
   assert(steam_harness.controller.set_mode(ControlMode::kSteam, 2000));
   steam_harness.controller.update(ok(115.0F), 2500);
@@ -1412,16 +1375,13 @@ void capture_contract_payloads(const std::filesystem::path& directory) {
                     .request(HttpMethod::kGet, "/api/v1/state",
                              authorization, "", 2500)
                     .body);
-  write_capture(directory, "profiles-v2.json",
-                harness.request(HttpMethod::kGet, "/api/v2/profiles",
-                                authorization).body);
   write_capture(directory, "scale-v2.json",
                 harness.request(HttpMethod::kGet, "/api/v2/scale",
                                 authorization).body);
   ApiHarness trace_harness;
   const auto trace_start = trace_harness.request(
       HttpMethod::kPost, "/api/v2/extractions/start", authorization,
-      "{\"idempotencyKey\":\"trace-capture-0001\",\"selection\":{\"kind\":\"profile\",\"profileId\":\"profile-1\"},\"weightControl\":{\"targetWeightDecigrams\":350,\"compensationDecigrams\":20}}",
+      "{\"idempotencyKey\":\"trace-capture-0001\",\"selection\":{\"kind\":\"profile\",\"profileId\":\"profile-1\",\"profile\":{\"name\":\"Classic30\",\"preInfusionSeconds\":0,\"soakSeconds\":0,\"mainExtractionSeconds\":30}},\"weightControl\":{\"targetWeightDecigrams\":350,\"compensationDecigrams\":20}}",
       1100U);
   assert(trace_start.status == 200);
   for (std::uint32_t now_ms = 1100U; now_ms <= 1600U; now_ms += 250U) {
@@ -1596,62 +1556,6 @@ void capture_contract_payloads(const std::filesystem::path& directory) {
                                       authorization).body);
 }
 
-void test_bounded_history_contract() {
-  ApiHarness harness;
-  const char* authorization = "Bearer test-secret";
-  for (std::uint64_t second = 1; second <= 605; ++second) {
-    const auto now = second * 1000U;
-    assert(harness.history.record(now,
-                                  harness.controller.snapshot(
-                                      static_cast<std::uint32_t>(now)),
-                                  harness.pump.command()));
-  }
-
-  auto response = harness.request(HttpMethod::kGet, "/api/v2/history",
-                                  authorization, "", 605000);
-  assert(response.status == 200);
-  assert(response.body.size() <= kMaximumSerializedHistoryPageBytes);
-  assert(response.body.find("\"continuity\":\"initial\"") !=
-         std::string::npos);
-  assert(response.body.find("\"oldestSequence\":6") != std::string::npos);
-  assert(response.body.find("\"sequence\":6") != std::string::npos);
-  assert(response.body.find("\"hasMore\":true") != std::string::npos);
-  assert(response.body.find("\"controllerConfiguration\":{") !=
-         std::string::npos);
-  assert(response.body.find("\"selectedController\":\"legacy_curve\"") !=
-         std::string::npos);
-  assert(response.body.find("\"controllerDiagnostics\":{") !=
-         std::string::npos);
-  assert(response.body.find("\"predictedTemperature5sC\"") ==
-         std::string::npos);
-
-  response = harness.request(
-      HttpMethod::kGet,
-      "/api/v2/history?bootId=00112233445566778899aabbccddeeff&afterSequence=1",
-      authorization, "", 605000);
-  assert(response.status == 200);
-  assert(response.body.find("\"continuity\":\"truncated\"") !=
-         std::string::npos);
-
-  response = harness.request(
-      HttpMethod::kGet,
-      "/api/v2/history?bootId=ffeeddccbbaa99887766554433221100&afterSequence=1",
-      authorization, "", 605000);
-  assert(response.status == 200);
-  assert(response.body.find("\"continuity\":\"reset\"") !=
-         std::string::npos);
-
-  expect_error(harness.request(HttpMethod::kGet,
-                               "/api/v2/history?afterSequence=1",
-                               authorization),
-               400, "malformed_request");
-  expect_error(harness.request(
-                   HttpMethod::kGet,
-                   "/api/v2/history?bootId=00112233445566778899aabbccddeeff&afterSequence=9999",
-                   authorization),
-               400, "malformed_request");
-}
-
 void test_api_v2_state_reads_are_observational() {
   const char* authorization = "Bearer test-secret";
   ApiHarness extraction;
@@ -1731,7 +1635,7 @@ void test_scale_api_and_weighted_start_contract() {
 
   response = harness.request(
       HttpMethod::kPost, "/api/v2/extractions/start", authorization,
-      "{\"idempotencyKey\":\"weighted-api-start-1\",\"selection\":{\"kind\":\"profile\",\"profileId\":\"profile-2\"},\"weightControl\":{\"targetWeightDecigrams\":350,\"compensationDecigrams\":20}}",
+      "{\"idempotencyKey\":\"weighted-api-start-1\",\"selection\":{\"kind\":\"profile\",\"profileId\":\"profile-2\",\"profile\":{\"name\":\"Pre5Soak5\",\"preInfusionSeconds\":5,\"soakSeconds\":5,\"mainExtractionSeconds\":25}},\"weightControl\":{\"targetWeightDecigrams\":350,\"compensationDecigrams\":20}}",
       1100);
   assert(response.status == 200);
   assert(harness.pump.command() == PumpCommand::kRunning);
@@ -1822,7 +1726,7 @@ void test_scale_api_and_weighted_start_contract() {
   expect_error(
       adoption_retry.request(
           HttpMethod::kPost, "/api/v2/extractions/start", authorization,
-          "{\"idempotencyKey\":\"pending-adoption-weighted\",\"selection\":{\"kind\":\"profile\",\"profileId\":\"profile-2\"},\"weightControl\":{\"targetWeightDecigrams\":350,\"compensationDecigrams\":20}}",
+          "{\"idempotencyKey\":\"pending-adoption-weighted\",\"selection\":{\"kind\":\"profile\",\"profileId\":\"profile-2\",\"profile\":{\"name\":\"Pre5Soak5\",\"preInfusionSeconds\":5,\"soakSeconds\":5,\"mainExtractionSeconds\":25}},\"weightControl\":{\"targetWeightDecigrams\":350,\"compensationDecigrams\":20}}",
           1310),
       409, "scale_not_calibrated");
   assert(adoption_retry.pump.command() == PumpCommand::kOff);
@@ -1854,22 +1758,10 @@ void test_scale_api_and_weighted_start_contract() {
          std::string::npos);
 }
 
-void test_history_capture_deadline_does_not_accumulate_jitter() {
-  ApiHarness harness;
-  HistoryBuffer history("00112233445566778899aabbccddeeff");
-  const auto snapshot = harness.controller.snapshot(1000U);
-
-  assert(history.record(1067U, snapshot, PumpCommand::kOff));
-  assert(!history.record(1999U, snapshot, PumpCommand::kOff));
-  assert(history.record(2000U, snapshot, PumpCommand::kOff));
-  assert(!history.record(2999U, snapshot, PumpCommand::kOff));
-  assert(history.record(3000U, snapshot, PumpCommand::kOff));
-}
-
 void test_weighted_trace_is_bounded_paginated_and_observational() {
   ApiHarness harness;
   const auto scale = harness.scale.snapshot(1100U);
-  const ExtractionSelection selection{ExtractionSelectionKind::kProfile, 0U};
+  const ExtractionSelection selection = classic_profile_selection();
   const WeightControl control{350, 60};
   assert(harness.extraction.start("weighted-trace-0001", selection, 1100U,
                                   &control, &scale) ==
@@ -1912,27 +1804,6 @@ void test_weighted_trace_is_bounded_paginated_and_observational() {
   expect_error(response, 400, "malformed_request");
 }
 
-void test_controller_diagnostics_history_page_stays_within_transport_budget() {
-  ApiHarness harness;
-  for (std::uint32_t now_ms = 1500U; now_ms <= 42000U; now_ms += 500U) {
-    const float temperature_c =
-        88.0F + static_cast<float>(now_ms - 1500U) / 20000.0F;
-    const auto snapshot = harness.controller.update(
-        ok(temperature_c), harness.pump.command(), now_ms);
-    harness.history.record(now_ms, snapshot, harness.pump.command());
-  }
-
-  const auto response = harness.request(
-      HttpMethod::kGet,
-      "/api/v2/history?bootId=00112233445566778899aabbccddeeff&afterSequence=31",
-      "Bearer test-secret", "", 42000U);
-  assert(response.status == 200);
-  assert(response.body.find("\"controllerDiagnostics\":{") !=
-         std::string::npos);
-  assert(response.body.find("\"piRequestedDuty\":") != std::string::npos);
-  assert(response.body.size() <= kMaximumSerializedHistoryPageBytes);
-}
-
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -1942,7 +1813,7 @@ int main(int argc, char** argv) {
   test_effective_temperature_serializes_once_across_v1_v2_and_modes();
   test_over_temperature_dismissal_endpoint_is_guarded();
   test_malformed_and_domain_failures_do_not_bypass_validation();
-  test_api_v2_profiles_and_extraction_contract();
+  test_api_v2_inline_profile_and_extraction_contract();
   test_api_v2_state_reads_are_observational();
   test_api_v2_rejects_malformed_nested_shapes_and_lock_failure();
   test_target_adoption_lock_failure_retains_the_heater_inhibit();
@@ -1952,11 +1823,8 @@ int main(int argc, char** argv) {
   test_temperature_calibration_api_start_guards_and_session_ownership();
   test_workflow_mode_coordination_is_authoritative();
   test_api_v2_cooldown_and_compensation_contract();
-  test_bounded_history_contract();
   test_scale_api_and_weighted_start_contract();
-  test_history_capture_deadline_does_not_accumulate_jitter();
   test_weighted_trace_is_bounded_paginated_and_observational();
-  test_controller_diagnostics_history_page_stays_within_transport_budget();
   if (argc == 2) {
     capture_contract_payloads(argv[1]);
   }

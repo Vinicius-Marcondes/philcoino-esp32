@@ -1,7 +1,4 @@
-import type {
-  MachineStateV2,
-  ProfileSet,
-} from "@philcoino/protocol";
+import type { MachineStateV2 } from "@philcoino/protocol";
 
 import {
   connectingState,
@@ -13,7 +10,6 @@ import {
 export const DASHBOARD_POLL_INTERVAL_MS = 1_000;
 
 export interface DashboardStateClient {
-  getProfiles(options?: { signal?: AbortSignal }): Promise<ProfileSet>;
   getStateV2(options?: { signal?: AbortSignal }): Promise<MachineStateV2>;
 }
 

@@ -124,7 +124,16 @@ function running(extractionId: string, elapsedMs = 5_000): ExtractionState {
     phase: "main-extraction",
     pumpCommand: "running",
     remainingMs: 20_000,
-    selection: { kind: "profile", profileId: "profile-1" },
+    selection: {
+      kind: "profile",
+      profileId: "profile-1",
+      profile: {
+        name: "Test",
+        preInfusionSeconds: 5,
+        soakSeconds: 5,
+        mainExtractionSeconds: 30,
+      },
+    },
     status: "running",
   };
 }

@@ -2,8 +2,6 @@ import type {
   CompensationState,
   CooldownState,
   HeaterSettingsRequest,
-  HistoryCursor,
-  HistoryPage,
   MachineState,
   ModeRequest,
   ScaleTraceResponse,
@@ -20,33 +18,9 @@ const bothUpdate: TemperatureSettingsRequest = {
 };
 const modeUpdate: ModeRequest = { mode: "steam" };
 const heaterUpdate: HeaterSettingsRequest = { heaterEnabled: false };
-const historyCursor: HistoryCursor = {
-  bootId: "00112233445566778899aabbccddeeff",
-  afterSequence: 2,
-};
-const historyPage: HistoryPage = {
-  deviceId: "machine-1",
-  bootId: historyCursor.bootId,
-  capturedAtUptimeMs: 2_500,
-  oldestSequence: 1,
-  latestSequence: 2,
-  nextCursor: historyCursor,
-  hasMore: false,
-  continuity: "continuous",
-  controllerConfiguration: {
-    firmwareVersion: "0.4.0",
-    selectedController: "legacy_curve",
-    piKp: 0.08,
-    piKi: 0.01,
-    filterAlpha: 0.25,
-    controllerIntervalMs: 500,
-    ssrWindowMs: 10_000,
-  },
-  samples: [],
-};
 const traceCursor: WeightedExtractionTraceCursor = {
   extractionId: "run-1",
-  bootId: historyCursor.bootId,
+  bootId: "00112233445566778899aabbccddeeff",
   afterSequence: 2,
 };
 const scaleTrace: ScaleTraceResponse = {
@@ -125,8 +99,6 @@ void [
   bothUpdate,
   modeUpdate,
   heaterUpdate,
-  historyCursor,
-  historyPage,
   traceCursor,
   scaleTrace,
   cooldownStart,

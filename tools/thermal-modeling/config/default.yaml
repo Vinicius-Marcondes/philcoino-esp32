@@ -59,7 +59,7 @@ aliases:
   heater_active: [heater_active, heater_actual, heater_state]
   heater_duty: [commanded_heater_duty_1s, heater_actual_duty, heater_command_duty, heater_command, baseline_heater_duty, pid_output]
   baseline_duty: [baseline_heater_duty, pid_output]
-  pump: [pump_active, pump_state]
+  pump: [pump_command, pump_active, pump_state]
   mode: [active_mode, controller_mode, machine_mode]
   status: [machine_status, status]
   fault: [fault_code, fault]

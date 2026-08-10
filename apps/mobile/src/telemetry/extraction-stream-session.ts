@@ -149,9 +149,14 @@ export class ExtractionStreamSession {
             page,
           );
           if (page.status === "terminal") {
-            await this.options.repository.append(
-              extractionSummaryFromPage(this.options.deviceId, page),
-            );
+            const summary = extractionSummaryFromPage(this.options.deviceId, page);
+            await this.options.repository.append({
+              ...summary,
+              recordStatus:
+                trace.completeness === "complete" ? "complete" : "incomplete",
+              traceCompleteness: trace.completeness,
+              traceSampleCount: trace.samples.length,
+            });
           }
           if (!this.isCurrent(generation)) return;
           this.cursor = page.nextCursor;

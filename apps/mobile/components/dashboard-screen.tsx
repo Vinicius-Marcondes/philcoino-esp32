@@ -104,7 +104,10 @@ import {
 import { navigationRailLeadingInset } from "@/src/layout/navigation-rail-inset";
 import { createDebugDeviceApiClient } from "@/src/networking/debug-device-api-client";
 import { createDeviceApiClient } from "@/src/networking/expo-device-api-client";
-import { profileSetsEqual } from "@/src/profiles/profile-set";
+import {
+  profileSelection,
+  profileSetsEqual,
+} from "@/src/profiles/profile-set";
 import type { SelectedDevice } from "@/src/storage/selected-device-repository";
 import { mobileProfileRepository } from "@/src/storage/secure-mobile-profile-repository";
 import {
@@ -153,9 +156,7 @@ export function DashboardScreen({
     ],
   );
   const {
-    cancelProfileImport,
     connection,
-    confirmProfileImport,
     compensation,
     cooldown,
     cooldownStartMutation,
@@ -166,20 +167,12 @@ export function DashboardScreen({
     extraction,
     extractionStartMutation,
     extractionStopMutation,
-    exportProfiles,
     freshness,
     heaterMutation,
-    importProfiles,
-    machineProfileError,
     modeMutation,
-    machineProfiles,
     mobileProfiles,
-    profileMutation,
     profileStorageError,
-    profileImportState,
     profileWritePending,
-    profilesSynchronized,
-    retryMachineProfiles,
     saveMobileProfiles,
     setHeaterEnabled,
     setMode,
@@ -229,7 +222,6 @@ export function DashboardScreen({
     freshness,
     historyRepository,
     historyExporter,
-    client,
   );
   const [dashboardPage, setDashboardPage] =
     useState<DashboardPage>("dashboard");
@@ -242,7 +234,8 @@ export function DashboardScreen({
     client,
     deviceId: selectedDevice.deviceId,
     extraction,
-    scalePageVisible: dashboardPage === "scale" || consoleOpen,
+    scalePageVisible:
+      dashboardPage === "scale" || dashboardPage === "shots" || consoleOpen,
     streamClient: "streamExtractionTelemetry" in client ? client : null,
   });
   const traceCutoffDecigrams =
@@ -260,6 +253,7 @@ export function DashboardScreen({
     machine: 0,
     profiles: 0,
     scale: 0,
+    shots: 0,
   });
   const pendingScrollRestore = useRef<{
     offset: number;
@@ -302,8 +296,6 @@ export function DashboardScreen({
   const extractionUiState: ExtractionPreviewState = useMemo(
     () => ({
       extraction: extraction ?? idlePreviewState.extraction,
-      machineProfiles:
-        machineProfiles ?? mobileProfiles ?? idlePreviewState.machineProfiles,
       mobileProfiles: mobileProfiles ?? idlePreviewState.mobileProfiles,
       notice: null,
       selected: selectedExtraction,
@@ -311,7 +303,6 @@ export function DashboardScreen({
     [
       extraction,
       idlePreviewState,
-      machineProfiles,
       mobileProfiles,
       selectedExtraction,
     ],
@@ -364,10 +355,6 @@ export function DashboardScreen({
     () => dismissMutation("cooldown-stop"),
     [dismissMutation],
   );
-  const dismissProfileMutation = useCallback(
-    () => dismissMutation("profiles"),
-    [dismissMutation],
-  );
   const dismissLocalProfileMutation = useCallback(
     () => setLocalProfileMutation(idleMutationState),
     [],
@@ -381,7 +368,6 @@ export function DashboardScreen({
     faultMutation.status === "pending" ||
     heaterMutation.status === "pending" ||
     modeMutation.status === "pending" ||
-    profileMutation.status === "pending" ||
     temperatureMutation.status === "pending";
 
   const applyExtractionUiState = useCallback(
@@ -412,11 +398,6 @@ export function DashboardScreen({
           });
         });
       }
-      if (!profileSetsEqual(next.machineProfiles, extractionUiState.machineProfiles)) {
-        localProfileSaveGeneration.current += 1;
-        setLocalProfileMutation(idleMutationState);
-        exportProfiles();
-      }
       if (
         extractionUiState.extraction.status === "idle" &&
         next.extraction.status === "running"
@@ -435,7 +416,6 @@ export function DashboardScreen({
       }
     },
     [
-      exportProfiles,
       extractionUiState,
       freshness,
       brewControlMode,
@@ -447,17 +427,18 @@ export function DashboardScreen({
   );
 
   const forgetMachine = useCallback(() => {
-    const clearingHistory = clearTemperatureHistory();
-    onForget();
-    void clearingHistory.catch(() => undefined);
-  }, [clearTemperatureHistory, onForget]);
+    void Promise.allSettled([
+      clearTemperatureHistory(),
+      scale.clearHistory(),
+    ]).finally(onForget);
+  }, [clearTemperatureHistory, onForget, scale]);
 
   const openDashboardPage = useCallback(
     (page: DashboardPage) => {
       if (page === "profiles") {
         setSelectedExtraction((current) =>
-          current.kind === "manual"
-            ? { kind: "profile", profileId: "profile-1" }
+          current.kind === "manual" && mobileProfiles !== null
+            ? profileSelection(mobileProfiles, "profile-1")
             : current,
         );
       }
@@ -474,7 +455,7 @@ export function DashboardScreen({
       );
       setDashboardPage(page);
     },
-    [dashboardPage],
+    [dashboardPage, mobileProfiles],
   );
   const navigationSwipeResponder = useMemo(
     () =>
@@ -520,12 +501,10 @@ export function DashboardScreen({
         cutoffDecigrams={traceCutoffDecigrams}
         deviceName={deviceName}
         extraction={extraction}
-        extractionHistory={scale.history}
         landscape={landscape}
         live={freshness === "live"}
         onBrewControlModeChange={setBrewControlMode}
         onClose={() => setConsoleOpen(false)}
-        onSelectHistoryTrace={scale.selectTrace}
         onStateChange={applyExtractionUiState}
         onWeightControlChange={setShotWeightControl}
         scale={scale.scale}
@@ -534,13 +513,6 @@ export function DashboardScreen({
         startPending={extractionStartMutation.status === "pending"}
         state={extractionUiState}
         stopPending={extractionStopMutation.status === "pending"}
-        temperatureHistory={{
-          error: temperatureHistory.error,
-          samples: temperatureHistory.samples,
-          status: temperatureHistory.status === "loading" ? "loading" : "ready",
-          syncStatus: temperatureHistory.syncStatus,
-          syncWarning: temperatureHistory.syncWarning,
-        }}
         trace={scale.trace}
         visible={consoleOpen}
         workflowBlock={
@@ -749,7 +721,7 @@ export function DashboardScreen({
                         />
                       </View>
                       <View style={styles.dashboardLandscapeControl}>
-                        {mobileProfiles !== null && machineProfiles !== null ? (
+                        {mobileProfiles !== null ? (
                           <View style={styles.extractionControlGroup}>
                             <ExtractionConsoleEntry
                               compact
@@ -792,8 +764,6 @@ export function DashboardScreen({
                           history={temperatureHistory.samples}
                           loading={temperatureHistory.status === "loading"}
                           scale={null}
-                          syncStatus={temperatureHistory.syncStatus}
-                          syncWarning={temperatureHistory.syncWarning}
                         />
                       </View>
                     </View>
@@ -848,10 +818,8 @@ export function DashboardScreen({
                           history={temperatureHistory.samples}
                           loading={temperatureHistory.status === "loading"}
                           scale={null}
-                          syncStatus={temperatureHistory.syncStatus}
-                          syncWarning={temperatureHistory.syncWarning}
                         />
-                        {mobileProfiles !== null && machineProfiles !== null ? (
+                        {mobileProfiles !== null ? (
                           <View style={styles.extractionControlGroup}>
                             <ExtractionConsoleEntry
                               compact={landscape}
@@ -901,8 +869,6 @@ export function DashboardScreen({
                 history={temperatureHistory.samples}
                 loading={temperatureHistory.status === "loading"}
                 scale={null}
-                syncStatus={temperatureHistory.syncStatus}
-                syncWarning={temperatureHistory.syncWarning}
               />
             ) : null}
           </>
@@ -913,48 +879,16 @@ export function DashboardScreen({
             {profileStorageError !== null && mobileProfiles === null ? (
               <ProfileLoadingCard error={profileStorageError} />
             ) : null}
-            {machineProfiles === null ? (
-              <ProfileLoadingCard
-                error={machineProfileError}
-                onRetry={
-                  machineProfileError === null
-                    ? undefined
-                    : retryMachineProfiles
-                }
-              />
-            ) : null}
-            {machineProfiles !== null && machineProfileError !== null ? (
-              <ProfileLoadingCard
-                error={machineProfileError}
-                onRetry={retryMachineProfiles}
-              />
-            ) : null}
             <MutationFeedback
-              onDismiss={
-                profileMutation.status === "idle"
-                  ? dismissLocalProfileMutation
-                  : dismissProfileMutation
-              }
-              state={
-                profileMutation.status === "idle"
-                  ? localProfileMutation
-                  : profileMutation
-              }
+              onDismiss={dismissLocalProfileMutation}
+              state={localProfileMutation}
             />
             {mobileProfiles !== null ? (
               <ExtractionPreview
                 compact={landscape}
                 debugPreview={debugDeviceMode}
-                onCancelProfileImport={cancelProfileImport}
-                onConfirmProfileImport={confirmProfileImport}
-                onImportProfiles={importProfiles}
                 onStateChange={applyExtractionUiState}
-                profileActionsDisabled={
-                  freshness !== "live" || profileMutation.status === "pending"
-                }
-                profileImportState={profileImportState}
                 profileWritePending={profileWritePending}
-                profilesSynchronized={profilesSynchronized}
                 state={extractionUiState}
                 view="profiles"
                 workflowBlock={cooldownActive ? "cooldown" : null}
@@ -1064,7 +998,23 @@ export function DashboardScreen({
                 <TemperatureHistoryExportCard
                   error={temperatureHistory.exportError}
                   exporting={temperatureHistory.exporting}
-                  hasHistory={temperatureHistory.samples.length > 0}
+                  onClear={() =>
+                    Alert.alert(
+                      translate("dashboard.historyClear"),
+                      translate("dashboard.historyClearConfirm"),
+                      [
+                        {
+                          text: translate("dashboard.historyClearCancel"),
+                          style: "cancel",
+                        },
+                        {
+                          text: translate("dashboard.historyClear"),
+                          style: "destructive",
+                          onPress: () => void clearTemperatureHistory(),
+                        },
+                      ],
+                    )
+                  }
                   onExport={() => void temperatureHistory.exportAll()}
                 />
 
@@ -1119,6 +1069,7 @@ export function DashboardScreen({
             scale={scale}
           />
         ) : null}
+        {dashboardPage === "shots" ? <ShotsPage scale={scale} /> : null}
         </ScrollView>
       </Animated.View>
       </KeyboardAvoidingView>
@@ -1191,6 +1142,12 @@ export function DashboardScreen({
               label={translate("dashboard.navigation.scale.tab")}
               onPress={() => openDashboardPage("scale")}
             />
+            <DashboardTab
+              active={dashboardPage === "shots"}
+              landscape={landscape}
+              label={translate("dashboard.navigation.shots.tab")}
+              onPress={() => openDashboardPage("shots")}
+            />
           </View>
         </View>
     </View>
@@ -1208,51 +1165,12 @@ function ScalePage({
 }) {
   const [reference, setReference] = useState("100.0");
   const [defaults, setDefaults] = useState(referenceDefaults);
-  const [selectedTrace, setSelectedTrace] = useState<
-    Awaited<ReturnType<typeof scale.selectTrace>>
-  >(null);
   useEffect(() => setDefaults(referenceDefaults), [referenceDefaults]);
   const state = scale.scale;
   const busy = scale.mutation !== null;
   return (
     <View style={styles.machineLayout}>
       <View style={styles.machineLayoutColumn}>
-        {selectedTrace !== null ? (
-          <View style={styles.contextCard}>
-            <View style={styles.shotDetailHeader}>
-              <View>
-                <Text selectable style={styles.cardLabel}>
-                  {translate("scale.traceTitle", {
-                    status: selectedTrace.completeness.toUpperCase(),
-                  })}
-                </Text>
-                <Text selectable style={styles.contextText}>
-                  {selectedTrace.extractionId}
-                </Text>
-              </View>
-              <View style={styles.scaleModeRow}>
-                <Pressable
-                  onPress={() => void scale.exportTrace(selectedTrace)}
-                  style={styles.exportButton}>
-                  <Text style={styles.exportButtonText}>
-                    {translate("scale.traceExport")}
-                  </Text>
-                </Pressable>
-                <Pressable
-                  onPress={() => setSelectedTrace(null)}
-                  style={styles.scaleModeButton}>
-                  <Text style={styles.scaleModeButtonText}>
-                    {translate("scale.traceClose")}
-                  </Text>
-                </Pressable>
-              </View>
-            </View>
-            <WeightedTraceChart
-              key={selectedTrace.extractionId}
-              trace={selectedTrace}
-            />
-          </View>
-        ) : null}
         <View style={styles.contextCard}>
           <Text selectable style={styles.cardLabel}>
             {translate("scale.diagnostics")}
@@ -1353,20 +1271,35 @@ function ScalePage({
         </View>
       </View>
 
+    </View>
+  );
+}
+
+function ShotsPage({ scale }: { scale: ReturnType<typeof useScale> }) {
+  const [selectedShot, setSelectedShot] = useState<
+    (typeof scale.history)[number] | null
+  >(null);
+  const [selectedTrace, setSelectedTrace] = useState<
+    Awaited<ReturnType<typeof scale.selectTrace>>
+  >(null);
+  const openShot = async (shot: (typeof scale.history)[number]) => {
+    setSelectedShot(shot);
+    setSelectedTrace(
+      await scale.selectTrace(shot.extractionId, shot.bootId),
+    );
+  };
+  return (
+    <View style={styles.machineLayout}>
       <View style={styles.machineLayoutColumn}>
         <View style={styles.contextCard}>
           <Text selectable style={styles.cardLabel}>
             {translate("scale.history")}
           </Text>
-          {scale.history.slice(0, 20).map((shot) => (
+          {scale.history.map((shot) => (
             <Pressable
               accessibilityRole="button"
-              key={`${shot.bootId ?? "legacy"}:${shot.extractionId}`}
-              onPress={() =>
-                void scale
-                  .selectTrace(shot.extractionId, shot.bootId)
-                  .then(setSelectedTrace)
-              }
+              key={`${shot.bootId ?? "pending"}:${shot.extractionId}`}
+              onPress={() => void openShot(shot)}
               style={({ pressed }) => [
                 styles.scaleHistoryRow,
                 pressed && styles.pressed,
@@ -1375,11 +1308,10 @@ function ScalePage({
                 {formatWeightReadout(shot.finalWeightDecigrams)} · {shotLabel(shot)}
               </Text>
               <Text selectable style={styles.contextText}>
-                {new Date(shot.recordedAtMs).toLocaleString()} · {shot.outcome}
+                {new Date(shot.recordedAtMs).toLocaleString()} · {shot.outcome ?? shot.recordStatus ?? "incomplete"}
               </Text>
               <Text selectable style={styles.traceAvailability}>
-                {shot.traceCompleteness === null ||
-                shot.traceCompleteness === undefined
+                {shot.traceCompleteness === null || shot.traceCompleteness === undefined
                   ? translate("scale.traceUnavailable")
                   : `${translate("scale.traceOpen")} · ${shot.traceCompleteness}`}
               </Text>
@@ -1422,16 +1354,61 @@ function ScalePage({
             </Pressable>
           </View>
           {scale.historyError !== null ? (
-            <Text selectable style={styles.historyError}>
-              {scale.historyError}
-            </Text>
-          ) : null}
-          {scale.traceSupported === false ? (
-            <Text selectable style={styles.contextText}>
-              {translate("scale.traceLegacy")}
-            </Text>
+            <Text selectable style={styles.historyError}>{scale.historyError}</Text>
           ) : null}
         </View>
+      </View>
+      <View style={styles.machineLayoutColumn}>
+        {selectedShot !== null ? (
+          <View style={styles.contextCard}>
+            <View style={styles.shotDetailHeader}>
+              <View>
+                <Text selectable style={styles.cardLabel}>
+                  {translate("scale.traceTitle", {
+                    status: (selectedTrace?.completeness ?? selectedShot.recordStatus ?? "incomplete").toUpperCase(),
+                  })}
+                </Text>
+                <Text selectable style={styles.contextTitle}>
+                  {shotLabel(selectedShot)} · {selectedShot.outcome ?? "incomplete"}
+                </Text>
+                <Text selectable style={styles.contextText}>
+                  {selectedShot.selection.kind === "profile"
+                    ? selectedShot.selection.profile.name
+                    : translate("scale.historyManual")}
+                </Text>
+                <Text selectable style={styles.contextText}>{selectedShot.extractionId}</Text>
+              </View>
+              <View style={styles.scaleModeRow}>
+                {selectedTrace !== null ? (
+                  <Pressable
+                    onPress={() => void scale.exportTrace(selectedTrace)}
+                    style={styles.exportButton}>
+                    <Text style={styles.exportButtonText}>{translate("scale.traceExport")}</Text>
+                  </Pressable>
+                ) : null}
+                <Pressable
+                  onPress={() => {
+                    setSelectedShot(null);
+                    setSelectedTrace(null);
+                  }}
+                  style={styles.scaleModeButton}>
+                  <Text style={styles.scaleModeButtonText}>{translate("scale.traceClose")}</Text>
+                </Pressable>
+              </View>
+            </View>
+            {selectedTrace === null ? (
+              <Text selectable style={styles.contextText}>
+                {translate("scale.traceUnavailable")}
+              </Text>
+            ) : (
+              <WeightedTraceChart key={selectedTrace.extractionId} trace={selectedTrace} />
+            )}
+          </View>
+        ) : (
+          <View style={styles.contextCard}>
+            <Text selectable style={styles.contextText}>{translate("scale.traceOpen")}</Text>
+          </View>
+        )}
       </View>
     </View>
   );
@@ -1479,7 +1456,7 @@ function ProfileLoadingCard({
             pressed && styles.pressed,
           ]}>
           <Text style={styles.profileRetryButtonText}>
-            {translate("extractionPreview.retryMachineProfiles")}
+            {translate("extractionPreview.retryProfiles")}
           </Text>
         </Pressable>
       ) : null}
@@ -1536,15 +1513,15 @@ function DashboardTab({
 function TemperatureHistoryExportCard({
   error,
   exporting,
-  hasHistory,
+  onClear,
   onExport,
 }: {
   error: "export" | "storage" | null;
   exporting: boolean;
-  hasHistory: boolean;
+  onClear: () => void;
   onExport: () => void;
 }) {
-  const disabled = exporting || !hasHistory;
+  const disabled = exporting;
 
   return (
     <View style={styles.historyExportCard}>
@@ -1571,6 +1548,19 @@ function TemperatureHistoryExportCard({
           {exporting
             ? translate("dashboard.historyExporting")
             : translate("dashboard.historyExport")}
+        </Text>
+      </Pressable>
+      <Pressable
+        accessibilityRole="button"
+        disabled={exporting}
+        onPress={onClear}
+        style={({ pressed }) => [
+          styles.scaleModeButton,
+          exporting && styles.disabled,
+          pressed && styles.pressed,
+        ]}>
+        <Text style={styles.scaleModeButtonText}>
+          {translate("dashboard.historyClear")}
         </Text>
       </Pressable>
       {error !== null ? (

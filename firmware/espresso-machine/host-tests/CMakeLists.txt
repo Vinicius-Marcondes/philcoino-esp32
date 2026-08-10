@@ -145,7 +145,6 @@ add_executable(
   ../components/networking/src/api_routes.cpp
     ../components/networking/src/api_workflow_codec.cpp
     ../components/networking/src/extraction_telemetry.cpp
-    ../components/networking/src/history.cpp
   ../components/networking/src/weighted_trace.cpp
   ../components/control/src/control.cpp
   ../components/control/src/brew_pi.cpp
@@ -172,7 +171,6 @@ set(
   ../components/networking/src/api_machine_codec.cpp
   ../components/networking/src/api_workflow_codec.cpp
   ../components/networking/src/extraction_telemetry.cpp
-  ../components/networking/src/history.cpp
   ../components/networking/src/weighted_trace.cpp
   ../components/control/src/control.cpp
   ../components/control/src/brew_pi.cpp

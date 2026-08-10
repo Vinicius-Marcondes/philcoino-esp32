@@ -17,6 +17,13 @@ describe("native shot history repository trace storage", () => {
     expect(source).not.toContain("RETENTION_MS");
   });
 
+  test("stores executed profiles and incomplete lifecycle status", () => {
+    expect(source).toContain("selection_profile_json");
+    expect(source).toContain("record_status");
+    expect(source).toContain("markUnfinishedIncomplete");
+    expect(source).toContain("JSON.stringify(record.selection.profile)");
+  });
+
   test("reads trace samples scoped to the stored boot", () => {
     expect(source).toContain(
       "WHERE device_id = ? AND extraction_id = ? AND boot_id = ?",

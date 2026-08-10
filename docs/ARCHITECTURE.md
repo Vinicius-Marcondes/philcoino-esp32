@@ -186,8 +186,8 @@ without disabling Start or REST Stop. The phone derives beverage mass flow from
 raw net weight with the existing causal one-second regression and resets across
 every identity, sequence, availability, or null-weight discontinuity.
 
-`DashboardMutationSession` serializes temperature, mode, heater, fault, complete
-profile export, extraction Start/Stop, and cooldown Start/Stop mutations. It:
+`DashboardMutationSession` serializes temperature, mode, heater, fault,
+extraction Start/Stop, and cooldown Start/Stop mutations. It:
 
 1. marks the selected mutation pending;
 2. pauses and cancels polling;
@@ -207,70 +207,36 @@ relies on the firmware's bounded inactivity lease. The UI never commands the
 pump or valve, never detects steam, and requires the user to operate the wand
 and explicitly confirm Save.
 
-The mobile four-slot profile set is stored independently from the selected
+The app-wide four-slot profile set is stored independently from the selected
 device record through a strict SecureStore-backed repository and seeded only on
-first use. A focused profile synchronization session loads local and machine
-sets independently, deduplicates and cancels remote reads, retries them on
-focus/reconnection or explicit request, and serializes every local write under
-monotonic revisions. Local edits and imports publish only after storage
-succeeds; an older completion cannot replace a newer requested set.
-
-Canonical ordered-set comparison drives synchronization status. Whole-set
-export remains an acknowledged ESP32 mutation. Import performs a fresh
-authenticated profile read, presents only changed slots for review, then
-replaces the complete app-wide local set after explicit confirmation without
-mutating firmware. Active extraction, stale connectivity, or conflicting
-profile work blocks import; cooldown does not block this phone-only write.
-Custom Start remains blocked until a current acknowledged machine set matches
-the local set. A Start retry after an unacknowledged transport outcome reuses
-its client-generated key. Cooldown uses the same rule; a definitive firmware
-rejection clears the key so the next user request is fresh, while an unknown
-transport outcome retains it for replay.
+first use. Local writes are serialized under monotonic revisions and publish
+only after storage succeeds. Firmware has no profile repository, default set,
+import/export, or synchronization state. Profile Start sends the exact selected
+profile snapshot inline; weighted Start adds the selected weight control.
+Firmware validates and latches both values in RAM before acknowledging Start.
+A same-key retry must match the complete profile and weight data, so editing a
+local slot cannot alter an acknowledged shot. An unacknowledged transport retry
+reuses its client-generated key; a definitive rejection clears it.
 
 Each validated foreground poll also appends a device-scoped temperature-history
 row to mobile SQLite. Rows include phone UTC capture time plus acknowledged
 firmware uptime, temperature, targets, mode, heater permission/command, pump
 command, status, and fault context. Polling uses only queryless
 `GET /api/v2/state`; there is no prediction capability probe or fallback.
-The temperature repository retains only the current local calendar day;
-background/offline periods and firmware uptime resets remain
-explicit graph gaps. The Dashboard presents consecutive thirty-second Live
+The repository retains every row until explicit clear or machine removal, but
+Dashboard loads only the current local calendar day. Background, locked,
+offline, and closed periods plus firmware uptime resets remain explicit graph
+gaps; the app neither polls in the background nor requests backfill. Dashboard
+presents consecutive thirty-second Live
 pages in the same telemetry surface used for weighted extraction traces. In
 temperature-history mode, the upper band renders only acknowledged boiler and
 target samples, the current scale state supplies the weight metric, and the
 lower band explicitly marks weight history and derived flow unavailable. An
 extraction trace populates that unchanged surface with nullable retained weight
 and app-derived beverage flow, so extraction state changes do not replace or
-restyle the graph. Machine can export every stored temperature row for the
-current day. This observational data never participates in firmware control
-and contains neither bearer tokens nor network addresses.
-
-Mobile compares each new row with the latest stored timestamp, firmware uptime,
-boot/sequence provenance, and explicit gap marker. Only a detected discontinuity
-starts a separate abortable history recovery session; uninterrupted foreground
-polling never requests retained history. Recovery reads up to eight samples per
-authenticated `GET /api/v2/history` page and yields between pages so live
-polling and control traffic can interleave with backfill. Its
-strict parser accepts no more than eight samples. The first
-request/response midpoint anchors the page's firmware uptime to phone UTC for
-the batch. SQLite commits
-each page and its cursor atomically, identifies device rows by
-`(deviceId, bootId, sequence)`, and replaces overlapping phone-origin rows.
-HTTP 404 means older firmware and silently retains foreground-only history;
-other failures are graph-scoped warnings. Backgrounding cancels recovery, and
-the first new foreground row re-triggers it when the stored discontinuity is
-still present. CSV export waits for an already-running recovery but does not
-force an otherwise unnecessary full synchronization.
-
-Firmware owns a RAM-only 600-sample history ring. One 40-byte fixed-size sample
-is attempted per second after the current acknowledged control snapshot
-and fail-off pump command are available. A delayed loop records only its actual
-current sample. The writer never waits: a history-specific atomic guard skips
-capture on contention, while a network reader copies at most eight samples
-plus the current controller configuration before releasing the guard and
-serializing JSON within the 8 KiB response budget. A random 128-bit boot ID and
-increasing sequence distinguish reboot, continuous, reset, and truncated
-history without persisting anything to NVS.
+restyle the graph. Machine exports all retained rows in database batches and
+offers confirmed clear-all. This observational data never participates in
+firmware control and contains neither bearer tokens nor network addresses.
 
 Extraction telemetry uses a separate RAM-only 320-sample ring. The workflow
 task attempts an observational capture every 250 ms for Manual, timed-profile,
@@ -283,48 +249,51 @@ weight and never blocks ordinary Start. A network task copies at most sixteen
 samples under the ring guard, then serializes and sends SSE outside the workflow
 mutex.
 
-Mobile extraction history keys summaries and traces by device, firmware boot,
-and extraction identity, so the firmware's reboot-reset extraction counter
-cannot overwrite an older retained shot. The SQLite migration copies existing
-weighted rows and trace boot IDs transactionally, keeps the legacy tables as
-migration sources, and performs no age-based pruning.
+Mobile creates a shot row as soon as polling observes an acknowledged or
+reconciled extraction identity. It stores the executed profile snapshot,
+control mode, optional weight settings, timestamps, terminal measurements, and
+trace completeness. The stream is re-armed for running and retained terminal
+states after foregrounding or restart. If terminal replay is unavailable or
+overwritten, the row remains explicitly incomplete. Summaries and traces are
+keyed by device, firmware boot, and extraction identity, so a reboot-reset
+counter cannot overwrite an older shot. No age-based pruning occurs. The fifth
+`Shots` tab is the sole list/detail/export/clear surface; Scale retains only
+diagnostics, calibration, and per-profile weight defaults.
 
 Live graph pages use stable clock-aligned thirty-second windows. The newest
 page follows incoming samples only while the user remains at the latest offset;
 an older inspected window keeps its timestamp identity when live or recovered
 samples are inserted. Each visible page uses five adaptive Y-axis ticks derived
 from its boiler and target values, with padding and a minimum display range.
-Raw current-day CSV export remains available from Machine. Recovered device
-rows append controller/build/gain/filter/window, PI/legacy request,
-contribution, saturation, command, phase, and operating-mode columns.
-Foreground-only rows leave those nullable fields empty. SQLite schema v5
-rebuilds prior local history transactionally, preserving ordinary rows and
-provenance while discarding prediction JSON. Boot changes, uptime/timestamp
-discontinuities, sequence skips, and truncated starts split graph segments
-rather than drawing or interpolating unavailable intervals.
+All-row batched CSV export remains available from Machine. SQLite migration
+preserves locally useful acknowledged state while removing backfill cursors,
+provenance, recovery state, and firmware-history-only diagnostics. Uptime and
+timestamp discontinuities split graph segments rather than drawing or
+interpolating unavailable intervals.
 
 ## Simulator runtime
 
 `createSimulator` wires a `SimulatorMachine` to Hono. Bearer middleware protects
-the five API v1 mutations/state operations and all API v2 state, profile,
-extraction, and cooldown operations. Parsing uses protocol schemas and emits
+the five API v1 mutations/state operations and all API v2 state, extraction,
+and cooldown operations. Parsing uses protocol schemas and emits
 version-appropriate strict errors.
 
-The deterministic model also captures the same one-Hertz rolling history and
-the independent 250 ms extraction telemetry ring, including all three control
+The deterministic model captures the 250 ms extraction telemetry ring,
+including all three control
 modes, best-effort baselines, a ten-second settling tail, cursor replay/reset,
 and strict SSE framing. Simulator time remains manually advanced; advancing it
 publishes deterministic stream events without real-time sleeps.
 
-The model holds persisted targets, the four-slot profile set, and the signed
-temperature calibration separately from volatile mode, raw temperature,
+The model holds persisted targets and signed temperature calibration separately
+from volatile mode, raw temperature,
 heater permission, faults, workflows/idempotency, readiness, timeouts, and
 uptime. Time never advances in the background.
 `POST /_simulator/advance` steps temperature, extraction, and cooldown state in
 bounded increments, which makes phases, threshold completion, the 45-second
 cutoff, five-second stabilization, readiness, and timeout boundaries
-deterministic. Power-cycle preserves targets, profiles, and calibration while
-reset restores their defaults and clears calibration.
+deterministic. Inline profiles are RAM-only shot inputs; power-cycle preserves
+targets and calibration while reset restores their defaults and clears
+calibration.
 
 The simulator stores one raw boiler temperature and derives
 `boilerTemperatureC = rawTemperatureC + temperatureOffsetC` exactly once for
@@ -379,14 +348,14 @@ The temperature owner retains a fixed 500 ms FreeRTOS wake deadline using the
 ESP-IDF 6 `xTaskDelayUntil` API. Deadline-relative lateness is recorded in the
 bounded default-off diagnostics without hot-path logging. If work overruns more
 than one period, elapsed deadline slots are skipped on the same fixed grid so
-the MAX6675 is not immediately reread during scheduler catch-up. Task priority,
-history cadence, and the independent 1,500 ms heater lease remain unchanged.
+the MAX6675 is not immediately reread during scheduler catch-up. Task priority
+and the independent 1,500 ms heater lease remain unchanged.
 PRD-016 replaces passive prediction with a bounded Brew PI candidate while
 retaining the same owner and schedule.
 
 Temperature, extraction, and cooldown share one non-recursive 50 ms workflow
 mutex; the legacy API domain labels intentionally alias that boundary, so there
-is no cross-domain lock order. Sensor reads, target/profile NVS, Wi-Fi reads,
+is no cross-domain lock order. Sensor reads, target NVS, Wi-Fi reads,
 JSON serialization, and HTTP response transmission stay
 outside it. A missed acquisition immediately attempts both command outputs off
 and posts an atomic fail-safe request; the next owner latches an internal fault,
@@ -402,7 +371,11 @@ receives `409 stream_unavailable`, and a slow or failed client is disconnected
 instead of growing an unbounded queue. Two seconds without a sample emits an
 SSE comment heartbeat.
 
-Targets and the ordered four-slot extraction profile set load from separate one-key NVS blobs. Missing data initializes validated defaults; corrupt/invalid data stops startup. A profile replacement is validated as a complete set before its single blob commit, so firmware never deliberately publishes a partially replaced set. The first sensor sample happens before networking starts. Wi-Fi/API startup runs in a separate FreeRTOS task so a network failure does not intentionally stop temperature control.
+Targets, calibration, and Steam settings retain their existing independent NVS
+ownership. Firmware never reads, writes, defaults, or cleans up legacy profile
+NVS data; it is unreachable. The first sensor sample happens before networking
+starts. Wi-Fi/API startup runs in a separate FreeRTOS task so a network failure
+does not intentionally stop temperature control.
 
 HX711 reads run in a separate low-priority sampling task and publish through the
 same bounded workflow synchronization boundary. After one immediate read, a
@@ -432,8 +405,7 @@ the previous offset and targets.
 The API and control loops share controller snapshots behind the bounded workflow
 domain. Target updates first validate and command heater off under the boundary,
 perform synchronous NVS outside it, then reacquire it to acknowledge the
-persisted targets. Profile persistence likewise occurs outside the real-time
-boundary. Remaining timing, watchdog, target-runtime, and physical-output risks
+persisted targets. Remaining timing, watchdog, target-runtime, and physical-output risks
 stay tracked as unresolved findings.
 
 ### Sensor and control state
@@ -539,7 +511,6 @@ The ESP-IDF adapter owns the 512-byte authorization-header limit, 1,024-byte req
 | Active Steam heat-soak origin | Firmware RAM | Reflected while powered | No |
 | Mobile extraction profiles | Mobile SecureStore | Yes | Not applicable |
 | Keep-screen-awake preference | Mobile local key-value storage | Yes | App-level; independent of the selected machine |
-| Firmware extraction profiles | Firmware NVS | Not applicable | Yes |
 | Scale calibration | Firmware NVS | Not applicable | Yes |
 | Per-profile weight defaults | Mobile SecureStore | Yes | Not applicable |
 | Extraction summaries/traces (Manual, timed, weighted; until explicit clear) | Mobile SQLite | Yes | Not applicable |
@@ -550,7 +521,7 @@ The ESP-IDF adapter owns the 512-byte authorization-header limit, 1,024-byte req
 | Active mode | Firmware RAM | Yes while powered | No; boots brew |
 | Heater permission | Firmware RAM | Yes while powered | No; boots enabled |
 | Fault latch | Firmware RAM | Yes while powered | No; over-temperature may also be dismissed after cooldown |
-| Current-day Dashboard temperature samples | Mobile SQLite | Yes, until local-day pruning or the machine is forgotten | Not applicable |
+| Foreground Dashboard status samples | Mobile SQLite | Yes, until explicit clear or machine removal; only today is graphed | Not applicable |
 | Dashboard mutation feedback | Mobile component state | No | Not applicable |
 | Simulator targets | Simulator process model | During simulated power-cycle | Reset endpoint restores defaults |
 

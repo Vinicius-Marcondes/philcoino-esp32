@@ -1605,17 +1605,9 @@ void ScaleController::refresh_cached_derived_state() {
   }
 }
 
-ExtractionController::ExtractionController(
-    peripherals::ExtractionProfiles profiles, peripherals::FailOffPump& pump)
-    : profiles_(std::move(profiles)), pump_(pump) {
-  if (!peripherals::extraction_profiles_are_valid(profiles_)) {
-    profiles_ = peripherals::default_extraction_profiles();
-  }
+ExtractionController::ExtractionController(peripherals::FailOffPump& pump)
+    : pump_(pump) {
   pump_.force_off();
-}
-
-const peripherals::ExtractionProfiles& ExtractionController::profiles() const {
-  return profiles_;
 }
 
 bool ExtractionController::active() const { return active_; }
@@ -1703,22 +1695,15 @@ WeightExtractionSnapshot ExtractionController::weight_snapshot(
   return value;
 }
 
-bool ExtractionController::adopt_persisted_profiles(
-    const peripherals::ExtractionProfiles& profiles) {
-  if (active_ || !peripherals::extraction_profiles_are_valid(profiles)) {
-    return false;
-  }
-  profiles_ = profiles;
-  return true;
-}
-
 StartExtractionResult ExtractionController::start(
     const std::string& idempotency_key, ExtractionSelection selection,
     std::uint32_t now_ms, const WeightControl* weight_control,
     const ScaleSnapshot* scale) {
   if (!valid_idempotency_key(idempotency_key) ||
       (selection.kind == ExtractionSelectionKind::kProfile &&
-       selection.profile_index >= profiles_.size()) ||
+       (selection.profile_index >= peripherals::kProfileSlotCount ||
+        !peripherals::extraction_profile_is_valid(selection.profile) ||
+        !selection.profile.configured)) ||
       (weight_control != nullptr &&
        (selection.kind != ExtractionSelectionKind::kProfile ||
         !weight_control_is_valid(*weight_control)))) {
@@ -1737,10 +1722,7 @@ StartExtractionResult ExtractionController::start(
 
   peripherals::ExtractionProfile selected_profile{};
   if (selection.kind == ExtractionSelectionKind::kProfile) {
-    selected_profile = profiles_[selection.profile_index];
-    if (!selected_profile.configured) {
-      return StartExtractionResult::kProfileNotConfigured;
-    }
+    selected_profile = selection.profile;
   }
   if (weight_control != nullptr) {
     if (scale_warning_active_) {
@@ -1986,9 +1968,16 @@ void ExtractionController::acknowledge_scale_warning() {
 
 bool ExtractionController::selections_equal(
     const ExtractionSelection& left, const ExtractionSelection& right) {
-  return left.kind == right.kind &&
-         (left.kind == ExtractionSelectionKind::kManual ||
-          left.profile_index == right.profile_index);
+  if (left.kind != right.kind) return false;
+  if (left.kind == ExtractionSelectionKind::kManual) return true;
+  return left.profile_index == right.profile_index &&
+         left.profile.configured == right.profile.configured &&
+         left.profile.name == right.profile.name &&
+         left.profile.pre_infusion_seconds ==
+             right.profile.pre_infusion_seconds &&
+         left.profile.soak_seconds == right.profile.soak_seconds &&
+         left.profile.main_extraction_seconds ==
+             right.profile.main_extraction_seconds;
 }
 
 bool ExtractionController::weight_controls_equal(

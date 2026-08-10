@@ -15,12 +15,13 @@ describe("extraction console screen", () => {
     expect(screen).toContain("visible={visible}");
   });
 
-  test("plots the shot with the console chart and falls back to temperature", () => {
+  test("plots only the live shot and shows a simple ready state while idle", () => {
     expect(screen).toContain("<WeightedTraceChart");
     expect(screen).toContain('variant="console"');
     expect(screen).toContain("key={displayedTrace.extractionId}");
-    expect(screen).toContain("<TemperatureHistoryChart");
-    expect(screen).toContain("bands={2}");
+    expect(screen).not.toContain("<TemperatureHistoryChart");
+    expect(screen).toContain('translate("extractionConsole.readyTitle")');
+    expect(screen).toContain('translate("extractionConsole.readyDetail")');
   });
 
   test("derives every readout through the tested console model", () => {
@@ -56,10 +57,25 @@ describe("dashboard console wiring", () => {
   test("owns the console visibility and polls the scale while it is open", () => {
     expect(dashboard).toContain("<ExtractionConsoleScreen");
     expect(dashboard).toContain("const [consoleOpen, setConsoleOpen] = useState(false)");
-    expect(dashboard).toContain(
-      'scalePageVisible: dashboardPage === "scale" || consoleOpen,',
-    );
+    expect(dashboard).toContain('dashboardPage === "scale" || dashboardPage === "shots" || consoleOpen');
     expect(dashboard).toContain("state={extractionUiState}");
     expect(dashboard).toContain("onStateChange={applyExtractionUiState}");
+  });
+
+  test("keeps every history action in Shots and confirmed status clearing in Machine", () => {
+    const scalePage = dashboard.slice(
+      dashboard.indexOf("function ScalePage"),
+      dashboard.indexOf("function ShotsPage"),
+    );
+    const shotsPage = dashboard.slice(
+      dashboard.indexOf("function ShotsPage"),
+      dashboard.indexOf("function shotLabel"),
+    );
+    expect(scalePage).not.toContain("scale.history.map");
+    expect(shotsPage).toContain("scale.history.map");
+    expect(shotsPage).toContain("scale.exportHistory()");
+    expect(shotsPage).toContain("scale.clearHistory()");
+    expect(dashboard).toContain('translate("dashboard.historyClearConfirm")');
+    expect(dashboard).toContain("clearTemperatureHistory()");
   });
 });

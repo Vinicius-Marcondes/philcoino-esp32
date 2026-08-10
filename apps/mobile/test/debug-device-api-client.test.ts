@@ -104,19 +104,21 @@ describe("debug device mode", () => {
     expect((error as ApiClientError).kind).toBe("cancelled");
   });
 
-  test("falls back cleanly when retained history is unavailable", async () => {
-    const error = await captureError(createDebugDeviceApiClient().getHistory());
-    expect(error).toMatchObject({ kind: "not-found", status: 404 });
-  });
-
-  test("provides deterministic API v2 profile and acknowledged extraction data", async () => {
+  test("provides deterministic inline-profile extraction data", async () => {
     const client = createDebugDeviceApiClient();
-    const profiles = await client.getProfiles();
-    expect(profiles.profiles[0].profile?.name).toBe("Classic30");
 
     const request = {
       idempotencyKey: "debug-start-key-01",
-      selection: { kind: "profile" as const, profileId: "profile-2" as const },
+      selection: {
+        kind: "profile" as const,
+        profileId: "profile-2" as const,
+        profile: {
+          name: "DebugP2",
+          preInfusionSeconds: 5,
+          soakSeconds: 5,
+          mainExtractionSeconds: 30,
+        },
+      },
     };
     const started = await client.startExtraction(request);
     expect(started).toMatchObject({

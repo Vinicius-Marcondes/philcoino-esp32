@@ -23,7 +23,6 @@ struct Classification {
   bool heater{false};
   bool temperature_calibration_candidate{false};
   bool temperature_calibration_session{false};
-  bool profiles{false};
   bool extraction_start{false};
   bool cooldown_start{false};
 };
@@ -71,12 +70,6 @@ Classification classify(const std::string& body) {
   if (!result.temperature_calibration_session) {
     assert(calibration_id == "unchanged");
   }
-  ExtractionProfiles profiles = default_extraction_profiles();
-  const std::string original_profiles = serialize_profiles(profiles);
-  result.profiles = parse_profiles(body, profiles);
-  if (!result.profiles) {
-    assert(serialize_profiles(profiles) == original_profiles);
-  }
   std::string key = "unchanged";
   ExtractionSelection selection{ExtractionSelectionKind::kProfile, 2U};
   result.extraction_start = parse_start(body, key, selection);
@@ -96,7 +89,7 @@ Classification classify(const std::string& body) {
 bool same(const Classification& left, const Classification& right) {
   return left.json == right.json &&
          left.temperatures == right.temperatures && left.mode == right.mode &&
-         left.heater == right.heater && left.profiles == right.profiles &&
+         left.heater == right.heater &&
          left.temperature_calibration_candidate ==
              right.temperature_calibration_candidate &&
          left.temperature_calibration_session ==
@@ -111,7 +104,7 @@ void exercise(const std::string& body) {
   if (body.size() > json::kMaximumInputBytes) {
     assert(!first.json && !first.temperatures && !first.mode &&
            !first.heater && !first.temperature_calibration_candidate &&
-           !first.temperature_calibration_session && !first.profiles &&
+           !first.temperature_calibration_session &&
            !first.extraction_start &&
            !first.cooldown_start);
   }
