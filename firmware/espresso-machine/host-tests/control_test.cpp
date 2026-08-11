@@ -375,7 +375,6 @@ void test_global_offset_is_applied_once_for_control_readiness_and_snapshot() {
   auto snapshot = harness.controller.update(reading(88.0F), 0);
   assert(snapshot.mode == ControlMode::kBrew);
   assert(snapshot.boiler_temperature.temperature_c == 93.0F);
-  assert(snapshot.controller.temperature_raw_c == 88.0F);
   assert(!snapshot.heater_enabled);
 
   assert(harness.controller.set_mode(ControlMode::kSteam, 0));
@@ -413,7 +412,6 @@ void test_calibration_sign_examples_map_raw_boiling_to_100() {
     ControllerHarness harness({93, 115}, example.second);
     auto snapshot = harness.controller.update(reading(example.first), 0);
     assert(snapshot.boiler_temperature.temperature_c == 100.0F);
-    assert(snapshot.controller.temperature_raw_c == example.first);
     assert(harness.controller.set_mode(ControlMode::kSteam, 500));
     snapshot = harness.controller.snapshot(500);
     assert(snapshot.boiler_temperature.temperature_c == 100.0F);
@@ -1162,7 +1160,6 @@ void test_effective_and_raw_steam_limits_fail_off_independently() {
   assert(!snapshot.heater_enabled);
   snapshot = effective.controller.update(reading(130.25F), 500);
   assert(snapshot.boiler_temperature.temperature_c == 135.25F);
-  assert(snapshot.controller.temperature_raw_c == 130.25F);
   assert(snapshot.status == ControlStatus::kFault);
   assert(snapshot.fault.code == FaultCode::kOverTemperature);
   assert(!snapshot.heater_enabled);
@@ -1175,7 +1172,6 @@ void test_effective_and_raw_steam_limits_fail_off_independently() {
   assert(!snapshot.heater_enabled);
   snapshot = raw.controller.update(reading(135.25F), 500);
   assert(snapshot.boiler_temperature.temperature_c == 127.25F);
-  assert(snapshot.controller.temperature_raw_c == 135.25F);
   assert(snapshot.status == ControlStatus::kFault);
   assert(snapshot.fault.code == FaultCode::kOverTemperature);
   assert(!snapshot.heater_enabled);

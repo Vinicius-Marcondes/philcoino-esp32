@@ -6,26 +6,34 @@
 #include <string>
 
 #include "philcoino/api.hpp"
-#include "philcoino/performance_diagnostics.hpp"
+#include "philcoino/esp_security.hpp"
 
 namespace philcoino::networking {
 
 class ExtractionTelemetryBuffer;
 
-enum class WifiStatus { kOff, kConnecting, kConnected, kRetrying, kFailed };
+enum class WifiStatus {
+  kOff,
+  kConnecting,
+  kAssociated,
+  kConnected,
+  kRetrying,
+  kFailed,
+};
 
 class EspNetworkServer {
  public:
-  EspNetworkServer(
-      FirmwareApi& api, const DeviceIdentity& identity,
-      diagnostics::PerformanceDiagnostics* performance_diagnostics = nullptr,
-      ExtractionTelemetryBuffer* extraction_telemetry = nullptr);
+  EspNetworkServer(FirmwareApi& api, const DeviceIdentity& identity,
+                   EspTlsIdentity& tls_identity,
+                   ExtractionTelemetryBuffer* extraction_telemetry = nullptr);
 
   bool start(const char* ssid, const char* password);
   WifiStatus wifi_status() const;
 
  private:
   bool start_wifi(const char* ssid, const char* password);
+  void schedule_wifi_reconnect();
+  static void wifi_reconnect_task(void* context);
   bool start_mdns();
   void start_mdns_retry();
   static void mdns_retry_task(void* context);
@@ -40,13 +48,15 @@ class EspNetworkServer {
 
   FirmwareApi& api_;
   DeviceIdentity identity_;
-  diagnostics::PerformanceDiagnostics* performance_diagnostics_;
+  EspTlsIdentity& tls_identity_;
   ExtractionTelemetryBuffer* extraction_telemetry_;
   void* event_group_{nullptr};
   void* http_server_{nullptr};
   void* wifi_event_handler_{nullptr};
   void* ip_event_handler_{nullptr};
   std::atomic<WifiStatus> wifi_status_{WifiStatus::kOff};
+  std::atomic<bool> wifi_started_{false};
+  std::atomic<bool> wifi_reconnect_running_{false};
   std::atomic<bool> mdns_started_{false};
   std::atomic<bool> mdns_starting_{false};
   std::atomic<bool> mdns_retry_running_{false};

@@ -363,24 +363,6 @@ std::string serialize_compensation(
          "\"}";
 }
 
-HttpResponse cooldown_conflict(const control::CooldownSnapshot& cooldown,
-                               const char* message) {
-  return json_response(
-      409,
-      std::string("{\"error\":{\"code\":\"cooldown_active\",\"message\":\"") +
-          message + "\"},\"activeCooldown\":" + serialize_cooldown(cooldown) +
-          '}');
-}
-
-HttpResponse extraction_conflict(
-    const control::ExtractionSnapshot& extraction, const char* message) {
-  return json_response(
-      409,
-      std::string("{\"error\":{\"code\":\"extraction_active\",\"message\":\"") +
-          message + "\"},\"activeExtraction\":" +
-          serialize_extraction(extraction) + '}');
-}
-
 std::string serialize_scale(
     const control::ScaleSnapshot& scale,
     const control::WeightExtractionSnapshot& weight) {

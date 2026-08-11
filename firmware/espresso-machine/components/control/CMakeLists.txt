@@ -1,5 +1,5 @@
 idf_component_register(
-  SRCS "src/control.cpp" "src/brew_pi.cpp"
+  SRCS "src/control.cpp"
   INCLUDE_DIRS "include"
   REQUIRES firmware_config peripherals
 )

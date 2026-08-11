@@ -22,9 +22,6 @@ std::string serialize_state(const control::ControlSnapshot& snapshot,
                             std::uint64_t uptime_ms);
 std::string serialize_steam_control(
     const control::SteamControlSnapshot& snapshot);
-std::string serialize_targets(peripherals::TemperatureTargets targets);
-std::string serialize_mode(control::ControlMode mode);
-std::string serialize_heater_enabled(bool enabled);
 bool parse_temperatures(const std::string& body,
                         peripherals::TemperatureTargets current,
                         peripherals::TemperatureTargets& updated,
@@ -35,6 +32,15 @@ bool parse_steam_control_settings(
     const std::string& body,
     peripherals::SteamControlSettings current,
     peripherals::SteamControlSettings& updated,
+    bool& constraint_violation);
+bool parse_settings(
+    const std::string& body,
+    peripherals::TemperatureTargets current_targets,
+    peripherals::SteamControlSettings current_steam,
+    peripherals::TemperatureTargets& updated_targets,
+    peripherals::SteamControlSettings& updated_steam,
+    bool& has_temperature_settings,
+    bool& has_steam_settings,
     bool& constraint_violation);
 bool parse_temperature_calibration_query(const std::string& query,
                                          bool& calibration_id_supplied,
@@ -65,10 +71,5 @@ std::string serialize_compensation(
     const control::ExtractionSnapshot& extraction);
 std::string serialize_scale(const control::ScaleSnapshot& scale,
                             const control::WeightExtractionSnapshot& weight);
-
-HttpResponse cooldown_conflict(const control::CooldownSnapshot& cooldown,
-                               const char* message);
-HttpResponse extraction_conflict(
-    const control::ExtractionSnapshot& extraction, const char* message);
 
 }  // namespace philcoino::networking::codec

@@ -14,7 +14,7 @@ describe("weighted extraction trace chart", () => {
   });
 
   test("takes its geometry and height from the shared telemetry modules", () => {
-    expect(source).toContain("weightedTracePlot({");
+    expect(source).toContain("extractionTelemetryPlot({");
     expect(source).toContain("telemetryChartHeight(variant, compact)");
     expect(source).not.toContain("function baseGeometry(");
     expect(source).not.toContain("function weightedTraceGeometry(");

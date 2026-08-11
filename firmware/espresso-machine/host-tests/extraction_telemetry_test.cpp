@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cassert>
 #include <cstdint>
 #include <string>
@@ -38,25 +39,6 @@ ExtractionSnapshot running(const char* id, ExtractionSelection selection,
           ExtractionOutcome::kNone};
 }
 
-struct ContentionContext {
-  ExtractionTelemetryBuffer* buffer;
-  ControlSnapshot machine;
-  ExtractionSnapshot extraction;
-  ScaleSnapshot scale;
-  WeightExtractionSnapshot weight;
-  bool attempted{false};
-};
-
-void attempt_capture_while_locked(void* opaque) {
-  auto* context = static_cast<ContentionContext*>(opaque);
-  if (context->attempted) return;
-  context->attempted = true;
-  context->extraction.elapsed_ms = 250U;
-  assert(!context->buffer->record(250U, context->machine,
-                                  context->extraction, context->scale,
-                                  context->weight));
-}
-
 void test_all_modes_and_cursor_replay() {
   ExtractionTelemetryBuffer buffer{"00112233445566778899aabbccddeeff"};
   WeightExtractionSnapshot no_weight{};
@@ -67,6 +49,7 @@ void test_all_modes_and_cursor_replay() {
 
   ExtractionTelemetryPage page{};
   assert(buffer.page({}, 1250U, page));
+  assert(page.continuity == ExtractionTelemetryContinuity::kInitial);
   assert(page.sample_count == 2U);
   assert(page.selection.kind == ExtractionSelectionKind::kManual);
   assert(page.baseline_available);
@@ -84,6 +67,12 @@ void test_all_modes_and_cursor_replay() {
   assert(page.continuity == ExtractionTelemetryContinuity::kContinuous);
   assert(page.sample_count == 1U);
   assert(buffer.cursor_available(cursor));
+  auto reset_cursor = cursor;
+  reset_cursor.boot_id = {};
+  const std::string other_boot = "ffeeddccbbaa99887766554433221100";
+  std::copy(other_boot.begin(), other_boot.end(), reset_cursor.boot_id.begin());
+  assert(buffer.page(reset_cursor, 1250U, page));
+  assert(page.continuity == ExtractionTelemetryContinuity::kReset);
   cursor.after_sequence = 3U;
   assert(!buffer.cursor_available(cursor));
   assert(!parse_extraction_telemetry_cursor("extractionId=run-1", cursor));
@@ -136,37 +125,58 @@ void test_full_settling_tail_and_fixed_retention() {
   assert(page.latest_sequence == 330U);
   assert(page.sample_count == kExtractionTelemetryPageSize);
   assert(page.has_more);
+  ExtractionTelemetryCursor overwritten{};
+  overwritten.supplied = true;
+  overwritten.boot_id = page.boot_id;
+  overwritten.extraction_id = page.extraction_id;
+  overwritten.after_sequence = 1U;
+  assert(retained.page(overwritten, extraction.elapsed_ms, page));
+  assert(page.continuity == ExtractionTelemetryContinuity::kTruncated);
+  assert(page.samples[0].sequence == 11U);
   const auto json = serialize_extraction_telemetry_page("device-1", page);
   assert(!json.empty());
   assert(json.size() <= kExtractionTelemetrySerializedPageLimit);
 }
 
-void test_zero_wait_contention_and_wrap_safe_uptime() {
+void test_unavailable_acquisition_stays_null() {
   ExtractionTelemetryBuffer buffer{"00112233445566778899aabbccddeeff"};
-  ContentionContext contention{
-      &buffer,
-      machine(),
-      running("run-gap", {ExtractionSelectionKind::kManual, 0U}, 0U),
-      scale(),
-      {},
-  };
-  buffer.set_notification(attempt_capture_while_locked, &contention);
-  assert(buffer.record(0U, contention.machine, contention.extraction,
-                       contention.scale, contention.weight));
-  buffer.set_notification(nullptr, nullptr);
-  contention.extraction.elapsed_ms = 500U;
-  assert(buffer.record(500U, contention.machine, contention.extraction,
-                       contention.scale, contention.weight));
+  auto unavailable_machine = machine();
+  unavailable_machine.boiler_temperature = {
+      ThermocoupleStatus::kOpenCircuit, 0.0F};
+  auto unavailable_scale = scale();
+  unavailable_scale.gross_weight_available = false;
+  unavailable_scale.availability = ScaleAvailability::kUnavailable;
+  const auto extraction =
+      running("run-null", {ExtractionSelectionKind::kManual, 0U}, 0U);
+  WeightExtractionSnapshot weight{};
+  assert(buffer.record(0U, unavailable_machine, extraction,
+                       unavailable_scale, weight));
+  ExtractionTelemetryPage page{};
+  assert(buffer.page({}, 0U, page));
+  const auto json = serialize_extraction_telemetry_page("device-1", page);
+  assert(json.find("\"boilerTemperatureC\":null") != std::string::npos);
+  assert(json.find("\"netWeightDecigrams\":null") != std::string::npos);
+}
+
+void test_committed_sequence_and_wrap_safe_uptime() {
+  ExtractionTelemetryBuffer buffer{"00112233445566778899aabbccddeeff"};
+  auto extraction =
+      running("run-gap", {ExtractionSelectionKind::kManual, 0U}, 0U);
+  WeightExtractionSnapshot weight{};
+  assert(buffer.record(0U, machine(), extraction, scale(), weight));
+  extraction.elapsed_ms = 250U;
+  assert(buffer.record(250U, machine(), extraction, scale(), weight));
+  extraction.elapsed_ms = 500U;
+  assert(buffer.record(500U, machine(), extraction, scale(), weight));
   ExtractionTelemetryPage page{};
   assert(buffer.page({}, 500U, page));
-  assert(page.sample_count == 2U);
+  assert(page.sample_count == 3U);
   assert(page.samples[0].sequence == 1U);
-  assert(page.samples[1].sequence == 3U);
+  assert(page.samples[1].sequence == 2U);
+  assert(page.samples[2].sequence == 3U);
 
   ExtractionTelemetryBuffer wrap{"00112233445566778899aabbccddeeff"};
-  auto extraction =
-      running("run-wrap", {ExtractionSelectionKind::kManual, 0U}, 0U);
-  WeightExtractionSnapshot weight{};
+  extraction = running("run-wrap", {ExtractionSelectionKind::kManual, 0U}, 0U);
   constexpr std::uint64_t before_wrap = UINT32_MAX - 100ULL;
   assert(wrap.record(before_wrap, machine(), extraction, scale(), weight));
   extraction.elapsed_ms = 100U;
@@ -180,6 +190,7 @@ void test_zero_wait_contention_and_wrap_safe_uptime() {
 int main() {
   test_all_modes_and_cursor_replay();
   test_full_settling_tail_and_fixed_retention();
-  test_zero_wait_contention_and_wrap_safe_uptime();
+  test_committed_sequence_and_wrap_safe_uptime();
+  test_unavailable_acquisition_stays_null();
   return 0;
 }

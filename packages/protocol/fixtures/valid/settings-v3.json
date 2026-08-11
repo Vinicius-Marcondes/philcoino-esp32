@@ -1,0 +1,9 @@
+{
+  "brewTargetC": 93,
+  "steamTargetC": 120,
+  "steamControl": {
+    "initialCompensationC": 12,
+    "decayDurationMs": 720000,
+    "readyTimeoutMs": 300000
+  }
+}

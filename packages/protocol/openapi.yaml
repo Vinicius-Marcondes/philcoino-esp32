@@ -1,18 +1,18 @@
 {
   "openapi": "3.1.1",
-  "jsonSchemaDialect": "https://spec.openapis.org/oas/3.1/dialect/base",
+  "jsonSchemaDialect": "https://json-schema.org/draft/2020-12/schema",
   "info": {
     "title": "Philcoino ESP32 API",
-    "version": "2.0.0",
-    "description": "Local-network API for monitoring and configuring one Philcoino espresso machine."
+    "version": "3.0.0",
+    "description": "Breaking, HTTPS-only local API. All authenticated mutations return a complete acknowledged state snapshot."
   },
   "servers": [
     {
-      "url": "http://{host}",
+      "url": "https://{host}",
       "variables": {
         "host": {
           "default": "philcoino.local",
-          "description": "mDNS hostname or manually entered local IP address"
+          "description": "mDNS hostname or manually selected local address"
         }
       }
     }
@@ -21,79 +21,70 @@
     "/healthz": {
       "get": {
         "operationId": "getHealth",
-        "summary": "Read process and network health",
         "security": [],
         "responses": {
-          "200": {
-            "description": "The device HTTP service is healthy.",
-            "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/HealthResponse" }
-              }
-            }
-          }
+          "200": { "description": "HTTPS service health.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Health" } } } }
         }
       }
     },
-    "/api/v1/device": {
-      "get": {
-        "operationId": "getDevice",
-        "summary": "Read public device identity",
+    "/api/v3/pairing/sessions": {
+      "post": {
+        "operationId": "startPairingSession",
         "security": [],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PairingSessionStartRequest" } } } },
         "responses": {
-          "200": {
-            "description": "Stable device identity and version information.",
-            "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/DeviceResponse" }
-              }
-            }
-          },
-          "500": { "$ref": "#/components/responses/InternalError" }
+          "200": { "description": "A bounded SRP-6a session and server hello. Device identity is untrusted until the encrypted binding is verified.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PairingSessionStart" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "409": { "$ref": "#/components/responses/Conflict" }
         }
       }
     },
-    "/api/v1/state": {
-      "get": {
-        "operationId": "getMachineState",
-        "summary": "Read the complete machine snapshot",
-        "security": [{ "bearerAuth": [] }],
+    "/api/v3/pairing/sessions/{sessionId}/proof": {
+      "post": {
+        "operationId": "verifyPairingProof",
+        "security": [],
+        "parameters": [{ "name": "sessionId", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/PairingSessionId" } }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PairingSessionProofRequest" } } } },
         "responses": {
-          "200": {
-            "description": "Current temperatures, targets, control state, and fault data.",
-            "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/MachineState" }
-              }
-            }
-          },
+          "200": { "description": "Verified SRP server proof and authenticated encrypted certificate binding.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PairingSessionProof" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
           "401": { "$ref": "#/components/responses/Unauthorized" },
-          "500": { "$ref": "#/components/responses/InternalError" }
+          "409": { "$ref": "#/components/responses/Conflict" }
         }
       }
     },
-    "/api/v1/settings/temperatures": {
-      "patch": {
-        "operationId": "updateTemperatureSettings",
-        "summary": "Validate and persist one or both temperature targets",
-        "security": [{ "bearerAuth": [] }],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": { "$ref": "#/components/schemas/TemperatureSettingsRequest" }
-            }
-          }
-        },
+    "/api/v3/pairing/sessions/{sessionId}/complete": {
+      "post": {
+        "operationId": "completePairingSession",
+        "security": [],
+        "x-requiresPinnedTls": true,
+        "parameters": [{ "name": "sessionId", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/PairingSessionId" } }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PairingSessionCompleteRequest" } } } },
         "responses": {
-          "200": {
-            "description": "Both persisted targets after the requested update.",
-            "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/TemperatureSettingsResponse" }
-              }
-            }
-          },
+          "200": { "description": "New client credential. A fifth client evicts the oldest issued credential.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PairingComplete" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "409": { "$ref": "#/components/responses/Conflict" }
+        }
+      }
+    },
+    "/api/v3/state": {
+      "get": {
+        "operationId": "getState",
+        "security": [{ "bearerAuth": [] }],
+        "responses": {
+          "200": { "$ref": "#/components/responses/State" },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/api/v3/settings": {
+      "patch": {
+        "operationId": "updateSettings",
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SettingsPatch" } } } },
+        "responses": {
+          "200": { "$ref": "#/components/responses/State" },
           "400": { "$ref": "#/components/responses/BadRequest" },
           "401": { "$ref": "#/components/responses/Unauthorized" },
           "409": { "$ref": "#/components/responses/Conflict" },
@@ -101,2446 +92,677 @@
         }
       }
     },
-    "/api/v1/mode": {
+    "/api/v3/mode": {
       "put": {
         "operationId": "setMode",
-        "summary": "Idempotently select the active temperature-control mode",
         "security": [{ "bearerAuth": [] }],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": { "$ref": "#/components/schemas/ModeRequest" }
-            }
-          }
-        },
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ModeRequest" } } } },
         "responses": {
-          "200": {
-            "description": "The resulting acknowledged mode.",
-            "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/ModeResponse" }
-              }
-            }
-          },
+          "200": { "$ref": "#/components/responses/State" },
           "400": { "$ref": "#/components/responses/BadRequest" },
           "401": { "$ref": "#/components/responses/Unauthorized" },
-          "409": { "$ref": "#/components/responses/Conflict" },
-          "500": { "$ref": "#/components/responses/InternalError" }
+          "409": { "$ref": "#/components/responses/Conflict" }
         }
       }
     },
-    "/api/v1/heater": {
+    "/api/v3/heater-permission": {
       "put": {
         "operationId": "setHeaterPermission",
-        "summary": "Allow or inhibit automatic heater output",
         "security": [{ "bearerAuth": [] }],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": { "$ref": "#/components/schemas/HeaterSettingsRequest" }
-            }
-          }
-        },
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HeaterPermissionRequest" } } } },
         "responses": {
-          "200": {
-            "description": "The resulting acknowledged volatile heater permission.",
-            "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/HeaterSettingsResponse" }
-              }
-            }
-          },
+          "200": { "$ref": "#/components/responses/State" },
           "400": { "$ref": "#/components/responses/BadRequest" },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "500": { "$ref": "#/components/responses/InternalError" }
+          "401": { "$ref": "#/components/responses/Unauthorized" }
         }
       }
     },
-    "/api/v1/faults/over-temperature/dismiss": {
+    "/api/v3/faults/over-temperature/dismiss": {
       "post": {
-        "operationId": "dismissOverTemperature",
-        "summary": "Dismiss a recoverable over-temperature fault after cooldown",
+        "operationId": "dismissOverTemperatureFault",
         "security": [{ "bearerAuth": [] }],
         "responses": {
-          "200": {
-            "description": "The fresh machine snapshot after the over-temperature fault is dismissed.",
-            "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/OverTemperatureDismissResponse" }
-              }
-            }
-          },
+          "200": { "$ref": "#/components/responses/State" },
           "401": { "$ref": "#/components/responses/Unauthorized" },
-          "409": { "$ref": "#/components/responses/Conflict" },
-          "500": { "$ref": "#/components/responses/InternalError" }
+          "409": { "$ref": "#/components/responses/Conflict" }
         }
       }
     },
-    "/api/v2/state": {
-      "get": {
-        "operationId": "getMachineStateV2",
-        "summary": "Read acknowledged machine, extraction, compensation, and cooldown state",
+    "/api/v3/temperature-calibrations/current": {
+      "post": {
+        "operationId": "startTemperatureCalibration",
         "security": [{ "bearerAuth": [] }],
         "responses": {
-          "200": {
-            "description": "Current API v1 machine state plus firmware-acknowledged extraction, compensation, and cooldown state.",
-            "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/MachineStateV2" }
-              }
-            }
-          },
-          "400": { "$ref": "#/components/responses/V2BadRequest" },
-          "401": { "$ref": "#/components/responses/V2Unauthorized" },
-          "500": { "$ref": "#/components/responses/V2InternalError" }
-        }
-      }
-    },
-    "/api/v2/settings/steam-control": {
-      "get": {
-        "operationId": "getSteamControlSettings",
-        "summary": "Read persisted Steam heat-soak settings and live estimator state",
-        "security": [{ "bearerAuth": [] }],
-        "responses": {
-          "200": {
-            "description": "Firmware-authoritative persisted settings and current transient Steam estimator state.",
-            "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/SteamControlState" }
-              }
-            }
-          },
-          "401": { "$ref": "#/components/responses/V2Unauthorized" },
-          "500": { "$ref": "#/components/responses/V2InternalError" }
+          "200": { "$ref": "#/components/responses/State" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "409": { "$ref": "#/components/responses/Conflict" }
         }
       },
       "patch": {
-        "operationId": "updateSteamControlSettings",
-        "summary": "Validate and atomically persist one or more Steam heat-soak settings",
-        "description": "The heater is commanded off before persistence. A successful update adopts the settings without restarting an existing heat-soak or Ready timestamp. Updates are rejected while the machine is faulted.",
-        "security": [{ "bearerAuth": [] }],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": { "$ref": "#/components/schemas/SteamControlSettingsRequest" }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Acknowledged persisted settings and recomputed live estimator state.",
-            "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/SteamControlState" }
-              }
-            }
-          },
-          "400": { "$ref": "#/components/responses/V2BadRequest" },
-          "401": { "$ref": "#/components/responses/V2Unauthorized" },
-          "409": { "$ref": "#/components/responses/V2Conflict" },
-          "500": { "$ref": "#/components/responses/V2InternalError" }
-        }
-      }
-    },
-    "/api/v2/temperature-calibration": {
-      "get": {
-        "operationId": "getTemperatureCalibration",
-        "summary": "Read temperature-calibration state and optionally renew its lease",
-        "description": "Omit calibrationId while no calibration is active. While calibrating, the opaque active calibrationId is required and a matching request renews the 15-second inactivity lease.",
-        "security": [{ "bearerAuth": [] }],
-        "parameters": [
-          {
-            "name": "calibrationId",
-            "in": "query",
-            "required": false,
-            "schema": { "$ref": "#/components/schemas/TemperatureCalibrationSessionId" }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Current firmware-authoritative calibration state.",
-            "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/TemperatureCalibrationState" }
-              }
-            }
-          },
-          "400": { "$ref": "#/components/responses/V2BadRequest" },
-          "401": { "$ref": "#/components/responses/V2Unauthorized" },
-          "409": { "$ref": "#/components/responses/V2Conflict" },
-          "500": { "$ref": "#/components/responses/V2InternalError" }
-        }
-      }
-    },
-    "/api/v2/temperature-calibration/start": {
-      "post": {
-        "operationId": "startTemperatureCalibration",
-        "summary": "Start a firmware-owned raw-temperature calibration session",
-        "description": "Starts at raw 100 degrees Celsius when uncalibrated or at the raw boiling point implied by the saved offset when recalibrating. The operation never commands the pump or steam valve.",
-        "security": [{ "bearerAuth": [] }],
-        "responses": {
-          "200": {
-            "description": "The acknowledged active calibration session.",
-            "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/ActiveTemperatureCalibrationState" }
-              }
-            }
-          },
-          "401": { "$ref": "#/components/responses/V2Unauthorized" },
-          "409": { "$ref": "#/components/responses/V2Conflict" },
-          "500": { "$ref": "#/components/responses/V2InternalError" }
-        }
-      }
-    },
-    "/api/v2/temperature-calibration/candidate": {
-      "put": {
         "operationId": "updateTemperatureCalibrationCandidate",
-        "summary": "Update the active raw calibration target",
-        "description": "Changes the whole-degree raw target and resets advisory stability without changing the saved offset.",
         "security": [{ "bearerAuth": [] }],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": { "$ref": "#/components/schemas/UpdateTemperatureCalibrationCandidateRequest" }
-            }
-          }
-        },
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TemperatureCalibrationCandidate" } } } },
         "responses": {
-          "200": {
-            "description": "The acknowledged active calibration state.",
-            "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/ActiveTemperatureCalibrationState" }
-              }
-            }
-          },
-          "400": { "$ref": "#/components/responses/V2BadRequest" },
-          "401": { "$ref": "#/components/responses/V2Unauthorized" },
-          "409": { "$ref": "#/components/responses/V2Conflict" },
-          "500": { "$ref": "#/components/responses/V2InternalError" }
+          "200": { "$ref": "#/components/responses/State" },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "409": { "$ref": "#/components/responses/Conflict" }
         }
-      }
-    },
-    "/api/v2/temperature-calibration/save": {
-      "post": {
+      },
+      "put": {
         "operationId": "saveTemperatureCalibration",
-        "summary": "Persist the active candidate as logical 100 degrees Celsius",
-        "description": "Persists offset = 100 - candidateRawTargetC. The previous offset and all temperature targets remain unchanged if persistence or raw-ceiling reachability validation fails.",
         "security": [{ "bearerAuth": [] }],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": { "$ref": "#/components/schemas/TemperatureCalibrationSessionRequest" }
-            }
-          }
-        },
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SessionRequest" } } } },
         "responses": {
-          "200": {
-            "description": "The acknowledged persisted calibrated state.",
-            "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/CalibratedTemperatureCalibrationState" }
-              }
-            }
-          },
-          "400": { "$ref": "#/components/responses/V2BadRequest" },
-          "401": { "$ref": "#/components/responses/V2Unauthorized" },
-          "409": { "$ref": "#/components/responses/V2Conflict" },
-          "500": { "$ref": "#/components/responses/V2InternalError" }
+          "200": { "$ref": "#/components/responses/State" },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "409": { "$ref": "#/components/responses/Conflict" }
         }
-      }
-    },
-    "/api/v2/temperature-calibration/cancel": {
-      "post": {
+      },
+      "delete": {
         "operationId": "cancelTemperatureCalibration",
-        "summary": "Cancel the active calibration and restore ordinary Brew control",
-        "description": "Discards the candidate without changing the saved offset or persisted Brew and Steam targets.",
         "security": [{ "bearerAuth": [] }],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": { "$ref": "#/components/schemas/TemperatureCalibrationSessionRequest" }
-            }
-          }
-        },
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SessionRequest" } } } },
         "responses": {
-          "200": {
-            "description": "The acknowledged uncalibrated or calibrated state after cancellation.",
-            "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/TemperatureCalibrationState" }
-              }
-            }
-          },
-          "400": { "$ref": "#/components/responses/V2BadRequest" },
-          "401": { "$ref": "#/components/responses/V2Unauthorized" },
-          "409": { "$ref": "#/components/responses/V2Conflict" },
-          "500": { "$ref": "#/components/responses/V2InternalError" }
+          "200": { "$ref": "#/components/responses/State" },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
         }
       }
     },
-    "/api/v2/scale": {
-      "get": {
-        "operationId": "getScaleState",
-        "summary": "Read calibration, live weight, weighted extraction, and warning state",
+    "/api/v3/temperature-calibrations/current/lease": {
+      "post": {
+        "operationId": "renewTemperatureCalibrationLease",
         "security": [{ "bearerAuth": [] }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SessionRequest" } } } },
         "responses": {
-          "200": {
-            "description": "Current firmware-authoritative scale state.",
-            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ScaleState" } } }
-          },
-          "401": { "$ref": "#/components/responses/V2Unauthorized" },
-          "500": { "$ref": "#/components/responses/V2InternalError" }
+          "200": { "$ref": "#/components/responses/State" },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "409": { "$ref": "#/components/responses/Conflict" }
         }
       }
     },
-    "/api/v2/scale/trace": {
-      "get": {
-        "operationId": "getScaleTrace",
-        "summary": "Read current scale state and a bounded weighted-extraction trace page",
-        "description": "Observation-only telemetry. Supply no cursor parameters for the retained trace's initial page or supply extractionId, bootId, and afterSequence together for continuation.",
-        "security": [{ "bearerAuth": [] }],
-        "parameters": [
-          {
-            "name": "extractionId",
-            "in": "query",
-            "required": false,
-            "schema": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$" }
-          },
-          {
-            "name": "bootId",
-            "in": "query",
-            "required": false,
-            "schema": { "$ref": "#/components/schemas/ReplayBootId" }
-          },
-          {
-            "name": "afterSequence",
-            "in": "query",
-            "required": false,
-            "schema": { "$ref": "#/components/schemas/ReplaySequence" }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Current strict scale state plus the retained trace page, or null when no weighted trace exists.",
-            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ScaleTraceResponse" } } }
-          },
-          "400": { "$ref": "#/components/responses/V2BadRequest" },
-          "401": { "$ref": "#/components/responses/V2Unauthorized" },
-          "500": { "$ref": "#/components/responses/V2InternalError" }
-        }
-      }
-    },
-    "/api/v2/scale/calibration/start": {
+    "/api/v3/scale-calibrations/current": {
       "post": {
         "operationId": "startScaleCalibration",
-        "summary": "Capture the stable unloaded-platform calibration point",
         "security": [{ "bearerAuth": [] }],
         "responses": {
-          "200": {
-            "description": "Calibration session started with its zero point captured.",
-            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ScaleState" } } }
-          },
-          "401": { "$ref": "#/components/responses/V2Unauthorized" },
-          "409": { "$ref": "#/components/responses/V2Conflict" },
-          "500": { "$ref": "#/components/responses/V2InternalError" }
+          "200": { "$ref": "#/components/responses/State" },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "409": { "$ref": "#/components/responses/Conflict" }
         }
-      }
-    },
-    "/api/v2/scale/calibration/complete": {
-      "post": {
+      },
+      "put": {
         "operationId": "completeScaleCalibration",
-        "summary": "Persist calibration from a stable reference load",
         "security": [{ "bearerAuth": [] }],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": { "$ref": "#/components/schemas/CompleteScaleCalibrationRequest" }
-            }
-          }
-        },
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ScaleCalibrationComplete" } } } },
         "responses": {
-          "200": {
-            "description": "Persisted calibrated scale state.",
-            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ScaleState" } } }
-          },
-          "400": { "$ref": "#/components/responses/V2BadRequest" },
-          "401": { "$ref": "#/components/responses/V2Unauthorized" },
-          "409": { "$ref": "#/components/responses/V2Conflict" },
-          "500": { "$ref": "#/components/responses/V2InternalError" }
+          "200": { "$ref": "#/components/responses/State" },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "409": { "$ref": "#/components/responses/Conflict" }
         }
-      }
-    },
-    "/api/v2/scale/calibration/cancel": {
-      "post": {
+      },
+      "delete": {
         "operationId": "cancelScaleCalibration",
-        "summary": "Cancel the volatile calibration session",
         "security": [{ "bearerAuth": [] }],
         "responses": {
-          "200": {
-            "description": "Current scale state with no calibration session.",
-            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ScaleState" } } }
-          },
-          "401": { "$ref": "#/components/responses/V2Unauthorized" },
-          "500": { "$ref": "#/components/responses/V2InternalError" }
+          "200": { "$ref": "#/components/responses/State" },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
         }
       }
     },
-    "/api/v2/scale/warnings/acknowledge": {
+    "/api/v3/scale/warnings/acknowledge": {
       "post": {
         "operationId": "acknowledgeScaleWarning",
-        "summary": "Acknowledge the retained weighted-extraction fallback warning",
         "security": [{ "bearerAuth": [] }],
         "responses": {
-          "200": {
-            "description": "Scale state after clearing the retained warning.",
-            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ScaleState" } } }
-          },
-          "401": { "$ref": "#/components/responses/V2Unauthorized" },
-          "500": { "$ref": "#/components/responses/V2InternalError" }
+          "200": { "$ref": "#/components/responses/State" },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
         }
       }
     },
-    "/api/v2/extractions/start": {
+    "/api/v3/extractions": {
       "post": {
         "operationId": "startExtraction",
-        "summary": "Start Manual or one inline profile snapshot idempotently",
-        "description": "Start is accepted only in acknowledged Brew mode and while cooldown is idle. Replaying the same idempotency key and normalized selection returns the retained active or terminal extraction without issuing another pump-high command. Reusing a retained key with a different selection is rejected as idempotency_mismatch. A terminal record remains volatile until another key is successfully accepted or the device reboots.",
         "security": [{ "bearerAuth": [] }],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": { "$ref": "#/components/schemas/StartExtractionRequest" }
-            }
-          }
-        },
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ExtractionStart" } } } },
         "responses": {
-          "200": {
-            "description": "The same acknowledged active or terminal extraction for a new or replayed key.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "oneOf": [
-                    { "$ref": "#/components/schemas/RunningExtractionState" },
-                    { "$ref": "#/components/schemas/TerminalExtractionState" }
-                  ]
-                }
-              }
-            }
-          },
-          "400": { "$ref": "#/components/responses/V2BadRequest" },
-          "401": { "$ref": "#/components/responses/V2Unauthorized" },
-          "409": {
-            "description": "The machine is not in Brew, a different extraction or cooldown is active, or the selected custom slot is empty.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "oneOf": [
-                    { "$ref": "#/components/schemas/ExtractionActiveConflictResponse" },
-                    { "$ref": "#/components/schemas/CooldownActiveConflictResponse" },
-                    { "$ref": "#/components/schemas/ApiV2ErrorResponse" }
-                  ]
-                }
-              }
-            }
-          },
-          "500": { "$ref": "#/components/responses/V2InternalError" }
+          "200": { "$ref": "#/components/responses/State" },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "409": { "$ref": "#/components/responses/Conflict" }
         }
       }
     },
-    "/api/v2/extractions/stop": {
-      "post": {
+    "/api/v3/extractions/current": {
+      "delete": {
         "operationId": "stopExtraction",
-        "summary": "Idempotently stop extraction and acknowledge idle",
         "security": [{ "bearerAuth": [] }],
         "responses": {
-          "200": {
-            "description": "Acknowledged idle or retained terminal state, including when extraction was already idle.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "oneOf": [
-                    { "$ref": "#/components/schemas/IdleExtractionState" },
-                    { "$ref": "#/components/schemas/TerminalExtractionState" }
-                  ]
-                }
-              }
-            }
-          },
-          "401": { "$ref": "#/components/responses/V2Unauthorized" },
-          "500": { "$ref": "#/components/responses/V2InternalError" }
+          "200": { "$ref": "#/components/responses/State" },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
         }
       }
     },
-    "/api/v2/extractions/stream": {
+    "/api/v3/extractions/current/stream": {
       "get": {
-        "operationId": "streamExtractionTelemetry",
-        "summary": "Stream bounded extraction telemetry pages",
-        "description": "Authenticated Server-Sent Events for the retained current or most recent extraction. Supply no cursor parameters for the initial retained page, or supply extractionId, bootId, and afterSequence together for continuation. Each telemetry event contains one strict ExtractionTelemetryPage. Catch-up pages contain at most 16 samples; live pages contain one sample. Comment heartbeats carry no state. There is no polling fallback.",
+        "operationId": "streamCurrentExtraction",
         "security": [{ "bearerAuth": [] }],
         "parameters": [
-          {
-            "name": "extractionId",
-            "in": "query",
-            "required": false,
-            "schema": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$" }
-          },
-          {
-            "name": "bootId",
-            "in": "query",
-            "required": false,
-            "schema": { "$ref": "#/components/schemas/ReplayBootId" }
-          },
-          {
-            "name": "afterSequence",
-            "in": "query",
-            "required": false,
-            "schema": { "$ref": "#/components/schemas/ReplaySequence" }
-          }
+          { "name": "extractionId", "in": "query", "required": false, "schema": { "$ref": "#/components/schemas/OpaqueId" } },
+          { "name": "bootId", "in": "query", "required": false, "schema": { "type": "string", "pattern": "^[0-9a-f]{32}$" } },
+          { "name": "afterSequence", "in": "query", "required": false, "schema": { "type": "integer", "minimum": 0 } }
         ],
         "responses": {
           "200": {
-            "description": "SSE stream containing telemetry events whose data field is an ExtractionTelemetryPage, plus optional comment heartbeats.",
+            "description": "Four-hertz SSE stream. Event IDs contain boot, extraction, and sequence identity.",
+            "headers": {
+              "Cache-Control": { "schema": { "type": "string", "const": "no-cache" } }
+            },
             "content": {
               "text/event-stream": {
-                "schema": { "type": "string" }
+                "schema": { "type": "string", "description": "Telemetry events with two-second comment heartbeats." },
+                "x-eventDataSchema": { "$ref": "#/components/schemas/TelemetryPage" }
               }
             }
           },
-          "400": { "$ref": "#/components/responses/V2BadRequest" },
-          "401": { "$ref": "#/components/responses/V2Unauthorized" },
-          "409": { "$ref": "#/components/responses/V2Conflict" },
-          "500": { "$ref": "#/components/responses/V2InternalError" }
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "409": { "$ref": "#/components/responses/StreamBusy" }
         }
       }
     },
-    "/api/v2/cooldowns/start": {
+    "/api/v3/cooldowns": {
       "post": {
         "operationId": "startCooldown",
-        "summary": "Start the firmware-owned cooldown workflow idempotently",
-        "description": "A new key is eligible only while extraction and cooldown are idle, the validated Brew-effective temperature is above the current Brew target, and no sensor or machine fault prevents operation. Firmware switches to Brew, establishes the transient heater inhibit, commands the heater off, snapshots the Brew target, and only then commands the pump running. Replaying the retained key returns the original cooldown identity and current or terminal acknowledgement without restarting the 45-second pump deadline. A different key replaces a terminal acknowledgement only after fresh eligibility checks.",
         "security": [{ "bearerAuth": [] }],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": { "$ref": "#/components/schemas/StartCooldownRequest" }
-            }
-          }
-        },
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/IdempotencyRequest" } } } },
         "responses": {
-          "200": {
-            "description": "The acknowledged new, replayed, active, or retained terminal cooldown state. Same-key replay never restarts a deadline.",
-            "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/CooldownState" }
-              }
-            }
-          },
-          "400": { "$ref": "#/components/responses/V2BadRequest" },
-          "401": { "$ref": "#/components/responses/V2Unauthorized" },
-          "409": {
-            "description": "An extraction or different cooldown is active, or sensor, fault, or temperature eligibility rejects a new cooldown.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "oneOf": [
-                    { "$ref": "#/components/schemas/ExtractionActiveConflictResponse" },
-                    { "$ref": "#/components/schemas/CooldownActiveConflictResponse" },
-                    { "$ref": "#/components/schemas/ApiV2ErrorResponse" }
-                  ]
-                }
-              }
-            }
-          },
-          "500": { "$ref": "#/components/responses/V2InternalError" }
+          "200": { "$ref": "#/components/responses/State" },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "409": { "$ref": "#/components/responses/Conflict" }
         }
       }
     },
-    "/api/v2/cooldowns/stop": {
-      "post": {
+    "/api/v3/cooldowns/current": {
+      "delete": {
         "operationId": "stopCooldown",
-        "summary": "Idempotently stop cooldown pumping",
-        "description": "While pumping, Stop commands the pump off and enters the same five-second stabilization phase with outcome stopped. During stabilization or idle it returns the current acknowledgement unchanged.",
         "security": [{ "bearerAuth": [] }],
         "responses": {
-          "200": {
-            "description": "The acknowledged stabilizing or idle cooldown state.",
-            "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/CooldownState" }
-              }
-            }
-          },
-          "401": { "$ref": "#/components/responses/V2Unauthorized" },
-          "500": { "$ref": "#/components/responses/V2InternalError" }
+          "200": { "$ref": "#/components/responses/State" },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
         }
       }
     }
   },
   "components": {
     "securitySchemes": {
-      "bearerAuth": {
-        "type": "http",
-        "scheme": "bearer",
-        "bearerFormat": "opaque"
-      }
+      "bearerAuth": { "type": "http", "scheme": "bearer", "bearerFormat": "256-bit opaque token" }
     },
     "responses": {
-      "BadRequest": {
-        "description": "The JSON body is malformed or violates a request constraint.",
-        "content": {
-          "application/json": {
-            "schema": { "$ref": "#/components/schemas/ErrorResponse" }
-          }
-        }
-      },
-      "Unauthorized": {
-        "description": "The bearer token is missing or invalid.",
-        "headers": {
-          "WWW-Authenticate": {
-            "schema": { "type": "string" },
-            "description": "Bearer authentication challenge."
-          }
-        },
-        "content": {
-          "application/json": {
-            "schema": { "$ref": "#/components/schemas/ErrorResponse" }
-          }
-        }
-      },
-      "Conflict": {
-        "description": "The machine cannot apply the valid command in its current state.",
-        "content": {
-          "application/json": {
-            "schema": { "$ref": "#/components/schemas/ErrorResponse" }
-          }
-        }
-      },
-      "InternalError": {
-        "description": "The device could not complete the request.",
-        "content": {
-          "application/json": {
-            "schema": { "$ref": "#/components/schemas/ErrorResponse" }
-          }
-        }
-      },
-      "V2BadRequest": {
-        "description": "The JSON body is malformed or violates an API v2 request constraint.",
-        "content": {
-          "application/json": {
-            "schema": { "$ref": "#/components/schemas/ApiV2ErrorResponse" }
-          }
-        }
-      },
-      "V2Unauthorized": {
-        "description": "The bearer token is missing or invalid.",
-        "headers": {
-          "WWW-Authenticate": {
-            "schema": { "type": "string" },
-            "description": "Bearer authentication challenge."
-          }
-        },
-        "content": {
-          "application/json": {
-            "schema": { "$ref": "#/components/schemas/ApiV2ErrorResponse" }
-          }
-        }
-      },
-      "V2Conflict": {
-        "description": "The scale or machine cannot apply the valid API v2 command in its current state.",
-        "content": {
-          "application/json": {
-            "schema": { "$ref": "#/components/schemas/ApiV2ErrorResponse" }
-          }
-        }
-      },
-      "V2InternalError": {
-        "description": "The device could not complete the API v2 request.",
-        "content": {
-          "application/json": {
-            "schema": { "$ref": "#/components/schemas/ApiV2ErrorResponse" }
-          }
-        }
-      }
+      "State": { "description": "Complete acknowledged state.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/State" } } } },
+      "BadRequest": { "description": "Malformed or invalid request.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+      "Unauthorized": { "description": "Missing, invalid, revoked, or evicted credential.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+      "Conflict": { "description": "Request conflicts with current state.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+      "StreamBusy": { "description": "One telemetry subscriber is already active.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+      "RateLimited": { "description": "Pairing challenge rate limit exceeded.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+      "InternalError": { "description": "Internal or persistence failure.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
     },
     "schemas": {
-      "Mode": {
-        "type": "string",
-        "enum": ["brew", "steam"]
+      "Base64Url256": { "type": "string", "minLength": 43, "maxLength": 43, "pattern": "^[A-Za-z0-9_-]{43}$" },
+      "Identifier": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$" },
+      "OpaqueId": { "type": "string", "minLength": 16, "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$" },
+      "Health": {
+        "type": "object", "additionalProperties": false, "required": ["status", "uptimeMs"],
+        "properties": { "status": { "const": "ok" }, "uptimeMs": { "type": "integer", "minimum": 0 } }
       },
-      "MachineStatus": {
-        "type": "string",
-        "enum": ["heating", "ready", "fault"]
-      },
-      "FaultCode": {
-        "type": "string",
-        "enum": [
-          "sensor_failure",
-          "over_temperature",
-          "heating_timeout",
-          "internal_error"
-        ]
-      },
-      "ErrorCode": {
-        "type": "string",
-        "enum": [
-          "malformed_request",
-          "unauthorized",
-          "temperature_out_of_range",
-          "temperature_target_unsafe",
-          "sensor_unavailable",
-          "persistence_failure",
-          "internal_error"
-        ]
-      },
-      "BrewTarget": {
-        "type": "integer",
-        "minimum": 85,
-        "maximum": 95
-      },
-      "SteamTarget": {
-        "type": "integer",
-        "minimum": 110,
-        "maximum": 135
-      },
-      "HealthResponse": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["status", "uptimeMs"],
-        "properties": {
-          "status": { "const": "ok" },
-          "uptimeMs": { "type": "integer", "minimum": 0 }
-        },
-        "examples": [
-          { "status": "ok", "uptimeMs": 184220 }
-        ]
-      },
-      "DeviceResponse": {
-        "type": "object",
-        "additionalProperties": false,
+      "DeviceIdentity": {
+        "type": "object", "additionalProperties": false,
         "required": ["deviceId", "name", "model", "apiVersion", "firmwareVersion"],
         "properties": {
-          "deviceId": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 64,
-            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
-          },
+          "deviceId": { "$ref": "#/components/schemas/Identifier" },
           "name": { "type": "string", "minLength": 1, "maxLength": 64 },
           "model": { "type": "string", "minLength": 1, "maxLength": 64 },
-          "apiVersion": { "const": "2" },
+          "apiVersion": { "const": "3" },
           "firmwareVersion": { "type": "string", "minLength": 1, "maxLength": 32 }
-        },
-        "examples": [
-          {
-            "deviceId": "philcoino-c3-a1b2c3",
-            "name": "Kitchen espresso machine",
-            "model": "philcoino-esp32-c3",
-            "apiVersion": "2",
-            "firmwareVersion": "1.0.0"
-          }
-        ]
-      },
-      "Fault": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["code", "message"],
-        "properties": {
-          "code": { "$ref": "#/components/schemas/FaultCode" },
-          "message": { "type": "string", "minLength": 1, "maxLength": 160 }
         }
       },
-      "MachineState": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "status",
-          "activeMode",
-          "boilerTemperatureC",
-          "brewTargetC",
-          "steamTargetC",
-          "heaterEnabled",
-          "heaterActive",
-          "fault",
-          "steamTimeoutRemainingMs",
-          "steamControl",
-          "uptimeMs"
-        ],
+      "PairingSessionId": { "type": "string", "minLength": 32, "maxLength": 32, "pattern": "^[a-f0-9]{32}$" },
+      "Base64Url96": { "type": "string", "minLength": 16, "maxLength": 16, "pattern": "^[A-Za-z0-9_-]{16}$" },
+      "Base64Url512": { "type": "string", "minLength": 86, "maxLength": 86, "pattern": "^[A-Za-z0-9_-]{86}$" },
+      "SrpPublicKey": { "type": "string", "minLength": 2, "maxLength": 512, "pattern": "^[A-Za-z0-9_-]+$" },
+      "SrpSalt": { "type": "string", "minLength": 22, "maxLength": 86, "pattern": "^[A-Za-z0-9_-]+$" },
+      "EncryptedPairingBinding": { "type": "string", "minLength": 23, "maxLength": 1024, "pattern": "^[A-Za-z0-9_-]+$" },
+      "PairingSessionStartRequest": {
+        "type": "object", "additionalProperties": false, "required": ["clientName", "clientNonce", "clientPublicKey"],
         "properties": {
-          "status": { "$ref": "#/components/schemas/MachineStatus" },
-          "activeMode": { "$ref": "#/components/schemas/Mode" },
-          "boilerTemperatureC": {
-            "type": "number",
-            "description": "The firmware-authoritative globally calibrated thermocouple temperature in both Brew and Steam. After raw validation, firmware adds the one persisted signed global temperature-calibration offset exactly once. With no saved calibration the offset is zero. The transient Steam control estimate is exposed separately in steamControl."
-          },
-          "brewTargetC": { "$ref": "#/components/schemas/BrewTarget" },
-          "steamTargetC": { "$ref": "#/components/schemas/SteamTarget" },
-          "heaterEnabled": { "type": "boolean" },
-          "heaterActive": { "type": "boolean" },
-          "fault": {
-            "oneOf": [
-              { "$ref": "#/components/schemas/Fault" },
-              { "type": "null" }
-            ]
-          },
-          "steamTimeoutRemainingMs": {
-            "oneOf": [
-              { "type": "integer", "minimum": 0, "maximum": 900000 },
-              { "type": "null" }
-            ]
-          },
-          "steamControl": { "$ref": "#/components/schemas/SteamControlState" },
-          "uptimeMs": { "type": "integer", "minimum": 0 }
-        },
-        "allOf": [
-          {
-            "if": {
-              "properties": { "status": { "const": "fault" } },
-              "required": ["status"]
-            },
-            "then": {
-              "properties": {
-                "fault": { "$ref": "#/components/schemas/Fault" },
-                "heaterActive": { "const": false }
-              }
-            },
-            "else": {
-              "properties": {
-                "fault": { "type": "null" }
-              }
+          "clientName": { "type": "string", "minLength": 1, "maxLength": 64 },
+          "clientNonce": { "$ref": "#/components/schemas/Base64Url256" },
+          "clientPublicKey": { "$ref": "#/components/schemas/SrpPublicKey" }
+        }
+      },
+      "PairingSessionStart": {
+        "type": "object", "additionalProperties": false,
+        "required": ["sessionId", "device", "serverPublicKey", "salt", "expiresAtUptimeMs"],
+        "properties": {
+          "sessionId": { "$ref": "#/components/schemas/PairingSessionId" },
+          "device": { "$ref": "#/components/schemas/DeviceIdentity" },
+          "serverPublicKey": { "$ref": "#/components/schemas/SrpPublicKey" },
+          "salt": { "$ref": "#/components/schemas/SrpSalt" },
+          "expiresAtUptimeMs": { "type": "integer", "minimum": 0 }
+        }
+      },
+      "PairingSessionProofRequest": {
+        "type": "object", "additionalProperties": false,
+        "required": ["clientProof"],
+        "properties": {
+          "clientProof": { "$ref": "#/components/schemas/Base64Url512" }
+        }
+      },
+      "PairingSessionProof": {
+        "type": "object", "additionalProperties": false,
+        "required": ["serverProof", "deviceNonce", "encryptedDeviceBinding"],
+        "properties": {
+          "serverProof": { "$ref": "#/components/schemas/Base64Url512" },
+          "deviceNonce": { "$ref": "#/components/schemas/Base64Url96" },
+          "encryptedDeviceBinding": { "$ref": "#/components/schemas/EncryptedPairingBinding" }
+        }
+      },
+      "PairingSessionCompleteRequest": {
+        "type": "object", "additionalProperties": false,
+        "required": ["clientId", "encryptedClientBinding"],
+        "properties": {
+          "clientId": { "type": "string", "pattern": "^[a-f0-9]{32}$" },
+          "encryptedClientBinding": { "$ref": "#/components/schemas/EncryptedPairingBinding" }
+        }
+      },
+      "PairingComplete": {
+        "type": "object", "additionalProperties": false,
+        "required": ["device", "certificateSpkiSha256", "clientId", "accessToken"],
+        "properties": {
+          "device": { "$ref": "#/components/schemas/DeviceIdentity" },
+          "certificateSpkiSha256": { "$ref": "#/components/schemas/Base64Url256" },
+          "clientId": { "type": "string", "pattern": "^[a-f0-9]{32}$" },
+          "accessToken": { "$ref": "#/components/schemas/Base64Url256" }
+        }
+      },
+      "SettingsPatch": {
+        "type": "object", "additionalProperties": false, "minProperties": 1,
+        "properties": {
+          "brewTargetC": { "type": "integer", "minimum": 85, "maximum": 95 },
+          "steamTargetC": { "type": "integer", "minimum": 110, "maximum": 135 },
+          "steamControl": {
+            "type": "object", "additionalProperties": false, "minProperties": 1,
+            "properties": {
+              "initialCompensationC": { "type": "integer", "minimum": 0, "maximum": 20 },
+              "decayDurationMs": { "type": "integer", "minimum": 60000, "maximum": 1800000, "multipleOf": 60000 },
+              "readyTimeoutMs": { "type": "integer", "minimum": 60000, "maximum": 900000, "multipleOf": 60000 }
             }
           }
-        ],
-        "examples": [
-          {
-            "status": "heating",
-            "activeMode": "brew",
-            "boilerTemperatureC": 87.4,
-            "brewTargetC": 93,
-            "steamTargetC": 115,
-            "heaterEnabled": true,
-            "heaterActive": true,
-            "fault": null,
-            "steamTimeoutRemainingMs": null,
-            "steamControl": {
-              "settings": {
-                "initialCompensationC": 12,
-                "decayDurationMs": 720000,
-                "readyTimeoutMs": 300000
-              },
-              "compensationActive": false,
-              "appliedCompensationC": 0,
-              "controlTemperatureC": null,
-              "heatSoakElapsedMs": null
-            },
-            "uptimeMs": 184220
-          },
-          {
-            "status": "fault",
-            "activeMode": "brew",
-            "boilerTemperatureC": 24.5,
-            "brewTargetC": 93,
-            "steamTargetC": 115,
-            "heaterEnabled": false,
-            "heaterActive": false,
-            "fault": {
-              "code": "sensor_failure",
-              "message": "The boiler thermocouple reading is unavailable."
-            },
-            "steamTimeoutRemainingMs": null,
-            "steamControl": {
-              "settings": {
-                "initialCompensationC": 12,
-                "decayDurationMs": 720000,
-                "readyTimeoutMs": 300000
-              },
-              "compensationActive": false,
-              "appliedCompensationC": 0,
-              "controlTemperatureC": null,
-              "heatSoakElapsedMs": null
-            },
-            "uptimeMs": 185000
-          }
-        ]
-      },
-      "TemperatureSettingsRequest": {
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "brewTargetC": { "$ref": "#/components/schemas/BrewTarget" },
-          "steamTargetC": { "$ref": "#/components/schemas/SteamTarget" }
-        },
-        "anyOf": [
-          { "required": ["brewTargetC"] },
-          { "required": ["steamTargetC"] }
-        ],
-        "examples": [
-          { "brewTargetC": 93, "steamTargetC": 115 }
-        ]
-      },
-      "TemperatureSettingsResponse": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["brewTargetC", "steamTargetC"],
-        "properties": {
-          "brewTargetC": { "$ref": "#/components/schemas/BrewTarget" },
-          "steamTargetC": { "$ref": "#/components/schemas/SteamTarget" }
-        },
-        "examples": [
-          { "brewTargetC": 93, "steamTargetC": 115 }
-        ]
-      },
-      "SteamCompensationInitial": {
-        "type": "integer",
-        "minimum": 0,
-        "maximum": 20,
-        "multipleOf": 1
-      },
-      "SteamCompensationDecay": {
-        "type": "integer",
-        "minimum": 60000,
-        "maximum": 1800000,
-        "multipleOf": 60000
-      },
-      "SteamReadyTimeout": {
-        "type": "integer",
-        "minimum": 60000,
-        "maximum": 900000,
-        "multipleOf": 60000
-      },
-      "SteamControlSettings": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "initialCompensationC",
-          "decayDurationMs",
-          "readyTimeoutMs"
-        ],
-        "properties": {
-          "initialCompensationC": { "$ref": "#/components/schemas/SteamCompensationInitial" },
-          "decayDurationMs": { "$ref": "#/components/schemas/SteamCompensationDecay" },
-          "readyTimeoutMs": { "$ref": "#/components/schemas/SteamReadyTimeout" }
-        },
-        "examples": [
-          {
-            "initialCompensationC": 12,
-            "decayDurationMs": 720000,
-            "readyTimeoutMs": 300000
-          }
-        ]
-      },
-      "SteamControlSettingsRequest": {
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "initialCompensationC": { "$ref": "#/components/schemas/SteamCompensationInitial" },
-          "decayDurationMs": { "$ref": "#/components/schemas/SteamCompensationDecay" },
-          "readyTimeoutMs": { "$ref": "#/components/schemas/SteamReadyTimeout" }
-        },
-        "anyOf": [
-          { "required": ["initialCompensationC"] },
-          { "required": ["decayDurationMs"] },
-          { "required": ["readyTimeoutMs"] }
-        ],
-        "examples": [
-          {
-            "initialCompensationC": 12,
-            "decayDurationMs": 720000,
-            "readyTimeoutMs": 300000
-          }
-        ]
-      },
-      "SteamControlState": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "settings",
-          "compensationActive",
-          "appliedCompensationC",
-          "controlTemperatureC",
-          "heatSoakElapsedMs"
-        ],
-        "properties": {
-          "settings": { "$ref": "#/components/schemas/SteamControlSettings" },
-          "compensationActive": { "type": "boolean" },
-          "appliedCompensationC": { "type": "number", "minimum": 0, "maximum": 20 },
-          "controlTemperatureC": {
-            "oneOf": [
-              { "type": "number", "minimum": -40, "maximum": 180 },
-              { "type": "null" }
-            ]
-          },
-          "heatSoakElapsedMs": {
-            "oneOf": [
-              { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
-              { "type": "null" }
-            ]
-          }
-        },
-        "description": "The transient positive-only Steam estimator layered after the persisted global calibration. It is active only in Steam, never changes the raw or calibrated 135°C fault boundaries, and retains its monotonic episode timestamp across short mode changes until the calibrated boiler reaches the Brew target.",
-        "examples": [
-          {
-            "settings": {
-              "initialCompensationC": 12,
-              "decayDurationMs": 720000,
-              "readyTimeoutMs": 300000
-            },
-            "compensationActive": true,
-            "appliedCompensationC": 10,
-            "controlTemperatureC": 130,
-            "heatSoakElapsedMs": 120000
-          }
-        ]
-      },
-      "TemperatureCalibrationSessionId": {
-        "type": "string",
-        "minLength": 16,
-        "maxLength": 64,
-        "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$"
-      },
-      "TemperatureCalibrationCandidateRawTarget": {
-        "type": "integer",
-        "minimum": 90,
-        "maximum": 120,
-        "multipleOf": 1
-      },
-      "TemperatureCalibrationOffset": {
-        "type": "integer",
-        "minimum": -20,
-        "maximum": 10,
-        "multipleOf": 1
-      },
-      "TemperatureCalibrationSafeTargetBounds": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "brewMinimumC",
-          "brewMaximumC",
-          "steamMinimumC",
-          "steamMaximumC"
-        ],
-        "properties": {
-          "brewMinimumC": { "const": 85 },
-          "brewMaximumC": { "$ref": "#/components/schemas/BrewTarget" },
-          "steamMinimumC": { "const": 110 },
-          "steamMaximumC": { "$ref": "#/components/schemas/SteamTarget" }
-        },
-        "description": "Offset-adjusted whole-degree target bounds whose maxima do not exceed the independent raw 135 degrees Celsius cap."
-      },
-      "UncalibratedTemperatureCalibrationState": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "status",
-          "savedOffsetC",
-          "boilerTemperatureRawC",
-          "boilerTemperatureC",
-          "heaterActive",
-          "ready",
-          "safeTargetBounds"
-        ],
-        "properties": {
-          "status": { "const": "uncalibrated" },
-          "savedOffsetC": { "const": 0 },
-          "boilerTemperatureRawC": {
-            "oneOf": [
-              { "type": "number", "minimum": -40, "maximum": 160 },
-              { "type": "null" }
-            ]
-          },
-          "boilerTemperatureC": {
-            "oneOf": [
-              { "type": "number", "minimum": -60, "maximum": 170 },
-              { "type": "null" }
-            ]
-          },
-          "heaterActive": { "type": "boolean" },
-          "ready": { "type": "boolean" },
-          "safeTargetBounds": { "$ref": "#/components/schemas/TemperatureCalibrationSafeTargetBounds" }
-        },
-        "examples": [
-          {
-            "status": "uncalibrated",
-            "savedOffsetC": 0,
-            "boilerTemperatureRawC": 24.5,
-            "boilerTemperatureC": 24.5,
-            "heaterActive": false,
-            "ready": false,
-            "safeTargetBounds": {
-              "brewMinimumC": 85,
-              "brewMaximumC": 95,
-              "steamMinimumC": 110,
-              "steamMaximumC": 135
-            }
-          }
-        ]
-      },
-      "ActiveTemperatureCalibrationState": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "status",
-          "savedOffsetC",
-          "boilerTemperatureRawC",
-          "boilerTemperatureC",
-          "heaterActive",
-          "ready",
-          "safeTargetBounds",
-          "calibrationId",
-          "candidateRawTargetC",
-          "offsetPreviewC",
-          "advisoryStableMs",
-          "sessionLeaseRemainingMs",
-          "previewSafeTargetBounds"
-        ],
-        "properties": {
-          "status": { "const": "calibrating" },
-          "savedOffsetC": { "$ref": "#/components/schemas/TemperatureCalibrationOffset" },
-          "boilerTemperatureRawC": {
-            "oneOf": [
-              { "type": "number", "minimum": -40, "maximum": 160 },
-              { "type": "null" }
-            ]
-          },
-          "boilerTemperatureC": {
-            "oneOf": [
-              { "type": "number", "minimum": -60, "maximum": 170 },
-              { "type": "null" }
-            ]
-          },
-          "heaterActive": { "type": "boolean" },
-          "ready": { "type": "boolean" },
-          "safeTargetBounds": { "$ref": "#/components/schemas/TemperatureCalibrationSafeTargetBounds" },
-          "calibrationId": { "$ref": "#/components/schemas/TemperatureCalibrationSessionId" },
-          "candidateRawTargetC": { "$ref": "#/components/schemas/TemperatureCalibrationCandidateRawTarget" },
-          "offsetPreviewC": {
-            "$ref": "#/components/schemas/TemperatureCalibrationOffset",
-            "description": "Exactly 100 - candidateRawTargetC."
-          },
-          "advisoryStableMs": {
-            "type": "integer",
-            "minimum": 0,
-            "description": "Continuous time at the candidate band for user guidance only; never a Save gate."
-          },
-          "sessionLeaseRemainingMs": {
-            "type": "integer",
-            "minimum": 0,
-            "maximum": 15000
-          },
-          "previewSafeTargetBounds": { "$ref": "#/components/schemas/TemperatureCalibrationSafeTargetBounds" }
-        },
-        "examples": [
-          {
-            "status": "calibrating",
-            "savedOffsetC": 0,
-            "boilerTemperatureRawC": 99.7,
-            "boilerTemperatureC": 99.7,
-            "heaterActive": false,
-            "ready": true,
-            "safeTargetBounds": {
-              "brewMinimumC": 85,
-              "brewMaximumC": 95,
-              "steamMinimumC": 110,
-              "steamMaximumC": 135
-            },
-            "calibrationId": "temp-cal-01J2ABCDEF",
-            "candidateRawTargetC": 100,
-            "offsetPreviewC": 0,
-            "advisoryStableMs": 42000,
-            "sessionLeaseRemainingMs": 15000,
-            "previewSafeTargetBounds": {
-              "brewMinimumC": 85,
-              "brewMaximumC": 95,
-              "steamMinimumC": 110,
-              "steamMaximumC": 135
-            }
-          }
-        ]
-      },
-      "CalibratedTemperatureCalibrationState": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "status",
-          "savedOffsetC",
-          "boilerTemperatureRawC",
-          "boilerTemperatureC",
-          "heaterActive",
-          "ready",
-          "safeTargetBounds"
-        ],
-        "properties": {
-          "status": { "const": "calibrated" },
-          "savedOffsetC": { "$ref": "#/components/schemas/TemperatureCalibrationOffset" },
-          "boilerTemperatureRawC": {
-            "oneOf": [
-              { "type": "number", "minimum": -40, "maximum": 160 },
-              { "type": "null" }
-            ]
-          },
-          "boilerTemperatureC": {
-            "oneOf": [
-              { "type": "number", "minimum": -60, "maximum": 170 },
-              { "type": "null" }
-            ]
-          },
-          "heaterActive": { "type": "boolean" },
-          "ready": { "type": "boolean" },
-          "safeTargetBounds": { "$ref": "#/components/schemas/TemperatureCalibrationSafeTargetBounds" }
-        },
-        "examples": [
-          {
-            "status": "calibrated",
-            "savedOffsetC": -8,
-            "boilerTemperatureRawC": 108,
-            "boilerTemperatureC": 100,
-            "heaterActive": false,
-            "ready": true,
-            "safeTargetBounds": {
-              "brewMinimumC": 85,
-              "brewMaximumC": 95,
-              "steamMinimumC": 110,
-              "steamMaximumC": 127
-            }
-          }
-        ]
-      },
-      "TemperatureCalibrationState": {
-        "oneOf": [
-          { "$ref": "#/components/schemas/UncalibratedTemperatureCalibrationState" },
-          { "$ref": "#/components/schemas/ActiveTemperatureCalibrationState" },
-          { "$ref": "#/components/schemas/CalibratedTemperatureCalibrationState" }
-        ],
-        "discriminator": { "propertyName": "status" },
-        "examples": [
-          {
-            "status": "calibrated",
-            "savedOffsetC": -8,
-            "boilerTemperatureRawC": 108,
-            "boilerTemperatureC": 100,
-            "heaterActive": false,
-            "ready": true,
-            "safeTargetBounds": {
-              "brewMinimumC": 85,
-              "brewMaximumC": 95,
-              "steamMinimumC": 110,
-              "steamMaximumC": 127
-            }
-          }
-        ]
-      },
-      "UpdateTemperatureCalibrationCandidateRequest": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["calibrationId", "candidateRawTargetC"],
-        "properties": {
-          "calibrationId": { "$ref": "#/components/schemas/TemperatureCalibrationSessionId" },
-          "candidateRawTargetC": { "$ref": "#/components/schemas/TemperatureCalibrationCandidateRawTarget" }
-        },
-        "examples": [
-          {
-            "calibrationId": "temp-cal-01J2ABCDEF",
-            "candidateRawTargetC": 108
-          }
-        ]
-      },
-      "TemperatureCalibrationSessionRequest": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["calibrationId"],
-        "properties": {
-          "calibrationId": { "$ref": "#/components/schemas/TemperatureCalibrationSessionId" }
-        },
-        "examples": [
-          { "calibrationId": "temp-cal-01J2ABCDEF" }
-        ]
+        }
       },
       "ModeRequest": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["mode"],
-        "properties": {
-          "mode": { "$ref": "#/components/schemas/Mode" }
-        },
-        "examples": [
-          { "mode": "steam" }
-        ]
+        "type": "object", "additionalProperties": false, "required": ["mode"],
+        "properties": { "mode": { "enum": ["brew", "steam"] } }
       },
-      "ModeResponse": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["mode"],
-        "properties": {
-          "mode": { "$ref": "#/components/schemas/Mode" }
-        },
-        "examples": [
-          { "mode": "steam" }
-        ]
+      "HeaterPermissionRequest": {
+        "type": "object", "additionalProperties": false, "required": ["enabled"],
+        "properties": { "enabled": { "type": "boolean" } }
       },
-      "HeaterSettingsRequest": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["heaterEnabled"],
-        "properties": {
-          "heaterEnabled": { "type": "boolean" }
-        },
-        "examples": [
-          { "heaterEnabled": false }
-        ]
+      "SessionRequest": {
+        "type": "object", "additionalProperties": false, "required": ["calibrationId"],
+        "properties": { "calibrationId": { "$ref": "#/components/schemas/OpaqueId" } }
       },
-      "HeaterSettingsResponse": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["heaterEnabled"],
+      "TemperatureCalibrationCandidate": {
+        "type": "object", "additionalProperties": false, "required": ["calibrationId", "candidateRawTargetC"],
         "properties": {
-          "heaterEnabled": { "type": "boolean" }
-        },
-        "examples": [
-          { "heaterEnabled": false }
-        ]
+          "calibrationId": { "$ref": "#/components/schemas/OpaqueId" },
+          "candidateRawTargetC": { "type": "integer", "minimum": 90, "maximum": 120 }
+        }
       },
-      "OverTemperatureDismissResponse": {
-        "$ref": "#/components/schemas/MachineState",
-        "examples": [
+      "ScaleCalibrationComplete": {
+        "type": "object", "additionalProperties": false, "required": ["referenceWeightDecigrams"],
+        "properties": { "referenceWeightDecigrams": { "type": "integer", "minimum": 500, "maximum": 5000 } }
+      },
+      "IdempotencyRequest": {
+        "type": "object", "additionalProperties": false, "required": ["idempotencyKey"],
+        "properties": { "idempotencyKey": { "$ref": "#/components/schemas/OpaqueId" } }
+      },
+      "ExtractionStart": {
+        "oneOf": [
           {
-            "status": "heating",
-            "activeMode": "brew",
-            "boilerTemperatureC": 93,
-            "brewTargetC": 93,
-            "steamTargetC": 115,
-            "heaterEnabled": true,
-            "heaterActive": false,
-            "fault": null,
-            "steamTimeoutRemainingMs": null,
-            "steamControl": {
-              "settings": {
-                "initialCompensationC": 12,
-                "decayDurationMs": 720000,
-                "readyTimeoutMs": 300000
-              },
-              "compensationActive": false,
-              "appliedCompensationC": 0,
-              "controlTemperatureC": null,
-              "heatSoakElapsedMs": null
-            },
-            "uptimeMs": 190000
-          }
-        ]
-      },
-      "ProfileSlotId": {
-        "type": "string",
-        "enum": ["profile-1", "profile-2", "profile-3", "profile-4"],
-        "pattern": "^[a-z][a-z0-9-]*$"
-      },
-      "ProfileName": {
-        "type": "string",
-        "minLength": 1,
-        "maxLength": 12,
-        "pattern": "^[A-Za-z0-9]+$"
-      },
-      "ExtractionProfile": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "name",
-          "preInfusionSeconds",
-          "soakSeconds",
-          "mainExtractionSeconds"
-        ],
-        "properties": {
-          "name": { "$ref": "#/components/schemas/ProfileName" },
-          "preInfusionSeconds": { "type": "integer", "minimum": 0, "maximum": 60 },
-          "soakSeconds": { "type": "integer", "minimum": 0, "maximum": 60 },
-          "mainExtractionSeconds": { "type": "integer", "minimum": 1, "maximum": 60 }
-        },
-        "description": "Whole-second phases whose sum must not exceed 60 seconds. A zero pre-infusion requires zero soak.",
-        "allOf": [
-          {
-            "if": {
-              "properties": { "preInfusionSeconds": { "const": 0 } },
-              "required": ["preInfusionSeconds"]
-            },
-            "then": {
-              "properties": { "soakSeconds": { "const": 0 } }
+            "type": "object", "additionalProperties": false, "required": ["idempotencyKey", "selection"],
+            "properties": {
+              "idempotencyKey": { "$ref": "#/components/schemas/OpaqueId" },
+              "selection": { "$ref": "#/components/schemas/ExtractionSelection" }
             }
-          }
-        ],
-        "examples": [
-          {
-            "name": "Classic30",
-            "preInfusionSeconds": 0,
-            "soakSeconds": 0,
-            "mainExtractionSeconds": 30
           },
           {
-            "name": "Pre5Soak5",
-            "preInfusionSeconds": 5,
-            "soakSeconds": 5,
-            "mainExtractionSeconds": 25
+            "type": "object", "additionalProperties": false, "required": ["idempotencyKey", "selection", "weightControl"],
+            "properties": {
+              "idempotencyKey": { "$ref": "#/components/schemas/OpaqueId" },
+              "selection": { "$ref": "#/components/schemas/ProfileSelection" },
+              "weightControl": { "$ref": "#/components/schemas/WeightControl" }
+            }
           }
         ]
-      },
-      "ManualExtractionSelection": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["kind"],
-        "properties": { "kind": { "const": "manual" } }
-      },
-      "ProfileExtractionSelection": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["kind", "profileId", "profile"],
-        "properties": {
-          "kind": { "const": "profile" },
-          "profileId": { "$ref": "#/components/schemas/ProfileSlotId" },
-          "profile": { "$ref": "#/components/schemas/ExtractionProfile" }
-        }
       },
       "ExtractionSelection": {
         "oneOf": [
-          { "$ref": "#/components/schemas/ManualExtractionSelection" },
-          { "$ref": "#/components/schemas/ProfileExtractionSelection" }
+          { "type": "object", "additionalProperties": false, "required": ["kind"], "properties": { "kind": { "const": "manual" } } },
+          { "$ref": "#/components/schemas/ProfileSelection" }
         ]
       },
-      "PumpCommand": {
-        "type": "string",
-        "enum": ["running", "off"],
-        "description": "Firmware's GPIO10 command only; not measured pump operation, series-switch position, current, flow, or confirmed physical de-energization."
-      },
-      "ExtractionPhase": {
-        "type": "string",
-        "enum": ["idle", "manual", "pre-infusion", "soak", "main-extraction"]
-      },
-      "IdleExtractionState": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "status",
-          "extractionId",
-          "selection",
-          "phase",
-          "elapsedMs",
-          "remainingMs",
-          "pumpCommand"
-        ],
+      "ProfileSelection": {
+        "type": "object", "additionalProperties": false, "required": ["kind", "profileId", "profile"],
         "properties": {
-          "status": { "const": "idle" },
-          "extractionId": { "type": "null" },
-          "selection": { "type": "null" },
-          "phase": { "const": "idle" },
-          "elapsedMs": { "const": 0 },
-          "remainingMs": { "type": "null" },
-          "pumpCommand": { "const": "off" }
-        },
-        "examples": [
-          {
-            "status": "idle",
-            "extractionId": null,
-            "selection": null,
-            "phase": "idle",
-            "elapsedMs": 0,
-            "remainingMs": null,
-            "pumpCommand": "off"
+          "kind": { "const": "profile" },
+          "profileId": { "enum": ["profile-1", "profile-2", "profile-3", "profile-4"] },
+          "profile": {
+            "type": "object", "additionalProperties": false,
+            "required": ["name", "preInfusionSeconds", "soakSeconds", "mainExtractionSeconds"],
+            "properties": {
+              "name": { "type": "string", "pattern": "^[A-Za-z0-9]{1,12}$" },
+              "preInfusionSeconds": { "type": "integer", "minimum": 0, "maximum": 60 },
+              "soakSeconds": { "type": "integer", "minimum": 0, "maximum": 60 },
+              "mainExtractionSeconds": { "type": "integer", "minimum": 1, "maximum": 60 }
+            }
           }
-        ]
+        }
       },
-      "RunningExtractionState": {
+      "WeightControl": {
+        "type": "object", "additionalProperties": false,
+        "required": ["targetWeightDecigrams", "compensationDecigrams"],
+        "properties": {
+          "targetWeightDecigrams": { "type": "integer", "minimum": 50, "maximum": 1000 },
+          "compensationDecigrams": { "type": "integer", "minimum": 0, "maximum": 100 }
+        }
+      },
+      "Fault": {
+        "type": "object", "additionalProperties": false, "required": ["code", "message"],
+        "properties": {
+          "code": { "enum": ["sensor_failure", "over_temperature", "heating_timeout", "internal_error"] },
+          "message": { "type": "string", "minLength": 1, "maxLength": 160 }
+        }
+      },
+      "BootId": { "type": "string", "minLength": 32, "maxLength": 32, "pattern": "^[0-9a-f]{32}$" },
+      "SteamControlState": {
+        "type": "object", "additionalProperties": false,
+        "required": ["settings", "compensationActive", "appliedCompensationC", "controlTemperatureC", "heatSoakElapsedMs"],
+        "properties": {
+          "settings": {
+            "type": "object", "additionalProperties": false,
+            "required": ["initialCompensationC", "decayDurationMs", "readyTimeoutMs"],
+            "properties": {
+              "initialCompensationC": { "type": "integer", "minimum": 0, "maximum": 20 },
+              "decayDurationMs": { "type": "integer", "minimum": 60000, "maximum": 1800000, "multipleOf": 60000 },
+              "readyTimeoutMs": { "type": "integer", "minimum": 60000, "maximum": 900000, "multipleOf": 60000 }
+            }
+          },
+          "compensationActive": { "type": "boolean" },
+          "appliedCompensationC": { "type": "number", "minimum": 0, "maximum": 20 },
+          "controlTemperatureC": { "type": ["number", "null"], "minimum": -40, "maximum": 180 },
+          "heatSoakElapsedMs": { "type": ["integer", "null"], "minimum": 0, "maximum": 9007199254740991 }
+        }
+      },
+      "State": {
+        "type": "object", "additionalProperties": false,
+        "required": ["apiVersion", "device", "bootId", "revision", "capturedAtUptimeMs", "machine", "scale", "temperatureCalibration", "extraction", "compensation", "cooldown"],
+        "properties": {
+          "apiVersion": { "const": "3" },
+          "device": { "$ref": "#/components/schemas/DeviceIdentity" },
+          "bootId": { "$ref": "#/components/schemas/BootId" },
+          "revision": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+          "capturedAtUptimeMs": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+          "machine": { "$ref": "#/components/schemas/Machine" },
+          "scale": { "$ref": "#/components/schemas/Scale" },
+          "temperatureCalibration": { "$ref": "#/components/schemas/TemperatureCalibration" },
+          "extraction": { "$ref": "#/components/schemas/ExtractionState" },
+          "compensation": { "$ref": "#/components/schemas/CompensationState" },
+          "cooldown": { "$ref": "#/components/schemas/CooldownState" }
+        }
+      },
+      "Machine": {
+        "type": "object", "additionalProperties": false,
+        "required": ["status", "activeMode", "boilerTemperatureC", "brewTargetC", "steamTargetC", "heaterEnabled", "heaterActive", "steamTimeoutRemainingMs", "steamControl", "uptimeMs", "fault"],
+        "properties": {
+          "status": { "enum": ["heating", "ready", "fault"] },
+          "activeMode": { "enum": ["brew", "steam"] },
+          "boilerTemperatureC": { "type": ["number", "null"], "minimum": -60, "maximum": 180 },
+          "brewTargetC": { "type": "integer", "minimum": 85, "maximum": 95 },
+          "steamTargetC": { "type": "integer", "minimum": 110, "maximum": 135 },
+          "heaterEnabled": { "type": "boolean" },
+          "heaterActive": { "type": "boolean" },
+          "steamTimeoutRemainingMs": { "type": ["integer", "null"], "minimum": 0, "maximum": 900000 },
+          "steamControl": { "$ref": "#/components/schemas/SteamControlState" },
+          "uptimeMs": { "type": "integer", "minimum": 0 },
+          "fault": { "oneOf": [{ "type": "null" }, { "$ref": "#/components/schemas/Fault" }] }
+        }
+      },
+      "ActiveWeightExtraction": {
+        "type": "object", "additionalProperties": false,
+        "required": ["extractionId", "mode", "targetWeightDecigrams", "compensationDecigrams", "cutoffWeightDecigrams", "netWeightDecigrams"],
+        "properties": {
+          "extractionId": { "$ref": "#/components/schemas/OpaqueId" },
+          "mode": { "enum": ["weight", "timer-fallback"] },
+          "targetWeightDecigrams": { "type": "integer", "minimum": 50, "maximum": 1000 },
+          "compensationDecigrams": { "type": "integer", "minimum": 0, "maximum": 100 },
+          "cutoffWeightDecigrams": { "type": "integer", "minimum": 1, "maximum": 1000 },
+          "netWeightDecigrams": { "type": ["integer", "null"], "minimum": -11000, "maximum": 11000 }
+        }
+      },
+      "TerminalWeightExtraction": {
+        "type": "object", "additionalProperties": false,
+        "required": ["extractionId", "targetWeightDecigrams", "compensationDecigrams", "cutoffWeightDecigrams", "finalWeightDecigrams", "settled", "completionReason", "fallbackOccurred"],
+        "properties": {
+          "extractionId": { "$ref": "#/components/schemas/OpaqueId" },
+          "targetWeightDecigrams": { "type": "integer", "minimum": 50, "maximum": 1000 },
+          "compensationDecigrams": { "type": "integer", "minimum": 0, "maximum": 100 },
+          "cutoffWeightDecigrams": { "type": "integer", "minimum": 1, "maximum": 1000 },
+          "finalWeightDecigrams": { "type": ["integer", "null"], "minimum": -11000, "maximum": 11000 },
+          "settled": { "type": "boolean" },
+          "completionReason": { "enum": ["weight-reached", "timer-fallback", "stopped", "safety-cutoff"] },
+          "fallbackOccurred": { "type": "boolean" }
+        }
+      },
+      "ScaleWarning": {
+        "type": "object", "additionalProperties": false,
+        "required": ["code", "extractionId", "acknowledged"],
+        "properties": {
+          "code": { "const": "scale_fallback" },
+          "extractionId": { "$ref": "#/components/schemas/OpaqueId" },
+          "acknowledged": { "const": false }
+        }
+      },
+      "Scale": {
+        "type": "object", "additionalProperties": false,
+        "required": ["availability", "calibrationStatus", "stable", "grossWeightDecigrams", "netWeightDecigrams", "activeExtraction", "terminalExtraction", "warning"],
+        "properties": {
+          "availability": { "enum": ["unavailable", "unstable", "ready"] },
+          "calibrationStatus": { "enum": ["uncalibrated", "calibrating", "calibrated"] },
+          "stable": { "type": "boolean" },
+          "grossWeightDecigrams": { "type": ["integer", "null"], "minimum": -500, "maximum": 10500 },
+          "netWeightDecigrams": { "type": ["integer", "null"], "minimum": -11000, "maximum": 11000 },
+          "activeExtraction": { "oneOf": [{ "type": "null" }, { "$ref": "#/components/schemas/ActiveWeightExtraction" }] },
+          "terminalExtraction": { "oneOf": [{ "type": "null" }, { "$ref": "#/components/schemas/TerminalWeightExtraction" }] },
+          "warning": { "oneOf": [{ "type": "null" }, { "$ref": "#/components/schemas/ScaleWarning" }] }
+        }
+      },
+      "TemperatureSafeBounds": {
+        "type": "object", "additionalProperties": false,
+        "required": ["brewMinimumC", "brewMaximumC", "steamMinimumC", "steamMaximumC"],
+        "properties": {
+          "brewMinimumC": { "const": 85 },
+          "brewMaximumC": { "type": "integer", "minimum": 85, "maximum": 95 },
+          "steamMinimumC": { "const": 110 },
+          "steamMaximumC": { "type": "integer", "minimum": 110, "maximum": 135 }
+        }
+      },
+      "TemperatureCalibration": {
         "oneOf": [
           {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["status", "extractionId", "selection", "phase", "elapsedMs", "remainingMs", "pumpCommand"],
+            "type": "object", "additionalProperties": false,
+            "required": ["status", "savedOffsetC", "boilerTemperatureRawC", "boilerTemperatureC", "heaterActive", "ready", "safeTargetBounds"],
             "properties": {
-              "status": { "const": "running" },
-              "extractionId": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$" },
-              "selection": { "$ref": "#/components/schemas/ManualExtractionSelection" },
-              "phase": { "const": "manual" },
-              "elapsedMs": { "type": "integer", "minimum": 0, "maximum": 60000 },
-              "remainingMs": { "type": "integer", "minimum": 0, "maximum": 60000 },
-              "pumpCommand": { "const": "running" }
+              "status": { "const": "uncalibrated" }, "savedOffsetC": { "const": 0 },
+              "boilerTemperatureRawC": { "type": ["number", "null"], "minimum": -40, "maximum": 160 },
+              "boilerTemperatureC": { "type": ["number", "null"], "minimum": -60, "maximum": 170 },
+              "heaterActive": { "type": "boolean" }, "ready": { "type": "boolean" },
+              "safeTargetBounds": { "$ref": "#/components/schemas/TemperatureSafeBounds" }
             }
           },
           {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["status", "extractionId", "selection", "phase", "elapsedMs", "remainingMs", "pumpCommand"],
+            "type": "object", "additionalProperties": false,
+            "required": ["status", "savedOffsetC", "boilerTemperatureRawC", "boilerTemperatureC", "heaterActive", "ready", "safeTargetBounds"],
             "properties": {
-              "status": { "const": "running" },
-              "extractionId": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$" },
-              "selection": { "$ref": "#/components/schemas/ProfileExtractionSelection" },
-              "phase": { "const": "pre-infusion" },
-              "elapsedMs": { "type": "integer", "minimum": 0, "maximum": 60000 },
-              "remainingMs": { "type": "integer", "minimum": 0, "maximum": 60000 },
-              "pumpCommand": { "const": "running" }
+              "status": { "const": "calibrated" }, "savedOffsetC": { "type": "integer", "minimum": -20, "maximum": 10 },
+              "boilerTemperatureRawC": { "type": ["number", "null"], "minimum": -40, "maximum": 160 },
+              "boilerTemperatureC": { "type": ["number", "null"], "minimum": -60, "maximum": 170 },
+              "heaterActive": { "type": "boolean" }, "ready": { "type": "boolean" },
+              "safeTargetBounds": { "$ref": "#/components/schemas/TemperatureSafeBounds" }
             }
           },
           {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["status", "extractionId", "selection", "phase", "elapsedMs", "remainingMs", "pumpCommand"],
+            "type": "object", "additionalProperties": false,
+            "required": ["status", "savedOffsetC", "boilerTemperatureRawC", "boilerTemperatureC", "heaterActive", "ready", "safeTargetBounds", "calibrationId", "candidateRawTargetC", "offsetPreviewC", "advisoryStableMs", "sessionLeaseRemainingMs", "previewSafeTargetBounds"],
             "properties": {
-              "status": { "const": "running" },
-              "extractionId": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$" },
-              "selection": { "$ref": "#/components/schemas/ProfileExtractionSelection" },
-              "phase": { "const": "soak" },
-              "elapsedMs": { "type": "integer", "minimum": 0, "maximum": 60000 },
-              "remainingMs": { "type": "integer", "minimum": 0, "maximum": 60000 },
-              "pumpCommand": { "const": "off" }
+              "status": { "const": "calibrating" }, "savedOffsetC": { "type": "integer", "minimum": -20, "maximum": 10 },
+              "boilerTemperatureRawC": { "type": ["number", "null"], "minimum": -40, "maximum": 160 },
+              "boilerTemperatureC": { "type": ["number", "null"], "minimum": -60, "maximum": 170 },
+              "heaterActive": { "type": "boolean" }, "ready": { "type": "boolean" },
+              "safeTargetBounds": { "$ref": "#/components/schemas/TemperatureSafeBounds" },
+              "calibrationId": { "$ref": "#/components/schemas/OpaqueId" },
+              "candidateRawTargetC": { "type": "integer", "minimum": 90, "maximum": 120 },
+              "offsetPreviewC": { "type": "integer", "minimum": -20, "maximum": 10 },
+              "advisoryStableMs": { "type": "integer", "minimum": 0 },
+              "sessionLeaseRemainingMs": { "type": "integer", "minimum": 0, "maximum": 15000 },
+              "previewSafeTargetBounds": { "$ref": "#/components/schemas/TemperatureSafeBounds" }
             }
-          },
-          {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["status", "extractionId", "selection", "phase", "elapsedMs", "remainingMs", "pumpCommand"],
-            "properties": {
-              "status": { "const": "running" },
-              "extractionId": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$" },
-              "selection": { "$ref": "#/components/schemas/ProfileExtractionSelection" },
-              "phase": { "const": "main-extraction" },
-              "elapsedMs": { "type": "integer", "minimum": 0, "maximum": 60000 },
-              "remainingMs": { "type": "integer", "minimum": 0, "maximum": 60000 },
-              "pumpCommand": { "const": "running" }
-            }
-          }
-        ],
-        "examples": [
-          {
-            "status": "running",
-            "extractionId": "run-184220",
-            "selection": {
-              "kind": "profile",
-              "profileId": "profile-2",
-              "profile": { "name": "Pre5Soak5", "preInfusionSeconds": 5, "soakSeconds": 5, "mainExtractionSeconds": 25 }
-            },
-            "phase": "soak",
-            "elapsedMs": 7000,
-            "remainingMs": 28000,
-            "pumpCommand": "off"
-          }
-        ]
-      },
-      "ExtractionOutcome": {
-        "type": "string",
-        "enum": ["completed", "stopped", "failed"]
-      },
-      "TerminalExtractionState": {
-        "oneOf": [
-          {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["status", "extractionId", "selection", "phase", "elapsedMs", "remainingMs", "pumpCommand", "outcome"],
-            "properties": {
-              "status": { "const": "idle" },
-              "extractionId": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$" },
-              "selection": { "$ref": "#/components/schemas/ExtractionSelection" },
-              "phase": { "const": "idle" },
-              "elapsedMs": { "type": "integer", "minimum": 0, "maximum": 60000 },
-              "remainingMs": { "type": "null" },
-              "pumpCommand": { "const": "off" },
-              "outcome": { "enum": ["completed", "stopped"] }
-            }
-          },
-          {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["status", "extractionId", "selection", "phase", "elapsedMs", "remainingMs", "pumpCommand", "outcome"],
-            "properties": {
-              "status": { "const": "idle" },
-              "extractionId": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$" },
-              "selection": { "$ref": "#/components/schemas/ExtractionSelection" },
-              "phase": { "const": "idle" },
-              "elapsedMs": { "type": "integer", "minimum": 0, "maximum": 60000 },
-              "remainingMs": { "type": "null" },
-              "pumpCommand": { "$ref": "#/components/schemas/PumpCommand" },
-              "outcome": { "const": "failed" }
-            }
-          }
-        ],
-        "description": "Volatile terminal idempotency acknowledgement retained through completion, Stop, or output failure. It is evicted only by a successfully accepted different key or reboot. A failed low write may retain pumpCommand running because command state is not physical-flow feedback.",
-        "examples": [
-          {
-            "status": "idle",
-            "extractionId": "run-184220",
-            "selection": {
-              "kind": "profile",
-              "profileId": "profile-2",
-              "profile": { "name": "Pre5Soak5", "preInfusionSeconds": 5, "soakSeconds": 5, "mainExtractionSeconds": 25 }
-            },
-            "phase": "idle",
-            "elapsedMs": 35000,
-            "remainingMs": null,
-            "pumpCommand": "off",
-            "outcome": "completed"
           }
         ]
       },
       "ExtractionState": {
         "oneOf": [
-          { "$ref": "#/components/schemas/IdleExtractionState" },
-          { "$ref": "#/components/schemas/RunningExtractionState" },
-          { "$ref": "#/components/schemas/TerminalExtractionState" }
-        ]
-      },
-      "CompensationPhase": {
-        "type": "string",
-        "enum": ["manual", "main-extraction"]
-      },
-      "InactiveCompensationState": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["status", "phase"],
-        "properties": {
-          "status": { "const": "inactive" },
-          "phase": { "type": "null" }
-        },
-        "description": "No non-zero extraction bias is participating in the heater-duty calculation. Profile pre-infusion uses its fixed zero-degree policy and soak uses no compensation, so both acknowledge inactive here while extraction.phase remains authoritative for the workflow phase.",
-        "examples": [
-          { "status": "inactive", "phase": null }
-        ]
-      },
-      "ActiveCompensationState": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["status", "phase"],
-        "properties": {
-          "status": { "const": "active" },
-          "phase": { "$ref": "#/components/schemas/CompensationPhase" }
-        },
-        "description": "Firmware is using its fixed compile-time extraction bias only for the acknowledged Manual or main-extraction heater-duty calculation. This is not a measured thermal result or a runtime-configurable value and does not alter targets, readiness, deadlines, or limits.",
-        "examples": [
-          { "status": "active", "phase": "main-extraction" }
+          {
+            "type": "object", "additionalProperties": false,
+            "required": ["status", "extractionId", "selection", "phase", "elapsedMs", "remainingMs", "pumpCommand"],
+            "properties": {
+              "status": { "const": "idle" }, "extractionId": { "type": "null" }, "selection": { "type": "null" },
+              "phase": { "const": "idle" }, "elapsedMs": { "const": 0 }, "remainingMs": { "type": "null" }, "pumpCommand": { "const": "off" }
+            }
+          },
+          {
+            "type": "object", "additionalProperties": false,
+            "required": ["status", "extractionId", "selection", "phase", "elapsedMs", "remainingMs", "pumpCommand"],
+            "properties": {
+              "status": { "const": "running" }, "extractionId": { "$ref": "#/components/schemas/OpaqueId" },
+              "selection": { "$ref": "#/components/schemas/ExtractionSelection" },
+              "phase": { "enum": ["manual", "pre-infusion", "soak", "main-extraction"] },
+              "elapsedMs": { "type": "integer", "minimum": 0, "maximum": 60000 },
+              "remainingMs": { "type": "integer", "minimum": 0, "maximum": 60000 },
+              "pumpCommand": { "enum": ["running", "off"] }
+            }
+          },
+          {
+            "type": "object", "additionalProperties": false,
+            "required": ["status", "extractionId", "selection", "phase", "elapsedMs", "remainingMs", "pumpCommand", "outcome"],
+            "properties": {
+              "status": { "const": "idle" }, "extractionId": { "$ref": "#/components/schemas/OpaqueId" },
+              "selection": { "$ref": "#/components/schemas/ExtractionSelection" }, "phase": { "const": "idle" },
+              "elapsedMs": { "type": "integer", "minimum": 0, "maximum": 60000 }, "remainingMs": { "type": "null" },
+              "pumpCommand": { "enum": ["running", "off"] }, "outcome": { "enum": ["completed", "stopped", "failed"] }
+            }
+          }
         ]
       },
       "CompensationState": {
         "oneOf": [
-          { "$ref": "#/components/schemas/InactiveCompensationState" },
-          { "$ref": "#/components/schemas/ActiveCompensationState" }
-        ]
-      },
-      "CooldownStatus": {
-        "type": "string",
-        "enum": ["idle", "pumping", "stabilizing"]
-      },
-      "CooldownOutcome": {
-        "type": "string",
-        "enum": ["target-reached", "cutoff", "stopped", "failed"]
-      },
-      "CooldownId": {
-        "type": "string",
-        "minLength": 1,
-        "maxLength": 64,
-        "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$"
-      },
-      "InitialIdleCooldownState": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["status", "cooldownId", "brewTargetC", "elapsedMs", "remainingMs", "pumpCommand", "heaterInhibited", "outcome"],
-        "properties": {
-          "status": { "const": "idle" },
-          "cooldownId": { "type": "null" },
-          "brewTargetC": { "type": "null" },
-          "elapsedMs": { "const": 0 },
-          "remainingMs": { "type": "null" },
-          "pumpCommand": { "const": "off" },
-          "heaterInhibited": { "const": false },
-          "outcome": { "type": "null" }
-        }
-      },
-      "TerminalIdleCooldownState": {
-        "oneOf": [
-          {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["status", "cooldownId", "brewTargetC", "elapsedMs", "remainingMs", "pumpCommand", "heaterInhibited", "outcome"],
-            "properties": {
-              "status": { "const": "idle" },
-              "cooldownId": { "$ref": "#/components/schemas/CooldownId" },
-              "brewTargetC": { "$ref": "#/components/schemas/BrewTarget" },
-              "elapsedMs": { "type": "integer", "minimum": 0, "maximum": 50000 },
-              "remainingMs": { "type": "null" },
-              "pumpCommand": { "const": "off" },
-              "heaterInhibited": { "const": false },
-              "outcome": { "enum": ["target-reached", "cutoff", "stopped"] }
-            }
-          },
-          {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["status", "cooldownId", "brewTargetC", "elapsedMs", "remainingMs", "pumpCommand", "heaterInhibited", "outcome"],
-            "properties": {
-              "status": { "const": "idle" },
-              "cooldownId": { "$ref": "#/components/schemas/CooldownId" },
-              "brewTargetC": { "$ref": "#/components/schemas/BrewTarget" },
-              "elapsedMs": { "type": "integer", "minimum": 0, "maximum": 50000 },
-              "remainingMs": { "type": "null" },
-              "pumpCommand": { "$ref": "#/components/schemas/PumpCommand" },
-              "heaterInhibited": { "const": false },
-              "outcome": { "const": "failed" }
-            }
-          }
-        ],
-        "description": "The retained terminal acknowledgement for the most recent cooldown. Successful target, cutoff, and Stop outcomes retain the cooldown-owned off command even when another workflow later owns the shared pump. A failed off write may retain pumpCommand running; command state does not prove physical flow or de-energization. Reset or power loss returns the initial idle shape.",
-        "examples": [
-          {
-            "status": "idle",
-            "cooldownId": "cooldown-184220",
-            "brewTargetC": 93,
-            "elapsedMs": 50000,
-            "remainingMs": null,
-            "pumpCommand": "off",
-            "heaterInhibited": false,
-            "outcome": "cutoff"
-          },
-          {
-            "status": "idle",
-            "cooldownId": "cooldown-184221",
-            "brewTargetC": 93,
-            "elapsedMs": 12000,
-            "remainingMs": null,
-            "pumpCommand": "running",
-            "heaterInhibited": false,
-            "outcome": "failed"
-          }
-        ]
-      },
-      "IdleCooldownState": {
-        "oneOf": [
-          { "$ref": "#/components/schemas/InitialIdleCooldownState" },
-          { "$ref": "#/components/schemas/TerminalIdleCooldownState" }
-        ],
-        "examples": [
-          {
-            "status": "idle",
-            "cooldownId": null,
-            "brewTargetC": null,
-            "elapsedMs": 0,
-            "remainingMs": null,
-            "pumpCommand": "off",
-            "heaterInhibited": false,
-            "outcome": null
-          },
-          {
-            "status": "idle",
-            "cooldownId": "cooldown-184220",
-            "brewTargetC": 93,
-            "elapsedMs": 50000,
-            "remainingMs": null,
-            "pumpCommand": "off",
-            "heaterInhibited": false,
-            "outcome": "cutoff"
-          },
-          {
-            "status": "idle",
-            "cooldownId": "cooldown-failed-off",
-            "brewTargetC": 93,
-            "elapsedMs": 12000,
-            "remainingMs": null,
-            "pumpCommand": "running",
-            "heaterInhibited": false,
-            "outcome": "failed"
-          }
-        ]
-      },
-      "PumpingCooldownState": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["status", "cooldownId", "brewTargetC", "elapsedMs", "remainingMs", "pumpCommand", "heaterInhibited", "outcome"],
-        "properties": {
-          "status": { "const": "pumping" },
-          "cooldownId": { "$ref": "#/components/schemas/CooldownId" },
-          "brewTargetC": { "$ref": "#/components/schemas/BrewTarget" },
-          "elapsedMs": { "type": "integer", "minimum": 0, "maximum": 45000, "description": "Acknowledged monotonic elapsed time from cooldown Start." },
-          "remainingMs": { "type": "integer", "minimum": 0, "maximum": 45000, "description": "Time remaining to the fixed pump-command cutoff; elapsedMs plus remainingMs is exactly 45000." },
-          "pumpCommand": { "const": "running" },
-          "heaterInhibited": { "const": true },
-          "outcome": { "type": "null" }
-        },
-        "description": "Firmware has acknowledged Brew mode, snapshotted brewTargetC, established the transient heater inhibit, issued the heater-off command, and then issued the GPIO10 running command. running is command state only and does not confirm flow, current, switch position, cooling, or SSR behavior.",
-        "examples": [
-          {
-            "status": "pumping",
-            "cooldownId": "cooldown-184220",
-            "brewTargetC": 93,
-            "elapsedMs": 12000,
-            "remainingMs": 33000,
-            "pumpCommand": "running",
-            "heaterInhibited": true,
-            "outcome": null
-          }
-        ]
-      },
-      "StabilizingCooldownState": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["status", "cooldownId", "brewTargetC", "elapsedMs", "remainingMs", "pumpCommand", "heaterInhibited", "outcome"],
-        "properties": {
-          "status": { "const": "stabilizing" },
-          "cooldownId": { "$ref": "#/components/schemas/CooldownId" },
-          "brewTargetC": { "$ref": "#/components/schemas/BrewTarget" },
-          "elapsedMs": { "type": "integer", "minimum": 0, "maximum": 50000, "description": "Total acknowledged monotonic elapsed time from cooldown Start." },
-          "remainingMs": { "type": "integer", "minimum": 0, "maximum": 5000, "description": "Time remaining in the fixed five-second stabilization phase." },
-          "pumpCommand": { "const": "off" },
-          "heaterInhibited": { "const": true },
-          "outcome": {
-            "type": "string",
-            "enum": ["target-reached", "cutoff", "stopped"]
-          }
-        },
-        "description": "The pump-off command has been issued because the snapshotted target was reached, the 45-second cutoff elapsed, or Stop was acknowledged. The transient heater inhibit remains for the five-second stabilization deadline. Neither command proves physical de-energization or cooling.",
-        "examples": [
-          {
-            "status": "stabilizing",
-            "cooldownId": "cooldown-184220",
-            "brewTargetC": 93,
-            "elapsedMs": 45000,
-            "remainingMs": 5000,
-            "pumpCommand": "off",
-            "heaterInhibited": true,
-            "outcome": "cutoff"
-          }
-        ]
-      },
-      "ActiveCooldownState": {
-        "oneOf": [
-          { "$ref": "#/components/schemas/PumpingCooldownState" },
-          { "$ref": "#/components/schemas/StabilizingCooldownState" }
+          { "type": "object", "additionalProperties": false, "required": ["status", "phase"], "properties": { "status": { "const": "inactive" }, "phase": { "type": "null" } } },
+          { "type": "object", "additionalProperties": false, "required": ["status", "phase"], "properties": { "status": { "const": "active" }, "phase": { "enum": ["manual", "main-extraction"] } } }
         ]
       },
       "CooldownState": {
         "oneOf": [
-          { "$ref": "#/components/schemas/IdleCooldownState" },
-          { "$ref": "#/components/schemas/ActiveCooldownState" }
-        ]
-      },
-      "MachineStateV2": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["machine", "extraction", "compensation", "cooldown"],
-        "properties": {
-          "machine": { "$ref": "#/components/schemas/MachineState" },
-          "extraction": { "$ref": "#/components/schemas/ExtractionState" },
-          "compensation": { "$ref": "#/components/schemas/CompensationState" },
-          "cooldown": { "$ref": "#/components/schemas/CooldownState" }
-        },
-        "description": "One firmware-acknowledged snapshot. Running extraction requires Brew mode. Active compensation requires the matching Manual or main-extraction phase, enabled heater permission, and no fault. Pumping or stabilizing cooldown requires Brew mode, idle extraction, inactive compensation, a heater-off command in machine.heaterActive, and no fault. A retained failed cooldown outcome requires machine.status fault so removing the transient inhibit cannot restore heating.",
-        "examples": [
           {
-            "machine": {
-              "status": "ready",
-              "activeMode": "brew",
-              "boilerTemperatureC": 93,
-              "brewTargetC": 93,
-              "steamTargetC": 115,
-              "heaterEnabled": true,
-              "heaterActive": false,
-              "fault": null,
-              "steamTimeoutRemainingMs": null,
-              "steamControl": {
-                "settings": {
-                  "initialCompensationC": 12,
-                  "decayDurationMs": 720000,
-                  "readyTimeoutMs": 300000
-                },
-                "compensationActive": false,
-                "appliedCompensationC": 0,
-                "controlTemperatureC": null,
-                "heatSoakElapsedMs": null
-              },
-              "uptimeMs": 184220
-            },
-            "extraction": {
-              "status": "idle",
-              "extractionId": null,
-              "selection": null,
-              "phase": "idle",
-              "elapsedMs": 0,
-              "remainingMs": null,
-              "pumpCommand": "off"
-            },
-            "compensation": {
-              "status": "inactive",
-              "phase": null
-            },
-            "cooldown": {
-              "status": "idle",
-              "cooldownId": null,
-              "brewTargetC": null,
-              "elapsedMs": 0,
-              "remainingMs": null,
-              "pumpCommand": "off",
-              "heaterInhibited": false,
-              "outcome": null
-            }
-          }
-        ]
-      },
-      "ReplayBootId": {
-        "type": "string",
-        "minLength": 32,
-        "maxLength": 32,
-        "pattern": "^[0-9a-f]{32}$"
-      },
-      "ReplaySequence": {
-        "type": "integer",
-        "minimum": 0,
-        "maximum": 9007199254740991
-      },
-      "WeightControl": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["targetWeightDecigrams", "compensationDecigrams"],
-        "properties": {
-          "targetWeightDecigrams": { "type": "integer", "minimum": 50, "maximum": 1000 },
-          "compensationDecigrams": { "type": "integer", "minimum": 0, "maximum": 100 }
-        },
-        "description": "Tenths-of-a-gram values. Compensation must be lower than target.",
-        "examples": [
-          { "targetWeightDecigrams": 350, "compensationDecigrams": 60 }
-        ]
-      },
-      "ActiveWeightExtraction": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["extractionId", "mode", "targetWeightDecigrams", "compensationDecigrams", "cutoffWeightDecigrams", "netWeightDecigrams"],
-        "properties": {
-          "extractionId": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$" },
-          "mode": { "type": "string", "enum": ["weight", "timer-fallback"] },
-          "targetWeightDecigrams": { "type": "integer", "minimum": 50, "maximum": 1000 },
-          "compensationDecigrams": { "type": "integer", "minimum": 0, "maximum": 100 },
-          "cutoffWeightDecigrams": { "type": "integer", "minimum": 1, "maximum": 1000 },
-          "netWeightDecigrams": { "oneOf": [{ "type": "integer", "minimum": -500, "maximum": 10500 }, { "type": "null" }] }
-        },
-        "examples": [
+            "type": "object", "additionalProperties": false,
+            "required": ["status", "cooldownId", "brewTargetC", "elapsedMs", "remainingMs", "pumpCommand", "heaterInhibited", "outcome"],
+            "properties": { "status": { "const": "idle" }, "cooldownId": { "type": "null" }, "brewTargetC": { "type": "null" }, "elapsedMs": { "const": 0 }, "remainingMs": { "type": "null" }, "pumpCommand": { "const": "off" }, "heaterInhibited": { "const": false }, "outcome": { "type": "null" } }
+          },
           {
-            "extractionId": "sim-run-1",
-            "mode": "weight",
-            "targetWeightDecigrams": 350,
-            "compensationDecigrams": 60,
-            "cutoffWeightDecigrams": 290,
-            "netWeightDecigrams": 120
-          }
-        ]
-      },
-      "TerminalWeightExtraction": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["extractionId", "targetWeightDecigrams", "compensationDecigrams", "cutoffWeightDecigrams", "finalWeightDecigrams", "settled", "completionReason", "fallbackOccurred"],
-        "properties": {
-          "extractionId": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$" },
-          "targetWeightDecigrams": { "type": "integer", "minimum": 50, "maximum": 1000 },
-          "compensationDecigrams": { "type": "integer", "minimum": 0, "maximum": 100 },
-          "cutoffWeightDecigrams": { "type": "integer", "minimum": 1, "maximum": 1000 },
-          "finalWeightDecigrams": { "oneOf": [{ "type": "integer", "minimum": -500, "maximum": 10500 }, { "type": "null" }] },
-          "settled": { "type": "boolean" },
-          "completionReason": { "type": "string", "enum": ["weight-reached", "timer-fallback", "stopped", "safety-cutoff"] },
-          "fallbackOccurred": { "type": "boolean" }
-        },
-        "examples": [
+            "type": "object", "additionalProperties": false,
+            "required": ["status", "cooldownId", "brewTargetC", "elapsedMs", "remainingMs", "pumpCommand", "heaterInhibited", "outcome"],
+            "properties": { "status": { "const": "idle" }, "cooldownId": { "$ref": "#/components/schemas/OpaqueId" }, "brewTargetC": { "type": "integer", "minimum": 85, "maximum": 95 }, "elapsedMs": { "type": "integer", "minimum": 0, "maximum": 50000 }, "remainingMs": { "type": "null" }, "pumpCommand": { "enum": ["running", "off"] }, "heaterInhibited": { "const": false }, "outcome": { "enum": ["target-reached", "cutoff", "stopped", "failed"] } }
+          },
           {
-            "extractionId": "sim-run-1",
-            "targetWeightDecigrams": 350,
-            "compensationDecigrams": 60,
-            "cutoffWeightDecigrams": 290,
-            "finalWeightDecigrams": 351,
-            "settled": true,
-            "completionReason": "weight-reached",
-            "fallbackOccurred": false
-          }
-        ]
-      },
-      "ScaleState": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["availability", "calibrationStatus", "stable", "grossWeightDecigrams", "netWeightDecigrams", "activeExtraction", "terminalExtraction", "warning"],
-        "properties": {
-          "availability": { "type": "string", "enum": ["unavailable", "unstable", "ready"] },
-          "calibrationStatus": { "type": "string", "enum": ["uncalibrated", "calibrating", "calibrated"] },
-          "stable": { "type": "boolean" },
-          "grossWeightDecigrams": { "oneOf": [{ "type": "integer", "minimum": -500, "maximum": 10500 }, { "type": "null" }] },
-          "netWeightDecigrams": { "oneOf": [{ "type": "integer", "minimum": -500, "maximum": 10500 }, { "type": "null" }] },
-          "activeExtraction": { "oneOf": [{ "$ref": "#/components/schemas/ActiveWeightExtraction" }, { "type": "null" }] },
-          "terminalExtraction": { "oneOf": [{ "$ref": "#/components/schemas/TerminalWeightExtraction" }, { "type": "null" }] },
-          "warning": {
-            "oneOf": [
-              {
-                "type": "object",
-                "additionalProperties": false,
-                "required": ["code", "extractionId", "acknowledged"],
-                "properties": {
-                  "code": { "const": "scale_fallback" },
-                  "extractionId": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$" },
-                  "acknowledged": { "const": false }
-                }
-              },
-              { "type": "null" }
-            ]
-          }
-        },
-        "examples": [
+            "type": "object", "additionalProperties": false,
+            "required": ["status", "cooldownId", "brewTargetC", "elapsedMs", "remainingMs", "pumpCommand", "heaterInhibited", "outcome"],
+            "properties": { "status": { "const": "pumping" }, "cooldownId": { "$ref": "#/components/schemas/OpaqueId" }, "brewTargetC": { "type": "integer", "minimum": 85, "maximum": 95 }, "elapsedMs": { "type": "integer", "minimum": 0, "maximum": 45000 }, "remainingMs": { "type": "integer", "minimum": 0, "maximum": 45000 }, "pumpCommand": { "const": "running" }, "heaterInhibited": { "const": true }, "outcome": { "type": "null" } }
+          },
           {
-            "availability": "ready",
-            "calibrationStatus": "calibrated",
-            "stable": true,
-            "grossWeightDecigrams": 800,
-            "netWeightDecigrams": null,
-            "activeExtraction": null,
-            "terminalExtraction": null,
-            "warning": null
+            "type": "object", "additionalProperties": false,
+            "required": ["status", "cooldownId", "brewTargetC", "elapsedMs", "remainingMs", "pumpCommand", "heaterInhibited", "outcome"],
+            "properties": { "status": { "const": "stabilizing" }, "cooldownId": { "$ref": "#/components/schemas/OpaqueId" }, "brewTargetC": { "type": "integer", "minimum": 85, "maximum": 95 }, "elapsedMs": { "type": "integer", "minimum": 0, "maximum": 50000 }, "remainingMs": { "type": "integer", "minimum": 0, "maximum": 5000 }, "pumpCommand": { "const": "off" }, "heaterInhibited": { "const": true }, "outcome": { "enum": ["target-reached", "cutoff", "stopped"] } }
           }
         ]
       },
-      "WeightedExtractionTraceCursor": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["extractionId", "bootId", "afterSequence"],
-        "properties": {
-          "extractionId": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$" },
-          "bootId": { "$ref": "#/components/schemas/ReplayBootId" },
-          "afterSequence": { "$ref": "#/components/schemas/ReplaySequence" }
-        }
+      "TelemetryCursor": {
+        "type": "object", "additionalProperties": false, "required": ["extractionId", "bootId", "afterSequence"],
+        "properties": { "extractionId": { "$ref": "#/components/schemas/OpaqueId" }, "bootId": { "$ref": "#/components/schemas/BootId" }, "afterSequence": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 } }
       },
-      "WeightedExtractionTraceSample": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["sequence", "uptimeMs", "elapsedMs", "phase", "boilerTemperatureC", "activeTargetC", "netWeightDecigrams", "scaleAvailability", "pumpCommand"],
-        "properties": {
-          "sequence": { "$ref": "#/components/schemas/ReplaySequence" },
-          "uptimeMs": { "type": "integer", "minimum": 0 },
-          "elapsedMs": { "type": "integer", "minimum": 0, "maximum": 70000 },
-          "phase": { "type": "string", "enum": ["pre-infusion", "soak", "main-extraction", "settling"] },
-          "boilerTemperatureC": { "type": "number" },
-          "activeTargetC": { "type": "integer", "minimum": 85, "maximum": 95 },
-          "netWeightDecigrams": { "oneOf": [{ "type": "integer", "minimum": -500, "maximum": 10500 }, { "type": "null" }] },
-          "scaleAvailability": { "type": "string", "enum": ["unavailable", "unstable", "ready"] },
-          "pumpCommand": { "$ref": "#/components/schemas/PumpCommand" }
-        }
-      },
-      "WeightedExtractionTracePage": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["deviceId", "extractionId", "bootId", "capturedAtUptimeMs", "status", "oldestSequence", "latestSequence", "nextCursor", "hasMore", "continuity", "samples"],
-        "properties": {
-          "deviceId": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$" },
-          "extractionId": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$" },
-          "bootId": { "$ref": "#/components/schemas/ReplayBootId" },
-          "capturedAtUptimeMs": { "type": "integer", "minimum": 0 },
-          "status": { "type": "string", "enum": ["running", "settling", "terminal"] },
-          "oldestSequence": { "$ref": "#/components/schemas/ReplaySequence" },
-          "latestSequence": { "$ref": "#/components/schemas/ReplaySequence" },
-          "nextCursor": { "$ref": "#/components/schemas/WeightedExtractionTraceCursor" },
-          "hasMore": { "type": "boolean" },
-          "continuity": { "type": "string", "enum": ["initial", "continuous", "truncated", "reset"] },
-          "samples": {
-            "type": "array",
-            "maxItems": 16,
-            "items": { "$ref": "#/components/schemas/WeightedExtractionTraceSample" }
-          }
-        }
-      },
-      "ScaleTraceResponse": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["scale", "trace"],
-        "properties": {
-          "scale": { "$ref": "#/components/schemas/ScaleState" },
-          "trace": { "oneOf": [{ "$ref": "#/components/schemas/WeightedExtractionTracePage" }, { "type": "null" }] }
-        },
-        "examples": [
-          {
-            "scale": {
-              "availability": "ready",
-              "calibrationStatus": "calibrated",
-              "stable": false,
-              "grossWeightDecigrams": 910,
-              "netWeightDecigrams": 110,
-              "activeExtraction": {
-                "extractionId": "sim-run-1",
-                "mode": "weight",
-                "targetWeightDecigrams": 350,
-                "compensationDecigrams": 20,
-                "cutoffWeightDecigrams": 330,
-                "netWeightDecigrams": 110
-              },
-              "terminalExtraction": null,
-              "warning": null
-            },
-            "trace": {
-              "deviceId": "philcoino-simulator",
-              "extractionId": "sim-run-1",
-              "bootId": "00000000000000000000000000000001",
-              "capturedAtUptimeMs": 1250,
-              "status": "running",
-              "oldestSequence": 1,
-              "latestSequence": 5,
-              "nextCursor": {
-                "extractionId": "sim-run-1",
-                "bootId": "00000000000000000000000000000001",
-                "afterSequence": 5
-              },
-              "hasMore": false,
-              "continuity": "initial",
-              "samples": [
-                {
-                  "sequence": 5,
-                  "uptimeMs": 1250,
-                  "elapsedMs": 1250,
-                  "phase": "main-extraction",
-                  "boilerTemperatureC": 92.8,
-                  "activeTargetC": 93,
-                  "netWeightDecigrams": 110,
-                  "scaleAvailability": "ready",
-                  "pumpCommand": "running"
-                }
-              ]
-            }
-          }
-        ]
-      },
-      "ExtractionTelemetryCursor": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["extractionId", "bootId", "afterSequence"],
-        "properties": {
-          "extractionId": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$" },
-          "bootId": { "$ref": "#/components/schemas/ReplayBootId" },
-          "afterSequence": { "$ref": "#/components/schemas/ReplaySequence" }
-        }
-      },
-      "ExtractionTelemetrySample": {
-        "type": "object",
-        "additionalProperties": false,
+      "TelemetrySample": {
+        "type": "object", "additionalProperties": false,
         "required": ["sequence", "uptimeMs", "elapsedMs", "extractionElapsedMs", "phase", "boilerTemperatureC", "activeTargetC", "heaterActive", "pumpCommand", "scaleAvailability", "netWeightDecigrams"],
         "properties": {
-          "sequence": { "$ref": "#/components/schemas/ReplaySequence" },
-          "uptimeMs": { "type": "integer", "minimum": 0 },
+          "sequence": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+          "uptimeMs": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
           "elapsedMs": { "type": "integer", "minimum": 0, "maximum": 70000 },
           "extractionElapsedMs": { "type": "integer", "minimum": 0, "maximum": 60000 },
-          "phase": { "type": "string", "enum": ["manual", "pre-infusion", "soak", "main-extraction", "settling"] },
-          "boilerTemperatureC": { "type": "number" },
+          "phase": { "enum": ["manual", "pre-infusion", "soak", "main-extraction", "settling"] },
+          "boilerTemperatureC": { "type": ["number", "null"], "minimum": -60, "maximum": 180 },
           "activeTargetC": { "type": "integer", "minimum": 85, "maximum": 95 },
-          "heaterActive": { "type": "boolean", "description": "Firmware heater command state; it is not proof of physical current." },
-          "pumpCommand": { "$ref": "#/components/schemas/PumpCommand" },
-          "scaleAvailability": { "type": "string", "enum": ["unavailable", "unstable", "ready"] },
-          "netWeightDecigrams": { "oneOf": [{ "type": "integer", "minimum": -500, "maximum": 10500 }, { "type": "null" }] }
+          "heaterActive": { "type": "boolean" }, "pumpCommand": { "enum": ["running", "off"] },
+          "scaleAvailability": { "enum": ["unavailable", "unstable", "ready"] },
+          "netWeightDecigrams": { "type": ["integer", "null"], "minimum": -11000, "maximum": 11000 }
         }
       },
-      "ExtractionTelemetryPage": {
-        "type": "object",
-        "additionalProperties": false,
+      "TelemetryPage": {
+        "type": "object", "additionalProperties": false,
         "required": ["version", "deviceId", "extractionId", "bootId", "capturedAtUptimeMs", "selection", "controlMode", "weightControl", "baselineWeightDecigrams", "status", "outcome", "terminalWeight", "oldestSequence", "latestSequence", "nextCursor", "hasMore", "continuity", "samples"],
         "properties": {
-          "version": { "const": 1 },
-          "deviceId": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$" },
-          "extractionId": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$" },
-          "bootId": { "$ref": "#/components/schemas/ReplayBootId" },
-          "capturedAtUptimeMs": { "type": "integer", "minimum": 0 },
-          "selection": { "$ref": "#/components/schemas/ExtractionSelection" },
-          "controlMode": { "type": "string", "enum": ["manual", "timed", "weight"] },
-          "weightControl": { "oneOf": [{ "$ref": "#/components/schemas/WeightControl" }, { "type": "null" }] },
-          "baselineWeightDecigrams": { "oneOf": [{ "type": "integer", "minimum": -500, "maximum": 10500 }, { "type": "null" }] },
-          "status": { "type": "string", "enum": ["running", "settling", "terminal"] },
-          "outcome": { "oneOf": [{ "type": "string", "enum": ["completed", "stopped", "failed"] }, { "type": "null" }] },
-          "terminalWeight": { "oneOf": [{ "$ref": "#/components/schemas/TerminalWeightExtraction" }, { "type": "null" }] },
-          "oldestSequence": { "$ref": "#/components/schemas/ReplaySequence" },
-          "latestSequence": { "$ref": "#/components/schemas/ReplaySequence" },
-          "nextCursor": { "$ref": "#/components/schemas/ExtractionTelemetryCursor" },
-          "hasMore": { "type": "boolean" },
-          "continuity": { "type": "string", "enum": ["initial", "continuous", "truncated", "reset"] },
-          "samples": {
-            "type": "array",
-            "minItems": 1,
-            "maxItems": 16,
-            "items": { "$ref": "#/components/schemas/ExtractionTelemetrySample" }
-          }
-        },
-        "description": "A strict retained telemetry page. Cross-field invariants require ordered retained samples, a matching cursor, exact hasMore, mode/selection consistency, and terminal outcome consistency.",
-        "examples": [
-          {
-            "version": 1,
-            "deviceId": "philcoino-simulator",
-            "extractionId": "sim-run-1",
-            "bootId": "00000000000000000000000000000001",
-            "capturedAtUptimeMs": 1250,
-            "selection": {
-              "kind": "profile",
-              "profileId": "profile-1",
-              "profile": { "name": "Classic30", "preInfusionSeconds": 0, "soakSeconds": 0, "mainExtractionSeconds": 30 }
-            },
-            "controlMode": "weight",
-            "weightControl": { "targetWeightDecigrams": 350, "compensationDecigrams": 20 },
-            "baselineWeightDecigrams": 800,
-            "status": "running",
-            "outcome": null,
-            "terminalWeight": null,
-            "oldestSequence": 1,
-            "latestSequence": 5,
-            "nextCursor": { "extractionId": "sim-run-1", "bootId": "00000000000000000000000000000001", "afterSequence": 5 },
-            "hasMore": false,
-            "continuity": "initial",
-            "samples": [
-              {
-                "sequence": 5,
-                "uptimeMs": 1250,
-                "elapsedMs": 1250,
-                "extractionElapsedMs": 1250,
-                "phase": "main-extraction",
-                "boilerTemperatureC": 92.8,
-                "activeTargetC": 93,
-                "heaterActive": true,
-                "pumpCommand": "running",
-                "scaleAvailability": "ready",
-                "netWeightDecigrams": 110
-              }
-            ]
-          }
-        ]
+          "version": { "const": 1 }, "deviceId": { "$ref": "#/components/schemas/Identifier" },
+          "extractionId": { "$ref": "#/components/schemas/OpaqueId" }, "bootId": { "$ref": "#/components/schemas/BootId" },
+          "capturedAtUptimeMs": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+          "selection": { "$ref": "#/components/schemas/ExtractionSelection" }, "controlMode": { "enum": ["manual", "timed", "weight"] },
+          "weightControl": { "oneOf": [{ "type": "null" }, { "$ref": "#/components/schemas/WeightControl" }] },
+          "baselineWeightDecigrams": { "type": ["integer", "null"], "minimum": -500, "maximum": 10500 },
+          "status": { "enum": ["running", "settling", "terminal"] }, "outcome": { "type": ["string", "null"], "enum": ["completed", "stopped", "failed", null] },
+          "terminalWeight": { "oneOf": [{ "type": "null" }, { "$ref": "#/components/schemas/TerminalWeightExtraction" }] },
+          "oldestSequence": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+          "latestSequence": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+          "nextCursor": { "$ref": "#/components/schemas/TelemetryCursor" }, "hasMore": { "type": "boolean" },
+          "continuity": { "enum": ["initial", "continuous", "truncated", "reset"] },
+          "samples": { "type": "array", "minItems": 1, "maxItems": 16, "items": { "$ref": "#/components/schemas/TelemetrySample" } }
+        }
       },
-      "CompleteScaleCalibrationRequest": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["referenceWeightDecigrams"],
-        "properties": {
-          "referenceWeightDecigrams": { "type": "integer", "minimum": 500, "maximum": 5000 }
-        },
-        "examples": [{ "referenceWeightDecigrams": 1000 }]
-      },
-      "StartExtractionRequest": {
-        "oneOf": [
-          {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["idempotencyKey", "selection"],
-            "properties": {
-              "idempotencyKey": { "type": "string", "minLength": 16, "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$" },
-              "selection": { "$ref": "#/components/schemas/ExtractionSelection" }
-            }
-          },
-          {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["idempotencyKey", "selection", "weightControl"],
-            "properties": {
-              "idempotencyKey": { "type": "string", "minLength": 16, "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$" },
-              "selection": { "$ref": "#/components/schemas/ProfileExtractionSelection" },
-              "weightControl": { "$ref": "#/components/schemas/WeightControl" }
-            }
-          }
-        ],
-        "examples": [
-          {
-            "idempotencyKey": "start-01J2ABCDEF1234",
-            "selection": {
-              "kind": "profile",
-              "profileId": "profile-2",
-              "profile": { "name": "Pre5Soak5", "preInfusionSeconds": 5, "soakSeconds": 5, "mainExtractionSeconds": 25 }
-            }
-          },
-          {
-            "idempotencyKey": "start-weight-01J2ABCDEF",
-            "selection": {
-              "kind": "profile",
-              "profileId": "profile-1",
-              "profile": { "name": "Classic30", "preInfusionSeconds": 0, "soakSeconds": 0, "mainExtractionSeconds": 30 }
-            },
-            "weightControl": { "targetWeightDecigrams": 350, "compensationDecigrams": 60 }
-          }
-        ]
-      },
-      "StartCooldownRequest": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["idempotencyKey"],
-        "properties": {
-          "idempotencyKey": {
-            "type": "string",
-            "minLength": 16,
-            "maxLength": 64,
-            "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$"
-          }
-        },
-        "examples": [
-          { "idempotencyKey": "cooldown-01J2ABCDEF1" }
-        ]
-      },
-      "ApiV2ErrorCode": {
-        "type": "string",
-        "enum": [
-          "malformed_request",
-          "unauthorized",
-          "extraction_active",
-          "cooldown_active",
-          "brew_mode_required",
-          "cooldown_not_required",
-          "sensor_unavailable",
-          "machine_faulted",
-          "idempotency_mismatch",
-          "scale_not_calibrated",
-          "scale_not_stable",
-          "scale_unavailable",
-          "scale_warning_unacknowledged",
-          "calibration_in_progress",
-          "heater_disabled",
-          "temperature_calibration_active",
-          "temperature_calibration_inactive",
-          "temperature_calibration_session_mismatch",
-          "temperature_calibration_expired",
-          "temperature_target_unsafe",
-          "stream_unavailable",
-          "stream_busy",
-          "persistence_failure",
-          "internal_error"
-        ]
-      },
-      "ApiV2ErrorResponse": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["error"],
+      "Error": {
+        "type": "object", "additionalProperties": false, "required": ["error"],
         "properties": {
           "error": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["code", "message"],
+            "type": "object", "additionalProperties": false, "required": ["code", "message"],
             "properties": {
-              "code": { "$ref": "#/components/schemas/ApiV2ErrorCode" },
+              "code": {
+                "enum": ["malformed_request", "unauthorized", "pairing_busy", "pairing_session_expired", "pairing_session_replayed", "pairing_stage_mismatch", "invalid_pairing_code", "extraction_active", "cooldown_active", "brew_mode_required", "cooldown_not_required", "sensor_unavailable", "machine_faulted", "idempotency_mismatch", "scale_not_calibrated", "scale_not_stable", "scale_unavailable", "scale_warning_unacknowledged", "calibration_in_progress", "heater_disabled", "temperature_calibration_active", "temperature_calibration_inactive", "temperature_calibration_session_mismatch", "temperature_calibration_expired", "temperature_target_unsafe", "stream_unavailable", "stream_busy", "persistence_failure", "internal_error"]
+              },
               "message": { "type": "string", "minLength": 1, "maxLength": 160 }
             }
           }
-        },
-        "examples": [
-          {
-            "error": {
-              "code": "brew_mode_required",
-              "message": "Switch the machine to Brew before starting extraction."
-            }
-          },
-          {
-            "error": {
-              "code": "cooldown_not_required",
-              "message": "The Brew-effective temperature must be above the current Brew target."
-            }
-          },
-          {
-            "error": {
-              "code": "sensor_unavailable",
-              "message": "Cooldown requires a valid boiler temperature reading."
-            }
-          },
-          {
-            "error": {
-              "code": "machine_faulted",
-              "message": "Cooldown cannot start while a machine fault is latched."
-            }
-          },
-          {
-            "error": {
-              "code": "temperature_target_unsafe",
-              "message": "The requested effective target would exceed the raw temperature ceiling."
-            }
-          }
-        ]
-      },
-      "ExtractionActiveConflictResponse": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["error", "activeExtraction"],
-        "properties": {
-          "error": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["code", "message"],
-            "properties": {
-              "code": { "const": "extraction_active" },
-              "message": { "type": "string", "minLength": 1, "maxLength": 160 }
-            }
-          },
-          "activeExtraction": { "$ref": "#/components/schemas/RunningExtractionState" }
-        },
-        "examples": [
-          {
-            "error": {
-              "code": "extraction_active",
-              "message": "A different extraction is already active."
-            },
-            "activeExtraction": {
-              "status": "running",
-              "extractionId": "run-184220",
-              "selection": { "kind": "manual" },
-              "phase": "manual",
-              "elapsedMs": 12000,
-              "remainingMs": 48000,
-              "pumpCommand": "running"
-            }
-          }
-        ]
-      },
-      "CooldownActiveConflictResponse": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["error", "activeCooldown"],
-        "properties": {
-          "error": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["code", "message"],
-            "properties": {
-              "code": { "const": "cooldown_active" },
-              "message": { "type": "string", "minLength": 1, "maxLength": 160 }
-            }
-          },
-          "activeCooldown": { "$ref": "#/components/schemas/ActiveCooldownState" }
-        },
-        "examples": [
-          {
-            "error": {
-              "code": "cooldown_active",
-              "message": "A different cooldown is already active."
-            },
-            "activeCooldown": {
-              "status": "pumping",
-              "cooldownId": "cooldown-184220",
-              "brewTargetC": 93,
-              "elapsedMs": 12000,
-              "remainingMs": 33000,
-              "pumpCommand": "running",
-              "heaterInhibited": true,
-              "outcome": null
-            }
-          }
-        ]
-      },
-      "ErrorResponse": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["error"],
-        "properties": {
-          "error": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["code", "message"],
-            "properties": {
-              "code": { "$ref": "#/components/schemas/ErrorCode" },
-              "message": { "type": "string", "minLength": 1, "maxLength": 160 }
-            }
-          }
-        },
-        "examples": [
-          {
-            "error": {
-              "code": "temperature_out_of_range",
-              "message": "Brew target must be between 85 and 95 degrees Celsius."
-            }
-          }
-        ]
+        }
       }
     }
   }

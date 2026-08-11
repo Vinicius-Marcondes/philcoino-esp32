@@ -6,7 +6,7 @@ export function normalizeDeviceAddress(address: string): string {
 
   const withScheme = candidate.includes("://")
     ? candidate
-    : `http://${candidate}`;
+    : `https://${candidate}`;
 
   let url: URL;
   try {
@@ -16,14 +16,14 @@ export function normalizeDeviceAddress(address: string): string {
   }
 
   if (
-    url.protocol !== "http:" ||
+    url.protocol !== "https:" ||
     url.username.length > 0 ||
     url.password.length > 0 ||
     (url.pathname !== "/" && url.pathname !== "") ||
     url.search.length > 0 ||
     url.hash.length > 0
   ) {
-    throw new TypeError("The device address must be a local HTTP origin.");
+    throw new TypeError("The device address must be a local HTTPS origin.");
   }
 
   return url.origin;

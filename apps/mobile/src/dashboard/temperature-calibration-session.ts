@@ -1,6 +1,6 @@
 import type {
-  ApiV2ErrorCode,
-  ErrorCode,
+  ApiErrorCode,
+  MachineStateV3,
   TemperatureCalibrationState,
 } from "@philcoino/protocol";
 
@@ -19,25 +19,28 @@ export interface TemperatureCalibrationClient {
   cancelTemperatureCalibration(
     request: { calibrationId: string },
     options?: { signal?: AbortSignal },
-  ): Promise<TemperatureCalibrationState>;
-  getTemperatureCalibration(
-    calibrationId?: string,
+  ): Promise<MachineStateV3>;
+  getState(
     options?: { signal?: AbortSignal },
-  ): Promise<TemperatureCalibrationState>;
+  ): Promise<MachineStateV3>;
+  renewTemperatureCalibration(
+    request: { calibrationId: string },
+    options?: { signal?: AbortSignal },
+  ): Promise<MachineStateV3>;
   saveTemperatureCalibration(
     request: { calibrationId: string },
     options?: { signal?: AbortSignal },
-  ): Promise<TemperatureCalibrationState>;
+  ): Promise<MachineStateV3>;
   startTemperatureCalibration(
     options?: { signal?: AbortSignal },
-  ): Promise<TemperatureCalibrationState>;
+  ): Promise<MachineStateV3>;
   updateTemperatureCalibrationCandidate(
     request: {
       calibrationId: string;
       candidateRawTargetC: number;
     },
     options?: { signal?: AbortSignal },
-  ): Promise<TemperatureCalibrationState>;
+  ): Promise<MachineStateV3>;
 }
 
 export type TemperatureCalibrationPendingMutation =
@@ -57,8 +60,7 @@ export type TemperatureCalibrationSessionStatus =
   | "disconnected";
 
 export type TemperatureCalibrationSessionErrorCode =
-  | ApiV2ErrorCode
-  | ErrorCode
+  | ApiErrorCode
   | ApiClientErrorKind
   | "unknown";
 
@@ -207,7 +209,7 @@ export class TemperatureCalibrationSession {
 
   private mutate(
     mutation: TemperatureCalibrationPendingMutation,
-    request: (signal: AbortSignal) => Promise<TemperatureCalibrationState>,
+    request: (signal: AbortSignal) => Promise<MachineStateV3>,
     terminalStatus?: "cancelled" | "saved",
   ): Promise<void> {
     if (!this.running || this.closeReason !== null) {
@@ -228,14 +230,14 @@ export class TemperatureCalibrationSession {
       const controller = new AbortController();
       this.activeController = controller;
       try {
-        const snapshot = await request(controller.signal);
+        const acknowledged = await request(controller.signal);
         if (!this.isCurrent(generation)) {
           return;
         }
         this.publish({
           error: null,
           pendingMutation: null,
-          snapshot,
+          snapshot: acknowledged.temperatureCalibration,
           status: terminalStatus ?? "ready",
         });
         if (terminalStatus !== undefined) {
@@ -271,17 +273,20 @@ export class TemperatureCalibrationSession {
         this.state.snapshot?.status === "calibrating"
           ? this.state.snapshot.calibrationId
           : undefined;
-      const snapshot = await this.client.getTemperatureCalibration(
-        calibrationId,
-        { signal: controller.signal },
-      );
+      const acknowledged =
+        calibrationId === undefined
+          ? await this.client.getState({ signal: controller.signal })
+          : await this.client.renewTemperatureCalibration(
+              { calibrationId },
+              { signal: controller.signal },
+            );
       if (!this.isCurrent(generation)) {
         return;
       }
       this.publish({
         error: null,
         pendingMutation: null,
-        snapshot,
+        snapshot: acknowledged.temperatureCalibration,
         status: "ready",
       });
     } catch (error) {

@@ -2,12 +2,14 @@ import { DeviceResponseSchema } from "@philcoino/protocol";
 
 import { normalizeDeviceAddress } from "../networking/device-address";
 
-const SELECTED_DEVICE_KEY = "philcoino.selected-device.v1";
+const SELECTED_DEVICE_KEY = "philcoino.selected-device.v3";
 
 export interface SelectedDevice {
   deviceId: string;
-  lastSuccessfulAddress: string;
-  token: string;
+  httpsOrigin: string;
+  certificateSpkiSha256: string;
+  clientId: string;
+  accessToken: string;
 }
 
 export interface SecureKeyValueStore {
@@ -55,9 +57,15 @@ function parseSelectedDevice(value: unknown): SelectedDevice {
 
   const keys = Object.keys(value);
   if (
-    keys.length !== 3 ||
+    keys.length !== 5 ||
     !keys.every((key) =>
-      ["deviceId", "lastSuccessfulAddress", "token"].includes(key),
+      [
+        "deviceId",
+        "httpsOrigin",
+        "certificateSpkiSha256",
+        "clientId",
+        "accessToken",
+      ].includes(key),
     )
   ) {
     throw new Error("The selected device contains unexpected fields.");
@@ -67,19 +75,35 @@ function parseSelectedDevice(value: unknown): SelectedDevice {
   if (!deviceId.success) {
     throw new Error("The selected device ID is invalid.");
   }
-  if (typeof value.lastSuccessfulAddress !== "string") {
+  if (typeof value.httpsOrigin !== "string") {
     throw new Error("The selected device address is invalid.");
   }
-  if (typeof value.token !== "string" || value.token.length === 0) {
-    throw new Error("The selected device token is invalid.");
+  const base64Url256 = /^[A-Za-z0-9_-]{43}$/u;
+  if (
+    typeof value.certificateSpkiSha256 !== "string" ||
+    !base64Url256.test(value.certificateSpkiSha256)
+  ) {
+    throw new Error("The selected device certificate pin is invalid.");
+  }
+  if (
+    typeof value.clientId !== "string" ||
+    !/^[0-9a-f]{32}$/u.test(value.clientId)
+  ) {
+    throw new Error("The selected client ID is invalid.");
+  }
+  if (
+    typeof value.accessToken !== "string" ||
+    !base64Url256.test(value.accessToken)
+  ) {
+    throw new Error("The selected device access token is invalid.");
   }
 
   return {
     deviceId: deviceId.data,
-    lastSuccessfulAddress: normalizeDeviceAddress(
-      value.lastSuccessfulAddress,
-    ),
-    token: value.token,
+    httpsOrigin: normalizeDeviceAddress(value.httpsOrigin),
+    certificateSpkiSha256: value.certificateSpkiSha256,
+    clientId: value.clientId,
+    accessToken: value.accessToken,
   };
 }
 

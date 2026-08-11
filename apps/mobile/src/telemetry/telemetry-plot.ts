@@ -55,7 +55,7 @@ export interface TemperatureHistoryPlot extends TelemetryPlotFrame {
   x: (recordedAtMs: number) => number;
 }
 
-export function weightedTracePlot({
+export function extractionTelemetryPlot({
   cutoffDecigrams,
   height,
   trace,
@@ -84,16 +84,12 @@ export function weightedTracePlot({
   let weightHighest = MINIMUM_WEIGHT_G;
   let flowHighest = MINIMUM_FLOW_G_PER_S;
   for (const sample of trace.samples) {
-    temperatureLowest = Math.min(
-      temperatureLowest,
-      sample.boilerTemperatureC,
-      sample.activeTargetC,
-    );
-    temperatureHighest = Math.max(
-      temperatureHighest,
-      sample.boilerTemperatureC,
-      sample.activeTargetC,
-    );
+    temperatureLowest = Math.min(temperatureLowest, sample.activeTargetC);
+    temperatureHighest = Math.max(temperatureHighest, sample.activeTargetC);
+    if (sample.boilerTemperatureC !== null) {
+      temperatureLowest = Math.min(temperatureLowest, sample.boilerTemperatureC);
+      temperatureHighest = Math.max(temperatureHighest, sample.boilerTemperatureC);
+    }
     if (sample.netWeightDecigrams !== null) {
       weightHighest = Math.max(weightHighest, sample.netWeightDecigrams / 10);
     }
@@ -164,11 +160,11 @@ export function weightedTracePlot({
     temperatureBand,
     temperaturePaths: continuous.map((segment) =>
       linePath(
-        segment,
+        segment.filter((sample) => sample.boilerTemperatureC !== null),
         (sample) => x(sample.elapsedMs),
-        (sample) => temperatureY(sample.boilerTemperatureC),
+        (sample) => temperatureY(sample.boilerTemperatureC!),
       ),
-    ),
+    ).filter(Boolean),
     temperatureY,
     weightBand,
     weightPaths: continuous

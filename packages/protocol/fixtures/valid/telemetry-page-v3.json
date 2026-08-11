@@ -1,0 +1,38 @@
+{
+  "version": 1,
+  "deviceId": "philcoino-test",
+  "extractionId": "extraction-0001",
+  "bootId": "00000000000000000000000000000001",
+  "capturedAtUptimeMs": 250,
+  "selection": { "kind": "manual" },
+  "controlMode": "manual",
+  "weightControl": null,
+  "baselineWeightDecigrams": null,
+  "status": "running",
+  "outcome": null,
+  "terminalWeight": null,
+  "oldestSequence": 1,
+  "latestSequence": 1,
+  "nextCursor": {
+    "extractionId": "extraction-0001",
+    "bootId": "00000000000000000000000000000001",
+    "afterSequence": 1
+  },
+  "hasMore": false,
+  "continuity": "initial",
+  "samples": [
+    {
+      "sequence": 1,
+      "uptimeMs": 250,
+      "elapsedMs": 250,
+      "extractionElapsedMs": 250,
+      "phase": "manual",
+      "boilerTemperatureC": null,
+      "activeTargetC": 93,
+      "heaterActive": false,
+      "pumpCommand": "running",
+      "scaleAvailability": "unavailable",
+      "netWeightDecigrams": null
+    }
+  ]
+}

@@ -9,7 +9,7 @@ import type {
   ScaleCompletionReason,
   TerminalWeightExtraction,
 } from "@philcoino/protocol";
-import type { TraceCompleteness } from "./weighted-shot-trace";
+import type { TraceCompleteness } from "./extraction-trace";
 
 export interface WeightedShotSummary {
   compensationDecigrams: number;

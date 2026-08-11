@@ -54,6 +54,7 @@ function parseFrame(frame: string): ExtractionTelemetryPage | null {
     return null;
   }
   let eventName = "message";
+  let eventId: string | null = null;
   const data: string[] = [];
   for (const line of lines) {
     if (line.length === 0 || line.startsWith(":")) continue;
@@ -63,8 +64,21 @@ function parseFrame(frame: string): ExtractionTelemetryPage | null {
       colon < 0
         ? ""
         : line.slice(colon + 1).replace(/^ /, "");
-    if (field === "event") eventName = value;
-    else if (field === "data") data.push(value);
+    if (field === "event") {
+      if (eventName !== "message") {
+        throw new ExtractionSseProtocolError("The SSE event name was repeated.");
+      }
+      eventName = value;
+    } else if (field === "id") {
+      if (eventId !== null || value.length === 0 || value.includes("\0")) {
+        throw new ExtractionSseProtocolError("The SSE event ID is invalid.");
+      }
+      eventId = value;
+    } else if (field === "data") {
+      data.push(value);
+    } else {
+      throw new ExtractionSseProtocolError("The device sent an unknown SSE field.");
+    }
   }
   if (eventName !== "telemetry") {
     throw new ExtractionSseProtocolError("The device sent an unknown SSE event.");
@@ -81,6 +95,16 @@ function parseFrame(frame: string): ExtractionTelemetryPage | null {
   const parsed = ExtractionTelemetryPageSchema.safeParse(value);
   if (!parsed.success) {
     throw new ExtractionSseProtocolError("The telemetry SSE event violated the protocol.");
+  }
+  const expectedEventId = [
+    parsed.data.bootId,
+    parsed.data.extractionId,
+    parsed.data.nextCursor.afterSequence,
+  ].join(".");
+  if (eventId !== expectedEventId) {
+    throw new ExtractionSseProtocolError(
+      "The telemetry SSE event ID did not match its cursor.",
+    );
   }
   return parsed.data;
 }

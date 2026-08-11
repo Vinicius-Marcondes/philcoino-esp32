@@ -1,0 +1,12 @@
+{
+  "device": {
+    "deviceId": "philcoino-test",
+    "name": "Philcoino test",
+    "model": "espresso-machine",
+    "apiVersion": "3",
+    "firmwareVersion": "3.0.0"
+  },
+  "clientId": "11111111111111111111111111111111",
+  "accessToken": "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDAAA",
+  "certificateSpkiSha256": "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA"
+}

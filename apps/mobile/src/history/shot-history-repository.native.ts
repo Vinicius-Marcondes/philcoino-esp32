@@ -5,7 +5,6 @@ import type {
   ExtractionTelemetryControlMode,
   ExtractionTelemetryPage,
   ExtractionTelemetryPhase,
-  WeightedExtractionTracePage,
   ScaleAvailability,
   PumpCommand,
   TerminalWeightExtraction,
@@ -15,14 +14,10 @@ import { ExtractionSelectionSchema } from "@philcoino/protocol";
 import type { ExtractionSummary, WeightedShotSummary } from "./shot-history";
 import type { ShotHistoryRepository } from "./shot-history-repository";
 import {
-  mergeTracePage,
-  type StoredWeightedShotTrace,
-  type TraceCompleteness,
-  type TraceGapStatus,
-} from "./weighted-shot-trace";
-import {
   mergeExtractionTracePage,
   type StoredExtractionTrace,
+  type TraceCompleteness,
+  type TraceGapStatus,
 } from "./extraction-trace";
 
 const DATABASE_NAME = "philcoino-mobile.db";
@@ -191,60 +186,6 @@ class SQLiteShotHistoryRepository implements ShotHistoryRepository {
           sample.extractionElapsedMs ?? sample.elapsedMs, sample.phase,
           sample.boilerTemperatureC, sample.activeTargetC,
           sample.heaterActive === undefined ? null : sample.heaterActive ? 1 : 0,
-          sample.netWeightDecigrams, sample.scaleAvailability,
-          sample.pumpCommand, sample.derivedFlowGPerS, sample.gapStatus,
-        );
-      }
-    });
-    return trace;
-  }
-
-  async commitTracePage(
-    deviceId: string,
-    page: WeightedExtractionTracePage,
-  ): Promise<StoredWeightedShotTrace> {
-    const database = await this.database();
-    const previous = await this.loadTrace(
-      deviceId,
-      page.extractionId,
-      page.bootId,
-    );
-    const trace = mergeTracePage(
-      previous === null ? null : legacyTrace(previous),
-      deviceId,
-      page,
-    );
-    const retainedSequence = trace.samples.at(-1)?.sequence ?? 0;
-    await database.withTransactionAsync(async () => {
-      await database.runAsync(
-        `INSERT OR REPLACE INTO weighted_shot_traces
-          (device_id, extraction_id, boot_id, completeness)
-         VALUES (?, ?, ?, ?)`,
-        trace.deviceId,
-        trace.extractionId,
-        trace.bootId,
-        trace.completeness,
-      );
-      await database.runAsync(
-        `DELETE FROM weighted_shot_trace_samples
-         WHERE device_id = ? AND extraction_id = ?
-           AND (boot_id != ? OR sequence > ?)`,
-        trace.deviceId,
-        trace.extractionId,
-        trace.bootId,
-        retainedSequence,
-      );
-      for (const sample of trace.samples) {
-        await database.runAsync(
-          `INSERT OR REPLACE INTO weighted_shot_trace_samples (
-            device_id, extraction_id, boot_id, sequence, uptime_ms, elapsed_ms,
-            phase, boiler_temperature_c, active_target_c,
-            net_weight_decigrams, scale_availability, pump_command,
-            derived_flow_g_per_s, gap_status
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          trace.deviceId, trace.extractionId, trace.bootId, sample.sequence,
-          sample.uptimeMs, sample.elapsedMs, sample.phase,
-          sample.boilerTemperatureC, sample.activeTargetC,
           sample.netWeightDecigrams, sample.scaleAvailability,
           sample.pumpCommand, sample.derivedFlowGPerS, sample.gapStatus,
         );
@@ -716,34 +657,6 @@ async function migrateExtractionHistory(
     DROP TABLE extraction_history;
     ALTER TABLE extraction_history_v2 RENAME TO extraction_history;
   `);
-}
-
-function legacyTrace(trace: StoredExtractionTrace): StoredWeightedShotTrace {
-  return {
-    bootId: trace.bootId,
-    completeness: trace.completeness,
-    deviceId: trace.deviceId,
-    extractionId: trace.extractionId,
-    samples: trace.samples
-      .filter(
-        (sample): sample is typeof sample & {
-          phase: Exclude<typeof sample.phase, "manual">;
-        } => sample.phase !== "manual",
-      )
-      .map((sample) => ({
-        activeTargetC: sample.activeTargetC,
-        boilerTemperatureC: sample.boilerTemperatureC,
-        derivedFlowGPerS: sample.derivedFlowGPerS,
-        elapsedMs: sample.elapsedMs,
-        gapStatus: sample.gapStatus,
-        netWeightDecigrams: sample.netWeightDecigrams,
-        phase: sample.phase,
-        pumpCommand: sample.pumpCommand,
-        scaleAvailability: sample.scaleAvailability,
-        sequence: sample.sequence,
-        uptimeMs: sample.uptimeMs,
-      })),
-  };
 }
 
 function nullableBoolean(value: boolean | null): number | null {

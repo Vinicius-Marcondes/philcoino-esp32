@@ -1,9 +1,8 @@
 import type {
   ExtractionState,
+  MachineStateV3,
   ProfileSlotId,
   ScaleState,
-  ScaleTraceResponse,
-  WeightedExtractionTraceCursor,
   WeightControl,
 } from "@philcoino/protocol";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -30,18 +29,14 @@ import {
 } from "@/src/telemetry/extraction-stream-session";
 
 interface ScaleClient {
-  acknowledgeScaleWarning(options?: { signal?: AbortSignal }): Promise<ScaleState>;
-  cancelScaleCalibration(options?: { signal?: AbortSignal }): Promise<ScaleState>;
+  acknowledgeScaleWarning(options?: { signal?: AbortSignal }): Promise<MachineStateV3>;
+  cancelScaleCalibration(options?: { signal?: AbortSignal }): Promise<MachineStateV3>;
   completeScaleCalibration(
     request: { referenceWeightDecigrams: number },
     options?: { signal?: AbortSignal },
-  ): Promise<ScaleState>;
+  ): Promise<MachineStateV3>;
   getScale(options?: { signal?: AbortSignal }): Promise<ScaleState>;
-  getScaleTrace(
-    cursor?: WeightedExtractionTraceCursor,
-    options?: { signal?: AbortSignal },
-  ): Promise<ScaleTraceResponse>;
-  startScaleCalibration(options?: { signal?: AbortSignal }): Promise<ScaleState>;
+  startScaleCalibration(options?: { signal?: AbortSignal }): Promise<MachineStateV3>;
 }
 
 export type ScaleMutation =
@@ -261,12 +256,12 @@ export function useScale({
   }, [scalePageVisible]);
 
   const run = useCallback(
-    async (kind: Exclude<ScaleMutation, null>, operation: () => Promise<ScaleState>) => {
+    async (kind: Exclude<ScaleMutation, null>, operation: () => Promise<MachineStateV3>) => {
       if (mutation !== null) return;
       setMutation(kind);
       setError(null);
       try {
-        setScale(await operation());
+        setScale((await operation()).scale);
       } catch (error) {
         setError(scaleMutationErrorMessage(error));
       } finally {

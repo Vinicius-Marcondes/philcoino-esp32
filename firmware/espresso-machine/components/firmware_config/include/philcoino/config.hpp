@@ -11,18 +11,6 @@ inline constexpr char kFriendlyName[] = "PhilcoINO";
 inline constexpr char kDeviceModel[] = "ESP32-C3 Super Mini";
 inline constexpr char kDeviceIdPrefix[] = "philcoino-";
 inline constexpr bool kWifiEnabled = true;
-#ifdef CONFIG_PHILCOINO_PERFORMANCE_DIAGNOSTICS
-inline constexpr bool kPerformanceDiagnosticsEnabled = true;
-#else
-inline constexpr bool kPerformanceDiagnosticsEnabled = false;
-#endif
-#ifdef CONFIG_PHILCOINO_BREW_PI_CONTROL
-inline constexpr bool kBrewPiControlEnabled = true;
-#else
-inline constexpr bool kBrewPiControlEnabled = false;
-#endif
-// ESP-IDF uses quarter-dBm units; 44 limits station TX power to 11 dBm.
-inline constexpr std::int8_t kWifiMaximumTxPowerQuarterDbm = 44;
 // Logs every successful MAX6675 frame and can make the serial monitor noisy.
 // Sensor transport failures remain logged when this diagnostic is disabled.
 inline constexpr bool kTemperatureReadingLoggingEnabled = false;
@@ -65,13 +53,6 @@ inline constexpr std::uint32_t kTemperatureControllerIntervalMs = 500U;
 inline constexpr std::uint32_t kHeaterControlWindowMs = 10U * 1000U;
 inline constexpr std::uint32_t kMinimumHeaterPulseMs = 500U;
 inline constexpr std::uint32_t kHeaterSafetyLeaseMs = 1500U;
-// Initial conservative shadow-only tuning candidate. Active-PI physical
-// acceptance requires owner-approved A/B evidence for the exact build.
-inline constexpr float kBrewPiKp = 0.08F;
-inline constexpr float kBrewPiKi = 0.01F;
-inline constexpr float kBrewPiFilterAlpha = 0.25F;
-inline constexpr float kBrewPiIntegralMinimum = -100.0F;
-inline constexpr float kBrewPiIntegralMaximum = 100.0F;
 inline constexpr std::uint32_t kCooldownPumpLimitMs = 45U * 1000U;
 inline constexpr std::uint32_t kCooldownStabilizationMs = 5U * 1000U;
 inline constexpr float kBrewHeatRampMinimumTargetBandC = 4.0F;

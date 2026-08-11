@@ -46,6 +46,7 @@ export function connectionStateFromError(
     }
     case "invalid-request":
       return { status: "protocol-error" };
+    case "certificate-changed":
     case "unauthorized":
       return { status: "unauthorized" };
     case "http":

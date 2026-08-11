@@ -1,7 +1,9 @@
 cmake_minimum_required(VERSION 3.22)
 
 set(IDF_TARGET "esp32c3" CACHE STRING "PhilcoINO firmware target" FORCE)
-set(SDKCONFIG_DEFAULTS "sdkconfig.defaults")
+if(NOT SDKCONFIG_DEFAULTS)
+  set(SDKCONFIG_DEFAULTS "sdkconfig.defaults")
+endif()
 set(PROJECT_VER "0.4.1")
 
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)

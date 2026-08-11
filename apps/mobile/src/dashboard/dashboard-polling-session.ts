@@ -1,4 +1,4 @@
-import type { MachineStateV2 } from "@philcoino/protocol";
+import type { MachineStateV3 } from "@philcoino/protocol";
 
 import {
   connectingState,
@@ -10,7 +10,7 @@ import {
 export const DASHBOARD_POLL_INTERVAL_MS = 1_000;
 
 export interface DashboardStateClient {
-  getStateV2(options?: { signal?: AbortSignal }): Promise<MachineStateV2>;
+  getState(options?: { signal?: AbortSignal }): Promise<MachineStateV3>;
 }
 
 interface PollingScheduler {
@@ -23,7 +23,7 @@ interface DashboardPollingSessionOptions {
   intervalMs?: number;
   onConnectionChange: (connection: ConnectionState) => void;
   onDeviceRestart?: () => void;
-  onSnapshotChange: (snapshot: MachineStateV2 | null) => void;
+  onSnapshotChange: (snapshot: MachineStateV3 | null) => void;
   scheduler?: PollingScheduler;
 }
 
@@ -39,7 +39,7 @@ export class DashboardPollingSession {
   private readonly onConnectionChange: (connection: ConnectionState) => void;
   private readonly onDeviceRestart: () => void;
   private readonly onSnapshotChange: (
-    snapshot: MachineStateV2 | null,
+    snapshot: MachineStateV3 | null,
   ) => void;
   private readonly scheduler: PollingScheduler;
 
@@ -48,7 +48,8 @@ export class DashboardPollingSession {
   private paused = false;
   private running = false;
   private timer: unknown | null = null;
-  private lastUptimeMs: number | null = null;
+  private lastBootId: string | null = null;
+  private lastRevision = -1;
 
   constructor(options: DashboardPollingSessionOptions) {
     this.client = options.client;
@@ -115,19 +116,24 @@ export class DashboardPollingSession {
     this.activeController = controller;
 
     try {
-      const snapshot = await this.client.getStateV2({
+      const snapshot = await this.client.getState({
         signal: controller.signal,
       });
       if (!this.isCurrent(generation)) {
         return;
       }
-      if (
-        this.lastUptimeMs !== null &&
-        snapshot.machine.uptimeMs < this.lastUptimeMs
-      ) {
+      if (this.lastBootId !== null && snapshot.bootId !== this.lastBootId) {
         this.onDeviceRestart();
+        this.lastRevision = -1;
       }
-      this.lastUptimeMs = snapshot.machine.uptimeMs;
+      if (
+        snapshot.bootId === this.lastBootId &&
+        snapshot.revision <= this.lastRevision
+      ) {
+        return;
+      }
+      this.lastBootId = snapshot.bootId;
+      this.lastRevision = snapshot.revision;
       this.onSnapshotChange(snapshot);
       this.onConnectionChange(onlineState);
     } catch (error) {

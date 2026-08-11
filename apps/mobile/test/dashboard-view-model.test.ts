@@ -65,14 +65,14 @@ describe("dashboard view model", () => {
     expect(
       connectionCopy({
         protocol: {
-          endpoint: "/api/v2/state",
+          endpoint: "/api/v3/state",
           issuePaths: ["extraction.pumpCommand"],
           status: 200,
         },
         status: "protocol-error",
       }).detail,
     ).toBe(
-      "The machine replied with data that does not match the current Philcoino API contract. Endpoint: /api/v2/state. HTTP status: 200. Invalid fields: extraction.pumpCommand.",
+      "The machine replied with data that does not match the current Philcoino API contract. Endpoint: /api/v3/state. HTTP status: 200. Invalid fields: extraction.pumpCommand.",
     );
   });
 

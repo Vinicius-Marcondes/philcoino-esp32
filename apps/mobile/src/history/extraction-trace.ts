@@ -11,14 +11,12 @@ import type {
   WeightControl,
 } from "@philcoino/protocol";
 
-import type {
-  TraceCompleteness,
-  TraceGapStatus,
-} from "./weighted-shot-trace";
+export type TraceCompleteness = "live" | "complete" | "partial";
+export type TraceGapStatus = "continuous" | "gap";
 
 export interface StoredExtractionTraceSample {
   activeTargetC: number;
-  boilerTemperatureC: number;
+  boilerTemperatureC: number | null;
   derivedFlowGPerS: number | null;
   elapsedMs: number;
   extractionElapsedMs?: number;

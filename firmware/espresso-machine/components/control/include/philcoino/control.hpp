@@ -4,7 +4,6 @@
 #include <cstdint>
 #include <string>
 
-#include "philcoino/brew_pi.hpp"
 #include "philcoino/config.hpp"
 #include "philcoino/peripherals.hpp"
 
@@ -13,16 +12,6 @@ namespace philcoino::control {
 enum class ControlMode { kBrew, kSteam };
 enum class ControlStatus { kHeating, kReady, kFault };
 enum class ExtractionPhase { kIdle, kManual, kPreInfusion, kSoak, kMainExtraction };
-enum class ControllerOperatingMode {
-  kWarmup,
-  kIdleStable,
-  kBrewing,
-  kPostBrewRecovery,
-  kSteam,
-  kInhibited,
-  kFault,
-};
-
 enum class FaultCode {
   kSensorFailure,
   kOverTemperature,
@@ -50,27 +39,6 @@ struct SteamControlSnapshot {
   std::uint32_t heat_soak_elapsed_ms{0};
 };
 
-struct ControllerDiagnostics {
-  float temperature_raw_c{0.0F};
-  float temperature_filtered_c{0.0F};
-  float base_target_c{0.0F};
-  float private_target_c{0.0F};
-  float error_c{0.0F};
-  SelectedController selected_controller{SelectedController::kLegacyCurve};
-  float legacy_requested_duty{0.0F};
-  float pi_requested_duty{0.0F};
-  float proportional_contribution{0.0F};
-  float integral_contribution{0.0F};
-  float integral_state{0.0F};
-  PiSaturation pi_saturation{PiSaturation::kNone};
-  bool pi_anti_windup_active{false};
-  bool heater_command_active{false};
-  float delivered_command_duty_1s{0.0F};
-  peripherals::PumpCommand pump_command{peripherals::PumpCommand::kOff};
-  ExtractionPhase extraction_phase{ExtractionPhase::kIdle};
-  ControllerOperatingMode operating_mode{ControllerOperatingMode::kWarmup};
-};
-
 struct ControlSnapshot {
   ControlStatus status{ControlStatus::kHeating};
   ControlMode mode{ControlMode::kBrew};
@@ -84,7 +52,6 @@ struct ControlSnapshot {
   FaultSnapshot fault{};
   SteamTimeoutSnapshot steam_timeout{};
   SteamControlSnapshot steam_control{};
-  ControllerDiagnostics controller{};
 };
 
 enum class TemperatureCalibrationStatus {
@@ -137,26 +104,19 @@ enum class TemperatureCalibrationResult {
 
 const char* fault_code_name(FaultCode code);
 const char* fault_message(FaultCode code);
-const char* extraction_phase_name(ExtractionPhase phase);
-const char* controller_operating_mode_name(ControllerOperatingMode mode);
-
 class TemperatureController {
  public:
   TemperatureController(peripherals::TemperatureTargets targets,
-                        peripherals::FailOffSsr& heater,
-                        BrewPiConfig pi_configuration =
-                            default_brew_pi_config());
+                        peripherals::FailOffSsr& heater);
   TemperatureController(
       peripherals::TemperatureTargets targets,
       peripherals::TemperatureCalibration calibration,
-      peripherals::FailOffSsr& heater,
-      BrewPiConfig pi_configuration = default_brew_pi_config());
+      peripherals::FailOffSsr& heater);
   TemperatureController(
       peripherals::TemperatureTargets targets,
       peripherals::TemperatureCalibration calibration,
       peripherals::SteamControlSettings steam_control_settings,
-      peripherals::FailOffSsr& heater,
-      BrewPiConfig pi_configuration = default_brew_pi_config());
+      peripherals::FailOffSsr& heater);
 
   ControlMode mode() const;
   ControlStatus status() const;
@@ -175,6 +135,16 @@ class TemperatureController {
       const peripherals::SteamControlSettings& settings,
       std::uint32_t now_ms);
   bool rollback_steam_control_settings_update(std::uint32_t now_ms);
+  bool prepare_settings_update(
+      const peripherals::TemperatureTargets& targets,
+      const peripherals::SteamControlSettings& steam_settings,
+      bool update_targets, bool update_steam, std::uint32_t now_ms);
+  bool adopt_persisted_settings(
+      const peripherals::TemperatureTargets& targets,
+      const peripherals::SteamControlSettings& steam_settings,
+      bool update_targets, bool update_steam, std::uint32_t now_ms);
+  bool rollback_settings_update(bool update_targets, bool update_steam,
+                                std::uint32_t now_ms);
   bool raw_temperature(float& temperature_c) const;
   bool brew_effective_temperature(float& temperature_c) const;
   bool targets_reachable(
@@ -246,14 +216,6 @@ class TemperatureController {
   void reset_recovery_heat();
   void update_recovery_heat();
   std::uint32_t heater_pulse_ms() const;
-  std::uint32_t duty_pulse_ms(float requested_duty) const;
-  float baseline_heater_duty() const;
-  ControllerOperatingMode controller_operating_mode() const;
-  void update_controller_diagnostics(
-      peripherals::PumpCommand pump_command, std::uint32_t now_ms,
-      bool reset_pi);
-  void account_delivered_command(std::uint32_t now_ms);
-  void reset_delivered_command_tracking(std::uint32_t now_ms);
   void reset_heater_control_window(std::uint32_t now_ms);
   void reset_readiness(std::uint32_t now_ms);
   void return_to_brew(std::uint32_t now_ms);
@@ -261,7 +223,7 @@ class TemperatureController {
   void restore_ordinary_brew_control(std::uint32_t now_ms);
   bool validate_readings(std::uint32_t now_ms);
   bool update_readiness(std::uint32_t now_ms);
-  bool update_heater(std::uint32_t now_ms, float requested_duty);
+  bool update_heater(std::uint32_t now_ms);
   SteamTimeoutSnapshot steam_timeout_snapshot(std::uint32_t now_ms) const;
 
   peripherals::FailOffSsr& heater_;
@@ -307,15 +269,6 @@ class TemperatureController {
   float current_steam_compensation_c_{0.0F};
   bool post_brew_recovery_active_{false};
   std::uint32_t last_pump_running_ms_{0};
-  BrewPiController brew_pi_;
-  ControllerDiagnostics controller_diagnostics_{};
-  float requested_heater_duty_{0.0F};
-  bool delivered_tracking_initialized_{false};
-  bool last_heater_command_active_{false};
-  std::uint32_t delivered_bucket_started_ms_{0};
-  std::uint32_t delivered_last_sample_ms_{0};
-  std::uint32_t delivered_command_on_ms_{0};
-  float delivered_command_duty_1s_{0.0F};
 };
 
 enum class ExtractionStatus { kIdle, kRunning };

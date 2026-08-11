@@ -15,7 +15,7 @@ import {
   type TelemetryChartVariant,
 } from "@/src/telemetry/telemetry-plot-frame";
 import {
-  weightedTracePlot,
+  extractionTelemetryPlot,
   type WeightedTracePlot,
 } from "@/src/telemetry/telemetry-plot";
 import {
@@ -53,7 +53,7 @@ export function WeightedTraceChart({
 
   const height = telemetryChartHeight(variant, compact);
   const plot = useMemo(
-    () => weightedTracePlot({ cutoffDecigrams, height, trace, width }),
+    () => extractionTelemetryPlot({ cutoffDecigrams, height, trace, width }),
     [cutoffDecigrams, height, trace, width],
   );
   const selected =
@@ -224,7 +224,7 @@ function WeightedTraceSvg({
           y2={plot.bottom}
         />
       ) : null}
-      {latest ? (
+      {latest !== null && latest.boilerTemperatureC !== null ? (
         <>
           <Circle
             cx={plot.x(latest.elapsedMs)}

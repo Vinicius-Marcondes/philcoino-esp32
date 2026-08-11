@@ -1,7 +1,6 @@
 import type {
   CooldownOutcome,
   CooldownState,
-  MachineStateV2,
 } from "@philcoino/protocol";
 import { useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
@@ -27,6 +26,7 @@ import {
   startCooldownPreview,
   stopCooldownPreview,
   type ThermalPreviewScenario,
+  type ThermalWorkflowSnapshot,
   type ThermalWorkflowPreviewState,
 } from "@/src/debug/thermal-workflow-preview-model";
 import { translate } from "@/src/localization/i18n";
@@ -42,7 +42,7 @@ interface ThermalWorkflowStatusProps {
   onOpenMachine: () => void;
   onStartCooldown: () => void;
   onStopCooldown: () => void;
-  snapshot: MachineStateV2;
+  snapshot: ThermalWorkflowSnapshot;
 }
 
 export function ThermalWorkflowStatus({
@@ -177,7 +177,7 @@ function CooldownCard({
   onShowCutoff?: () => void;
   onShowTarget?: () => void;
   onStop: () => void;
-  snapshot: MachineStateV2;
+  snapshot: ThermalWorkflowSnapshot;
   stopDisabled?: boolean;
 }) {
   const cooldown = snapshot.cooldown;
@@ -322,7 +322,7 @@ function ConfirmationCard({
   confirmDisabled?: boolean;
   onCancel: () => void;
   onConfirm: () => void;
-  snapshot: MachineStateV2;
+  snapshot: ThermalWorkflowSnapshot;
 }) {
   return (
     <View
@@ -341,7 +341,9 @@ function ConfirmationCard({
       <View style={styles.metricGrid}>
         <Metric
           label={translate("thermalPreview.currentTemperature")}
-          value={formatTemperature(snapshot.machine.boilerTemperatureC)}
+          value={snapshot.machine.boilerTemperatureC === null
+            ? "—"
+            : formatTemperature(snapshot.machine.boilerTemperatureC)}
         />
         <Metric
           label={translate("thermalPreview.brewThreshold")}
@@ -405,7 +407,7 @@ function RejectedCard() {
   );
 }
 
-function FailureCard({ snapshot }: { snapshot: MachineStateV2 }) {
+function FailureCard({ snapshot }: { snapshot: ThermalWorkflowSnapshot }) {
   return (
     <View accessibilityLiveRegion="assertive" style={styles.failureCard}>
       <Text selectable style={styles.failureEyebrow}>

@@ -1,9 +1,9 @@
 import type {
   ExtractionPhase,
+  ExtractionTelemetryPhase,
   ExtractionState,
   MachineState,
   ScaleState,
-  WeightedExtractionTracePhase,
 } from "@philcoino/protocol";
 
 import type { StoredExtractionTrace } from "../history/extraction-trace";
@@ -17,7 +17,7 @@ import {
 
 export type ExtractionConsolePhase =
   | ExtractionPhase
-  | WeightedExtractionTracePhase;
+  | ExtractionTelemetryPhase;
 
 export interface ExtractionConsoleReadouts {
   elapsed: string;

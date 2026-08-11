@@ -24,17 +24,25 @@ import { isDebugDeviceModeEnabled } from "@/src/debug-device-mode";
 import { translate } from "@/src/localization/i18n";
 import { mobileLayoutMode } from "@/src/layout/responsive-layout";
 import { ApiClientError } from "@/src/networking/api-client-error";
-import { createDeviceApiClient } from "@/src/networking/expo-device-api-client";
 import {
   createDebugPairingClient,
   DEBUG_DISCOVERY_TIMEOUT_MS,
   debugDeviceDiscovery,
   debugSelectedDeviceRepository,
 } from "@/src/pairing/debug-pairing-dependencies";
+import { createNativePairingClient } from "@/src/pairing/native-pairing-client";
+import {
+  pairingLog,
+  pairingLogSnapshot,
+  safePairingErrorDetails,
+  subscribePairingLog,
+  type PairingLogEntry,
+} from "@/src/pairing/pairing-log";
 import {
   authenticateAndSave,
   inspectDevice,
   restoreSelectedDevice,
+  type PairingError,
   type PairingCandidate,
   type PairingClientFactory,
 } from "@/src/pairing/pairing-service";
@@ -46,8 +54,7 @@ import {
 
 const DISCOVERY_TIMEOUT_MS = 8_000;
 const CONTENT_BOTTOM_PADDING = 44;
-const createPairingClient: PairingClientFactory = (options) =>
-  createDeviceApiClient(options);
+const createPairingClient: PairingClientFactory = createNativePairingClient;
 
 type PairedDevice = {
   candidate: PairingCandidate;
@@ -92,11 +99,14 @@ function PairingFlowScreen({
   const [selected, setSelected] = useState<PairingCandidate | null>(null);
   const [paired, setPaired] = useState<PairedDevice | null>(null);
   const [manualAddress, setManualAddress] = useState("");
-  const [token, setToken] = useState("");
+  const [pairingCode, setPairingCode] = useState("");
   const [message, setMessage] = useState(() => translate("pairing.checkingSaved"));
   const [busy, setBusy] = useState(true);
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   const [scanning, setScanning] = useState(false);
+  const [pairingDiagnostics, setPairingDiagnostics] = useState<
+    readonly PairingLogEntry[]
+  >(pairingLogSnapshot);
   const windowSize = useWindowDimensions();
   const safeAreaInsets = useSafeAreaInsets();
   const landscape = mobileLayoutMode(windowSize) === "landscape";
@@ -104,7 +114,13 @@ function PairingFlowScreen({
   const scanTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const activeOperation = useRef<AbortController | null>(null);
   const scrollView = useRef<ScrollView>(null);
-  const focusedInput = useRef<"manual-address" | "token" | null>(null);
+  const focusedInput = useRef<"manual-address" | "pairing-code" | null>(null);
+
+  useEffect(() => {
+    const unsubscribe = subscribePairingLog(setPairingDiagnostics);
+    pairingLog("connection", "success", { operation: "diagnostics-active-v3" });
+    return unsubscribe;
+  }, []);
 
   const scrollFocusedActionsIntoView = useCallback(() => {
     requestAnimationFrame(() => {
@@ -132,16 +148,22 @@ function PairingFlowScreen({
   const startBrowsing = useCallback(() => {
     stopBrowsing();
     let foundAny = false;
+    pairingLog("connection", "start", { operation: "discovery-scan" });
     setScanning(true);
     setMessage(translate("pairing.searching"));
 
     stopScan.current = discovery.scan({
       onDevice: (device) => {
         foundAny = true;
+        pairingLog("connection", "success", { operation: "discovery-device" });
         addDevice(device);
         setMessage(translate("pairing.selectMachine"));
       },
-      onError: () => {
+      onError: (error) => {
+        pairingLog("connection", "failure", {
+          operation: "discovery-scan",
+          ...safePairingErrorDetails(error),
+        });
         stopBrowsing();
         setMessage(automaticDiscoveryUnavailableMessage());
       },
@@ -150,6 +172,9 @@ function PairingFlowScreen({
     scanTimer.current = setTimeout(() => {
       stopBrowsing();
       if (!foundAny) {
+        pairingLog("connection", "failure", {
+          operation: "discovery-timeout",
+        });
         setMessage(noMachinesFoundMessage());
       }
     }, discoveryTimeoutMs);
@@ -158,6 +183,7 @@ function PairingFlowScreen({
   useEffect(() => {
     const controller = new AbortController();
     activeOperation.current = controller;
+    pairingLog("connection", "start", { operation: "restore-selected-device" });
 
     void restoreSelectedDevice(
       {
@@ -176,6 +202,10 @@ function PairingFlowScreen({
           return;
         }
         if (result.status === "connected") {
+          pairingLog("connection", "success", {
+            operation: "restore-selected-device",
+            state: "connected",
+          });
           setPaired({
             candidate: result.candidate,
             messageKey: result.recoveredAddress
@@ -186,15 +216,38 @@ function PairingFlowScreen({
           setMessage("");
           return;
         }
+        if (result.status === "pairing-required") {
+          pairingLog("connection", "success", {
+            operation: "restore-selected-device",
+            state: "pairing-required",
+          });
+          setSelected(result.candidate);
+          setMessage(translate("pairing.pairingRequired"));
+          return;
+        }
         if (result.status === "not-found") {
+          pairingLog("connection", "success", {
+            operation: "restore-selected-device",
+            state: "not-found",
+          });
           setMessage(
             translate("pairing.savedNotFound"),
           );
+        }
+        if (result.status === "empty") {
+          pairingLog("connection", "success", {
+            operation: "restore-selected-device",
+            state: "empty",
+          });
         }
         startBrowsing();
       })
       .catch((error: unknown) => {
         if (!controller.signal.aborted) {
+          pairingLog("connection", "failure", {
+            operation: "restore-selected-device",
+            ...safePairingErrorDetails(error),
+          });
           setMessage(errorMessage(error));
           startBrowsing();
         }
@@ -238,13 +291,15 @@ function PairingFlowScreen({
   }, [scrollFocusedActionsIntoView]);
 
   const selectDevice = (device: PairingCandidate) => {
+    pairingLog("connection", "success", { operation: "device-selected" });
     stopBrowsing();
     setSelected(device);
-    setToken("");
+    setPairingCode("");
     setMessage(translate("pairing.confirmIdentityMessage"));
   };
 
   const inspectManualAddress = async () => {
+    pairingLog("connection", "start", { operation: "manual-address-review" });
     activeOperation.current?.abort();
     const controller = new AbortController();
     activeOperation.current = controller;
@@ -259,10 +314,15 @@ function PairingFlowScreen({
         controller.signal,
       );
       setSelected(candidate);
-      setToken("");
-      setMessage(translate("pairing.validIdentity"));
+      pairingLog("connection", "success", { operation: "manual-address-review" });
+      setPairingCode("");
+      setMessage(translate("pairing.enterPairingCode"));
     } catch (error) {
       if (!controller.signal.aborted) {
+        pairingLog("connection", "failure", {
+          operation: "manual-address-review",
+          ...safePairingErrorDetails(error),
+        });
         setMessage(errorMessage(error));
       }
     } finally {
@@ -273,19 +333,27 @@ function PairingFlowScreen({
   };
 
   const pairSelectedDevice = async () => {
+    pairingLog("srp-start", "start", {
+      operation: "pair-button-pressed",
+      state: selected === null ? "no-selection" : "selection-present",
+    });
     if (selected === null) {
+      pairingLog("srp-start", "failure", {
+        operation: "pair-button-pressed",
+        state: "no-selection",
+      });
       return;
     }
     activeOperation.current?.abort();
     const controller = new AbortController();
     activeOperation.current = controller;
     setBusy(true);
-    setMessage(translate("pairing.verifyingToken"));
+    setMessage(translate("pairing.verifyingPairingCode"));
 
     try {
       const selectedDevice = await authenticateAndSave(
         selected,
-        token,
+        pairingCode,
         {
           createClient,
           repository,
@@ -297,10 +365,17 @@ function PairingFlowScreen({
         messageKey: "pairing.authenticationSucceeded",
         selectedDevice,
       });
-      setToken("");
+      setPairingCode("");
+      pairingLog("authenticated-state", "success", {
+        operation: "pair-button-finished",
+      });
       setMessage("");
     } catch (error) {
       if (!controller.signal.aborted) {
+        pairingLog("srp-start", "failure", {
+          operation: "pair-button-finished",
+          ...safePairingErrorDetails(error),
+        });
         setMessage(errorMessage(error));
       }
     } finally {
@@ -317,17 +392,29 @@ function PairingFlowScreen({
     setSelected(null);
     setDevices([]);
     setManualAddress("");
-    setToken("");
+    setPairingCode("");
     setBusy(false);
     startBrowsing();
   };
 
   const chooseAnotherDevice = () => {
     setSelected(null);
-    setToken("");
+    setPairingCode("");
     startBrowsing();
   };
-  const tokenSubmitDisabled = busy || token.trim().length === 0;
+  const pairingSubmitDisabled = busy || pairingCode.replaceAll(" ", "").length !== 8;
+
+  useEffect(() => {
+    pairingLog("srp-start", "success", {
+      operation: "pair-ui-state",
+      state: [
+        selected === null ? "unselected" : "selected",
+        busy ? "busy" : "idle",
+        `code-length-${pairingCode.replaceAll(" ", "").length}`,
+        pairingSubmitDisabled ? "button-disabled" : "button-enabled",
+      ].join(","),
+    });
+  }, [busy, pairingCode, pairingSubmitDisabled, selected]);
 
   if (paired !== null) {
     return (
@@ -397,18 +484,20 @@ function PairingFlowScreen({
             <Text selectable style={styles.sectionTitle}>{translate("pairing.confirmIdentity")}</Text>
             <IdentityDetails candidate={selected} />
             <View style={styles.fieldGroup}>
-              <Text selectable style={styles.label}>{translate("pairing.bearerToken")}</Text>
+              <Text selectable style={styles.label}>{translate("pairing.pairingCode")}</Text>
               <TextInput
-                accessibilityLabel={translate("pairing.bearerToken")}
+                accessibilityLabel={translate("pairing.pairingCode")}
                 autoCapitalize="none"
                 autoCorrect={false}
                 editable={!busy}
-                onChangeText={setToken}
+                keyboardType="number-pad"
+                maxLength={9}
+                onChangeText={(value) => setPairingCode(formatPairingCode(value))}
                 onBlur={() => {
                   focusedInput.current = null;
                 }}
                 onFocus={() => {
-                  focusedInput.current = "token";
+                  focusedInput.current = "pairing-code";
                   const visibleKeyboardHeight = Keyboard.metrics()?.height ?? 0;
                   if (visibleKeyboardHeight > 0) {
                     setKeyboardHeight(visibleKeyboardHeight);
@@ -416,15 +505,14 @@ function PairingFlowScreen({
                   scrollFocusedActionsIntoView();
                 }}
                 onSubmitEditing={() => void pairSelectedDevice()}
-                placeholder={translate("pairing.tokenPlaceholder")}
+                placeholder={translate("pairing.pairingCodePlaceholder")}
                 returnKeyType="done"
-                secureTextEntry
                 style={styles.input}
-                value={token}
+                value={pairingCode}
               />
             </View>
             <ActionButton
-              disabled={tokenSubmitDisabled}
+              disabled={pairingSubmitDisabled}
               label={busy ? translate("pairing.verifying") : translate("pairing.verifyAndSave")}
               onPress={() => void pairSelectedDevice()}
             />
@@ -501,6 +589,18 @@ function PairingFlowScreen({
         )}
           </View>
         </View>
+        <View style={styles.diagnostics}>
+          <Text selectable style={styles.diagnosticsTitle}>
+            PAIRING DIAGNOSTICS · UI v3
+          </Text>
+          {pairingDiagnostics.length === 0 ? (
+            <Text selectable style={styles.diagnosticsText}>No pairing events yet.</Text>
+          ) : pairingDiagnostics.map((entry) => (
+            <Text key={entry.sequence} selectable style={styles.diagnosticsText}>
+              {formatPairingLogEntry(entry)}
+            </Text>
+          ))}
+        </View>
       </ScrollView>
     </>
   );
@@ -556,10 +656,55 @@ function ActionButton({
 }
 
 function errorMessage(error: unknown): string {
+  const pairingError = readPairingError(error);
+  if (pairingError !== null) {
+    let message: string;
+    switch (pairingError.code) {
+      case "invalid_pairing_code_format":
+        message = translate("pairing.errors.invalidPairingCodeFormat");
+        break;
+      case "invalid_pairing_code":
+        message = translate("pairing.errors.invalidPairingCode");
+        break;
+      case "connection_failed":
+        message = translate("pairing.errors.connection");
+        break;
+      case "srp_start_failed":
+        message = translate("pairing.errors.srpStart");
+        break;
+      case "client_proof_failed":
+        message = translate("pairing.errors.clientProof");
+        break;
+      case "invalid_server_proof":
+        message = translate("pairing.errors.serverProof");
+        break;
+      case "invalid_certificate_binding":
+        message = translate("pairing.errors.certificateBinding");
+        break;
+      case "token_issue_failed":
+        message = translate("pairing.errors.tokenIssue");
+        break;
+      case "authenticated_state_failed":
+        message = translate("pairing.errors.authenticatedState");
+        break;
+      case "secure_store_failed":
+        message = translate("pairing.errors.secureSave");
+        break;
+      case "certificate_changed":
+        message = translate("pairing.errors.certificateChanged");
+        break;
+      case "identity_changed":
+        message = translate("pairing.errors.identityChanged");
+        break;
+    }
+    return `${message} [${pairingError.stage}/${pairingError.code}]`;
+  }
   if (error instanceof ApiClientError) {
     switch (error.kind) {
       case "unauthorized":
         return translate("pairing.errors.unauthorized");
+      case "certificate-changed":
+        return translate("pairing.errors.certificateChanged");
       case "not-found":
         return translate("pairing.errors.notFound");
       case "protocol":
@@ -576,6 +721,62 @@ function errorMessage(error: unknown): string {
     }
   }
   return translate("pairing.errors.generic");
+}
+
+function readPairingError(
+  error: unknown,
+): Pick<PairingError, "code" | "stage"> | null {
+  if (typeof error !== "object" || error === null) return null;
+  const value = error as { code?: unknown; stage?: unknown };
+  const codes = new Set<string>([
+    "certificate_changed",
+    "connection_failed",
+    "identity_changed",
+    "invalid_pairing_code_format",
+    "invalid_pairing_code",
+    "invalid_server_proof",
+    "invalid_certificate_binding",
+    "srp_start_failed",
+    "client_proof_failed",
+    "token_issue_failed",
+    "authenticated_state_failed",
+    "secure_store_failed",
+  ] satisfies PairingError["code"][]);
+  const stages = new Set<string>([
+    "connection",
+    "srp-start",
+    "client-proof",
+    "server-proof",
+    "certificate-binding",
+    "token-issue",
+    "authenticated-state",
+    "secure-save",
+  ] satisfies PairingError["stage"][]);
+  if (typeof value.code !== "string" || !codes.has(value.code) ||
+      typeof value.stage !== "string" || !stages.has(value.stage)) {
+    return null;
+  }
+  return value as Pick<PairingError, "code" | "stage">;
+}
+
+function formatPairingCode(value: string): string {
+  const digits = value.replace(/\D/gu, "").slice(0, 8);
+  return digits.length <= 4 ? digits : `${digits.slice(0, 4)} ${digits.slice(4)}`;
+}
+
+function formatPairingLogEntry(entry: PairingLogEntry): string {
+  const details = [
+    entry.operation,
+    entry.state === undefined ? undefined : `state=${entry.state}`,
+    entry.errorCode === undefined ? undefined : `native=${entry.errorCode}`,
+    entry.errorName === undefined ? undefined : `name=${entry.errorName}`,
+    entry.transportKind === undefined ? undefined : `transport=${entry.transportKind}`,
+    entry.httpStatus === undefined ? undefined : `http=${entry.httpStatus}`,
+    entry.apiCode === undefined ? undefined : `api=${entry.apiCode}`,
+  ].filter((value): value is string => value !== undefined);
+  return `#${entry.sequence} ${entry.stage}/${entry.event}${
+    details.length === 0 ? "" : ` · ${details.join(" · ")}`
+  }`;
 }
 
 function automaticDiscoveryUnavailableMessage(): string {
@@ -634,6 +835,24 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     gap: 14,
     padding: 18,
+  },
+  diagnostics: {
+    backgroundColor: "#241B17",
+    borderRadius: 14,
+    gap: 5,
+    padding: 12,
+  },
+  diagnosticsText: {
+    color: "#F4F0E8",
+    fontFamily: Platform.select({ ios: "Menlo", android: "monospace" }),
+    fontSize: 11,
+    lineHeight: 16,
+  },
+  diagnosticsTitle: {
+    color: "#F1A58E",
+    fontSize: 11,
+    fontWeight: "800",
+    letterSpacing: 0.8,
   },
   sectionHeading: { alignItems: "center", flexDirection: "row", justifyContent: "space-between" },
   sectionTitle: { color: "#241B17", fontSize: 21, fontWeight: "700" },

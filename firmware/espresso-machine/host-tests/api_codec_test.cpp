@@ -76,14 +76,31 @@ void test_machine_request_codecs() {
   assert(!parse_temperatures("{\"brewTargetC\":90,\"brewTargetC\":91}",
                              current, updated, constraint));
 
+  SteamControlSettings current_steam{12, 720000, 300000};
+  SteamControlSettings updated_steam{};
+  bool has_targets = false;
+  bool has_steam = false;
+  constraint = false;
+  assert(parse_settings(
+      "{\"brewTargetC\":94,\"steamTargetC\":121,"
+      "\"steamControl\":{\"initialCompensationC\":10}}",
+      current, current_steam, updated, updated_steam, has_targets,
+      has_steam, constraint));
+  assert(!constraint && has_targets && has_steam);
+  assert(updated.brew_c == 94 && updated.steam_c == 121);
+  assert(updated_steam.initial_compensation_c == 10);
+  assert(!parse_settings(
+      "{\"brewTargetC\":94,\"legacy\":true}", current, current_steam,
+      updated, updated_steam, has_targets, has_steam, constraint));
+
   ControlMode mode{};
   assert(parse_mode("{\"mode\":\"brew\"}", mode) &&
          mode == ControlMode::kBrew);
   assert(!parse_mode("{\"mode\":\"cleaning\"}", mode));
   bool enabled = false;
-  assert(parse_heater_enabled("{\"heaterEnabled\":true}", enabled) &&
+  assert(parse_heater_enabled("{\"enabled\":true}", enabled) &&
          enabled);
-  assert(!parse_heater_enabled("{\"heaterEnabled\":1}", enabled));
+  assert(!parse_heater_enabled("{\"enabled\":1}", enabled));
 
   bool calibration_id_supplied = false;
   std::string calibration_id;
@@ -204,30 +221,42 @@ void test_workflow_codecs() {
 }
 
 void test_authoritative_route_matrix() {
-  assert(kApiRoutes.size() == 25U);
+  assert(kApiRoutes.size() == 22U);
   std::size_t protected_count = 0;
   for (std::size_t index = 0; index < kApiRoutes.size(); ++index) {
     const auto& route = kApiRoutes[index];
-    assert(find_api_route(route.method, route.path) == &route);
+    const std::string concrete_path =
+        route.id == ApiRouteId::kPairingSessionAction
+            ? "/api/v3/pairing/sessions/0123456789abcdef0123456789abcdef/proof"
+            : route.path;
+    assert(find_api_route(route.method, concrete_path) == &route);
     protected_count += route.requires_authentication ? 1U : 0U;
     for (std::size_t other = index + 1U; other < kApiRoutes.size(); ++other) {
       assert(route.method != kApiRoutes[other].method ||
              std::string(route.path) != kApiRoutes[other].path);
     }
   }
-  assert(protected_count == 23U);
+  assert(protected_count == 19U);
   assert(!request_requires_auth(HttpMethod::kGet, "/healthz"));
-  assert(request_requires_auth(HttpMethod::kPost,
-                               "/api/v2/cooldowns/stop"));
-  assert(request_requires_auth(HttpMethod::kGet, "/api/v2/scale"));
-  assert(request_requires_auth(HttpMethod::kGet, "/api/v2/scale/trace"));
+  assert(request_requires_auth(HttpMethod::kDelete,
+                               "/api/v3/cooldowns/current"));
+  assert(request_requires_auth(HttpMethod::kGet, "/api/v3/state"));
   assert(request_requires_auth(
-      HttpMethod::kPost, "/api/v2/temperature-calibration/save"));
+      HttpMethod::kPut, "/api/v3/temperature-calibrations/current"));
   assert(request_requires_auth(
-      HttpMethod::kPatch, "/api/v2/settings/steam-control"));
-  assert(find_api_route(HttpMethod::kGet, "/api/v2/state?ignored=true") ==
-         find_api_route(HttpMethod::kGet, "/api/v2/state"));
+      HttpMethod::kPatch, "/api/v3/settings"));
+  assert(find_api_route(HttpMethod::kGet, "/api/v3/state?ignored=true") ==
+         find_api_route(HttpMethod::kGet, "/api/v3/state"));
+  assert(find_api_route(HttpMethod::kGet, "/api/v1/state") == nullptr);
+  assert(find_api_route(HttpMethod::kGet, "/api/v2/state") == nullptr);
   assert(find_api_route(HttpMethod::kPost, "/healthz") == nullptr);
+  assert(find_api_route(
+             HttpMethod::kPost,
+             "/api/v3/pairing/sessions/0123456789abcdef0123456789abcdef/complete") !=
+         nullptr);
+  assert(find_api_route(
+             HttpMethod::kPost,
+             "/api/v3/pairing/sessions/not-a-session/proof") == nullptr);
   assert(find_api_route(HttpMethod::kGet, "/unknown") == nullptr);
 }
 
