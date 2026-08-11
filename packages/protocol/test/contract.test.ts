@@ -3,6 +3,7 @@ import { describe, expect, it } from "bun:test";
 import {
   ApiErrorResponseSchema,
   ExtractionTelemetryPageSchema,
+  FirmwareUpdateAcceptedSchema,
   GrossWeightDecigramsSchema,
   MachineStateV3Schema,
   NetWeightDecigramsSchema,
@@ -126,6 +127,10 @@ describe("API v3 contract", () => {
       gross: number[];
       net: number[];
     };
+    const validFirmwareUpdate = await fixture(
+      "valid",
+      "firmware-update-accepted-v3.json",
+    );
 
     expect(MachineStateV3Schema.safeParse(validState).success).toBe(true);
     expect(SettingsRequestSchema.safeParse(validSettings).success).toBe(true);
@@ -134,6 +139,7 @@ describe("API v3 contract", () => {
     expect(PairingCompleteResponseSchema.safeParse(validComplete).success).toBe(true);
     expect(ApiErrorResponseSchema.safeParse(validError).success).toBe(true);
     expect(ExtractionTelemetryPageSchema.safeParse(validTelemetry).success).toBe(true);
+    expect(FirmwareUpdateAcceptedSchema.safeParse(validFirmwareUpdate).success).toBe(true);
     expect(validWeights.gross.every((value) =>
       GrossWeightDecigramsSchema.safeParse(value).success)).toBe(true);
     expect(validWeights.net.every((value) =>
@@ -147,6 +153,9 @@ describe("API v3 contract", () => {
     ).success).toBe(false);
     expect(ApiErrorResponseSchema.safeParse(
       await fixture("invalid", "error-extra-field-v3.json"),
+    ).success).toBe(false);
+    expect(FirmwareUpdateAcceptedSchema.safeParse(
+      await fixture("invalid", "firmware-update-extra-field-v3.json"),
     ).success).toBe(false);
 
     const invalidContinuity = await fixture(

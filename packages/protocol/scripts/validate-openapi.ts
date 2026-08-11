@@ -91,6 +91,7 @@ const expectedOperations = {
   "/api/v3/extractions/current/stream": ["get"],
   "/api/v3/cooldowns": ["post"],
   "/api/v3/cooldowns/current": ["delete"],
+  "/api/v3/firmware-updates": ["post"],
 } as const;
 
 if (
@@ -119,15 +120,17 @@ for (const [path, methods] of Object.entries(expectedOperations)) {
       `${method.toUpperCase()} ${path} responses`,
     );
 
-    if (!("200" in responses)) {
+    const successStatus = path === "/api/v3/firmware-updates" ? "202" : "200";
+    if (!(successStatus in responses)) {
       throw new Error(
-        `${method.toUpperCase()} ${path} must document a 200 response.`,
+        `${method.toUpperCase()} ${path} must document a ${successStatus} response.`,
       );
     }
 
     const returnsState =
       !isPublicPath(path) &&
-      path !== "/api/v3/extractions/current/stream";
+      path !== "/api/v3/extractions/current/stream" &&
+      path !== "/api/v3/firmware-updates";
     if (returnsState) {
       const success = objectAt(
         responses["200"],

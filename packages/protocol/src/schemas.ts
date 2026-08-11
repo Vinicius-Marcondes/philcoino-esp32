@@ -1063,6 +1063,12 @@ export const StartCooldownRequestSchema = z.strictObject({
   idempotencyKey: IdempotencyKeySchema,
 });
 
+export const FirmwareUpdateAcceptedSchema = z.strictObject({
+  status: z.literal("accepted"),
+  rebooting: z.literal(true),
+  bytesWritten: z.number().int().min(1).max(1_966_080),
+});
+
 export const ApiErrorCodeSchema = z.enum([
   "malformed_request",
   "unauthorized",
@@ -1091,6 +1097,15 @@ export const ApiErrorCodeSchema = z.enum([
   "temperature_target_unsafe",
   "stream_unavailable",
   "stream_busy",
+  "firmware_update_unavailable",
+  "firmware_metadata_invalid",
+  "unsupported_media_type",
+  "firmware_image_too_large",
+  "firmware_update_busy",
+  "output_shutdown_failed",
+  "firmware_digest_mismatch",
+  "firmware_image_invalid",
+  "firmware_update_failed",
   "persistence_failure",
   "internal_error",
 ]);
@@ -1225,5 +1240,8 @@ export type StartExtractionRequest = z.infer<
   typeof StartExtractionRequestSchema
 >;
 export type StartCooldownRequest = z.infer<typeof StartCooldownRequestSchema>;
+export type FirmwareUpdateAccepted = z.infer<
+  typeof FirmwareUpdateAcceptedSchema
+>;
 export type ApiErrorCode = z.infer<typeof ApiErrorCodeSchema>;
 export type ApiErrorResponse = z.infer<typeof ApiErrorResponseSchema>;

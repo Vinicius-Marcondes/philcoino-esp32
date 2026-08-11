@@ -251,6 +251,9 @@ HttpResponse FirmwareApi::handle_resolved(const ApiRouteDescriptor& route,
     case ApiRouteId::kExtractionStream:
       return error_response(409, "stream_unavailable",
                             "The SSE transport owns this route.");
+    case ApiRouteId::kFirmwareUpdate:
+      return error_response(409, "firmware_update_unavailable",
+                            "The OTA transport owns this route.");
     case ApiRouteId::kCooldownStart:
       return acknowledged_mutation(start_cooldown(body, uptime_ms), uptime_ms);
     case ApiRouteId::kCooldownStop:

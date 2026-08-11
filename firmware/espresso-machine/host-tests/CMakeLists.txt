@@ -78,6 +78,19 @@ target_compile_options(extraction_telemetry_test PRIVATE -Wall -Wextra -Werror)
 add_test(NAME extraction_telemetry_test COMMAND extraction_telemetry_test)
 
 add_executable(
+  firmware_update_test
+  firmware_update_test.cpp
+  ../components/networking/src/firmware_update.cpp
+)
+target_include_directories(
+  firmware_update_test
+  PRIVATE ../components/networking/include
+)
+target_compile_features(firmware_update_test PRIVATE cxx_std_17)
+target_compile_options(firmware_update_test PRIVATE -Wall -Wextra -Werror)
+add_test(NAME firmware_update_test COMMAND firmware_update_test)
+
+add_executable(
   pairing_test
   pairing_test.cpp
   ../components/networking/src/pairing.cpp

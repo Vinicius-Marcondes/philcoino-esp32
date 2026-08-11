@@ -4,6 +4,7 @@ import {
   EXTRACTION_TELEMETRY_HEARTBEAT_INTERVAL_MS,
   ExtractionTelemetryCursorSchema,
   FaultCodeSchema,
+  FirmwareUpdateAcceptedSchema,
   HeaterSettingsRequestSchema,
   ModeRequestSchema,
   PairingClientBindingSchema,
@@ -71,6 +72,16 @@ async function sha256(value: string): Promise<string> {
     new TextEncoder().encode(value),
   );
   return encodeBase64Url(new Uint8Array(digest));
+}
+
+async function sha256Hex(value: Uint8Array): Promise<string> {
+  const digest = new Uint8Array(await crypto.subtle.digest(
+    "SHA-256",
+    value.slice().buffer,
+  ));
+  return [...digest]
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
 }
 
 export const DEFAULT_SIMULATOR_PAIRING_CODE = "12345678";
@@ -398,6 +409,72 @@ export function createSimulator(
   app.use("/api/v3/extractions/*", requireBearer);
   app.use("/api/v3/cooldowns/*", requireBearer);
   app.use("/api/v3/temperature-calibrations/*", requireBearer);
+  app.use("/api/v3/firmware-updates", requireBearer);
+
+  app.post("/api/v3/firmware-updates", async (c) => {
+    if (c.req.header("Content-Type") !== "application/octet-stream") {
+      return contractApiError(
+        c,
+        415,
+        "unsupported_media_type",
+        "Firmware updates require application/octet-stream.",
+      );
+    }
+    const expectedDigest = c.req.header("X-Philcoino-Image-SHA256");
+    if (expectedDigest === undefined || !/^[0-9a-f]{64}$/u.test(expectedDigest)) {
+      return contractApiError(
+        c,
+        400,
+        "firmware_metadata_invalid",
+        "A lowercase hexadecimal image SHA-256 is required.",
+      );
+    }
+    const image = new Uint8Array(await c.req.arrayBuffer());
+    if (image.length === 0) {
+      return contractApiError(
+        c,
+        400,
+        "firmware_metadata_invalid",
+        "The firmware image is empty.",
+      );
+    }
+    if (image.length > 1_966_080) {
+      return contractApiError(
+        c,
+        413,
+        "firmware_image_too_large",
+        "The firmware image does not fit the inactive OTA slot.",
+      );
+    }
+    const state = machine.getStateV3();
+    if (
+      state.extraction.status !== "idle" ||
+      state.cooldown.status !== "idle" ||
+      state.temperatureCalibration.status === "calibrating" ||
+      state.scale.calibrationStatus === "calibrating"
+    ) {
+      return contractApiError(
+        c,
+        409,
+        "firmware_update_busy",
+        "Stop extraction, cooldown, and calibration before updating.",
+      );
+    }
+    if (await sha256Hex(image) !== expectedDigest) {
+      return contractApiError(
+        c,
+        422,
+        "firmware_digest_mismatch",
+        "The uploaded firmware SHA-256 does not match.",
+      );
+    }
+    machine.setHeaterEnabled(false);
+    return c.json(FirmwareUpdateAcceptedSchema.parse({
+      bytesWritten: image.length,
+      rebooting: true,
+      status: "accepted",
+    }), 202);
+  });
 
   app.get("/api/v3/state", (c) => {
     if ([...new URL(c.req.url).searchParams.keys()].length > 0) {
@@ -1296,7 +1373,7 @@ function temperatureCalibrationError(
 
 function contractApiError(
   c: Context,
-  status: 400 | 401 | 409 | 429 | 500,
+  status: 400 | 401 | 409 | 413 | 415 | 422 | 429 | 500,
   code: ApiErrorCode,
   message: string,
 ): Response {

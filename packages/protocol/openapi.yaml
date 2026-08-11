@@ -299,6 +299,38 @@
           "401": { "$ref": "#/components/responses/Unauthorized" }
         }
       }
+    },
+    "/api/v3/firmware-updates": {
+      "post": {
+        "operationId": "uploadFirmwareUpdate",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          {
+            "name": "X-Philcoino-Image-SHA256",
+            "in": "header",
+            "required": true,
+            "schema": { "type": "string", "minLength": 64, "maxLength": 64, "pattern": "^[0-9a-f]{64}$" }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/octet-stream": {
+              "schema": { "type": "string", "format": "binary", "minLength": 1, "maxLength": 1966080 }
+            }
+          }
+        },
+        "responses": {
+          "202": { "description": "The inactive OTA slot is verified and selected for a delayed reboot.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/FirmwareUpdateAccepted" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "409": { "$ref": "#/components/responses/Conflict" },
+          "413": { "$ref": "#/components/responses/BadRequest" },
+          "415": { "$ref": "#/components/responses/BadRequest" },
+          "422": { "$ref": "#/components/responses/BadRequest" },
+          "500": { "$ref": "#/components/responses/InternalError" }
+        }
+      }
     }
   },
   "components": {
@@ -750,6 +782,15 @@
           "samples": { "type": "array", "minItems": 1, "maxItems": 16, "items": { "$ref": "#/components/schemas/TelemetrySample" } }
         }
       },
+      "FirmwareUpdateAccepted": {
+        "type": "object", "additionalProperties": false,
+        "required": ["status", "rebooting", "bytesWritten"],
+        "properties": {
+          "status": { "const": "accepted" },
+          "rebooting": { "const": true },
+          "bytesWritten": { "type": "integer", "minimum": 1, "maximum": 1966080 }
+        }
+      },
       "Error": {
         "type": "object", "additionalProperties": false, "required": ["error"],
         "properties": {
@@ -757,7 +798,7 @@
             "type": "object", "additionalProperties": false, "required": ["code", "message"],
             "properties": {
               "code": {
-                "enum": ["malformed_request", "unauthorized", "pairing_busy", "pairing_session_expired", "pairing_session_replayed", "pairing_stage_mismatch", "invalid_pairing_code", "extraction_active", "cooldown_active", "brew_mode_required", "cooldown_not_required", "sensor_unavailable", "machine_faulted", "idempotency_mismatch", "scale_not_calibrated", "scale_not_stable", "scale_unavailable", "scale_warning_unacknowledged", "calibration_in_progress", "heater_disabled", "temperature_calibration_active", "temperature_calibration_inactive", "temperature_calibration_session_mismatch", "temperature_calibration_expired", "temperature_target_unsafe", "stream_unavailable", "stream_busy", "persistence_failure", "internal_error"]
+                "enum": ["malformed_request", "unauthorized", "pairing_busy", "pairing_session_expired", "pairing_session_replayed", "pairing_stage_mismatch", "invalid_pairing_code", "extraction_active", "cooldown_active", "brew_mode_required", "cooldown_not_required", "sensor_unavailable", "machine_faulted", "idempotency_mismatch", "scale_not_calibrated", "scale_not_stable", "scale_unavailable", "scale_warning_unacknowledged", "calibration_in_progress", "heater_disabled", "temperature_calibration_active", "temperature_calibration_inactive", "temperature_calibration_session_mismatch", "temperature_calibration_expired", "temperature_target_unsafe", "stream_unavailable", "stream_busy", "firmware_update_unavailable", "firmware_metadata_invalid", "unsupported_media_type", "firmware_image_too_large", "firmware_update_busy", "output_shutdown_failed", "firmware_digest_mismatch", "firmware_image_invalid", "firmware_update_failed", "persistence_failure", "internal_error"]
               },
               "message": { "type": "string", "minLength": 1, "maxLength": 160 }
             }

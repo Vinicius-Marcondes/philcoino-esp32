@@ -7,6 +7,7 @@
 
 #include "philcoino/api.hpp"
 #include "philcoino/esp_security.hpp"
+#include "philcoino/firmware_update.hpp"
 
 namespace philcoino::networking {
 
@@ -25,7 +26,8 @@ class EspNetworkServer {
  public:
   EspNetworkServer(FirmwareApi& api, const DeviceIdentity& identity,
                    EspTlsIdentity& tls_identity,
-                   ExtractionTelemetryBuffer* extraction_telemetry = nullptr);
+                   ExtractionTelemetryBuffer* extraction_telemetry,
+                   FirmwareUpdateCoordinator* firmware_update);
 
   bool start(const char* ssid, const char* password);
   WifiStatus wifi_status() const;
@@ -42,14 +44,17 @@ class EspNetworkServer {
                          void* event_data);
   int handle_http_request(void* request);
   int handle_extraction_stream(void* request);
+  int handle_firmware_update(void* request);
   void run_extraction_stream();
   static void extraction_stream_task(void* context);
   static void notify_extraction_stream(void* context);
+  static void firmware_reboot_task(void* context);
 
   FirmwareApi& api_;
   DeviceIdentity identity_;
   EspTlsIdentity& tls_identity_;
   ExtractionTelemetryBuffer* extraction_telemetry_;
+  FirmwareUpdateCoordinator* firmware_update_;
   void* event_group_{nullptr};
   void* http_server_{nullptr};
   void* wifi_event_handler_{nullptr};

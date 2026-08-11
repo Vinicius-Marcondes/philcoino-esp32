@@ -30,6 +30,7 @@ enum class ApiRouteId {
   kExtractionStream,
   kCooldownStart,
   kCooldownStop,
+  kFirmwareUpdate,
 };
 
 struct ApiRouteDescriptor {
@@ -39,7 +40,7 @@ struct ApiRouteDescriptor {
   bool requires_authentication;
 };
 
-inline constexpr std::array<ApiRouteDescriptor, 22> kApiRoutes{{
+inline constexpr std::array<ApiRouteDescriptor, 23> kApiRoutes{{
     {ApiRouteId::kHealth, HttpMethod::kGet, "/healthz", false},
     {ApiRouteId::kPairingSessionStart, HttpMethod::kPost,
      "/api/v3/pairing/sessions", false},
@@ -80,6 +81,8 @@ inline constexpr std::array<ApiRouteDescriptor, 22> kApiRoutes{{
      "/api/v3/cooldowns", true},
     {ApiRouteId::kCooldownStop, HttpMethod::kDelete,
      "/api/v3/cooldowns/current", true},
+    {ApiRouteId::kFirmwareUpdate, HttpMethod::kPost,
+     "/api/v3/firmware-updates", true},
 }};
 
 const ApiRouteDescriptor* find_api_route(HttpMethod method,

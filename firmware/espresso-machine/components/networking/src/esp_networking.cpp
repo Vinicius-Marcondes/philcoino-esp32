@@ -4,14 +4,17 @@
 #include <array>
 #include <cstddef>
 #include <cstring>
+#include <memory>
 #include <string>
 #include <utility>
 
 #include "esp_event.h"
 #include "esp_err.h"
+#include "esp_heap_caps.h"
 #include "esp_https_server.h"
 #include "esp_log.h"
 #include "esp_netif.h"
+#include "esp_system.h"
 #include "esp_timer.h"
 #include "esp_wifi.h"
 #include "esp_wifi_default.h"
@@ -35,6 +38,10 @@ constexpr std::size_t kMaximumAuthorizationLength = 512;
 constexpr std::size_t kMaximumRequestBodyLength = 1024;
 constexpr std::int64_t kRequestBodyDeadlineUs = 2'000'000;
 constexpr unsigned kMaximumBodyTimeouts = 3;
+constexpr std::size_t kFirmwareUploadChunkBytes = 4096;
+constexpr std::size_t kSha256HexLength = 64;
+constexpr std::int64_t kFirmwareUploadDeadlineUs = 180'000'000;
+constexpr unsigned kMaximumFirmwareUploadTimeouts = 180;
 constexpr std::uint32_t kMaximumWifiRetryDelayMs = 30'000;
 constexpr std::uint32_t kMaximumMdnsRetryDelayMs = 30'000;
 constexpr std::uint32_t kDhcpAcquisitionTimeoutMs = 30'000;
@@ -47,10 +54,14 @@ std::uint64_t uptime_ms() {
 const char* status_text(int status) {
   switch (status) {
     case 200: return "200 OK";
+    case 202: return "202 Accepted";
     case 400: return "400 Bad Request";
     case 401: return "401 Unauthorized";
     case 404: return "404 Not Found";
     case 409: return "409 Conflict";
+    case 413: return "413 Payload Too Large";
+    case 415: return "415 Unsupported Media Type";
+    case 422: return "422 Unprocessable Content";
     case 429: return "429 Too Many Requests";
     case 503: return "503 Service Unavailable";
     default: return "500 Internal Server Error";
@@ -113,11 +124,13 @@ EspNetworkServer::EspNetworkServer(FirmwareApi& api,
                                    const DeviceIdentity& identity,
                                    EspTlsIdentity& tls_identity,
                                    ExtractionTelemetryBuffer*
-                                       extraction_telemetry)
+                                       extraction_telemetry,
+                                   FirmwareUpdateCoordinator* firmware_update)
     : api_(api),
       identity_(identity),
       tls_identity_(tls_identity),
-      extraction_telemetry_(extraction_telemetry) {
+      extraction_telemetry_(extraction_telemetry),
+      firmware_update_(firmware_update) {
   if (extraction_telemetry_ != nullptr) {
     extraction_telemetry_->set_notification(notify_extraction_stream, this);
   }
@@ -383,6 +396,7 @@ bool EspNetworkServer::start_http() {
   configuration.httpd.max_uri_handlers =
       static_cast<std::uint16_t>(kApiRoutes.size() + 1U);
   configuration.httpd.uri_match_fn = httpd_uri_match_wildcard;
+  configuration.httpd.lru_purge_enable = true;
   configuration.httpd.recv_wait_timeout = 1;
   configuration.httpd.send_wait_timeout = 2;
   configuration.port_secure = kHttpsPort;
@@ -414,13 +428,32 @@ bool EspNetworkServer::start_http() {
     return false;
   }
 
+  auto firmware_update_handler = [](httpd_req_t* request) -> esp_err_t {
+    return static_cast<esp_err_t>(
+        static_cast<EspNetworkServer*>(request->user_ctx)
+            ->handle_firmware_update(request));
+  };
+  httpd_uri_t firmware_update_uri{};
+  firmware_update_uri.uri = "/api/v3/firmware-updates";
+  firmware_update_uri.method = HTTP_POST;
+  firmware_update_uri.handler = firmware_update_handler;
+  firmware_update_uri.user_ctx = this;
+  if (httpd_register_uri_handler(server, &firmware_update_uri) != ESP_OK) {
+    httpd_ssl_stop(server);
+    http_server_ = nullptr;
+    return false;
+  }
+
   auto handler = [](httpd_req_t* request) -> esp_err_t {
     return static_cast<esp_err_t>(
         static_cast<EspNetworkServer*>(request->user_ctx)
             ->handle_http_request(request));
   };
   for (const auto& route : kApiRoutes) {
-    if (route.id == ApiRouteId::kExtractionStream) continue;
+    if (route.id == ApiRouteId::kExtractionStream ||
+        route.id == ApiRouteId::kFirmwareUpdate) {
+      continue;
+    }
     httpd_uri_t uri{};
     uri.uri = route.path;
     uri.method = http_method(route.method);
@@ -433,6 +466,208 @@ bool EspNetworkServer::start_http() {
     }
   }
   return true;
+}
+
+int EspNetworkServer::handle_firmware_update(void* opaque_request) {
+  auto* request = static_cast<httpd_req_t*>(opaque_request);
+  constexpr char kPath[] = "/api/v3/firmware-updates";
+  std::array<char, kMaximumAuthorizationLength + 1U> authorization{};
+  const std::size_t authorization_length =
+      httpd_req_get_hdr_value_len(request, "Authorization");
+  const char* authorization_value = nullptr;
+  if (authorization_length > 0U &&
+      authorization_length <= kMaximumAuthorizationLength &&
+      httpd_req_get_hdr_value_str(request, "Authorization",
+                                  authorization.data(),
+                                  authorization_length + 1U) == ESP_OK) {
+    authorization_value = authorization.data();
+  }
+  if (!api_.authorized(authorization_value)) {
+    return send_http_response(
+        request,
+        {401,
+         "{\"error\":{\"code\":\"unauthorized\",\"message\":\"A valid bearer token is required.\"}}",
+         true},
+        kPath);
+  }
+  if (firmware_update_ == nullptr) {
+    return send_http_response(
+        request,
+        {503,
+         "{\"error\":{\"code\":\"firmware_update_unavailable\",\"message\":\"Firmware update storage is unavailable.\"}}",
+         false},
+        kPath);
+  }
+
+  std::array<char, 65> content_type{};
+  const std::size_t content_type_length =
+      httpd_req_get_hdr_value_len(request, "Content-Type");
+  if (content_type_length == 0U ||
+      content_type_length >= content_type.size() ||
+      httpd_req_get_hdr_value_str(request, "Content-Type",
+                                  content_type.data(),
+                                  content_type_length + 1U) != ESP_OK ||
+      std::strcmp(content_type.data(), "application/octet-stream") != 0) {
+    return send_http_response(
+        request,
+        {415,
+         "{\"error\":{\"code\":\"unsupported_media_type\",\"message\":\"Firmware updates require application/octet-stream.\"}}",
+         false},
+        kPath);
+  }
+
+  std::array<char, kSha256HexLength + 1U> digest{};
+  const std::size_t digest_length =
+      httpd_req_get_hdr_value_len(request, "X-Philcoino-Image-SHA256");
+  if (digest_length != kSha256HexLength ||
+      httpd_req_get_hdr_value_str(request, "X-Philcoino-Image-SHA256",
+                                  digest.data(), digest.size()) != ESP_OK) {
+    return send_http_response(
+        request,
+        {400,
+         "{\"error\":{\"code\":\"firmware_metadata_invalid\",\"message\":\"A lowercase hexadecimal image SHA-256 is required.\"}}",
+         false},
+        kPath);
+  }
+
+  const auto begin_result = firmware_update_->begin(
+      request->content_len, digest.data(),
+      static_cast<std::uint32_t>(uptime_ms()));
+  if (begin_result != FirmwareUpdateResult::kOk) {
+    switch (begin_result) {
+      case FirmwareUpdateResult::kImageTooLarge:
+        return send_http_response(
+            request,
+            {413,
+             "{\"error\":{\"code\":\"firmware_image_too_large\",\"message\":\"The firmware image does not fit the inactive OTA slot.\"}}",
+             false},
+            kPath);
+      case FirmwareUpdateResult::kInvalidMetadata:
+        return send_http_response(
+            request,
+            {400,
+             "{\"error\":{\"code\":\"firmware_metadata_invalid\",\"message\":\"The firmware image metadata is invalid.\"}}",
+             false},
+            kPath);
+      case FirmwareUpdateResult::kSafetyConflict:
+      case FirmwareUpdateResult::kBusy:
+        return send_http_response(
+            request,
+            {409,
+             "{\"error\":{\"code\":\"firmware_update_busy\",\"message\":\"Stop extraction, cooldown, and calibration before updating.\"}}",
+             false},
+            kPath);
+      case FirmwareUpdateResult::kOutputFailure:
+        return send_http_response(
+            request,
+            {409,
+             "{\"error\":{\"code\":\"output_shutdown_failed\",\"message\":\"The firmware could not confirm fail-off output commands.\"}}",
+             false},
+            kPath);
+      default:
+        return send_http_response(
+            request,
+            {500,
+             "{\"error\":{\"code\":\"firmware_update_failed\",\"message\":\"The inactive OTA slot could not be prepared.\"}}",
+             false},
+            kPath);
+    }
+  }
+
+  std::unique_ptr<std::uint8_t, decltype(&heap_caps_free)> chunk(
+      static_cast<std::uint8_t*>(
+          heap_caps_malloc(kFirmwareUploadChunkBytes, MALLOC_CAP_8BIT)),
+      heap_caps_free);
+  if (chunk == nullptr) {
+    firmware_update_->abort();
+    return send_http_response(
+        request,
+        {500,
+         "{\"error\":{\"code\":\"firmware_update_failed\",\"message\":\"The OTA receive buffer could not be allocated.\"}}",
+         false},
+        kPath);
+  }
+  std::size_t remaining = request->content_len;
+  unsigned timeout_count = 0U;
+  const auto deadline_us = esp_timer_get_time() + kFirmwareUploadDeadlineUs;
+  while (remaining > 0U) {
+    if (esp_timer_get_time() >= deadline_us) {
+      firmware_update_->abort();
+      return ESP_FAIL;
+    }
+    const auto requested = std::min(remaining, kFirmwareUploadChunkBytes);
+    const int received = httpd_req_recv(
+        request, reinterpret_cast<char*>(chunk.get()), requested);
+    if (received == HTTPD_SOCK_ERR_TIMEOUT) {
+      ++timeout_count;
+      if (timeout_count >= kMaximumFirmwareUploadTimeouts) {
+        firmware_update_->abort();
+        return ESP_FAIL;
+      }
+      continue;
+    }
+    if (received <= 0) {
+      firmware_update_->abort();
+      return ESP_FAIL;
+    }
+    const auto length = static_cast<std::size_t>(received);
+    if (firmware_update_->write(chunk.get(), length) !=
+        FirmwareUpdateResult::kOk) {
+      return send_http_response(
+          request,
+          {500,
+           "{\"error\":{\"code\":\"firmware_update_failed\",\"message\":\"Writing the inactive OTA slot failed.\"}}",
+           false},
+          kPath);
+    }
+    remaining -= length;
+  }
+
+  const auto written = firmware_update_->bytes_written();
+  const auto finish_result = firmware_update_->finish();
+  if (finish_result != FirmwareUpdateResult::kOk) {
+    if (finish_result == FirmwareUpdateResult::kDigestMismatch) {
+      return send_http_response(
+          request,
+          {422,
+           "{\"error\":{\"code\":\"firmware_digest_mismatch\",\"message\":\"The uploaded firmware SHA-256 does not match.\"}}",
+           false},
+          kPath);
+    }
+    if (finish_result == FirmwareUpdateResult::kInvalidImage) {
+      return send_http_response(
+          request,
+          {422,
+           "{\"error\":{\"code\":\"firmware_image_invalid\",\"message\":\"ESP-IDF rejected the uploaded application image.\"}}",
+           false},
+          kPath);
+    }
+    return send_http_response(
+        request,
+        {500,
+         "{\"error\":{\"code\":\"firmware_update_failed\",\"message\":\"The OTA image could not be finalized.\"}}",
+         false},
+        kPath);
+  }
+
+  const std::string body =
+      "{\"status\":\"accepted\",\"rebooting\":true,\"bytesWritten\":" +
+      std::to_string(written) + "}";
+  const auto response_result = send_http_response(
+      request, {202, body, false}, kPath);
+  if (xTaskCreate(firmware_reboot_task, "philcoino-ota-reboot", 2048,
+                  nullptr, 5, nullptr) != pdPASS) {
+    ESP_LOGE(kLogTag,
+             "OTA delayed reboot task could not start; rebooting from the request task");
+    vTaskDelay(pdMS_TO_TICKS(500));
+    esp_restart();
+  }
+  return response_result;
+}
+
+void EspNetworkServer::firmware_reboot_task(void*) {
+  vTaskDelay(pdMS_TO_TICKS(500));
+  esp_restart();
 }
 
 int EspNetworkServer::handle_http_request(void* opaque_request) {

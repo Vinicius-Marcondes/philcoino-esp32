@@ -221,7 +221,7 @@ void test_workflow_codecs() {
 }
 
 void test_authoritative_route_matrix() {
-  assert(kApiRoutes.size() == 22U);
+  assert(kApiRoutes.size() == 23U);
   std::size_t protected_count = 0;
   for (std::size_t index = 0; index < kApiRoutes.size(); ++index) {
     const auto& route = kApiRoutes[index];
@@ -236,7 +236,7 @@ void test_authoritative_route_matrix() {
              std::string(route.path) != kApiRoutes[other].path);
     }
   }
-  assert(protected_count == 19U);
+  assert(protected_count == 20U);
   assert(!request_requires_auth(HttpMethod::kGet, "/healthz"));
   assert(request_requires_auth(HttpMethod::kDelete,
                                "/api/v3/cooldowns/current"));
@@ -245,6 +245,8 @@ void test_authoritative_route_matrix() {
       HttpMethod::kPut, "/api/v3/temperature-calibrations/current"));
   assert(request_requires_auth(
       HttpMethod::kPatch, "/api/v3/settings"));
+  assert(request_requires_auth(HttpMethod::kPost,
+                               "/api/v3/firmware-updates"));
   assert(find_api_route(HttpMethod::kGet, "/api/v3/state?ignored=true") ==
          find_api_route(HttpMethod::kGet, "/api/v3/state"));
   assert(find_api_route(HttpMethod::kGet, "/api/v1/state") == nullptr);

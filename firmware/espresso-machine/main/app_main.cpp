@@ -17,6 +17,7 @@
 #include "philcoino/config.hpp"
 #include "philcoino/control.hpp"
 #include "philcoino/esp_networking.hpp"
+#include "philcoino/esp_ota_update.hpp"
 #include "philcoino/esp_security.hpp"
 #include "philcoino/esp_peripherals.hpp"
 #include "philcoino/extraction_telemetry.hpp"
@@ -84,6 +85,61 @@ class FreeRtosApiSynchronization final
   philcoino::peripherals::FailOffPump& pump_;
   philcoino::peripherals::FailOffSsr& heater_;
   std::atomic<bool>& fail_safe_requested_;
+};
+
+class FailOffFirmwareUpdateSafety final
+    : public philcoino::networking::FirmwareUpdateSafety {
+ public:
+  FailOffFirmwareUpdateSafety(
+      philcoino::control::TemperatureController& temperature,
+      philcoino::control::ExtractionController& extraction,
+      philcoino::control::CooldownController& cooldown,
+      philcoino::control::ScaleController& scale,
+      philcoino::peripherals::FailOffPump& pump,
+      philcoino::peripherals::FailOffSsr& heater,
+      FreeRtosApiSynchronization& synchronization)
+      : temperature_(temperature),
+        extraction_(extraction),
+        cooldown_(cooldown),
+        scale_(scale),
+        pump_(pump),
+        heater_(heater),
+        synchronization_(synchronization) {}
+
+  philcoino::networking::FirmwareUpdateSafetyResult prepare(
+      std::uint32_t now_ms) override {
+    if (!synchronization_.lock(
+            philcoino::networking::ApiDomain::kExtraction)) {
+      return philcoino::networking::FirmwareUpdateSafetyResult::kOutputFailure;
+    }
+    const auto scale = scale_.snapshot(now_ms);
+    if (extraction_.active() || cooldown_.active() ||
+        temperature_.temperature_calibration_active() ||
+        scale.calibration_status ==
+            philcoino::control::ScaleCalibrationStatus::kCalibrating) {
+      synchronization_.unlock(
+          philcoino::networking::ApiDomain::kExtraction);
+      return philcoino::networking::FirmwareUpdateSafetyResult::kBusy;
+    }
+    const bool permission_disabled =
+        temperature_.set_heater_enabled(false, now_ms);
+    const bool heater_off = heater_.force_off();
+    const bool pump_off = pump_.force_off();
+    synchronization_.unlock(
+        philcoino::networking::ApiDomain::kExtraction);
+    return permission_disabled && heater_off && pump_off
+               ? philcoino::networking::FirmwareUpdateSafetyResult::kReady
+               : philcoino::networking::FirmwareUpdateSafetyResult::kOutputFailure;
+  }
+
+ private:
+  philcoino::control::TemperatureController& temperature_;
+  philcoino::control::ExtractionController& extraction_;
+  philcoino::control::CooldownController& cooldown_;
+  philcoino::control::ScaleController& scale_;
+  philcoino::peripherals::FailOffPump& pump_;
+  philcoino::peripherals::FailOffSsr& heater_;
+  FreeRtosApiSynchronization& synchronization_;
 };
 
 struct NetworkStartContext {
@@ -305,6 +361,8 @@ void scale_sample_task(void* argument) {
 
 extern "C" void app_main() {
   using namespace philcoino::peripherals;
+
+  philcoino::networking::EspOtaBootValidationGuard ota_boot_validation;
 
   static EspGpioOutput pump_gpio(philcoino::config::kPumpGpio);
   static EspOutputCriticalSection pump_critical_section;
@@ -538,19 +596,43 @@ extern "C" void app_main() {
       cooldown_controller, scale_calibration_storage,
       synchronization, &scale_controller,
       &steam_control_settings_storage, boot_id.data());
+  static FailOffFirmwareUpdateSafety firmware_update_safety(
+      controller, extraction_controller, cooldown_controller,
+      scale_controller, pump, ssr, synchronization);
+  static philcoino::networking::EspOtaUpdateBackend firmware_update_backend;
+  static philcoino::networking::FirmwareUpdateCoordinator firmware_update(
+      firmware_update_safety, firmware_update_backend);
   static philcoino::networking::EspNetworkServer network(
-      api, identity, tls_identity, &extraction_telemetry);
+      api, identity, tls_identity, &extraction_telemetry, &firmware_update);
   static const NetworkStartContext network_context{
       &network,
       CONFIG_PHILCOINO_WIFI_SSID,
       CONFIG_PHILCOINO_WIFI_PASSWORD,
   };
-  if (secure_network_ready &&
-      xTaskCreate(network_start_task, "philcoino-network", 6144,
-                  const_cast<NetworkStartContext*>(&network_context), 5,
-                  nullptr) != pdPASS) {
+  bool network_task_started = false;
+  if (secure_network_ready) {
+    network_task_started =
+        xTaskCreate(network_start_task, "philcoino-network", 6144,
+                    const_cast<NetworkStartContext*>(&network_context), 5,
+                    nullptr) == pdPASS;
+    if (!network_task_started) {
+      ESP_LOGE(kLogTag,
+               "Network startup task creation failed; temperature control remains active");
+    }
+  }
+  if (ota_boot_validation.pending() &&
+      (!secure_network_ready || !network_task_started)) {
     ESP_LOGE(kLogTag,
-             "Network startup task creation failed; temperature control remains active");
+             "OTA image cannot restore the secure update service; rollback requested");
+    pump.force_off();
+    ssr.force_off();
+    return;
+  }
+  if (!ota_boot_validation.confirm()) {
+    ESP_LOGE(kLogTag, "OTA image validation state could not be confirmed");
+    pump.force_off();
+    ssr.force_off();
+    return;
   }
 
   const TickType_t temperature_period_ticks =

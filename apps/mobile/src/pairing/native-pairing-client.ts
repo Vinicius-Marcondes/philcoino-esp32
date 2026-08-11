@@ -17,7 +17,7 @@ import type {
 } from "./pairing-service";
 import { pairingResponseError } from "./pairing-response-error";
 
-const REQUEST_TIMEOUT_MS = 10_000;
+const REQUEST_TIMEOUT_MS = 45_000;
 
 export const createNativePairingClient: PairingClientFactory = ({
   address,

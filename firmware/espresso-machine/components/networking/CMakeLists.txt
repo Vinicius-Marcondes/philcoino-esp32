@@ -7,12 +7,14 @@ idf_component_register(
     "src/api_routes.cpp"
     "src/api_workflow_codec.cpp"
     "src/esp_networking.cpp"
+    "src/esp_ota_update.cpp"
     "src/esp_security.cpp"
     "src/extraction_telemetry.cpp"
+    "src/firmware_update.cpp"
     "src/pairing.cpp"
   INCLUDE_DIRS "include"
-  REQUIRES control firmware_config peripherals
-  PRIV_REQUIRES esp_event esp_https_server esp_netif esp_timer esp_wifi espressif__mdns heap mbedtls nvs_flash protocomm
+  REQUIRES app_update control firmware_config mbedtls peripherals
+  PRIV_REQUIRES esp_event esp_https_server esp_netif esp_timer esp_wifi espressif__mdns heap nvs_flash protocomm
 )
 
 target_compile_features(${COMPONENT_LIB} PUBLIC cxx_std_17)
