@@ -17,6 +17,7 @@ import { SrpClientSession } from "../../device-simulator/src/srp.ts";
 
 export interface OtaRequest {
   body: Uint8Array;
+  bodyWriteTimeoutMs?: number;
   connectTimeoutMs?: number;
   expectedPin?: string;
   headers?: Record<string, string>;
@@ -64,6 +65,7 @@ const maximumFirmwareImageBytes = 1_966_080;
 const tlsConnectTimeoutMs = 12_000;
 const pairingResponseTimeoutMs = 45_000;
 const uploadRequestTimeoutMs = 180_000;
+const uploadBodyWriteTimeoutMs = 90_000;
 const socketWriteTimeoutMs = 10_000;
 
 export function normalizeOtaOrigin(value: string): string {
@@ -229,6 +231,7 @@ export async function uploadFirmwareImage(
     onProgress,
     origin,
     path: "/api/v3/firmware-updates",
+    bodyWriteTimeoutMs: uploadBodyWriteTimeoutMs,
     responseTimeoutMs: uploadRequestTimeoutMs,
   });
   ensureStatus(response, 202, "firmware upload");
@@ -268,13 +271,15 @@ async function tlsRequest(request: OtaRequest): Promise<OtaResponse> {
     "",
   ].join("\r\n");
   await writeSocket(socket, Buffer.from(head, "utf8"), socketWriteTimeoutMs);
+  const bodyWriteTimeoutMs =
+    request.bodyWriteTimeoutMs ?? socketWriteTimeoutMs;
   const chunkSize = 16 * 1024;
   for (let offset = 0; offset < request.body.length; offset += chunkSize) {
     const end = Math.min(offset + chunkSize, request.body.length);
     await writeSocket(
       socket,
       request.body.subarray(offset, end),
-      socketWriteTimeoutMs,
+      bodyWriteTimeoutMs,
     );
     request.onProgress?.(end, request.body.length);
   }

@@ -47,6 +47,55 @@ std::uint32_t uptime_ms() {
   return static_cast<std::uint32_t>(esp_timer_get_time() / 1000);
 }
 
+const char* thermocouple_status_name(
+    philcoino::peripherals::ThermocoupleStatus status) {
+  using philcoino::peripherals::ThermocoupleStatus;
+  switch (status) {
+    case ThermocoupleStatus::kOk: return "ok";
+    case ThermocoupleStatus::kNotReady: return "not_ready";
+    case ThermocoupleStatus::kOpenCircuit: return "open_circuit";
+    case ThermocoupleStatus::kInvalidFrame: return "invalid_frame";
+    case ThermocoupleStatus::kTransportError: return "transport_error";
+  }
+  return "unknown";
+}
+
+void log_thermocouple_failure(
+    const char* phase,
+    const philcoino::peripherals::ThermocoupleReading& reading,
+    unsigned attempt = 0U) {
+  ESP_LOGE(kLogTag,
+           "MAX6675 %s failure status=%s raw=0x%04X attempt=%u "
+           "CS=GPIO%" PRId32 " SCK=GPIO%" PRId32 " SO=GPIO%" PRId32,
+           phase, thermocouple_status_name(reading.status),
+           static_cast<unsigned>(reading.raw_frame), attempt,
+           philcoino::config::kBoilerThermocoupleChipSelectGpio,
+           philcoino::config::kBoilerThermocoupleClockGpio,
+           philcoino::config::kBoilerThermocoupleDataGpio);
+}
+
+philcoino::peripherals::ThermocoupleReading read_startup_temperature(
+    philcoino::peripherals::Max6675& thermocouple) {
+  constexpr unsigned kMaximumStartupAttempts = 3U;
+  philcoino::peripherals::ThermocoupleReading reading{};
+  for (unsigned attempt = 1U; attempt <= kMaximumStartupAttempts; ++attempt) {
+    vTaskDelay(pdMS_TO_TICKS(
+        philcoino::peripherals::kMax6675SampleIntervalMs));
+    reading = thermocouple.read(uptime_ms());
+    if (reading.status ==
+        philcoino::peripherals::ThermocoupleStatus::kOk) {
+      ESP_LOGI(kLogTag,
+               "MAX6675 startup sample ready temperature=%.2fC raw=0x%04X "
+               "attempt=%u",
+               static_cast<double>(reading.temperature_c),
+               static_cast<unsigned>(reading.raw_frame), attempt);
+      return reading;
+    }
+    log_thermocouple_failure("startup", reading, attempt);
+  }
+  return reading;
+}
+
 class FreeRtosApiSynchronization final
     : public philcoino::networking::ApiSynchronization {
  public:
@@ -288,19 +337,7 @@ void scale_sample_task(void* argument) {
   if (!context->ready_waiter->initialize_for_current_task()) {
     ESP_LOGW(
         kLogTag,
-        "HX711 data-ready interrupt initialization failed; weighted extraction remains blocked");
-    if (context->synchronization->lock(
-            philcoino::networking::ApiDomain::kExtraction)) {
-      context->scale->update(
-          {philcoino::peripherals::Hx711Status::kTransportError, 0},
-          uptime_ms());
-      context->synchronization->unlock(
-          philcoino::networking::ApiDomain::kExtraction);
-    }
-    while (true) {
-      vTaskDelay(pdMS_TO_TICKS(
-          philcoino::config::kScaleUnavailableTimeoutMs));
-    }
+        "HX711 data-ready interrupt unavailable; using 10 ms polling fallback");
   }
   auto last_usable_sample_ms = uptime_ms();
   bool usable_sample_received = false;
@@ -525,8 +562,8 @@ extern "C" void app_main() {
   }
   static Max6675 thermocouple(max6675_transport, uptime_ms());
 
-  vTaskDelay(pdMS_TO_TICKS(kMax6675SampleIntervalMs));
-  auto snapshot = controller.update(thermocouple.read(uptime_ms()), uptime_ms());
+  const auto startup_temperature = read_startup_temperature(thermocouple);
+  auto snapshot = controller.update(startup_temperature, uptime_ms());
 
   std::array<char, 33> boot_id{};
   std::snprintf(boot_id.data(), boot_id.size(),
@@ -635,6 +672,10 @@ extern "C" void app_main() {
     return;
   }
 
+  // app_main otherwise keeps ESP-IDF's low main-task priority. Temperature
+  // acquisition and heater-lease refresh must preempt TLS/Wi-Fi work when the
+  // 500 ms control period becomes runnable.
+  vTaskPrioritySet(nullptr, configMAX_PRIORITIES - 1);
   const TickType_t temperature_period_ticks =
       pdMS_TO_TICKS(kMax6675SampleIntervalMs);
   TickType_t temperature_last_wake = xTaskGetTickCount();
@@ -648,6 +689,9 @@ extern "C" void app_main() {
           lateness_ticks / temperature_period_ticks) * temperature_period_ticks;
     }
     const auto reading = thermocouple.read(uptime_ms());
+    if (reading.status != ThermocoupleStatus::kOk) {
+      log_thermocouple_failure("runtime", reading);
+    }
     if (!synchronization.lock(philcoino::networking::ApiDomain::kTemperature)) {
       pump.force_off();
       ssr.force_off();

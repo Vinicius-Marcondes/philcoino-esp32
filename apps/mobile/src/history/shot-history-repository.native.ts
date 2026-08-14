@@ -23,6 +23,7 @@ import {
 const DATABASE_NAME = "philcoino-mobile.db";
 class SQLiteShotHistoryRepository implements ShotHistoryRepository {
   private databasePromise: Promise<SQLite.SQLiteDatabase> | null = null;
+  private readonly traceCache = new Map<string, StoredExtractionTrace>();
 
   async append(summary: ExtractionSummary | WeightedShotSummary): Promise<void> {
     const record = normalizeSummary(summary);
@@ -104,6 +105,9 @@ class SQLiteShotHistoryRepository implements ShotHistoryRepository {
         deviceId,
       );
     });
+    for (const [key, trace] of this.traceCache) {
+      if (trace.deviceId === deviceId) this.traceCache.delete(key);
+    }
   }
 
   async markUnfinishedIncomplete(
@@ -132,13 +136,20 @@ class SQLiteShotHistoryRepository implements ShotHistoryRepository {
     page: ExtractionTelemetryPage,
   ): Promise<StoredExtractionTrace> {
     const database = await this.database();
-    const previous = await this.loadTrace(
+    const cacheKey = extractionTraceCacheKey(
       deviceId,
       page.extractionId,
       page.bootId,
     );
+    const previous =
+      this.traceCache.get(cacheKey) ??
+      (await this.loadTrace(deviceId, page.extractionId, page.bootId));
     const trace = mergeExtractionTracePage(previous, deviceId, page);
     const retainedSequence = trace.samples.at(-1)?.sequence ?? 0;
+    const firstChangedSequence = page.samples[0]?.sequence ?? retainedSequence;
+    const changedSamples = trace.samples.filter(
+      (sample) => sample.sequence >= firstChangedSequence,
+    );
     await database.withTransactionAsync(async () => {
       await database.runAsync(
         `INSERT OR REPLACE INTO extraction_traces (
@@ -173,7 +184,10 @@ class SQLiteShotHistoryRepository implements ShotHistoryRepository {
            AND (boot_id != ? OR sequence > ?)`,
         trace.deviceId, trace.extractionId, trace.bootId, retainedSequence,
       );
-      for (const sample of trace.samples) {
+      // A normal 4 Hz page only appends its new samples. Rewriting the full
+      // 60-second trace on every event made live rendering progressively lag.
+      // Replays replace the affected tail so derived flow remains coherent.
+      for (const sample of changedSamples) {
         await database.runAsync(
           `INSERT OR REPLACE INTO extraction_trace_samples (
             device_id, extraction_id, boot_id, sequence, uptime_ms, elapsed_ms,
@@ -191,6 +205,7 @@ class SQLiteShotHistoryRepository implements ShotHistoryRepository {
         );
       }
     });
+    this.traceCache.set(cacheKey, trace);
     return trace;
   }
 
@@ -254,6 +269,16 @@ class SQLiteShotHistoryRepository implements ShotHistoryRepository {
     extractionId: string,
     requestedBootId?: string | null,
   ): Promise<StoredExtractionTrace | null> {
+    if (requestedBootId !== undefined) {
+      const cached = this.traceCache.get(
+        extractionTraceCacheKey(
+          deviceId,
+          extractionId,
+          requestedBootId ?? "legacy",
+        ),
+      );
+      if (cached !== undefined) return cached;
+    }
     const database = await this.database();
     const metadata = requestedBootId === undefined
       ? await database.getFirstAsync<Record<string, unknown>>(
@@ -280,7 +305,7 @@ class SQLiteShotHistoryRepository implements ShotHistoryRepository {
       extractionId,
       bootId,
     );
-    return {
+    const trace: StoredExtractionTrace = {
       baselineWeightDecigrams: nullableNumber(metadata.baseline_weight_decigrams),
       bootId,
       completeness: String(metadata.completeness) as TraceCompleteness,
@@ -293,7 +318,10 @@ class SQLiteShotHistoryRepository implements ShotHistoryRepository {
       selection: storedSelection(metadata),
       samples: rows.map((row) => ({
         activeTargetC: Number(row.active_target_c),
-        boilerTemperatureC: Number(row.boiler_temperature_c),
+        boilerTemperatureC:
+          row.boiler_temperature_c === null
+            ? null
+            : Number(row.boiler_temperature_c),
         derivedFlowGPerS:
           row.derived_flow_g_per_s === null
             ? null
@@ -345,6 +373,11 @@ class SQLiteShotHistoryRepository implements ShotHistoryRepository {
               targetWeightDecigrams: Number(metadata.weight_target_decigrams),
             },
     };
+    this.traceCache.set(
+      extractionTraceCacheKey(deviceId, extractionId, bootId),
+      trace,
+    );
+    return trace;
   }
 
   private async database(): Promise<SQLite.SQLiteDatabase> {
@@ -404,7 +437,7 @@ class SQLiteShotHistoryRepository implements ShotHistoryRepository {
         elapsed_ms INTEGER NOT NULL,
         extraction_elapsed_ms INTEGER NOT NULL,
         phase TEXT NOT NULL,
-        boiler_temperature_c REAL NOT NULL,
+        boiler_temperature_c REAL,
         active_target_c INTEGER NOT NULL,
         heater_active INTEGER,
         net_weight_decigrams INTEGER,
@@ -465,6 +498,7 @@ class SQLiteShotHistoryRepository implements ShotHistoryRepository {
        );
     `);
     await migrateExtractionHistory(database);
+    await migrateExtractionTraceSamples(database);
     await ensureColumn(
       database,
       "extraction_traces",
@@ -659,6 +693,53 @@ async function migrateExtractionHistory(
   `);
 }
 
+async function migrateExtractionTraceSamples(
+  database: SQLite.SQLiteDatabase,
+): Promise<void> {
+  const columns = await database.getAllAsync<{
+    name: string;
+    notnull: number;
+  }>("PRAGMA table_info(extraction_trace_samples)");
+  const temperature = columns.find(
+    (item) => item.name === "boiler_temperature_c",
+  );
+  if (temperature === undefined || temperature.notnull === 0) return;
+
+  // API v3 represents an unavailable temperature as null. Older app databases
+  // incorrectly rejected that valid stream sample and stopped the whole graph.
+  await database.withTransactionAsync(async () => {
+    await database.execAsync(`
+      DROP INDEX IF EXISTS extraction_trace_lookup;
+      CREATE TABLE extraction_trace_samples_nullable_temperature (
+        device_id TEXT NOT NULL,
+        extraction_id TEXT NOT NULL,
+        boot_id TEXT NOT NULL,
+        sequence INTEGER NOT NULL,
+        uptime_ms INTEGER NOT NULL,
+        elapsed_ms INTEGER NOT NULL,
+        extraction_elapsed_ms INTEGER NOT NULL,
+        phase TEXT NOT NULL,
+        boiler_temperature_c REAL,
+        active_target_c INTEGER NOT NULL,
+        heater_active INTEGER,
+        net_weight_decigrams INTEGER,
+        scale_availability TEXT NOT NULL,
+        pump_command TEXT NOT NULL,
+        derived_flow_g_per_s REAL,
+        gap_status TEXT NOT NULL,
+        PRIMARY KEY(device_id, extraction_id, boot_id, sequence)
+      );
+      INSERT INTO extraction_trace_samples_nullable_temperature
+        SELECT * FROM extraction_trace_samples;
+      DROP TABLE extraction_trace_samples;
+      ALTER TABLE extraction_trace_samples_nullable_temperature
+        RENAME TO extraction_trace_samples;
+      CREATE INDEX extraction_trace_lookup
+        ON extraction_trace_samples(device_id, extraction_id, sequence);
+    `);
+  });
+}
+
 function nullableBoolean(value: boolean | null): number | null {
   return value === null ? null : value ? 1 : 0;
 }
@@ -669,6 +750,14 @@ function nullableStoredBoolean(value: unknown): boolean | null {
 
 function nullableNumber(value: unknown): number | null {
   return value === null ? null : Number(value);
+}
+
+function extractionTraceCacheKey(
+  deviceId: string,
+  extractionId: string,
+  bootId: string,
+): string {
+  return `${deviceId}\n${extractionId}\n${bootId}`;
 }
 
 export const shotHistoryRepository = new SQLiteShotHistoryRepository();

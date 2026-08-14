@@ -86,11 +86,15 @@ Hx711EventDrivenAcquisition::Hx711EventDrivenAcquisition(
 
 Hx711Reading Hx711EventDrivenAcquisition::acquire(
     std::uint32_t timeout_ms) {
-  if (initial_read_pending_) {
-    initial_read_pending_ = false;
-  } else {
-    waiter_.wait(timeout_ms);
+  // A conversion may have completed just before the task starts waiting. In
+  // that case DT is already low and no new falling edge will arrive until the
+  // current sample is clocked out. Always check the level-backed transport
+  // first, then use the notification only to avoid polling while not ready.
+  const auto immediate = hx711_.read();
+  if (immediate.status != Hx711Status::kNotReady) {
+    return immediate;
   }
+  waiter_.wait(timeout_ms);
   return hx711_.read();
 }
 

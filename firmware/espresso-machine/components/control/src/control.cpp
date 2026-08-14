@@ -1128,11 +1128,24 @@ void TemperatureController::restore_ordinary_brew_control(
   return_to_brew(now_ms);
 }
 
-bool TemperatureController::validate_readings(std::uint32_t) {
+bool TemperatureController::validate_readings(std::uint32_t now_ms) {
   if (!boiler_reading_ok()) {
-    latch_fault(FaultCode::kSensorFailure);
+    sensor_failure_streak_ = std::min(
+        sensor_failure_streak_ + 1U,
+        config::kSensorFailureConsecutiveSamples);
+    status_ = ControlStatus::kHeating;
+    reset_readiness(now_ms);
+    reset_heater_control_window(now_ms);
+    if (!heater_.force_off()) {
+      latch_fault(FaultCode::kInternalError);
+    } else if (sensor_failure_streak_ >=
+               config::kSensorFailureConsecutiveSamples) {
+      latch_fault(FaultCode::kSensorFailure);
+    }
     return false;
   }
+
+  sensor_failure_streak_ = 0U;
 
   if (raw_over_temperature(raw_boiler_temperature_.temperature_c) ||
       effective_over_temperature(
@@ -1378,11 +1391,12 @@ bool ScaleController::available(std::uint32_t now_ms) const {
 
 bool ScaleController::stable() const {
   return sample_count_ == samples_.size() &&
-         cached_raw_spread_ <= stable_raw_spread_limit();
+         cached_trimmed_raw_spread_ <= stable_raw_spread_limit();
 }
 
 bool ScaleController::stable_for_calibration() const {
-  return sample_count_ == samples_.size() && cached_raw_spread_ <= 1000;
+  return sample_count_ == samples_.size() &&
+         cached_trimmed_raw_spread_ <= 1000;
 }
 
 std::int32_t ScaleController::median_raw() const {
@@ -1399,13 +1413,16 @@ std::int32_t ScaleController::stable_raw_spread_limit() const {
   const auto scaled =
       raw_span * config::kScaleStableSpreadDecigrams /
       calibration_.reference_decigrams;
-  return static_cast<std::int32_t>(std::max(1LL, scaled));
+  // Calibration accepts a settled raw window with up to 1000 counts of
+  // variation. Never make that same physical signal immediately unstable
+  // merely because converting 0.5 g to raw counts produces a smaller limit.
+  return static_cast<std::int32_t>(std::max(1000LL, scaled));
 }
 
 void ScaleController::refresh_cached_derived_state() {
   if (sample_count_ == 0U) {
     cached_median_raw_ = 0;
-    cached_raw_spread_ = 0;
+    cached_trimmed_raw_spread_ = 0;
     cached_gross_weight_available_ = false;
     cached_gross_weight_decigrams_ = 0;
     return;
@@ -1414,9 +1431,12 @@ void ScaleController::refresh_cached_derived_state() {
   std::copy_n(samples_.begin(), sample_count_, sorted.begin());
   std::sort(sorted.begin(), sorted.begin() + sample_count_);
   cached_median_raw_ = sorted[sample_count_ / 2U];
-  cached_raw_spread_ =
-      static_cast<std::int64_t>(sorted[sample_count_ - 1U]) -
-      static_cast<std::int64_t>(sorted[0]);
+  // Ignore one extreme sample at each end of the ten-sample window. A single
+  // HX711 impulse must not block tare/calibration forever, while sustained
+  // motion still expands the remaining eight-sample range.
+  cached_trimmed_raw_spread_ =
+      static_cast<std::int64_t>(sorted[sample_count_ - 2U]) -
+      static_cast<std::int64_t>(sorted[1]);
   cached_gross_weight_available_ =
       calibrated_ && peripherals::scale_raw_to_decigrams(
                          calibration_, cached_median_raw_,

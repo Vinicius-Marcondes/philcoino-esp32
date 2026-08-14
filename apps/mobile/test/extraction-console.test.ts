@@ -6,6 +6,9 @@ const screen = await Bun.file(
 const dashboard = await Bun.file(
   new URL("../components/dashboard-screen.tsx", import.meta.url),
 ).text();
+const weightModeCard = await Bun.file(
+  new URL("../components/weight-mode-card.tsx", import.meta.url),
+).text();
 
 describe("extraction console screen", () => {
   test("takes over the screen and closes on hardware back", () => {
@@ -45,6 +48,13 @@ describe("extraction console screen", () => {
     expect(screen).toContain('from "@/components/weight-mode-card"');
   });
 
+  test("shows gross weight before tare and switches to net weight when available", () => {
+    expect(weightModeCard).toContain("currentScaleWeightDecigrams(scale)");
+    expect(weightModeCard).not.toContain(
+      "formatWeightReadout(scale?.netWeightDecigrams)",
+    );
+  });
+
   test("reads as an instrument panel with tabular numerals", () => {
     expect(screen).toContain('fontVariant: ["tabular-nums"]');
     expect(screen).toContain("StyleSheet.hairlineWidth");
@@ -54,10 +64,11 @@ describe("extraction console screen", () => {
 });
 
 describe("dashboard console wiring", () => {
-  test("owns the console visibility and polls the scale while it is open", () => {
+  test("owns console visibility and consumes scale from unified state", () => {
     expect(dashboard).toContain("<ExtractionConsoleScreen");
     expect(dashboard).toContain("const [consoleOpen, setConsoleOpen] = useState(false)");
-    expect(dashboard).toContain('dashboardPage === "scale" || dashboardPage === "shots" || consoleOpen');
+    expect(dashboard).toContain("stateScale: scaleSnapshot");
+    expect(dashboard).not.toContain("scalePageVisible:");
     expect(dashboard).toContain("state={extractionUiState}");
     expect(dashboard).toContain("onStateChange={applyExtractionUiState}");
   });

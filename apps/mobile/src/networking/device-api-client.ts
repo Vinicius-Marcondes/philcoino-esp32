@@ -18,7 +18,6 @@ import {
   type MachineStateV3,
   type ModeRequest,
   type SettingsRequest,
-  type ScaleState,
   type StartCooldownRequest,
   type StartExtractionRequest,
   type TemperatureCalibrationSessionRequest,
@@ -104,10 +103,6 @@ export class DeviceApiClient {
 
   getState(options: RequestOptions = {}): Promise<MachineStateV3> {
     return this.requestState("/api/v3/state", "GET", undefined, options);
-  }
-
-  async getScale(options: RequestOptions = {}): Promise<ScaleState> {
-    return (await this.getState(options)).scale;
   }
 
   updateSettings(
@@ -448,10 +443,10 @@ export class DeviceApiClient {
       options,
     );
     if (this.acceptedBootId === state.bootId) {
-      if (state.revision <= this.acceptedRevision) {
+      if (state.revision < this.acceptedRevision) {
         throw new ApiClientError(
           "protocol",
-          "The device returned an older or duplicate state revision.",
+          "The device returned an older state revision.",
           { endpoint: path },
         );
       }

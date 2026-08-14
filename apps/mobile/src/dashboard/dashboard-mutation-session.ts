@@ -87,6 +87,7 @@ export interface DashboardMutationClient {
 
 interface DashboardPollingControl {
   pause(): void;
+  pauseForMutation(): void;
   resume(): void;
 }
 
@@ -405,7 +406,7 @@ export class DashboardMutationSession {
       message: pendingMessage,
       status: "pending",
     });
-    this.polling.pause();
+    this.polling.pauseForMutation();
 
     try {
       const response = await request(controller.signal);

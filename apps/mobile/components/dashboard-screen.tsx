@@ -177,6 +177,7 @@ export function DashboardScreen({
     profileStorageError,
     profileWritePending,
     saveMobileProfiles,
+    scaleSnapshot,
     setHeaterEnabled,
     setMode,
     snapshot,
@@ -237,8 +238,7 @@ export function DashboardScreen({
     client,
     deviceId: selectedDevice.deviceId,
     extraction,
-    scalePageVisible:
-      dashboardPage === "scale" || dashboardPage === "shots" || consoleOpen,
+    stateScale: scaleSnapshot,
     streamClient: "streamExtractionTelemetry" in client ? client : null,
   });
   const traceCutoffDecigrams =
@@ -516,6 +516,7 @@ export function DashboardScreen({
         startPending={extractionStartMutation.status === "pending"}
         state={extractionUiState}
         stopPending={extractionStopMutation.status === "pending"}
+        streamStatus={scale.streamStatus}
         trace={scale.trace}
         visible={consoleOpen}
         workflowBlock={

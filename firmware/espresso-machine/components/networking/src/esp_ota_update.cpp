@@ -41,8 +41,15 @@ FirmwareUpdateResult EspOtaUpdateBackend::begin(
     return FirmwareUpdateResult::kBackendFailure;
   }
   hash_active_ = true;
+  // HTTP supplies the exact Content-Length. ESP-IDF reserves
+  // OTA_WITH_SEQUENTIAL_WRITES for unknown-size streams; passing the known
+  // size erases exactly the required inactive range before body reception and
+  // avoids interleaving sector erases with the live TLS upload.
   const auto result = esp_ota_begin(partition_, image_size, &handle_);
   if (result != ESP_OK) {
+    ESP_LOGE(kLogTag, "OTA begin failed slot=%s bytes=%u error=%s",
+             partition_->label, static_cast<unsigned>(image_size),
+             esp_err_to_name(result));
     psa_hash_abort(&hash_operation_);
     hash_active_ = false;
     partition_ = nullptr;
@@ -62,8 +69,14 @@ FirmwareUpdateResult EspOtaUpdateBackend::write(const std::uint8_t* data,
   if (!active_ || !hash_active_ || data == nullptr || length == 0U) {
     return FirmwareUpdateResult::kWriteFailure;
   }
-  if (psa_hash_update(&hash_operation_, data, length) != PSA_SUCCESS ||
-      esp_ota_write(handle_, data, length) != ESP_OK) {
+  if (psa_hash_update(&hash_operation_, data, length) != PSA_SUCCESS) {
+    ESP_LOGE(kLogTag, "OTA image hash update failed");
+    return FirmwareUpdateResult::kWriteFailure;
+  }
+  const auto write_result = esp_ota_write(handle_, data, length);
+  if (write_result != ESP_OK) {
+    ESP_LOGE(kLogTag, "OTA flash write failed bytes=%u error=%s",
+             static_cast<unsigned>(length), esp_err_to_name(write_result));
     return FirmwareUpdateResult::kWriteFailure;
   }
   return FirmwareUpdateResult::kOk;

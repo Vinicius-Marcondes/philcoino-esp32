@@ -11,9 +11,6 @@ inline constexpr char kFriendlyName[] = "PhilcoINO";
 inline constexpr char kDeviceModel[] = "ESP32-C3 Super Mini";
 inline constexpr char kDeviceIdPrefix[] = "philcoino-";
 inline constexpr bool kWifiEnabled = true;
-// Logs every successful MAX6675 frame and can make the serial monitor noisy.
-// Sensor transport failures remain logged when this diagnostic is disabled.
-inline constexpr bool kTemperatureReadingLoggingEnabled = false;
 
 inline constexpr std::int32_t kBrewTargetMinimumC = 85;
 inline constexpr std::int32_t kBrewTargetMaximumC = 95;
@@ -50,6 +47,7 @@ inline constexpr std::uint32_t kSteamReadyTimeoutMs = 5U * 60U * 1000U;
 inline constexpr std::uint32_t kReadyStabilityMs = 3U * 1000U;
 inline constexpr std::int32_t kReadyBandC = 1;
 inline constexpr std::uint32_t kTemperatureControllerIntervalMs = 500U;
+inline constexpr std::uint32_t kSensorFailureConsecutiveSamples = 3U;
 inline constexpr std::uint32_t kHeaterControlWindowMs = 10U * 1000U;
 inline constexpr std::uint32_t kMinimumHeaterPulseMs = 500U;
 inline constexpr std::uint32_t kHeaterSafetyLeaseMs = 1500U;

@@ -214,6 +214,17 @@ bool EspNetworkServer::start_wifi(const char* ssid, const char* password) {
     wifi_status_.store(WifiStatus::kFailed, std::memory_order_relaxed);
     return false;
   }
+  // This is an always-powered control appliance. ESP-IDF defaults to
+  // WIFI_PS_MIN_MODEM, which can defer inbound commands until the AP's DTIM
+  // window. Keep the radio awake so an established HTTPS connection has
+  // deterministic request latency.
+  const auto power_save_result = esp_wifi_set_ps(WIFI_PS_NONE);
+  if (power_save_result != ESP_OK) {
+    ESP_LOGW(kLogTag, "Wi-Fi real-time mode could not be enabled: %s",
+             esp_err_to_name(power_save_result));
+  } else {
+    ESP_LOGI(kLogTag, "Wi-Fi modem sleep disabled for real-time control");
+  }
   wifi_started_.store(true, std::memory_order_release);
   ESP_LOGI(kLogTag,
            "Wi-Fi station association started; background recovery remains active");
@@ -397,8 +408,11 @@ bool EspNetworkServer::start_http() {
       static_cast<std::uint16_t>(kApiRoutes.size() + 1U);
   configuration.httpd.uri_match_fn = httpd_uri_match_wildcard;
   configuration.httpd.lru_purge_enable = true;
-  configuration.httpd.recv_wait_timeout = 1;
-  configuration.httpd.send_wait_timeout = 2;
+  // The mobile poll cadence is one second. Keep the authenticated HTTP/1.1
+  // control socket alive across several polls so commands do not pay a fresh
+  // TLS handshake on every request.
+  configuration.httpd.recv_wait_timeout = 10;
+  configuration.httpd.send_wait_timeout = 5;
   configuration.port_secure = kHttpsPort;
   configuration.transport_mode = HTTPD_SSL_TRANSPORT_SECURE;
   configuration.servercert = tls_identity_.certificate();
@@ -588,6 +602,8 @@ int EspNetworkServer::handle_firmware_update(void* opaque_request) {
         kPath);
   }
   std::size_t remaining = request->content_len;
+  const std::size_t upload_size = remaining;
+  unsigned last_logged_percent = 0U;
   unsigned timeout_count = 0U;
   const auto deadline_us = esp_timer_get_time() + kFirmwareUploadDeadlineUs;
   while (remaining > 0U) {
@@ -621,6 +637,14 @@ int EspNetworkServer::handle_firmware_update(void* opaque_request) {
           kPath);
     }
     remaining -= length;
+    const auto percent = static_cast<unsigned>(
+        ((upload_size - remaining) * 100U) / upload_size);
+    if (percent >= last_logged_percent + 10U || remaining == 0U) {
+      last_logged_percent = percent;
+      ESP_LOGI(kLogTag, "OTA receive progress=%u%% bytes=%u/%u", percent,
+               static_cast<unsigned>(upload_size - remaining),
+               static_cast<unsigned>(upload_size));
+    }
   }
 
   const auto written = firmware_update_->bytes_written();

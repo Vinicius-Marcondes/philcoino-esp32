@@ -2,7 +2,6 @@
 #include <cassert>
 #include <cstdint>
 #include <string>
-#include <type_traits>
 
 #include "philcoino/config.hpp"
 
@@ -56,9 +55,6 @@ int main() {
   static_assert(kSteamRecoveryTriggerDropC > kBrewRecoveryTriggerDropC);
   static_assert(kBrewRecoveryHeatRampBandC < kBrewHeatRampBandC);
   static_assert(kSteamRecoveryHeatRampBandC < kSteamHeatRampBandC);
-  static_assert(
-      std::is_same_v<decltype(kTemperatureReadingLoggingEnabled), const bool>);
-  static_assert(!kTemperatureReadingLoggingEnabled);
   static_assert(kBoilerThermocoupleChipSelectGpio == 7);
   static_assert(kBoilerThermocoupleDataGpio == 5);
   static_assert(kBoilerThermocoupleClockGpio == 4);

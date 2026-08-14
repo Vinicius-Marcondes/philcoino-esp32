@@ -396,6 +396,54 @@ void test_mutations_return_complete_state_and_stream_is_transport_owned() {
   expect_error(response, 409, "stream_unavailable");
 }
 
+void test_extraction_start_and_stop_apply_output_before_acknowledgement() {
+  ApiHarness harness;
+  auto response = harness.request(
+      HttpMethod::kPost, "/api/v3/extractions", kTestAuthorization,
+      "{\"idempotencyKey\":\"instant-command-1\","
+      "\"selection\":{\"kind\":\"manual\"}}", 1200);
+  assert(response.status == 200);
+  assert(harness.pump_output.level);
+  assert(response.body.find("\"apiVersion\":\"3\"") != std::string::npos);
+  assert(response.body.find("\"status\":\"running\"") !=
+         std::string::npos);
+  assert(response.body.find("\"pumpCommand\":\"running\"") !=
+         std::string::npos);
+
+  response = harness.request(HttpMethod::kDelete,
+                             "/api/v3/extractions/current",
+                             kTestAuthorization, "", 1250);
+  assert(response.status == 200);
+  assert(!harness.pump_output.level);
+  assert(response.body.find("\"apiVersion\":\"3\"") != std::string::npos);
+  assert(response.body.find("\"pumpCommand\":\"off\"") !=
+         std::string::npos);
+}
+
+void test_scale_calibration_acknowledges_live_weight() {
+  ApiHarness harness;
+  auto response = harness.request(
+      HttpMethod::kPost, "/api/v3/scale-calibrations/current",
+      kTestAuthorization, "", 1100);
+  assert(response.status == 200);
+  assert(response.body.find("\"calibrationStatus\":\"calibrating\"") !=
+         std::string::npos);
+
+  for (std::int32_t index = 0; index < 10; ++index) {
+    harness.scale.update({Hx711Status::kOk, 180000}, 1200U + index);
+  }
+  response = harness.request(
+      HttpMethod::kPut, "/api/v3/scale-calibrations/current",
+      kTestAuthorization, "{\"referenceWeightDecigrams\":1000}", 1250);
+  assert(response.status == 200);
+  assert(response.body.find("\"apiVersion\":\"3\"") != std::string::npos);
+  assert(response.body.find("\"calibrationStatus\":\"calibrated\"") !=
+         std::string::npos);
+  assert(response.body.find("\"grossWeightDecigrams\":1000") !=
+         std::string::npos);
+  assert(harness.scale_backend.save_count == 1);
+}
+
 void test_settings_reject_unknown_and_fragmented_legacy_shapes() {
   ApiHarness harness;
   for (const char* body : {
@@ -417,6 +465,8 @@ int main() {
   test_v3_route_and_authentication_boundary();
   test_combined_settings_are_atomic_and_acknowledged_as_state();
   test_mutations_return_complete_state_and_stream_is_transport_owned();
+  test_extraction_start_and_stop_apply_output_before_acknowledgement();
+  test_scale_calibration_acknowledges_live_weight();
   test_settings_reject_unknown_and_fragmented_legacy_shapes();
   return 0;
 }

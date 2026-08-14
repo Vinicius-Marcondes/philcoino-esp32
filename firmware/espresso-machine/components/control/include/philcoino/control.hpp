@@ -269,6 +269,7 @@ class TemperatureController {
   float current_steam_compensation_c_{0.0F};
   bool post_brew_recovery_active_{false};
   std::uint32_t last_pump_running_ms_{0};
+  std::uint32_t sensor_failure_streak_{0};
 };
 
 enum class ExtractionStatus { kIdle, kRunning };
@@ -365,7 +366,7 @@ class ScaleController {
   std::uint32_t pending_calibration_token_{0};
   std::uint32_t next_calibration_token_{1};
   std::int32_t cached_median_raw_{0};
-  std::int64_t cached_raw_spread_{0};
+  std::int64_t cached_trimmed_raw_spread_{0};
   bool cached_gross_weight_available_{false};
   std::int32_t cached_gross_weight_decigrams_{0};
 };

@@ -20,13 +20,28 @@ describe("weighted extraction trace chart", () => {
     expect(source).not.toContain("function weightedTraceGeometry(");
   });
 
-  test("plots weight, flow, cutoff, phases and the inspection cursor", () => {
+  test("plots temperature, weight and flow as distinct live series", () => {
+    expect(source).toContain("plot.temperaturePaths");
     expect(source).toContain("plot.weightPaths");
     expect(source).toContain("plot.flowAreas");
+    expect(source).toContain("plot.flowPaths");
+    expect(source).toContain("<SeriesAxisLabels plot={plot} />");
+    expect(source).toContain('label="°C"');
+    expect(source).toContain('label="g"');
+    expect(source).toContain('label="g/s"');
+  });
+
+  test("keeps extraction annotations and the inspection cursor", () => {
     expect(source).toContain("plot.cutoffY");
     expect(source).toContain("plot.phaseBoundaries");
     expect(source).toContain("plot.settlingX");
     expect(source).toContain("onResponderMove");
+  });
+
+  test("renders the graph shell before the first stream page arrives", () => {
+    expect(source).toContain("trace: StoredExtractionTrace | null");
+    expect(source).toContain("const plottedTrace = trace ?? EMPTY_TRACE");
+    expect(source).toContain('translate("scale.telemetryStreamWaiting")');
   });
 
   test("labels missing weight and flow instead of synthesizing values", () => {

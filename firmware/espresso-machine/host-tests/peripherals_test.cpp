@@ -359,8 +359,12 @@ void test_thermocouple() {
 void test_event_driven_hx711_acquisition() {
   FakeHx711Transport transport;
   transport.readings = {
+      {Hx711Status::kOk, 11111},
       {Hx711Status::kNotReady, 0},
       {Hx711Status::kOk, 12345},
+      {Hx711Status::kNotReady, 0},
+      {Hx711Status::kNotReady, 0},
+      {Hx711Status::kNotReady, 0},
       {Hx711Status::kNotReady, 0},
       {Hx711Status::kNotReady, 0},
       {Hx711Status::kOk, 23456},
@@ -371,9 +375,10 @@ void test_event_driven_hx711_acquisition() {
   FakeHx711ReadyWaiter waiter;
   Hx711EventDrivenAcquisition acquisition(hx711, waiter);
 
-  const auto initial = acquisition.acquire(
+  const auto already_ready = acquisition.acquire(
       philcoino::config::kScaleUnavailableTimeoutMs);
-  assert(initial.status == Hx711Status::kNotReady);
+  assert(already_ready.status == Hx711Status::kOk);
+  assert(already_ready.raw == 11111);
   assert(transport.read_count == 1U);
   assert(waiter.wait_count == 0U);
 
@@ -386,7 +391,7 @@ void test_event_driven_hx711_acquisition() {
   assert(ready_before_wait.raw == 12345);
   assert(waiter.pending_notifications == 0U);
   assert(waiter.wait_count == 1U);
-  assert(transport.read_count == 2U);
+  assert(transport.read_count == 3U);
 
   const auto first_timeout = acquisition.acquire(
       philcoino::config::kScaleUnavailableTimeoutMs);
@@ -397,7 +402,7 @@ void test_event_driven_hx711_acquisition() {
   assert(waiter.wait_count == 3U);
   assert(waiter.last_timeout_ms ==
          philcoino::config::kScaleUnavailableTimeoutMs);
-  assert(transport.read_count == 4U);
+  assert(transport.read_count == 7U);
 
   waiter.notify_from_isr();
   const auto recovered = acquisition.acquire(
@@ -411,7 +416,8 @@ void test_event_driven_hx711_acquisition() {
   waiter.notify_from_isr();
   assert(acquisition.acquire(philcoino::config::kScaleUnavailableTimeoutMs)
              .status == Hx711Status::kSaturated);
-  assert(transport.read_count == 7U);
+  assert(waiter.wait_count == 4U);
+  assert(transport.read_count == 11U);
 }
 
 void test_target_storage() {

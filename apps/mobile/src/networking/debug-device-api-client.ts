@@ -65,10 +65,6 @@ export class DebugDeviceApiClient
     return this.snapshot;
   }
 
-  async getScale(options: { signal?: AbortSignal } = {}) {
-    return (await this.getState(options)).scale;
-  }
-
   async updateSettings(
     settings: SettingsRequest,
     options: { signal?: AbortSignal } = {},

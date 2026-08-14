@@ -30,6 +30,7 @@ class PhilcoinoSecureTransportModule : Module() {
   private val requests = ConcurrentHashMap<String, HttpsURLConnection>()
   private val cancelledRequests = ConcurrentHashMap.newKeySet<String>()
   private val streams = ConcurrentHashMap<String, HttpsURLConnection>()
+  private val pinnedSocketFactories = ConcurrentHashMap<String, PinningSocketFactory>()
   private val srpContexts = ConcurrentHashMap<String, SrpContext>()
   private val secureRandom = SecureRandom()
 
@@ -177,6 +178,7 @@ class PhilcoinoSecureTransportModule : Module() {
       cancelledRequests.clear()
       streams.values.forEach { it.disconnect() }
       streams.clear()
+      pinnedSocketFactories.clear()
       srpContexts.values.forEach { it.clear() }
       srpContexts.clear()
       executor.shutdownNow()
@@ -214,10 +216,12 @@ class PhilcoinoSecureTransportModule : Module() {
         "presentedPin" to
           (connection.sslSocketFactory as? PinningSocketFactory)?.presentedPin.orEmpty(),
       )
+    } catch (error: Throwable) {
+      connection.disconnect()
+      throw error
     } finally {
       requests.remove(requestId)
       cancelledRequests.remove(requestId)
-      connection.disconnect()
     }
   }
 
@@ -283,10 +287,7 @@ class PhilcoinoSecureTransportModule : Module() {
     if (pin == null && !(method == "POST" && isUnpinnedPairingPath(path))) {
       throw SecurityException("Unpinned requests are restricted to SRP pairing")
     }
-    val trust = PinningTrustManager(pin)
-    val context = SSLContext.getInstance("TLS")
-    context.init(null, arrayOf<TrustManager>(trust), secureRandom)
-    val socketFactory = PinningSocketFactory(context.socketFactory, trust)
+    val socketFactory = socketFactory(origin, pin)
     val connection = URL(origin + path).openConnection() as HttpsURLConnection
     onCreated(connection)
     connection.sslSocketFactory = socketFactory
@@ -306,6 +307,16 @@ class PhilcoinoSecureTransportModule : Module() {
       }
     }
     return connection
+  }
+
+  private fun socketFactory(origin: String, pin: String?): PinningSocketFactory {
+    val key = origin + "\n" + (pin ?: "bootstrap")
+    return pinnedSocketFactories.computeIfAbsent(key) {
+      val trust = PinningTrustManager(pin)
+      val context = SSLContext.getInstance("TLS")
+      context.init(null, arrayOf<TrustManager>(trust), secureRandom)
+      PinningSocketFactory(context.socketFactory, trust)
+    }
   }
 
   private class PinningTrustManager(

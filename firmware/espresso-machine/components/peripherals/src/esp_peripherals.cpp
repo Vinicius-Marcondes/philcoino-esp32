@@ -55,16 +55,6 @@ bool initialize_nvs_flash() {
   return result == ESP_OK;
 }
 
-[[maybe_unused]] const char* frame_status(std::uint16_t frame) {
-  if ((frame & 0x0004U) != 0U) {
-    return "open_circuit";
-  }
-  if ((frame & 0x8002U) != 0U) {
-    return "invalid_frame";
-  }
-  return "ok";
-}
-
 }  // namespace
 
 bool EspMax6675Transport::initialize() {
@@ -123,8 +113,10 @@ bool EspMax6675Transport::read_frame(std::uint16_t& frame) {
     return false;
   }
 
+  portENTER_CRITICAL(&bus_lock_);
   if (gpio_set_level(static_cast<gpio_num_t>(selected_gpio), 0) != ESP_OK) {
     gpio_set_level(static_cast<gpio_num_t>(selected_gpio), 1);
+    portEXIT_CRITICAL(&bus_lock_);
     ESP_LOGE(kThermocoupleLogTag,
              "boiler sensor CS setup failed on GPIO%" PRId32,
              selected_gpio);
@@ -136,6 +128,7 @@ bool EspMax6675Transport::read_frame(std::uint16_t& frame) {
       gpio_get_level(static_cast<gpio_num_t>(selected_gpio));
   if (selected_level != 0) {
     gpio_set_level(static_cast<gpio_num_t>(selected_gpio), 1);
+    portEXIT_CRITICAL(&bus_lock_);
     ESP_LOGE(kThermocoupleLogTag,
              "boiler sensor CS verification failed: GPIO%" PRId32 "=%d",
              selected_gpio, selected_level);
@@ -143,17 +136,14 @@ bool EspMax6675Transport::read_frame(std::uint16_t& frame) {
   }
 
   frame = 0;
+  bool clock_high_failed = false;
+  bool clock_low_failed = false;
   for (std::uint32_t bit = 0; bit < 16U; ++bit) {
     if (gpio_set_level(
             static_cast<gpio_num_t>(selected_clock_gpio), 1) !=
         ESP_OK) {
-      gpio_set_level(
-          static_cast<gpio_num_t>(selected_clock_gpio), 0);
-      gpio_set_level(static_cast<gpio_num_t>(selected_gpio), 1);
-      ESP_LOGE(kThermocoupleLogTag,
-               "boiler sensor clock-high failed on GPIO%" PRId32,
-               selected_clock_gpio);
-      return false;
+      clock_high_failed = true;
+      break;
     }
     esp_rom_delay_us(1);
     frame = static_cast<std::uint16_t>(
@@ -163,17 +153,22 @@ bool EspMax6675Transport::read_frame(std::uint16_t& frame) {
     if (gpio_set_level(
             static_cast<gpio_num_t>(selected_clock_gpio), 0) !=
         ESP_OK) {
-      gpio_set_level(static_cast<gpio_num_t>(selected_gpio), 1);
-      ESP_LOGE(kThermocoupleLogTag,
-               "boiler sensor clock-low failed on GPIO%" PRId32,
-               selected_clock_gpio);
-      return false;
+      clock_low_failed = true;
+      break;
     }
     esp_rom_delay_us(1);
   }
 
+  gpio_set_level(static_cast<gpio_num_t>(selected_clock_gpio), 0);
   const auto deselect_result =
       gpio_set_level(static_cast<gpio_num_t>(selected_gpio), 1);
+  portEXIT_CRITICAL(&bus_lock_);
+  if (clock_high_failed || clock_low_failed) {
+    ESP_LOGE(kThermocoupleLogTag,
+             "boiler sensor clock-%s failed on GPIO%" PRId32,
+             clock_high_failed ? "high" : "low", selected_clock_gpio);
+    return false;
+  }
   if (deselect_result != ESP_OK) {
     ESP_LOGE(kThermocoupleLogTag,
              "boiler sensor deselect failed on GPIO%" PRId32 ": %s",
@@ -182,13 +177,6 @@ bool EspMax6675Transport::read_frame(std::uint16_t& frame) {
     return false;
   }
 
-  if constexpr (config::kTemperatureReadingLoggingEnabled) {
-    ESP_LOGI(kThermocoupleLogTag,
-             "boiler CS=GPIO%" PRId32 " SCK=GPIO%" PRId32 " SO=GPIO%" PRId32
-             " raw=0x%04X status=%s cs_verified=1",
-             selected_gpio, selected_clock_gpio, selected_data_gpio,
-             static_cast<unsigned>(frame), frame_status(frame));
-  }
   return true;
 }
 
@@ -224,27 +212,42 @@ Hx711Reading EspHx711Transport::read() {
   if (gpio_get_level(data_gpio) != 0) {
     return {Hx711Status::kNotReady, 0};
   }
+
+  portENTER_CRITICAL(&bus_lock_);
+  if (gpio_get_level(data_gpio) != 0) {
+    portEXIT_CRITICAL(&bus_lock_);
+    return {Hx711Status::kNotReady, 0};
+  }
   std::uint32_t raw = 0;
+  bool transport_failed = false;
   for (std::uint32_t bit = 0; bit < 24U; ++bit) {
     if (gpio_set_level(clock_gpio, 1) != ESP_OK) {
-      gpio_set_level(clock_gpio, 0);
-      return {Hx711Status::kTransportError, 0};
+      transport_failed = true;
+      break;
     }
     esp_rom_delay_us(1);
     raw = (raw << 1U) |
           static_cast<std::uint32_t>(gpio_get_level(data_gpio) != 0);
     if (gpio_set_level(clock_gpio, 0) != ESP_OK) {
-      return {Hx711Status::kTransportError, 0};
+      transport_failed = true;
+      break;
     }
     esp_rom_delay_us(1);
   }
   // The 25th pulse selects channel A at gain 128 for the next conversion.
-  if (gpio_set_level(clock_gpio, 1) != ESP_OK) {
-    gpio_set_level(clock_gpio, 0);
-    return {Hx711Status::kTransportError, 0};
+  if (!transport_failed) {
+    if (gpio_set_level(clock_gpio, 1) != ESP_OK) {
+      transport_failed = true;
+    } else {
+      esp_rom_delay_us(1);
+      if (gpio_set_level(clock_gpio, 0) != ESP_OK) {
+        transport_failed = true;
+      }
+    }
   }
-  esp_rom_delay_us(1);
-  if (gpio_set_level(clock_gpio, 0) != ESP_OK) {
+  gpio_set_level(clock_gpio, 0);
+  portEXIT_CRITICAL(&bus_lock_);
+  if (transport_failed) {
     return {Hx711Status::kTransportError, 0};
   }
   if (raw == 0x800000U || raw == 0x7FFFFFU) {
@@ -261,7 +264,8 @@ bool EspHx711ReadyWaiter::initialize_for_current_task() {
   task_ = xTaskGetCurrentTaskHandle();
   if (task_ == nullptr) return false;
   const auto install_result = gpio_install_isr_service(ESP_INTR_FLAG_IRAM);
-  if (install_result != ESP_OK) {
+  if (install_result != ESP_OK &&
+      install_result != ESP_ERR_INVALID_STATE) {
     task_ = nullptr;
     return false;
   }
@@ -279,7 +283,12 @@ bool EspHx711ReadyWaiter::initialize_for_current_task() {
 }
 
 bool EspHx711ReadyWaiter::wait(std::uint32_t timeout_ms) {
-  if (!initialized_) return false;
+  if (!initialized_) {
+    constexpr std::uint32_t kPollingFallbackIntervalMs = 10U;
+    vTaskDelay(pdMS_TO_TICKS(
+        std::min(timeout_ms, kPollingFallbackIntervalMs)));
+    return false;
+  }
   return ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(timeout_ms)) > 0U;
 }
 

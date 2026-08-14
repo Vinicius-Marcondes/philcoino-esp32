@@ -8,6 +8,8 @@ public final class PhilcoinoSecureTransportModule: Module {
   private var requestTasks: [String: URLSessionDataTask] = [:]
   private var streamTasks: [String: Task<Void, Never>] = [:]
   private let taskLock = NSLock()
+  private var pinnedSessions: [String: PinnedSession] = [:]
+  private let sessionLock = NSLock()
   private var srpContexts: [String: SrpContext] = [:]
   private let srpLock = NSLock()
 
@@ -161,16 +163,18 @@ public final class PhilcoinoSecureTransportModule: Module {
     AsyncFunction("request") {
       (requestId: String, request: [String: Any]) async throws -> [String: Any] in
       let prepared = try Self.prepare(request)
-      let delegate = PinningDelegate(
-        expectedPin: prepared.pin,
+      let reusableSession = prepared.pin.map {
+        self.pinnedSession(origin: prepared.origin, pin: $0)
+      }
+      let delegate = reusableSession?.delegate ?? PinningDelegate(
+        expectedPin: nil,
         bootstrapAllowed: prepared.bootstrap
       )
-      let session = URLSession(
-        configuration: .ephemeral,
-        delegate: delegate,
-        delegateQueue: nil
-      )
-      defer { session.invalidateAndCancel() }
+      let disposableSession = reusableSession == nil
+        ? Self.makeSession(delegate: delegate)
+        : nil
+      let session = reusableSession?.session ?? disposableSession!
+      defer { disposableSession?.invalidateAndCancel() }
       defer { removeRequest(requestId) }
       let (data, response) = try await withCheckedThrowingContinuation {
         (continuation: CheckedContinuation<(Data, URLResponse), Error>) in
@@ -196,7 +200,7 @@ public final class PhilcoinoSecureTransportModule: Module {
       return [
         "status": http.statusCode,
         "body": String(decoding: data, as: UTF8.self),
-        "presentedPin": delegate.presentedPin ?? "",
+        "presentedPin": delegate.presentedPin ?? prepared.pin ?? "",
       ]
     }
 
@@ -288,6 +292,11 @@ public final class PhilcoinoSecureTransportModule: Module {
       self.taskLock.unlock()
       requests.forEach { $0.cancel() }
       streams.forEach { $0.cancel() }
+      self.sessionLock.lock()
+      let sessions = self.pinnedSessions.values
+      self.pinnedSessions.removeAll()
+      self.sessionLock.unlock()
+      sessions.forEach { $0.session.invalidateAndCancel() }
       self.srpLock.lock()
       self.srpContexts.removeAll()
       self.srpLock.unlock()
@@ -306,8 +315,35 @@ public final class PhilcoinoSecureTransportModule: Module {
     taskLock.unlock()
   }
 
+  private func pinnedSession(origin: String, pin: String) -> PinnedSession {
+    let key = origin + "\n" + pin
+    sessionLock.lock()
+    defer { sessionLock.unlock() }
+    if let existing = pinnedSessions[key] {
+      return existing
+    }
+    let created = PinnedSession(pin: pin)
+    pinnedSessions[key] = created
+    return created
+  }
+
+  fileprivate static func makeSession(delegate: PinningDelegate) -> URLSession {
+    let configuration = URLSessionConfiguration.ephemeral
+    // The ESP32-C3 HTTPS server has a deliberately small socket budget. One
+    // persistent control connection avoids repeated TLS handshakes and keeps
+    // the separate SSE connection from causing socket churn.
+    configuration.httpMaximumConnectionsPerHost = 1
+    configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
+    return URLSession(
+      configuration: configuration,
+      delegate: delegate,
+      delegateQueue: nil
+    )
+  }
+
   private struct PreparedRequest {
     let request: URLRequest
+    let origin: String
     let pin: String?
     let bootstrap: Bool
   }
@@ -340,7 +376,12 @@ public final class PhilcoinoSecureTransportModule: Module {
     if let body = value["body"] as? String {
       request.httpBody = Data(body.utf8)
     }
-    return PreparedRequest(request: request, pin: pin, bootstrap: bootstrap)
+    return PreparedRequest(
+      request: request,
+      origin: origin,
+      pin: pin,
+      bootstrap: bootstrap
+    )
   }
 
   private static func decodeBase64Url(_ value: String) -> Data? {
@@ -382,6 +423,17 @@ public final class PhilcoinoSecureTransportModule: Module {
     if path == "/api/v3/pairing/sessions" { return true }
     let pattern = "^/api/v3/pairing/sessions/[0-9a-f]{32}/proof$"
     return path.range(of: pattern, options: .regularExpression) != nil
+  }
+}
+
+private final class PinnedSession {
+  let delegate: PinningDelegate
+  let session: URLSession
+
+  init(pin: String) {
+    let delegate = PinningDelegate(expectedPin: pin, bootstrapAllowed: false)
+    self.delegate = delegate
+    self.session = PhilcoinoSecureTransportModule.makeSession(delegate: delegate)
   }
 }
 

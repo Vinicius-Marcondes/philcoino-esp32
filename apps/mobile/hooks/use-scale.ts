@@ -20,7 +20,6 @@ import {
 } from "@/src/scale/scale-preferences";
 import { scalePreferencesRepository } from "@/src/scale/scale-preferences-repository";
 import { scaleMutationErrorMessage } from "@/src/scale/scale-mutation-error";
-import { ScalePollingSession } from "@/src/scale/scale-polling-session";
 import type { StoredExtractionTrace } from "@/src/history/extraction-trace";
 import {
   ExtractionStreamSession,
@@ -35,7 +34,6 @@ interface ScaleClient {
     request: { referenceWeightDecigrams: number },
     options?: { signal?: AbortSignal },
   ): Promise<MachineStateV3>;
-  getScale(options?: { signal?: AbortSignal }): Promise<ScaleState>;
   startScaleCalibration(options?: { signal?: AbortSignal }): Promise<MachineStateV3>;
 }
 
@@ -50,13 +48,13 @@ export function useScale({
   client,
   deviceId,
   extraction,
-  scalePageVisible,
+  stateScale,
   streamClient,
 }: {
   client: ScaleClient;
   deviceId: string;
   extraction: ExtractionState | null;
-  scalePageVisible: boolean;
+  stateScale: ScaleState | null;
   streamClient: ExtractionStreamClient | null;
 }) {
   const [scale, setScale] = useState<ScaleState | null>(null);
@@ -71,29 +69,16 @@ export function useScale({
   const [traceSupported, setTraceSupported] = useState<boolean | null>(null);
   const [streamStatus, setStreamStatus] =
     useState<ExtractionStreamStatus>("idle");
-  const extractionRef = useRef(extraction);
   const recordedExtractionRef = useRef<string | null>(null);
-  const pollingRef = useRef<ScalePollingSession | null>(null);
   const streamRef = useRef<ExtractionStreamSession | null>(null);
-  extractionRef.current = extraction;
+
+  useEffect(() => {
+    setScale(stateScale);
+    if (stateScale !== null) setError(null);
+  }, [stateScale]);
 
   useEffect(() => {
     let active = true;
-    const polling = new ScalePollingSession({
-      client,
-      onError: () => {
-        if (active) {
-          setError("Scale data is unavailable.");
-        }
-      },
-      onSnapshot: (next) => {
-        if (!active) return;
-        setScale(next);
-        setError(null);
-      },
-      scalePageVisible,
-    });
-    pollingRef.current = polling;
     const stream = streamClient === null
       ? null
       : new ExtractionStreamSession({
@@ -132,28 +117,21 @@ export function useScale({
     ]).catch(() => {
       if (active) setHistoryError("Local scale data could not be loaded.");
     });
-    polling.start();
     if (AppState.currentState === "active") stream?.start();
     const appStateSubscription = AppState.addEventListener(
       "change",
       (state) => {
         if (state === "active") {
           stream?.start();
-          if (extractionRef.current?.status !== "running") polling.start();
         } else {
           stream?.stop();
-          polling.stop();
         }
       },
     );
     return () => {
       active = false;
-      polling.stop();
       stream?.stop();
       appStateSubscription.remove();
-      if (pollingRef.current === polling) {
-        pollingRef.current = null;
-      }
       if (streamRef.current === stream) streamRef.current = null;
     };
   }, [client, deviceId, streamClient]);
@@ -242,18 +220,11 @@ export function useScale({
         streamStatus === "live" ||
         streamStatus === "stale");
     if (streamingExpected) {
-      pollingRef.current?.stop();
       if (extraction?.extractionId !== null && extraction?.extractionId !== undefined) {
         streamRef.current?.observeExtraction(extraction.extractionId);
       }
-    } else if (AppState.currentState === "active") {
-      pollingRef.current?.start();
     }
   }, [extraction?.extractionId, extraction?.status, streamClient, streamStatus]);
-
-  useEffect(() => {
-    pollingRef.current?.setScalePageVisible(scalePageVisible);
-  }, [scalePageVisible]);
 
   const run = useCallback(
     async (kind: Exclude<ScaleMutation, null>, operation: () => Promise<MachineStateV3>) => {

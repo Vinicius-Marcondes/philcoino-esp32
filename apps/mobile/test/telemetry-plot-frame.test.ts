@@ -40,9 +40,22 @@ describe("telemetry plot frame", () => {
     expect(frame.bottom).toBe(190 - 22);
   });
 
+  test("gives extraction temperature, weight and flow independent bands", () => {
+    const frame = telemetryPlotFrame({
+      bandCount: 3,
+      height: 380,
+      maxElapsed: 60_000,
+      width: 400,
+    });
+    expect(frame.bands).toHaveLength(3);
+    expect(frame.bands[0].bottom).toBeLessThan(frame.bands[1].top);
+    expect(frame.bands[1].bottom).toBeLessThan(frame.bands[2].top);
+    expect(frame.bands[2].bottom).toBe(frame.bottom);
+  });
+
   test("keeps bands ordered, non-overlapping and positive across heights", () => {
     for (let height = 120; height <= 600; height += 10) {
-      for (const bandCount of [1, 2] as const) {
+      for (const bandCount of [1, 2, 3] as const) {
         const frame = telemetryPlotFrame({
           bandCount,
           height,

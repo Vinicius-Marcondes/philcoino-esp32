@@ -1,4 +1,4 @@
-export type TelemetryBandCount = 1 | 2;
+export type TelemetryBandCount = 1 | 2 | 3;
 
 export type TelemetryChartVariant = "console" | "home" | "trace-detail";
 
@@ -8,7 +8,7 @@ export interface TelemetryBand {
 }
 
 export interface TelemetryPlotFrame {
-  /** Band 0 carries temperature and target. Band 1, when present, carries weight and flow. */
+  /** Extraction charts use one band each for temperature, weight, and flow. */
   bands: TelemetryBand[];
   bottom: number;
   left: number;
@@ -23,6 +23,7 @@ const TOP_INSET = 8;
 const BOTTOM_INSET = 22;
 const BAND_GAP = 18;
 const UPPER_BAND_RATIO = 0.48;
+const THREE_BAND_GAP = 12;
 
 const CHART_HEIGHTS: Record<TelemetryChartVariant, { compact: number; full: number }> = {
   // Compact is the mounted-landscape case, where the header, readouts and
@@ -56,13 +57,14 @@ export function telemetryPlotFrame({
   const top = TOP_INSET;
   const bottom = height - BOTTOM_INSET;
   const upperBottom = Math.round(height * UPPER_BAND_RATIO);
-  const bands: TelemetryBand[] =
-    bandCount === 1
-      ? [{ bottom, top }]
-      : [
+  const bands: TelemetryBand[] = bandCount === 1
+    ? [{ bottom, top }]
+    : bandCount === 2
+      ? [
           { bottom: upperBottom, top },
           { bottom, top: upperBottom + BAND_GAP },
-        ];
+        ]
+      : threeBands(top, bottom);
   return {
     bands,
     bottom,
@@ -72,6 +74,19 @@ export function telemetryPlotFrame({
     right,
     top,
   };
+}
+
+function threeBands(top: number, bottom: number): TelemetryBand[] {
+  const availableHeight = bottom - top - THREE_BAND_GAP * 2;
+  const bandHeight = Math.floor(availableHeight / 3);
+  const firstBottom = top + bandHeight;
+  const secondTop = firstBottom + THREE_BAND_GAP;
+  const secondBottom = secondTop + bandHeight;
+  return [
+    { bottom: firstBottom, top },
+    { bottom: secondBottom, top: secondTop },
+    { bottom, top: secondBottom + THREE_BAND_GAP },
+  ];
 }
 
 export function telemetryGridLines(frame: TelemetryPlotFrame): number[] {

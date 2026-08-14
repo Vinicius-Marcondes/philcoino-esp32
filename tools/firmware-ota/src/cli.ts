@@ -25,15 +25,8 @@ async function main(): Promise<void> {
   }
   const origin = normalizeOtaOrigin(options.origin);
   const image = new Uint8Array(await readFile(options.file));
-  const pairingCode = await readPairingCode();
-  console.log("OTA client: srp-timeout-v6");
-  console.log(`Pairing with ${origin}...`);
-  const credential = await pairForFirmwareUpdate(
-    origin,
-    pairingCode,
-    undefined,
-    (stage, detail) => console.log(`[pairing/${stage}] ${detail}`),
-  );
+  console.log("OTA client: known-size-upload-v8");
+  const credential = await pairWithRetry(origin);
   console.log(`Authenticated ${credential.deviceId}; uploading ${image.length} bytes...`);
   let reportedPercent = -1;
   const result = await uploadFirmwareImage(
@@ -53,6 +46,31 @@ async function main(): Promise<void> {
   console.log(
     `ESP32 accepted ${result.bytesWritten} bytes and is rebooting into the rollback-protected slot.`,
   );
+}
+
+async function pairWithRetry(origin: string) {
+  const maximumAttempts = 3;
+  for (let attempt = 1; attempt <= maximumAttempts; attempt += 1) {
+    const pairingCode = await readPairingCode();
+    console.log(`Pairing with ${origin}...`);
+    try {
+      return await pairForFirmwareUpdate(
+        origin,
+        pairingCode,
+        undefined,
+        (stage, detail) => console.log(`[pairing/${stage}] ${detail}`),
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (!message.includes("invalid_pairing_code") || attempt === maximumAttempts) {
+        throw error;
+      }
+      console.error(
+        `Pairing code rejected. Re-enter all eight digits (${maximumAttempts - attempt} attempts remaining).`,
+      );
+    }
+  }
+  throw new Error("The pairing code was rejected.");
 }
 
 function parseArguments(values: string[]): {
@@ -84,7 +102,7 @@ async function readPairingCode(): Promise<string> {
       typeof process.stdin.setRawMode !== "function") {
     throw new Error("The eight-digit pairing code must be entered from an interactive terminal.");
   }
-  process.stdout.write("Pairing code: ");
+  process.stdout.write("Pairing code (8 digits): ");
   process.stdin.setRawMode(true);
   process.stdin.resume();
   process.stdin.setEncoding("utf8");
@@ -105,9 +123,13 @@ async function readPairingCode(): Promise<string> {
       }
       for (const character of text) {
         if (character === "\u007f" || character === "\b") {
-          digits = digits.slice(0, -1);
+          if (digits.length > 0) {
+            digits = digits.slice(0, -1);
+            process.stdout.write("\b \b");
+          }
         } else if (character >= "0" && character <= "9" && digits.length < 8) {
           digits += character;
+          process.stdout.write("*");
         } else if ((character === "\r" || character === "\n") && digits.length === 8) {
           restore();
           resolve(digits);

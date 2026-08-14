@@ -39,7 +39,7 @@ describe("mobile API v3 client", () => {
     })).toThrow();
   });
 
-  it("rejects duplicate and stale revisions within one boot", async () => {
+  it("accepts duplicate revisions but rejects stale revisions within one boot", async () => {
     const initial = await createDebugDeviceApiClient().getState();
     const states: MachineStateV3[] = [
       { ...initial, revision: 5 },
@@ -48,7 +48,7 @@ describe("mobile API v3 client", () => {
     ];
     const client = apiClient(async () => jsonResponse(states.shift()!));
     await expect(client.getState()).resolves.toMatchObject({ revision: 5 });
-    await expect(client.getState()).rejects.toMatchObject({ kind: "protocol" });
+    await expect(client.getState()).resolves.toMatchObject({ revision: 5 });
     await expect(client.getState()).rejects.toMatchObject({ kind: "protocol" });
   });
 
