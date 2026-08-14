@@ -59,12 +59,27 @@ int main() {
   static_assert(kBoilerThermocoupleDataGpio == 5);
   static_assert(kBoilerThermocoupleClockGpio == 4);
   static_assert(kSsrActiveHigh);
-  static_assert(kPumpGpio == 10);
-  static_assert(kPumpActiveHigh);
-  static_assert(kPumpGpio != kSsrGpio);
-  static_assert(kPumpGpio != kBoilerThermocoupleChipSelectGpio);
-  static_assert(kPumpGpio != kBoilerThermocoupleClockGpio);
-  static_assert(kPumpGpio != kBoilerThermocoupleDataGpio);
+  static_assert(kPumpDimmerGpio == 10);
+  static_assert(kPumpZeroCrossGpio == 6);
+  static_assert(kPumpDimmerPhase == 0U);
+  static_assert(kPumpMainsFrequencyHz == 60U);
+  static_assert(kPumpMaximumPowerPercent == 90U);
+  static_assert(kPumpMaximumPowerPercent < 100U);
+  static_assert(kPumpDimmerGpio != kPumpZeroCrossGpio);
+  static_assert(kPumpDimmerGpio != kSsrGpio);
+  static_assert(kPumpZeroCrossGpio != kSsrGpio);
+  static_assert(kPumpDimmerGpio != kBoilerThermocoupleChipSelectGpio);
+  static_assert(kPumpDimmerGpio != kBoilerThermocoupleClockGpio);
+  static_assert(kPumpDimmerGpio != kBoilerThermocoupleDataGpio);
+  static_assert(kPumpZeroCrossGpio != kBoilerThermocoupleChipSelectGpio);
+  static_assert(kPumpZeroCrossGpio != kBoilerThermocoupleClockGpio);
+  static_assert(kPumpZeroCrossGpio != kBoilerThermocoupleDataGpio);
+  static_assert(kPumpDimmerGpio != kScaleDataGpio);
+  static_assert(kPumpDimmerGpio != kScaleClockGpio);
+  static_assert(kPumpZeroCrossGpio != kScaleDataGpio);
+  static_assert(kPumpZeroCrossGpio != kScaleClockGpio);
+  static_assert(kScaleTaskMinimumLoopDelayMs == 10U);
+  static_assert(kScaleTaskMinimumLoopDelayMs < kScaleUnavailableTimeoutMs);
 
   return 0;
 }

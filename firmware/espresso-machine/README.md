@@ -12,7 +12,10 @@ advertising.
 ## Architecture
 
 - `components/firmware_config`: identity, pins, target/safety constants, timeouts, and diagnostic flags.
-- `components/peripherals`: pure MAX6675/HX711, NVS target/calibration, and independent fail-off heater/pump command policies plus ESP-IDF adapters.
+- `components/peripherals`: pure MAX6675/HX711, NVS target/calibration, and
+  independent fail-off heater/pump command policies plus ESP-IDF adapters. The
+  pump adapter uses `rbdimmerESP32`; higher-level control never owns zero-cross
+  or TRIAC timing.
 - `components/control`: pure temperature controller, readiness, duty windows,
   timeouts, fault latching, a default-off Brew PI selector, and strict
   controller diagnostics.
@@ -26,7 +29,13 @@ Pure policy stays host-testable; ESP-IDF GPIO/I2C/NVS/Wi-Fi/HTTP/mDNS calls rema
 
 ## Toolchain
 
-The project is pinned to ESP-IDF `v6.0.2`, target `esp32c3`, and managed `espressif/mdns` `1.11.3`.
+The project is pinned to ESP-IDF `v6.0.2`, target `esp32c3`, managed
+`espressif/mdns` `1.11.3`, and the upstream `rbdimmer/rbdimmerESP32` commit
+`ab50d09f924e3d5ecf8590ab71386caa72a8e282`, whose manifest declares `2.0.1`.
+The dimmer is resolved as an immutable Git dependency because that version is
+not published in the ESP Component Registry. The root CMake file supplies the
+missing ESP-IDF 6 `esp_driver_gpio` dependency and removes two duplicate
+upstream MAX_* command-line definitions without editing managed source.
 
 Activate the pinned installation for your environment, then build from this directory:
 
@@ -81,11 +90,12 @@ bun run firmware/espresso-machine/host-tests/validate_contract.ts \
 
 The suite covers identity/configuration, MAX6675 decoding, target persistence
 policy, strict inline-profile latching, fail-off heater/pump command behavior,
+the signed pump-power boundary and its mandatory 90% clamp,
 control transitions/timeouts/faults, bounded PI/legacy authority isolation, the
 bounded extraction replay and cursor codec,
 bearer/API parsing, the authenticated temperature-calibration transaction, and
 contract response captures. It does not exercise ESP-IDF scheduling, physical
-sensors, GPIO, SSRs, or thermal behavior.
+sensors, GPIO, zero-cross timing, TRIAC behavior, SSRs, or thermal behavior.
 
 Firmware advertises device API version `2`. `/api/v2/state` is queryless, and
 machine-history/profile routes are absent. Each profile Start carries the exact
@@ -129,13 +139,27 @@ Current source has:
 - one boiler-base MAX6675 is read on SCK/SO/CS GPIO4/GPIO5/GPIO7 and controls both brew and steam modes;
 - GPIO8 and GPIO9 are unassigned; the disabled SSD1306 implementation and its
   I2C dependency were removed in PERF-010;
-- `kPumpGpio = 10` and `kPumpActiveHigh = true`: startup commands GPIO10 low, while the firmware-owned extraction controller commands it for acknowledged Manual and profile phases;
+- the RobotDyn-compatible pump dimmer uses ZC input GPIO6 and DIM/PSM output
+  GPIO10 on phase 0 at configured 60 Hz with `RBDIMMER_CURVE_LINEAR`;
+- startup and every OFF path command 0%; existing ON behavior commands the
+  temporary maximum of 90%, enforced by `FailOffPump` before the dimmer API;
+- 1–2% remain valid abstract command values, but the pinned library's default
+  minimum treats levels below 3% as no TRIAC firing;
+- the HX711 task reuses the dimmer-installed GPIO ISR service and retains a
+  10 ms minimum loop delay after completed/error samples, so a stuck-low DT
+  input cannot starve the ESP32-C3 idle task or its watchdog;
 - `kWifiEnabled = true`.
 
 The single sensor is a deliberate control-authority choice and provides no independent software cross-check. Physical validation against an independent instrument and the independent thermal cutoff remain required before any energized consideration.
 
 ## Low-voltage checks only
 
-Keep mains heater and pump loads disconnected. With qualified supervision, power only the ESP32 and 3.3 V peripherals to check boot, the boiler thermocouple reading, open-probe handling, network API/discovery, and GPIO20/GPIO10 inactive levels through reset and induced failures.
+Keep mains heater and pump loads disconnected. With qualified supervision,
+power only the ESP32 and 3.3 V peripherals to check boot, the boiler
+thermocouple reading, open-probe handling, network API/discovery, GPIO20/GPIO10
+inactive levels through reset and induced failures, and GPIO6 zero-cross input
+behavior using an isolated test source.
 
-This does not authorize mains operation and cannot validate SSR load behavior, pump operation/de-energization, independent cutoff wiring, thermal response, enclosure, grounding, or regulatory compliance.
+This does not authorize mains operation and cannot validate phase-angle power,
+pump operation/de-energization, pressure, flow, independent cutoff wiring,
+thermal response, enclosure, grounding, or regulatory compliance.

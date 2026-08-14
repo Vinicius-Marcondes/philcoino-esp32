@@ -23,7 +23,12 @@ Do not add or install a new dependency without approval and a documented reason.
 
 - CMake and a C++17 compiler for host tests.
 - ESP-IDF 6.0.2 for the ESP32-C3 target build.
-- The managed `espressif/mdns` 1.11.3 component resolved by the firmware project.
+- The managed `espressif/mdns` 1.11.3 and
+  `rbdimmer/rbdimmerESP32` component resolved from immutable upstream commit
+  `ab50d09f924e3d5ecf8590ab71386caa72a8e282` (manifest version 2.0.1) by the
+  firmware project. This Git pin is required because 2.0.1 is not published in
+  the ESP Component Registry; `dependencies.lock` records the resolved source
+  and content hash.
 
 Firmware is not a Bun workspace. Do not inspect or commit generated `build`, `managed_components`, `sdkconfig`, or toolchain caches.
 

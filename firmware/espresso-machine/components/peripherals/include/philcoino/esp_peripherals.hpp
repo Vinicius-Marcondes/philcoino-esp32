@@ -109,6 +109,19 @@ class EspGpioOutput final : public DigitalOutput {
   std::int32_t gpio_;
 };
 
+class EspRbdimmerPumpOutput final : public PumpPowerOutput {
+ public:
+  bool initialize_off() override;
+  bool set_power_percent(std::uint8_t power_percent) override;
+
+ private:
+  bool force_gpio_low();
+  void cleanup();
+
+  void* channel_{nullptr};
+  bool library_initialized_{false};
+};
+
 class EspGptimerSafetyLease final : public SsrSafetyLease {
  public:
   EspGptimerSafetyLease(std::int32_t gpio, bool active_high);

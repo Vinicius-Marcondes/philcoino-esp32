@@ -295,27 +295,35 @@ class FailOffSsr {
 
 enum class PumpCommand { kOff, kRunning };
 
+class PumpPowerOutput {
+ public:
+  virtual ~PumpPowerOutput() = default;
+  virtual bool initialize_off() = 0;
+  virtual bool set_power_percent(std::uint8_t power_percent) = 0;
+};
+
 class FailOffPump {
  public:
-  FailOffPump(DigitalOutput& output, OutputCriticalSection& critical_section,
-              bool active_high = true);
+  FailOffPump(PumpPowerOutput& output,
+              OutputCriticalSection& critical_section);
 
   bool initialize();
   bool set_running(bool running);
+  bool set_power_percent(std::int32_t requested_power_percent);
   bool force_off();
   bool emergency_off();
   PumpCommand command() const;
+  std::uint8_t power_percent() const;
   bool output_state_unknown() const;
   bool emergency_inhibited() const;
 
  private:
-  bool write_command(PumpCommand command);
+  bool write_power_percent(std::uint8_t power_percent);
 
-  DigitalOutput& output_;
+  PumpPowerOutput& output_;
   OutputCriticalSection& critical_section_;
-  bool active_high_{true};
   bool initialized_{false};
-  std::atomic<PumpCommand> command_{PumpCommand::kOff};
+  std::atomic<std::uint8_t> power_percent_{0};
   std::atomic<bool> output_state_unknown_{true};
   std::atomic<bool> emergency_inhibited_{false};
 };

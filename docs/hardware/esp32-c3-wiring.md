@@ -15,8 +15,9 @@ Status: DRAFT — NOT ELECTRICALLY OR MAINS-SAFETY APPROVED
 | Boiler MAX6675 | SO | GPIO5 |
 | Heater SSR input | Positive | GPIO20, direct active-high drive, human-approved without external pull-down |
 | Heater SSR input | Negative | GND |
-| Pump SSR input | Positive | GPIO10, active-high command; software configuration approved, physical wiring not approved |
-| Pump SSR input | Negative | GND |
+| Pump dimmer | ZC output | GPIO6 input; non-strapping pin, physical connection pending verification |
+| Pump dimmer | DIM / PSM input | GPIO10 output; phase-angle trigger command |
+| Pump dimmer | VCC / GND | 3V3 / GND on the isolated low-voltage side |
 | HX711 load-cell ADC | VCC | 3V3 |
 | HX711 load-cell ADC | GND | GND |
 | HX711 load-cell ADC | DT/DOUT | GPIO0 |
@@ -63,13 +64,50 @@ Its exact part number, marked trip point, tolerance, reset behavior, electrical 
 
 ### Pump output
 
-GPIO10 is the active-high pump SSR command. Firmware commands it low before configuring it as an output and again immediately after configuration; it never restores a running command at boot. The firmware-owned API v2 controller can command it high for Manual, pre-infusion, and main-extraction phases and low for soak, Stop, completion, cutoff, reset/startup, synchronization failure, or GPIO failure.
+The installed pump controller is now a RobotDyn-compatible BTA16-600B
+phase-angle dimmer rather than the earlier pump SSR. Its isolated low-voltage
+interface uses GPIO6 for zero-cross input and GPIO10 for DIM/PSM output. GPIO6
+is currently unused by every other configured peripheral and is not an
+ESP32-C3 strapping pin; GPIO8/GPIO9 remain deliberately unassigned because of
+their boot-strapping constraints. The exact Super Mini board must still be
+checked to confirm GPIO6 exposure before flashing.
 
-`running` and `off` describe only the requested GPIO10 command. There is no pump-current, SSR-output, switch-position, pressure, or flow feedback, so software cannot confirm pump operation or physical de-energization. A GPIO write failure leaves the reported firmware command at `off`, records initialization failure where applicable, and must not be interpreted as proof that the pin or load is low.
+Firmware preloads GPIO10 low, initializes `rbdimmerESP32` with phase 0, fixed
+60 Hz, initial level 0%, and `RBDIMMER_CURVE_LINEAR`, then explicitly commands
+0% again before constructing extraction/cooldown control. Any initialization
+failure aborts later startup while retrying the low/OFF command. Manual,
+pre-infusion, main-extraction, and cooldown ON requests map to 90%; soak, Stop,
+completion, cutoff, reset/startup, synchronization failure, and output failure
+map to 0%.
 
-The original series pump switch remains the local hard cutoff but is not sensed by software. The exact pump SSR, active-high 3.3 V drive, reset/boot behavior, mounting, ratings, wiring, and failure behavior remain subject to disconnected low-voltage checks and separate qualified physical approval. GPIO10 is uncontrolled during reset and early boot before application initialization, so the firmware ordering does not remove that hardware risk.
+The single authoritative `kPumpMaximumPowerPercent` is 90. This temporary cap
+exists because the pending pressure sensor is limited to approximately 13 bar
+and no closed-loop pressure controller exists. Higher requests are clamped in
+the low-level pump owner before reaching the library. Values 1–2% remain
+abstract command values, but the pinned library's default minimum emits no
+TRIAC firing below 3%. No percentage represents measured voltage, pressure,
+flow, or delivered pump power.
+
+`running` and `off` remain the only public wire states and describe only whether
+the last acknowledged effective command is above 0%. There is no pump-current,
+TRIAC-output, switch-position, pressure, or flow feedback, so software cannot
+confirm pump operation or physical de-energization. A dimmer API/GPIO failure
+retains the existing unknown-output handling and must not be interpreted as
+proof that the pin or load is low.
+
+The original series pump switch remains the local hard cutoff but is not sensed
+by software. The dimmer identity, isolation, zero-cross polarity/waveform,
+3.3 V compatibility, BTA16 heat sinking/derating, reset/boot behavior, mounting,
+wiring, and failure behavior require disconnected low-voltage checks and
+separate qualified physical approval. GPIO10 remains uncontrolled during reset
+and early boot before application initialization, so firmware ordering cannot
+eliminate startup-pulse hardware risk.
 
 On 2026-07-14, the owner accepted the target functional matrix after reporting successful rebuilt HTTP/mDNS startup, mobile reachability, Manual and seeded-profile timing, Stop/cutoff behavior, continuation after app disconnection, and idle/no-resume behavior after reset or power cycle. This is owner-reported functional evidence, not an independently reviewed electrical record. No exact board identifier, firmware image hash, instrument model, raw GPIO10 capture, injected GPIO-write failure, target timer-wrap waveform, or separately authorized energized evidence was supplied. The wiring status therefore remains draft and not mains-safety approved.
+
+That evidence applies to the superseded GPIO10 pump-SSR configuration. It does
+not validate GPIO6 zero-cross detection, phase timing, the RobotDyn-compatible
+dimmer, the BTA16-600B installation, or the new reset/failure behavior.
 
 ### HX711 scale
 
@@ -113,7 +151,9 @@ The manufacturer's application guidance identifies a 1 A/250 VAC slow-blow input
 
 - Exact ESP32-C3 Super Mini vendor or schematic.
 - FOTEK SSR-40 DA terminal verification, reliable 3.3 V drive test, current derating, mounting, and heat sink.
-- Pump SSR identity/rating, original series-switch wiring, reliable 3.3 V drive, and reset/power-cycle GPIO10 behavior with the mains load disconnected.
+- RobotDyn-compatible dimmer identity/isolation/rating, GPIO6 exposure and
+  zero-cross waveform, GPIO10 DIM/PSM polarity, original series-switch wiring,
+  3.3 V behavior, and reset/power-cycle output with the mains load disconnected.
 - HX711/load-cell wire mapping, GPIO0/GPIO1 reset and power-cycle behavior, data-ready cadence, repeatability, drift, disconnection/saturation response, and calibration checks with all mains loads disconnected.
 - Original over-temperature fuse/thermostat identity, trip tolerance, reset behavior, electrical rating, placement, and proof that it interrupts a shorted SSR's heater current.
 - Verified HLK-5M05B input protection, PCB layout, enclosure, and 5 V connection to the chosen Super Mini board.

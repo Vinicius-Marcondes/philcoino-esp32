@@ -1,5 +1,9 @@
 dependencies:
   idf: "==6.0.2"
   espressif/mdns: "==1.11.3"
+  rbdimmer/rbdimmerESP32:
+    git: https://github.com/robotdyn-dimmer/rbdimmerESP32.git
+    version: ab50d09f924e3d5ecf8590ab71386caa72a8e282
+    require: private
 targets:
   - esp32c3

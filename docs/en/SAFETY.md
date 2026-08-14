@@ -66,8 +66,13 @@ Firmware owns the temperature-control loop and does not rely on app connectivity
 - persists validated targets, temperature calibration, and Steam heat-soak
   settings in separate NVS records; firmware neither reads nor writes profiles;
 - validates the complete profile supplied with Start, keeps that snapshot only
-  in RAM, runs Manual/profile shots in a dedicated monotonic controller,
-  initializes GPIO10 `off`, and never restores `running` at boot;
+  in RAM, and runs Manual/profile shots in a dedicated monotonic controller;
+- initializes the RobotDyn-compatible pump dimmer on GPIO6 ZC/GPIO10 DIM at
+  level 0%, with the LINEAR curve and configured 60 Hz mains, and never restores
+  `running` at boot;
+- enforces one temporary 90% maximum in the low-level pump owner: ON maps to
+  90%, OFF maps exactly to 0%, higher values clamp, and negative values fail
+  while commanding OFF;
 - runs mutually exclusive cooldown through a bounded 10 ms workflow task,
   orders heater inhibit/off before pump Start, and never restores cooldown at
   boot;
@@ -103,6 +108,14 @@ known firmware command. SQLite, graph, and CSV data do not prove
 physical operation, flow, cooling, or de-energization and must never be used as
 control-loop feedback.
 
+The internal pump percentage is also only an abstract actuator command. It is
+not measured RMS voltage, power, pressure, or flow. The temporary 90% cap
+limits the command while the approximately 13-bar sensor and future pressure
+controller are not a closed safety/control loop; it does not replace independent
+physical protection. The library defines 0% as OFF and, with its default minimum
+preserved, emits no TRIAC firing for 1–2% commands even though those values remain
+recorded as abstract commands.
+
 ## Known high-risk limitations
 
 The current review identifies, among others:
@@ -114,9 +127,9 @@ The current review identifies, among others:
 - the permanent single control sensor cannot detect a plausible but incorrect reading through sensor disagreement;
 - some valid remote/no-op writes can reset heating deadlines, allowing a client to extend timeout protection;
 - a failed GPIO off-write can still be presented as heater off even when physical state is unknown;
-- the pump has no current, SSR, flow, or series-switch feedback; `running` and
-  `off` describe only GPIO10 command state and a write failure can leave physical
-  state unknown;
+- the pump has no current, TRIAC, flow, pressure, or series-switch feedback;
+  `running` and `off` describe only whether the acknowledged dimmer command is
+  positive or zero, and an API/GPIO failure can leave physical state unknown;
 - mDNS startup failure currently tears down the HTTP server, defeating manual-address fallback;
 - pairing verifies a public stable ID rather than a cryptographic device identity;
 - plaintext HTTP bearer credentials lack minimum-strength enforcement, throttling, rotation, and transport confidentiality;
@@ -134,7 +147,8 @@ Software cannot replace:
 - pressure-vessel and dry-boil protections already required by the appliance;
 - qualified review and supervised measurement on the actual unit.
 
-An SSR may fail shorted. A successful API response or low GPIO command does not prove that heater or pump mains current stopped.
+An SSR or TRIAC may fail shorted. A successful API response, low GPIO command,
+or 0% level does not prove that heater or pump mains current stopped.
 
 ## Allowed development scope
 

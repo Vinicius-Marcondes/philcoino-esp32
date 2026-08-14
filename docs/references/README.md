@@ -1,6 +1,6 @@
 # Authoritative documentation references
 
-Last reviewed: 2026-07-03
+Last reviewed: 2026-08-14
 
 This index is the starting point for implementation research. Prefer the exact version linked here over unversioned tutorials. The firmware is pinned to ESP-IDF `v6.0.2`; firmware links below use that exact release.
 
@@ -38,6 +38,9 @@ These references inform engineering work; they do not constitute electrical, mai
 - [ESP-IDF v6.0.2 HTTP server](https://docs.espressif.com/projects/esp-idf/en/v6.0.2/esp32c3/api-reference/protocols/esp_http_server.html): firmware HTTP API implementation.
 - [ESP-IDF v6.0.2 component manager](https://docs.espressif.com/projects/esp-idf/en/v6.0.2/esp32c3/api-guides/tools/idf-component-manager.html): managed dependency manifests and lock files.
 - [Espressif mDNS component 1.11.3](https://components.espressif.com/components/espressif/mdns/versions/1.11.3/readme): pinned `_philcoino._tcp` discovery dependency.
+- [rbdimmerESP32 2.0.1 manifest](https://github.com/robotdyn-dimmer/rbdimmerESP32/blob/ab50d09f924e3d5ecf8590ab71386caa72a8e282/idf_component.yml): native ESP-IDF phase-angle dimmer metadata at the immutable Git dependency commit; 2.0.1 is not published in the ESP Component Registry.
+- [rbdimmerESP32 ESP-IDF guide](https://www.rbdimmer.com/docs/dimmers-universal-library-for-esp32-esp-idf-fraimwork-c-guide-and-examples): initialization, zero-cross registration, channel creation, and level-control flow.
+- [rbdimmerESP32 API](https://github.com/robotdyn-dimmer/rbdimmerESP32/blob/main/API.md): linear curve, 0% OFF behavior, frequency query, and default effective 3–99% firing range.
 
 ## Components
 

@@ -16,6 +16,7 @@
 namespace {
 
 using namespace philcoino::peripherals;
+namespace config = philcoino::config;
 
 class FakeMax6675Transport final : public Max6675Transport {
  public:
@@ -206,6 +207,34 @@ class FakeDigitalOutput final : public DigitalOutput {
   bool preserve_level_on_failure{false};
 };
 
+class FakePumpPowerOutput final : public PumpPowerOutput {
+ public:
+  bool initialize_off() override {
+    events.push_back(kInitializeEvent);
+    if (!fail_initialize || !preserve_level_on_failure) {
+      power_percent = 0U;
+    }
+    return !fail_initialize;
+  }
+
+  bool set_power_percent(std::uint8_t requested_power_percent) override {
+    events.push_back(static_cast<int>(requested_power_percent));
+    const bool failed = requested_power_percent == 0U ? fail_off : fail_positive;
+    if (!failed || !preserve_level_on_failure) {
+      power_percent = requested_power_percent;
+    }
+    return !failed;
+  }
+
+  static constexpr int kInitializeEvent = -1;
+  std::vector<int> events{};
+  std::uint8_t power_percent{100U};
+  bool fail_initialize{false};
+  bool fail_off{false};
+  bool fail_positive{false};
+  bool preserve_level_on_failure{false};
+};
+
 class FakeOutputCriticalSection final : public OutputCriticalSection {
  public:
   void enter() override {
@@ -264,6 +293,46 @@ class BlockingHighOutput final : public DigitalOutput {
   std::mutex barrier_mutex_;
   bool high_entered_{false};
   bool release_high_{false};
+};
+
+class BlockingPositivePumpOutput final : public PumpPowerOutput {
+ public:
+  bool initialize_off() override {
+    power_percent = 0U;
+    return true;
+  }
+
+  bool set_power_percent(std::uint8_t requested_power_percent) override {
+    if (requested_power_percent > 0U) {
+      std::unique_lock<std::mutex> lock(barrier_mutex_);
+      positive_entered_ = true;
+      barrier_.notify_all();
+      barrier_.wait(lock, [this] { return release_positive_; });
+    }
+    power_percent = requested_power_percent;
+    events.push_back(requested_power_percent);
+    return true;
+  }
+
+  void wait_for_positive() {
+    std::unique_lock<std::mutex> lock(barrier_mutex_);
+    barrier_.wait(lock, [this] { return positive_entered_; });
+  }
+
+  void release_positive() {
+    std::lock_guard<std::mutex> lock(barrier_mutex_);
+    release_positive_ = true;
+    barrier_.notify_all();
+  }
+
+  std::vector<std::uint8_t> events{};
+  std::uint8_t power_percent{100U};
+
+ private:
+  std::condition_variable barrier_;
+  std::mutex barrier_mutex_;
+  bool positive_entered_{false};
+  bool release_positive_{false};
 };
 
 class FakeSafetyLease final : public SsrSafetyLease {
@@ -585,57 +654,107 @@ void test_inline_profile_validation() {
 
 void test_fail_off_pump() {
   FakeOutputCriticalSection critical_section;
-  FakeDigitalOutput output;
+  FakePumpPowerOutput output;
   FailOffPump pump(output, critical_section);
   assert(pump.initialize());
-  assert((output.events == std::vector<OutputEvent>{OutputEvent::kLow,
-                                                    OutputEvent::kConfigure,
-                                                    OutputEvent::kLow}));
-  assert(!output.level);
-  assert(pump.command() == PumpCommand::kOff);
-  assert(pump.set_running(true));
-  assert(output.level);
-  assert(pump.command() == PumpCommand::kRunning);
-  assert(pump.force_off());
-  assert(!output.level);
+  assert((output.events ==
+          std::vector<int>{0, FakePumpPowerOutput::kInitializeEvent, 0}));
+  assert(output.power_percent == 0U);
+  assert(pump.power_percent() == 0U);
   assert(pump.command() == PumpCommand::kOff);
 
-  FakeDigitalOutput configuration_error;
-  configuration_error.fail_configure = true;
+  assert(!pump.set_power_percent(-1));
+  assert(pump.power_percent() == 0U);
+  const std::array<std::pair<std::int32_t, std::uint8_t>, 10> cases{{
+      {0, 0U},
+      {1, 1U},
+      {50, 50U},
+      {89, 89U},
+      {90, 90U},
+      {91, 90U},
+      {99, 90U},
+      {100, 90U},
+      {101, 90U},
+      {1000, 90U},
+  }};
+  for (const auto& [requested, effective] : cases) {
+    assert(pump.set_power_percent(requested));
+    assert(pump.power_percent() == effective);
+    assert(output.power_percent == effective);
+    assert(pump.command() ==
+           (effective == 0U ? PumpCommand::kOff : PumpCommand::kRunning));
+  }
+
+  assert(pump.set_power_percent(40));
+  assert(pump.power_percent() == 40U);
+  assert(pump.set_running(true));
+  assert(output.power_percent == config::kPumpMaximumPowerPercent);
+  assert(pump.power_percent() == config::kPumpMaximumPowerPercent);
+  assert(pump.command() == PumpCommand::kRunning);
+  assert(pump.set_running(false));
+  assert(output.power_percent == 0U);
+  assert(pump.power_percent() == 0U);
+  assert(pump.command() == PumpCommand::kOff);
+  assert(pump.set_running(true));
+  assert(pump.force_off());
+  assert(output.power_percent == 0U);
+  assert(pump.power_percent() == 0U);
+  assert(pump.command() == PumpCommand::kOff);
+
+  FakePumpPowerOutput configuration_error;
+  configuration_error.fail_initialize = true;
   FailOffPump failed_pump(configuration_error, critical_section);
   assert(!failed_pump.initialize());
-  assert(!configuration_error.level);
+  assert(configuration_error.power_percent == 0U);
   assert(failed_pump.command() == PumpCommand::kOff);
   assert(!failed_pump.set_running(true));
 
-  FakeDigitalOutput high_error;
-  FailOffPump high_error_pump(high_error, critical_section);
-  assert(high_error_pump.initialize());
-  high_error.fail_high = true;
-  const auto failure_start = high_error.events.size();
-  assert(!high_error_pump.set_running(true));
-  assert((std::vector<OutputEvent>(high_error.events.begin() + failure_start,
-                                  high_error.events.end()) ==
-          std::vector<OutputEvent>{OutputEvent::kHigh, OutputEvent::kLow}));
-  assert(!high_error.level);
-  assert(high_error_pump.command() == PumpCommand::kOff);
+  FakePumpPowerOutput positive_error;
+  FailOffPump positive_error_pump(positive_error, critical_section);
+  assert(positive_error_pump.initialize());
+  positive_error.fail_positive = true;
+  const auto failure_start = positive_error.events.size();
+  assert(!positive_error_pump.set_running(true));
+  assert((std::vector<int>(positive_error.events.begin() + failure_start,
+                           positive_error.events.end()) ==
+          std::vector<int>{config::kPumpMaximumPowerPercent, 0}));
+  assert(positive_error.power_percent == 0U);
+  assert(positive_error_pump.command() == PumpCommand::kOff);
 
-  FakeDigitalOutput stuck_high;
-  FailOffPump stuck_high_pump(stuck_high, critical_section);
-  assert(stuck_high_pump.initialize());
-  assert(stuck_high_pump.set_running(true));
-  stuck_high.fail_low = true;
-  stuck_high.preserve_level_on_failure = true;
-  assert(!stuck_high_pump.force_off());
-  assert(stuck_high.level);
-  assert(stuck_high_pump.command() == PumpCommand::kRunning);
-  assert(stuck_high_pump.output_state_unknown());
-  assert(!stuck_high_pump.set_running(true));
-  assert(stuck_high_pump.output_state_unknown());
-  stuck_high.fail_low = false;
-  assert(stuck_high_pump.force_off());
-  assert(stuck_high_pump.command() == PumpCommand::kOff);
-  assert(!stuck_high_pump.output_state_unknown());
+  FakePumpPowerOutput stuck_on;
+  FailOffPump stuck_on_pump(stuck_on, critical_section);
+  assert(stuck_on_pump.initialize());
+  assert(stuck_on_pump.set_running(true));
+  stuck_on.fail_off = true;
+  stuck_on.preserve_level_on_failure = true;
+  assert(!stuck_on_pump.force_off());
+  assert(stuck_on.power_percent == config::kPumpMaximumPowerPercent);
+  assert(stuck_on_pump.command() == PumpCommand::kRunning);
+  assert(stuck_on_pump.output_state_unknown());
+  assert(!stuck_on_pump.set_running(true));
+  assert(stuck_on_pump.output_state_unknown());
+  stuck_on.fail_off = false;
+  assert(stuck_on_pump.force_off());
+  assert(stuck_on_pump.command() == PumpCommand::kOff);
+  assert(stuck_on_pump.power_percent() == 0U);
+  assert(!stuck_on_pump.output_state_unknown());
+
+  FakePumpPowerOutput emergency_stuck_on;
+  FailOffPump emergency_pump(emergency_stuck_on, critical_section);
+  assert(emergency_pump.initialize());
+  assert(emergency_pump.set_running(true));
+  emergency_stuck_on.fail_off = true;
+  emergency_stuck_on.preserve_level_on_failure = true;
+  assert(!emergency_pump.emergency_off());
+  assert(emergency_pump.emergency_inhibited());
+  assert(emergency_pump.output_state_unknown());
+  assert(!emergency_pump.set_running(true));
+  emergency_stuck_on.fail_off = false;
+  assert(emergency_pump.set_power_percent(0));
+  assert(!emergency_pump.output_state_unknown());
+  assert(emergency_pump.command() == PumpCommand::kOff);
+  assert(!emergency_pump.set_power_percent(1));
+  assert(emergency_pump.command() == PumpCommand::kOff);
 }
 
 void test_fail_off_ssr() {
@@ -772,13 +891,13 @@ void test_emergency_inhibit_serializes_with_in_progress_high_commands() {
 
   {
     MutexOutputCriticalSection critical_section;
-    BlockingHighOutput output;
+    BlockingPositivePumpOutput output;
     FailOffPump pump(output, critical_section);
     assert(pump.initialize());
 
     std::atomic<bool> emergency_started{false};
     std::thread enable([&] { assert(pump.set_running(true)); });
-    output.wait_for_high();
+    output.wait_for_positive();
     std::thread emergency([&] {
       emergency_started.store(true, std::memory_order_release);
       assert(pump.emergency_off());
@@ -787,15 +906,16 @@ void test_emergency_inhibit_serializes_with_in_progress_high_commands() {
       std::this_thread::yield();
     }
     assert(!pump.emergency_inhibited());
-    output.release_high();
+    output.release_positive();
     enable.join();
     emergency.join();
 
     assert(pump.emergency_inhibited());
     assert(pump.command() == PumpCommand::kOff);
-    assert(!output.level);
+    assert(pump.power_percent() == 0U);
+    assert(output.power_percent == 0U);
     assert(!pump.set_running(true));
-    assert(!output.level);
+    assert(output.power_percent == 0U);
   }
 }
 

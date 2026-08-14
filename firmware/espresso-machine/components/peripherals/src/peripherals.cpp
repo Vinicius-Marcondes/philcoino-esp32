@@ -443,22 +443,19 @@ bool FailOffSsr::write_enabled_level(bool enabled) {
   return output_.set_level(output_high);
 }
 
-FailOffPump::FailOffPump(DigitalOutput& output,
-                         OutputCriticalSection& critical_section,
-                         bool active_high)
-    : output_(output),
-      critical_section_(critical_section),
-      active_high_(active_high) {}
+FailOffPump::FailOffPump(PumpPowerOutput& output,
+                         OutputCriticalSection& critical_section)
+    : output_(output), critical_section_(critical_section) {}
 
 bool FailOffPump::initialize() {
   initialized_ = false;
-  command_.store(PumpCommand::kOff, std::memory_order_relaxed);
+  power_percent_.store(0U, std::memory_order_relaxed);
   output_state_unknown_.store(true, std::memory_order_relaxed);
   emergency_inhibited_.store(false, std::memory_order_relaxed);
   if (!force_off()) {
     return false;
   }
-  if (!output_.configure_output()) {
+  if (!output_.initialize_off()) {
     force_off();
     return false;
   }
@@ -471,48 +468,60 @@ bool FailOffPump::initialize() {
 }
 
 bool FailOffPump::set_running(bool running) {
-  const auto requested = running ? PumpCommand::kRunning : PumpCommand::kOff;
+  return set_power_percent(
+      running ? config::kPumpMaximumPowerPercent : 0);
+}
+
+bool FailOffPump::set_power_percent(std::int32_t requested_power_percent) {
+  if (requested_power_percent < 0) {
+    force_off();
+    return false;
+  }
+  const auto effective_power_percent = static_cast<std::uint8_t>(
+      std::min<std::int32_t>(requested_power_percent,
+                             config::kPumpMaximumPowerPercent));
   if (!initialized_) {
     force_off();
     return false;
   }
-  if (running && (emergency_inhibited_.load(std::memory_order_acquire) ||
-                  output_state_unknown_.load(std::memory_order_acquire))) {
+  if (effective_power_percent > 0U &&
+      (emergency_inhibited_.load(std::memory_order_acquire) ||
+       output_state_unknown_.load(std::memory_order_acquire))) {
     force_off();
     return false;
   }
 
   ScopedOutputCriticalSection lock(critical_section_);
-  if (running && emergency_inhibited_.load(std::memory_order_acquire)) {
-    const bool forced_off = write_command(PumpCommand::kOff);
+  if (effective_power_percent > 0U &&
+      emergency_inhibited_.load(std::memory_order_acquire)) {
+    const bool forced_off = write_power_percent(0U);
     if (forced_off) {
-      command_.store(PumpCommand::kOff, std::memory_order_relaxed);
+      power_percent_.store(0U, std::memory_order_relaxed);
       output_state_unknown_.store(false, std::memory_order_release);
     } else {
       output_state_unknown_.store(true, std::memory_order_release);
     }
     return false;
   }
-  if (!write_command(requested)) {
-    if (requested == PumpCommand::kRunning &&
-        write_command(PumpCommand::kOff)) {
-      command_.store(PumpCommand::kOff, std::memory_order_relaxed);
+  if (!write_power_percent(effective_power_percent)) {
+    if (effective_power_percent > 0U && write_power_percent(0U)) {
+      power_percent_.store(0U, std::memory_order_relaxed);
       output_state_unknown_.store(false, std::memory_order_release);
     } else {
       output_state_unknown_.store(true, std::memory_order_release);
     }
     return false;
   }
-  command_.store(requested, std::memory_order_relaxed);
+  power_percent_.store(effective_power_percent, std::memory_order_relaxed);
   output_state_unknown_.store(false, std::memory_order_release);
   return true;
 }
 
 bool FailOffPump::force_off() {
   ScopedOutputCriticalSection lock(critical_section_);
-  const bool forced_off = write_command(PumpCommand::kOff);
+  const bool forced_off = write_power_percent(0U);
   if (forced_off) {
-    command_.store(PumpCommand::kOff, std::memory_order_relaxed);
+    power_percent_.store(0U, std::memory_order_relaxed);
     output_state_unknown_.store(false, std::memory_order_release);
   } else {
     output_state_unknown_.store(true, std::memory_order_release);
@@ -523,9 +532,9 @@ bool FailOffPump::force_off() {
 bool FailOffPump::emergency_off() {
   ScopedOutputCriticalSection lock(critical_section_);
   emergency_inhibited_.store(true, std::memory_order_release);
-  const bool forced_off = write_command(PumpCommand::kOff);
+  const bool forced_off = write_power_percent(0U);
   if (forced_off) {
-    command_.store(PumpCommand::kOff, std::memory_order_relaxed);
+    power_percent_.store(0U, std::memory_order_relaxed);
     output_state_unknown_.store(false, std::memory_order_release);
   } else {
     output_state_unknown_.store(true, std::memory_order_release);
@@ -534,7 +543,11 @@ bool FailOffPump::emergency_off() {
 }
 
 PumpCommand FailOffPump::command() const {
-  return command_.load(std::memory_order_relaxed);
+  return power_percent() == 0U ? PumpCommand::kOff : PumpCommand::kRunning;
+}
+
+std::uint8_t FailOffPump::power_percent() const {
+  return power_percent_.load(std::memory_order_relaxed);
 }
 
 bool FailOffPump::output_state_unknown() const {
@@ -545,9 +558,10 @@ bool FailOffPump::emergency_inhibited() const {
   return emergency_inhibited_.load(std::memory_order_acquire);
 }
 
-bool FailOffPump::write_command(PumpCommand command) {
-  const bool running = command == PumpCommand::kRunning;
-  return output_.set_level(running ? active_high_ : !active_high_);
+bool FailOffPump::write_power_percent(std::uint8_t power_percent) {
+  const auto bounded_power_percent = std::min(
+      power_percent, config::kPumpMaximumPowerPercent);
+  return output_.set_power_percent(bounded_power_percent);
 }
 
 }  // namespace philcoino::peripherals

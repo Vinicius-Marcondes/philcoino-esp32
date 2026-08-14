@@ -13,9 +13,26 @@ dependencies:
     source:
       type: idf
     version: 6.0.2
+  rbdimmer/rbdimmerESP32:
+    component_hash: 4fb242c16e6b1b1c547a3110f26349ca14280aeb3d66cf4824eca06f02dd66fc
+    dependencies:
+    - name: idf
+      version: '>=5.3.0'
+    source:
+      git: https://github.com/robotdyn-dimmer/rbdimmerESP32.git
+      path: .
+      type: git
+    targets:
+    - esp32
+    - esp32s2
+    - esp32s3
+    - esp32c3
+    - esp32c6
+    version: ab50d09f924e3d5ecf8590ab71386caa72a8e282
 direct_dependencies:
 - espressif/mdns
 - idf
-manifest_hash: 193991d3b4c1f6f12c8064c459f730ec0d3aceae6bb8d89c7b6a697b0e88f301
+- rbdimmer/rbdimmerESP32
+manifest_hash: 5cb151343351c73143ddfce10279369d0a6e479539ac9be2cfc103a8d0668ceb
 target: esp32c3
 version: 3.0.0

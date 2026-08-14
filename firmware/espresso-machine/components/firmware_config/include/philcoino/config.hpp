@@ -67,10 +67,16 @@ inline constexpr std::int32_t kBoilerThermocoupleChipSelectGpio = 7;
 
 inline constexpr std::int32_t kSsrGpio = 20;
 inline constexpr bool kSsrActiveHigh = true;
-inline constexpr std::int32_t kPumpGpio = 10;
-inline constexpr bool kPumpActiveHigh = true;
+inline constexpr std::int32_t kPumpDimmerGpio = 10;
+inline constexpr std::int32_t kPumpZeroCrossGpio = 6;
+inline constexpr std::uint8_t kPumpDimmerPhase = 0;
+inline constexpr std::uint16_t kPumpMainsFrequencyHz = 60;
+// Temporary hard limit: the pending pressure sensor is rated to approximately
+// 13 bar and closed-loop pressure regulation is not implemented yet.
+inline constexpr std::uint8_t kPumpMaximumPowerPercent = 90;
 inline constexpr std::int32_t kScaleDataGpio = 0;
 inline constexpr std::int32_t kScaleClockGpio = 1;
+inline constexpr std::uint32_t kScaleTaskMinimumLoopDelayMs = 10U;
 inline constexpr std::uint32_t kScaleUnavailableTimeoutMs = 750U;
 inline constexpr std::uint32_t kScaleAutomaticTareTimeoutMs = 3U * 1000U;
 inline constexpr std::uint32_t kScaleSettlingTimeoutMs = 10U * 1000U;

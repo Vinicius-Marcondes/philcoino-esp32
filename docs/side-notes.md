@@ -142,9 +142,12 @@ setup/build record were not committed. There is no remaining PRD-004 Human
 review, but the single-sensor, timeout, failed-off-write, cleartext credential,
 and other source-review findings remain engineering work.
 
-## Pump GPIO10 and SSR validation
+## Historical pump GPIO10 SSR validation
 
 Status: HUMAN FUNCTIONAL AND OWNER-REPORTED INSTRUMENTED REVIEW ACCEPTED
+
+This section records the superseded FOTEK pump-SSR configuration. Its Human
+evidence does not apply to the RobotDyn-compatible dimmer installed later.
 
 PRD-002 assigns GPIO10 as an active-high pump SSR command and retains the original pump switch in series. Firmware initializes the command low before output configuration, commands it low again after configuration, and never restores an active command at boot. API v2 now runs firmware-owned Manual and persisted-profile timing through a dedicated extraction task; host tests and contract captures cover the software behavior only.
 
@@ -164,6 +167,41 @@ the tested configuration. Raw GPIO10 waveforms, instrument/board/build
 identifiers, injected GPIO-write-failure evidence, and target timer-wrap
 captures were not committed. Those missing artifacts are not pending Human
 review; the no-feedback and failure-path limitations remain engineering facts.
+
+## RobotDyn-compatible pump dimmer
+
+Status: SOFTWARE IMPLEMENTED — NEW LOW-VOLTAGE AND PHYSICAL ACCEPTANCE PENDING
+
+The pump now uses the native ESP-IDF API from `rbdimmer/rbdimmerESP32` manifest
+version 2.0.1, pinned through Component Manager to immutable upstream commit
+`ab50d09f924e3d5ecf8590ab71386caa72a8e282` because 2.0.1 is not published in
+the ESP Component Registry. A project-local CMake compatibility shim supplies
+the upstream component's missing ESP-IDF 6 GPIO dependency and removes its two
+duplicate MAX_* definitions; managed source is neither edited nor vendored.
+Firmware preserves GPIO10 as DIM/PSM output and
+assigns the currently unused, non-strapping GPIO6 as zero-cross input. It
+registers phase 0 at fixed 60 Hz and creates one `RBDIMMER_CURVE_LINEAR` channel
+at initial level 0%. Startup preloads DIM low and explicitly reapplies 0 before
+any extraction or cooldown owner can run; partial initialization failure is
+logged, cleaned up, and aborts later startup while OFF is retried.
+
+`FailOffPump` is the authority for every existing caller. ON means the temporary
+maximum command of 90%, OFF means exactly 0%, and a signed variable-power API
+supports future profiling without adding a pressure controller. Negative input
+fails while commanding OFF; values above 90% clamp to the single configured
+maximum. The pending pressure sensor is limited to approximately 13 bar, so the
+cap must not be raised until a separately reviewed pressure-control and physical
+protection design exists. With the library's default minimum retained, 1–2%
+remain recorded command values but produce no TRIAC firing.
+
+No current, voltage, DIM pulse, zero-cross, pressure, flow, or pump feedback is
+available. The API continues to expose only `running` for a positive
+acknowledged command and `off` for 0%; neither state proves physical operation
+or de-energization. Before flashing, verify that GPIO6 is exposed on the exact
+Super Mini board. Before any energized consideration, separately validate
+zero-cross polarity/timing, GPIO10 reset behavior and absence of a startup
+pulse, isolation, BTA16-600B heat sinking/derating, series-switch wiring, 0%
+cessation, and the 90% phase-angle waveform under qualified supervision.
 
 ## FOTEK SSR-40 DA verification
 

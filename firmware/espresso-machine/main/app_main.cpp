@@ -390,6 +390,11 @@ void scale_sample_task(void* argument) {
         context->synchronization->unlock(
             philcoino::networking::ApiDomain::kExtraction);
       }
+      // A disconnected or miswired HX711 can hold DT low indefinitely. That
+      // makes every acquisition complete immediately, so enforce a bounded
+      // blocking point to keep the single-core idle task and watchdog healthy.
+      vTaskDelay(pdMS_TO_TICKS(
+          philcoino::config::kScaleTaskMinimumLoopDelayMs));
     }
   }
 }
@@ -401,14 +406,22 @@ extern "C" void app_main() {
 
   philcoino::networking::EspOtaBootValidationGuard ota_boot_validation;
 
-  static EspGpioOutput pump_gpio(philcoino::config::kPumpGpio);
+  static EspRbdimmerPumpOutput pump_dimmer;
   static EspOutputCriticalSection pump_critical_section;
-  static FailOffPump pump(pump_gpio, pump_critical_section,
-                          philcoino::config::kPumpActiveHigh);
+  static FailOffPump pump(pump_dimmer, pump_critical_section);
   if (!pump.initialize()) {
-    ESP_LOGE(kLogTag, "Pump fail-off initialization failed");
+    ESP_LOGE(kLogTag,
+             "Pump dimmer fail-off initialization failed; startup aborted after OFF retry");
     return;
   }
+  ESP_LOGI(kLogTag,
+           "Pump dimmer initialized: ZC=GPIO%" PRId32
+           " DIM=GPIO%" PRId32 " mains=%uHz curve=LINEAR max=%u%% initial=0%%",
+           philcoino::config::kPumpZeroCrossGpio,
+           philcoino::config::kPumpDimmerGpio,
+           static_cast<unsigned>(philcoino::config::kPumpMainsFrequencyHz),
+           static_cast<unsigned>(
+               philcoino::config::kPumpMaximumPowerPercent));
 
   static EspGpioOutput ssr_gpio(philcoino::config::kSsrGpio);
   static EspGptimerSafetyLease ssr_safety_lease(

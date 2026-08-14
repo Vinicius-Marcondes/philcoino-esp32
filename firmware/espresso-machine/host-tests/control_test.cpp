@@ -89,6 +89,41 @@ class FakeDigitalOutput final : public DigitalOutput {
   bool running_started_after_heater_inhibit{false};
 };
 
+class FakePumpPowerOutput final : public PumpPowerOutput {
+ public:
+  bool initialize_off() override {
+    configured = true;
+    level = false;
+    power_percent = 0U;
+    return !fail_configure;
+  }
+
+  bool set_power_percent(std::uint8_t requested_power_percent) override {
+    const bool running = requested_power_percent > 0U;
+    if (running && cooldown_guard != nullptr) {
+      running_started_after_heater_inhibit =
+          cooldown_guard->cooldown_inhibited() &&
+          !cooldown_guard->heater_enabled();
+    }
+    level = running;
+    power_percent = requested_power_percent;
+    events.push_back(running);
+    if (running && fail_high) return false;
+    if (!running && fail_low) return false;
+    return true;
+  }
+
+  std::vector<bool> events{};
+  std::uint8_t power_percent{100U};
+  bool level{true};
+  bool configured{false};
+  bool fail_low{false};
+  bool fail_high{false};
+  bool fail_configure{false};
+  const TemperatureController* cooldown_guard{nullptr};
+  bool running_started_after_heater_inhibit{false};
+};
+
 class FakeScaleCalibrationBackend final : public ScaleCalibrationBackend {
  public:
   BackendLoadResult load(ScaleCalibration& calibration) override {
@@ -227,7 +262,7 @@ struct ExtractionHarness {
     assert(pump.initialize());
   }
 
-  FakeDigitalOutput output{};
+  FakePumpPowerOutput output{};
   FakeOutputCriticalSection critical_section{};
   FailOffPump pump;
   ExtractionController controller;
@@ -244,7 +279,7 @@ struct CooldownHarness {
   }
 
   ControllerHarness temperature;
-  FakeDigitalOutput pump_output{};
+  FakePumpPowerOutput pump_output{};
   FakeOutputCriticalSection critical_section{};
   FailOffPump pump;
   CooldownController cooldown;
@@ -262,7 +297,7 @@ struct WorkflowHarness {
   }
 
   ControllerHarness temperature;
-  FakeDigitalOutput pump_output{};
+  FakePumpPowerOutput pump_output{};
   FakeOutputCriticalSection critical_section{};
   FailOffPump pump;
   ExtractionController extraction;

@@ -2,6 +2,7 @@ idf_component_register(
   SRCS "src/peripherals.cpp" "src/esp_peripherals.cpp"
   INCLUDE_DIRS "include"
   REQUIRES esp_driver_gpio esp_driver_gptimer firmware_config freertos nvs_flash
+  PRIV_REQUIRES rbdimmer__rbdimmerESP32
 )
 
 target_compile_features(${COMPONENT_LIB} PUBLIC cxx_std_17)

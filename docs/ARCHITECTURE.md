@@ -28,7 +28,8 @@ SecureStore                       HTTP API v1 + v2
                                                      |
                                       MAX6675 -> control -> heater SSR
                                                      |
-                         pump controller -> GPIO10 command + NVS
+                         pump controller -> 0-90% clamp -> rbdimmerESP32
+                                             -> GPIO6 ZC / GPIO10 DIM
 ```
 
 ## Authority and dependency direction
@@ -315,7 +316,11 @@ validation.
 ### Layering
 
 - `firmware_config` contains identity, GPIOs, ranges, timeouts, duty-curve constants, and diagnostic flags.
-- `peripherals` defines pure interfaces/policies for MAX6675, HX711, target/profile/calibration storage, and independent heater SSR and pump command outputs. `esp_peripherals.cpp` supplies GPIO/NVS implementations.
+- `peripherals` defines pure interfaces/policies for MAX6675, HX711,
+  target/profile/calibration storage, the independent heater SSR, and the
+  fail-off pump-power owner. `esp_peripherals.cpp` supplies GPIO/NVS adapters
+  and the native `rbdimmerESP32` phase-angle adapter; higher layers never own
+  zero-cross or TRIAC timing.
 - `control` contains the pure temperature, scale, extraction, and cooldown state machines.
 - `networking` separates bounded generic JSON syntax, typed machine/workflow codecs, immutable response serialization, authoritative route/access metadata, `FirmwareApi` controller/storage orchestration, and ESP-IDF Wi-Fi/HTTP/mDNS transport adapters.
 - `main/app_main.cpp` owns startup order, shared objects, mutex wiring, the sampling loop, and network task creation.
@@ -330,7 +335,20 @@ summary once per minute, and neither application ISR is modified.
 
 ### Startup and fail-off ordering
 
-Firmware first constructs and initializes `FailOffPump` on active-high GPIO10, commanding low before and after GPIO output configuration. It then initializes the independent heater `FailOffSsr` with its existing safety lease. Pump initialization failure aborts immediately; later critical startup failures retain/attempt the pump-off and heater-off commands.
+Firmware first preloads DIM GPIO10 low, then constructs `FailOffPump` over the
+`rbdimmerESP32` adapter. The adapter registers zero-cross GPIO6 as phase 0 at
+fixed 60 Hz, creates the GPIO10 channel with initial level 0 and
+`RBDIMMER_CURVE_LINEAR`, and explicitly reapplies 0 before returning. Only then
+does firmware initialize the independent heater `FailOffSsr` with its existing
+safety lease. Pump-dimmer initialization failure logs the library error, retries
+the low/OFF command, cleans up partial library state, and aborts immediately;
+later critical startup failures retain/attempt pump-off and heater-off.
+
+`FailOffPump` accepts signed abstract drive requests, rejects negative values by
+commanding 0, clamps every high request to the single 90% maximum, and records
+only successfully acknowledged effective commands. Existing ON calls map to
+90%; OFF always maps to 0%. The public API continues to derive `running` from a
+positive command and `off` from 0, without exposing pressure/flow claims.
 
 `ExtractionController` owns Manual cutoff, immutable active profile snapshots,
 pre-infusion/soak/main deadlines, replay/conflict behavior, and Stop.
@@ -382,7 +400,11 @@ same bounded workflow synchronization boundary. After one immediate read, a
 falling edge on HX711 DOUT wakes that task; the IRAM GPIO ISR only posts a
 coalescing task notification, while GPIO clocking, filtering, logging, and
 publication remain in task context. A 750 ms notify timeout preserves bounded
-unavailable detection for a missing or disconnected scale. `NotReady` reads do
+unavailable detection for a missing or disconnected scale. The waiter reuses
+the process-wide GPIO ISR service already installed by the pump dimmer. Every
+completed/error sample also introduces a 10 ms task delay, preventing a
+stuck-low DOUT input from spinning continuously and starving the ESP32-C3 idle
+watchdog. `NotReady` reads do
 not enter the workflow mutex or publish to `ScaleController`; accepted samples
 refresh the cached median, spread, stability, and calibrated weight once, and
 consumer snapshots apply only O(1) age/availability gating. This does not block
@@ -515,7 +537,7 @@ The ESP-IDF adapter owns the 512-byte authorization-header limit, 1,024-byte req
 | Per-profile weight defaults | Mobile SecureStore | Yes | Not applicable |
 | Extraction summaries/traces (Manual, timed, weighted; until explicit clear) | Mobile SQLite | Yes | Not applicable |
 | Active/last extraction telemetry ring and weighted fallback warning | Firmware RAM | Reflected while connected | No |
-| Pump GPIO10 command | Firmware RAM/GPIO | Reflected while connected | No; boots `off` |
+| Pump dimmer command (GPIO6 ZC/GPIO10 DIM) | Firmware RAM/dimmer | Reflected only as `running`/`off` | No; boots at 0%/`off` |
 | Extraction/cooldown identity, phase, deadlines, outcome | Firmware RAM | Reflected while connected | No; both boot idle and cooldown history is cleared |
 | Extraction duty compensation | Derived firmware policy | Reflected while eligible | No persisted setting; recomputed from acknowledged phase |
 | Active mode | Firmware RAM | Yes while powered | No; boots brew |
@@ -527,7 +549,12 @@ The ESP-IDF adapter owns the 512-byte authorization-header limit, 1,024-byte req
 
 ## Safety and security boundary
 
-Software can command an output inactive; it cannot prove that an SSR, GPIO, wiring path, or heater is physically de-energized. Independent thermal cutoff, correct mains wiring, relay sizing/heat sinking, enclosure, grounding, and supervised validation remain outside software acceptance.
+Software can command an output inactive; it cannot prove that an SSR, TRIAC,
+GPIO, wiring path, pump, or heater is physically de-energized. The pump's
+0–90% value is an actuator command, not measured voltage, power, pressure, or
+flow. Independent thermal/pressure protection, correct mains wiring, component
+sizing/heat sinking, enclosure, grounding, and supervised validation remain
+outside software acceptance.
 
 API v1/v2 use plaintext local HTTP with a bearer token and public mDNS identity. The current threat model does not provide transport confidentiality, cryptographic device identity, strong-token enforcement, or authentication throttling. Treat the network as trusted only for development and follow [Safety](en/SAFETY.md).
 

@@ -14,6 +14,10 @@
 #error "PhilcoINO requires CONFIG_FREERTOS_IN_IRAM for cache-safe HX711 notification"
 #endif
 
+#if !CONFIG_ESP_TIMER_SUPPORTS_ISR_DISPATCH_METHOD
+#error "PhilcoINO requires ESP timer ISR dispatch for pump phase-angle control"
+#endif
+
 #include <algorithm>
 #include <array>
 #include <cinttypes>
@@ -25,11 +29,13 @@
 #include "nvs.h"
 #include "nvs_flash.h"
 #include "philcoino/config.hpp"
+#include "rbdimmerESP32.h"
 
 namespace philcoino::peripherals {
 namespace {
 
 constexpr char kThermocoupleLogTag[] = "max6675";
+constexpr char kPumpDimmerLogTag[] = "pump_dimmer";
 constexpr char kNvsNamespace[] = "targets";
 constexpr char kTargetsKey[] = "values";
 constexpr char kTemperatureCalibrationNvsNamespace[] = "temp_cal";
@@ -263,17 +269,24 @@ bool EspHx711ReadyWaiter::initialize_for_current_task() {
   if (initialized_) return true;
   task_ = xTaskGetCurrentTaskHandle();
   if (task_ == nullptr) return false;
-  const auto install_result = gpio_install_isr_service(ESP_INTR_FLAG_IRAM);
-  if (install_result != ESP_OK &&
-      install_result != ESP_ERR_INVALID_STATE) {
+  const auto data_gpio = static_cast<gpio_num_t>(config::kScaleDataGpio);
+  if (gpio_set_intr_type(data_gpio, GPIO_INTR_NEGEDGE) != ESP_OK) {
     task_ = nullptr;
     return false;
   }
-  const auto data_gpio = static_cast<gpio_num_t>(config::kScaleDataGpio);
-  if (gpio_set_intr_type(data_gpio, GPIO_INTR_NEGEDGE) != ESP_OK ||
-      gpio_isr_handler_add(data_gpio, &EspHx711ReadyWaiter::on_ready, this) !=
-          ESP_OK ||
-      gpio_intr_enable(data_gpio) != ESP_OK) {
+
+  auto handler_result =
+      gpio_isr_handler_add(data_gpio, &EspHx711ReadyWaiter::on_ready, this);
+  if (handler_result == ESP_ERR_INVALID_STATE) {
+    const auto install_result = gpio_install_isr_service(ESP_INTR_FLAG_IRAM);
+    if (install_result != ESP_OK && install_result != ESP_ERR_INVALID_STATE) {
+      task_ = nullptr;
+      return false;
+    }
+    handler_result =
+        gpio_isr_handler_add(data_gpio, &EspHx711ReadyWaiter::on_ready, this);
+  }
+  if (handler_result != ESP_OK || gpio_intr_enable(data_gpio) != ESP_OK) {
     gpio_isr_handler_remove(data_gpio);
     task_ = nullptr;
     return false;
@@ -501,6 +514,109 @@ bool EspGpioOutput::configure_output() {
   configuration.pull_down_en = GPIO_PULLDOWN_DISABLE;
   configuration.intr_type = GPIO_INTR_DISABLE;
   return gpio_config(&configuration) == ESP_OK;
+}
+
+bool EspRbdimmerPumpOutput::initialize_off() {
+  if (channel_ != nullptr) {
+    return set_power_percent(0U);
+  }
+  if (!force_gpio_low()) {
+    ESP_LOGE(kPumpDimmerLogTag,
+             "Failed to preload DIM GPIO%" PRId32 " low",
+             config::kPumpDimmerGpio);
+    return false;
+  }
+
+  auto result = rbdimmer_init();
+  if (result != RBDIMMER_OK) {
+    ESP_LOGE(kPumpDimmerLogTag, "rbdimmer_init failed: %d",
+             static_cast<int>(result));
+    force_gpio_low();
+    return false;
+  }
+  library_initialized_ = true;
+
+  result = rbdimmer_register_zero_cross(
+      static_cast<std::uint8_t>(config::kPumpZeroCrossGpio),
+      config::kPumpDimmerPhase, config::kPumpMainsFrequencyHz);
+  if (result != RBDIMMER_OK) {
+    ESP_LOGE(kPumpDimmerLogTag,
+             "rbdimmer_register_zero_cross failed: %d",
+             static_cast<int>(result));
+    cleanup();
+    force_gpio_low();
+    return false;
+  }
+
+  rbdimmer_config_t channel_config{};
+  channel_config.gpio_pin =
+      static_cast<std::uint8_t>(config::kPumpDimmerGpio);
+  channel_config.phase = config::kPumpDimmerPhase;
+  channel_config.initial_level = 0U;
+  channel_config.curve_type = RBDIMMER_CURVE_LINEAR;
+  rbdimmer_channel_t* channel = nullptr;
+  result = rbdimmer_create_channel(&channel_config, &channel);
+  if (result != RBDIMMER_OK || channel == nullptr) {
+    ESP_LOGE(kPumpDimmerLogTag, "rbdimmer_create_channel failed: %d",
+             static_cast<int>(result));
+    cleanup();
+    force_gpio_low();
+    return false;
+  }
+  channel_ = channel;
+
+  if (!set_power_percent(0U)) {
+    ESP_LOGE(kPumpDimmerLogTag,
+             "Initial rbdimmer_set_level(0) failed");
+    cleanup();
+    force_gpio_low();
+    return false;
+  }
+  return true;
+}
+
+bool EspRbdimmerPumpOutput::set_power_percent(
+    std::uint8_t power_percent) {
+  const auto bounded_power_percent = std::min(
+      power_percent, config::kPumpMaximumPowerPercent);
+  if (channel_ == nullptr) {
+    return bounded_power_percent == 0U && force_gpio_low();
+  }
+  const auto result = rbdimmer_set_level(
+      static_cast<rbdimmer_channel_t*>(channel_), bounded_power_percent);
+  if (result != RBDIMMER_OK) {
+    ESP_LOGE(kPumpDimmerLogTag, "rbdimmer_set_level(%u) failed: %d",
+             static_cast<unsigned>(bounded_power_percent),
+             static_cast<int>(result));
+    if (bounded_power_percent > 0U) {
+      const auto off_result = rbdimmer_set_level(
+          static_cast<rbdimmer_channel_t*>(channel_), 0U);
+      if (off_result != RBDIMMER_OK) {
+        ESP_LOGE(kPumpDimmerLogTag,
+                 "rbdimmer_set_level(0) retry failed: %d",
+                 static_cast<int>(off_result));
+      }
+    }
+    force_gpio_low();
+    return false;
+  }
+  return bounded_power_percent != 0U || force_gpio_low();
+}
+
+bool EspRbdimmerPumpOutput::force_gpio_low() {
+  return gpio_set_level(static_cast<gpio_num_t>(config::kPumpDimmerGpio), 0) ==
+         ESP_OK;
+}
+
+void EspRbdimmerPumpOutput::cleanup() {
+  if (channel_ != nullptr) {
+    rbdimmer_delete_channel(static_cast<rbdimmer_channel_t*>(channel_));
+    channel_ = nullptr;
+  }
+  if (library_initialized_) {
+    rbdimmer_deinit();
+    library_initialized_ = false;
+  }
 }
 
 EspGptimerSafetyLease::EspGptimerSafetyLease(std::int32_t gpio,

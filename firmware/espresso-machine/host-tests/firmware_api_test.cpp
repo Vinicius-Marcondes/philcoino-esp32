@@ -208,6 +208,28 @@ class FakeDigitalOutput final : public DigitalOutput {
   bool fail_low{false};
 };
 
+class FakePumpPowerOutput final : public PumpPowerOutput {
+ public:
+  bool initialize_off() override {
+    level = false;
+    power_percent = 0U;
+    return true;
+  }
+
+  bool set_power_percent(std::uint8_t requested_power_percent) override {
+    const bool running = requested_power_percent > 0U;
+    if ((running && fail_positive) || (!running && fail_off)) return false;
+    level = running;
+    power_percent = requested_power_percent;
+    return true;
+  }
+
+  std::uint8_t power_percent{0U};
+  bool level{false};
+  bool fail_positive{false};
+  bool fail_off{false};
+};
+
 class FakeSafetyLease final : public SsrSafetyLease {
  public:
   bool initialize() override {
@@ -293,7 +315,7 @@ struct ApiHarness {
   FakeOutputCriticalSection ssr_critical_section;
   FailOffSsr ssr;
   TemperatureController controller;
-  FakeDigitalOutput pump_output{};
+  FakePumpPowerOutput pump_output{};
   FakeOutputCriticalSection pump_critical_section;
   FailOffPump pump;
   ExtractionController extraction;
@@ -404,6 +426,8 @@ void test_extraction_start_and_stop_apply_output_before_acknowledgement() {
       "\"selection\":{\"kind\":\"manual\"}}", 1200);
   assert(response.status == 200);
   assert(harness.pump_output.level);
+  assert(harness.pump_output.power_percent ==
+         philcoino::config::kPumpMaximumPowerPercent);
   assert(response.body.find("\"apiVersion\":\"3\"") != std::string::npos);
   assert(response.body.find("\"status\":\"running\"") !=
          std::string::npos);
@@ -415,6 +439,7 @@ void test_extraction_start_and_stop_apply_output_before_acknowledgement() {
                              kTestAuthorization, "", 1250);
   assert(response.status == 200);
   assert(!harness.pump_output.level);
+  assert(harness.pump_output.power_percent == 0U);
   assert(response.body.find("\"apiVersion\":\"3\"") != std::string::npos);
   assert(response.body.find("\"pumpCommand\":\"off\"") !=
          std::string::npos);
