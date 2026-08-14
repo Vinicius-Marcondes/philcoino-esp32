@@ -136,10 +136,10 @@ function originForHost(host: string, port: number): string | null {
   const urlHost = normalizedHost.includes(":")
     ? `[${normalizedHost.replace("%", "%25")}]`
     : normalizedHost;
-  const portSuffix = port === 80 ? "" : `:${port}`;
+  const portSuffix = port === 443 ? "" : `:${port}`;
 
   try {
-    return normalizeDeviceAddress(`http://${urlHost}${portSuffix}`);
+    return normalizeDeviceAddress(`https://${urlHost}${portSuffix}`);
   } catch {
     return null;
   }

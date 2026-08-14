@@ -1,0 +1,11 @@
+{
+  "name": "@philcoino/firmware-ota",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "upload": "bun run src/cli.ts",
+    "test": "bun test",
+    "typecheck": "bun run --cwd ../../apps/mobile tsc --noEmit --project ../../tools/firmware-ota/tsconfig.json"
+  }
+}

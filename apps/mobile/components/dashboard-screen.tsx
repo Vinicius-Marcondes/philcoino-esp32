@@ -2,7 +2,6 @@ import type {
   CompensationState,
   ExtractionSelection,
   MachineState,
-  MachineStateV2,
   ProfileSlotId,
   WeightControl,
 } from "@philcoino/protocol";
@@ -74,6 +73,7 @@ import {
   modeLabel,
   steamCountdownContext,
 } from "@/src/dashboard/dashboard-view-model";
+import type { ThermalWorkflowSnapshot } from "@/src/debug/thermal-workflow-preview-model";
 import {
   idleMutationState,
   type DashboardMutationState,
@@ -103,7 +103,7 @@ import {
 } from "@/src/layout/dashboard-page-navigation";
 import { navigationRailLeadingInset } from "@/src/layout/navigation-rail-inset";
 import { createDebugDeviceApiClient } from "@/src/networking/debug-device-api-client";
-import { createDeviceApiClient } from "@/src/networking/expo-device-api-client";
+import { createNativeDeviceApiClient } from "@/src/networking/native-device-api-client";
 import {
   profileSelection,
   profileSetsEqual,
@@ -145,14 +145,17 @@ export function DashboardScreen({
     () =>
       debugDeviceMode
         ? createDebugDeviceApiClient()
-        : createDeviceApiClient({
-            address: selectedDevice.lastSuccessfulAddress,
-            token: selectedDevice.token,
+        : createNativeDeviceApiClient({
+            origin: selectedDevice.httpsOrigin,
+            certificateSpkiSha256:
+              selectedDevice.certificateSpkiSha256,
+            accessToken: selectedDevice.accessToken,
           }),
     [
       debugDeviceMode,
-      selectedDevice.lastSuccessfulAddress,
-      selectedDevice.token,
+      selectedDevice.httpsOrigin,
+      selectedDevice.certificateSpkiSha256,
+      selectedDevice.accessToken,
     ],
   );
   const {
@@ -174,6 +177,7 @@ export function DashboardScreen({
     profileStorageError,
     profileWritePending,
     saveMobileProfiles,
+    scaleSnapshot,
     setHeaterEnabled,
     setMode,
     snapshot,
@@ -234,8 +238,7 @@ export function DashboardScreen({
     client,
     deviceId: selectedDevice.deviceId,
     extraction,
-    scalePageVisible:
-      dashboardPage === "scale" || dashboardPage === "shots" || consoleOpen,
+    stateScale: scaleSnapshot,
     streamClient: "streamExtractionTelemetry" in client ? client : null,
   });
   const traceCutoffDecigrams =
@@ -307,7 +310,7 @@ export function DashboardScreen({
       selectedExtraction,
     ],
   );
-  const thermalSnapshot: MachineStateV2 | null = useMemo(
+  const thermalSnapshot: ThermalWorkflowSnapshot | null = useMemo(
     () =>
       snapshot !== null &&
       extraction !== null &&
@@ -513,6 +516,7 @@ export function DashboardScreen({
         startPending={extractionStartMutation.status === "pending"}
         state={extractionUiState}
         stopPending={extractionStopMutation.status === "pending"}
+        streamStatus={scale.streamStatus}
         trace={scale.trace}
         visible={consoleOpen}
         workflowBlock={
@@ -1038,7 +1042,7 @@ export function DashboardScreen({
                     {selectedDevice.deviceId}
                   </Text>
                   <Text selectable style={styles.address}>
-                    {selectedDevice.lastSuccessfulAddress}
+                    {selectedDevice.httpsOrigin}
                   </Text>
                   <Pressable
                     accessibilityRole="button"
@@ -1640,7 +1644,8 @@ function MachineStatus({
   const canDismissOverTemperature =
     snapshot.status === "fault" &&
     snapshot.fault.code === "over_temperature" &&
-    boilerTemperatureC(snapshot) <= boilerTargetC(snapshot);
+    boilerTemperatureC(snapshot) !== null &&
+    boilerTemperatureC(snapshot)! <= boilerTargetC(snapshot);
   const dismissPending = faultMutation.status === "pending";
   const confirmDismissOverTemperature = () => {
     Alert.alert(
@@ -1719,7 +1724,10 @@ function MachineStatus({
                 {canDismissOverTemperature
                   ? translate("dashboard.boilerBackAtTarget")
                   : translate("dashboard.dismissalLocked", {
-                      current: formatTemperature(boilerTemperatureC(snapshot)),
+                      current:
+                        boilerTemperatureC(snapshot) === null
+                          ? "—"
+                          : formatTemperature(boilerTemperatureC(snapshot)!),
                       target: formatTarget(boilerTargetC(snapshot)),
                     })}
               </Text>
@@ -1795,7 +1803,7 @@ function TemperatureCard({
   mode: MachineState["activeMode"];
   sensorTemperatureC: number | null;
   targetC: number;
-  temperatureC: number;
+  temperatureC: number | null;
   width: "100%" | "48.5%";
 }) {
   return (
@@ -1823,7 +1831,7 @@ function TemperatureCard({
           styles.temperatureValue,
           compact && styles.temperatureValueCompact,
         ]}>
-        {formatTemperature(temperatureC)}
+        {temperatureC === null ? "—" : formatTemperature(temperatureC)}
       </Text>
       <Text selectable style={styles.temperatureTarget}>
         {translate("dashboard.target")} {formatTarget(targetC)}

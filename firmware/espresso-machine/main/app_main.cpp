@@ -1,15 +1,13 @@
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <cinttypes>
 #include <cmath>
 #include <cstdio>
-#include <limits>
 
 #include "esp_log.h"
-#include "esp_heap_caps.h"
 #include "esp_mac.h"
 #include "esp_random.h"
-#include "esp_system.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
@@ -19,40 +17,83 @@
 #include "philcoino/config.hpp"
 #include "philcoino/control.hpp"
 #include "philcoino/esp_networking.hpp"
+#include "philcoino/esp_ota_update.hpp"
+#include "philcoino/esp_security.hpp"
 #include "philcoino/esp_peripherals.hpp"
-#include "philcoino/performance_diagnostics.hpp"
-#include "philcoino/weighted_trace.hpp"
 #include "philcoino/extraction_telemetry.hpp"
 
 namespace {
 
 constexpr char kLogTag[] = "philcoino";
 
+constexpr bool configured_pairing_code_is_valid() {
+  constexpr char kPairingCode[] = CONFIG_PHILCOINO_PAIRING_CODE;
+  if (sizeof(kPairingCode) != 9U) return false;
+  for (std::size_t index = 0; index < 8U; ++index) {
+    if (kPairingCode[index] < '0' || kPairingCode[index] > '9') return false;
+  }
+  return kPairingCode[8] == '\0';
+}
+
+static_assert(configured_pairing_code_is_valid(),
+              "CONFIG_PHILCOINO_PAIRING_CODE must contain exactly eight digits");
+
 bool secrets_are_configured() {
   return CONFIG_PHILCOINO_WIFI_SSID[0] != '\0' &&
-         CONFIG_PHILCOINO_WIFI_PASSWORD[0] != '\0' &&
-         CONFIG_PHILCOINO_BEARER_TOKEN[0] != '\0';
+         CONFIG_PHILCOINO_WIFI_PASSWORD[0] != '\0';
 }
 
 std::uint32_t uptime_ms() {
   return static_cast<std::uint32_t>(esp_timer_get_time() / 1000);
 }
 
-std::uint64_t monotonic_us() {
-  return static_cast<std::uint64_t>(esp_timer_get_time());
+const char* thermocouple_status_name(
+    philcoino::peripherals::ThermocoupleStatus status) {
+  using philcoino::peripherals::ThermocoupleStatus;
+  switch (status) {
+    case ThermocoupleStatus::kOk: return "ok";
+    case ThermocoupleStatus::kNotReady: return "not_ready";
+    case ThermocoupleStatus::kOpenCircuit: return "open_circuit";
+    case ThermocoupleStatus::kInvalidFrame: return "invalid_frame";
+    case ThermocoupleStatus::kTransportError: return "transport_error";
+  }
+  return "unknown";
 }
 
-std::uint32_t bounded_u32(std::uint64_t value) {
-  return value > std::numeric_limits<std::uint32_t>::max()
-             ? std::numeric_limits<std::uint32_t>::max()
-             : static_cast<std::uint32_t>(value);
+void log_thermocouple_failure(
+    const char* phase,
+    const philcoino::peripherals::ThermocoupleReading& reading,
+    unsigned attempt = 0U) {
+  ESP_LOGE(kLogTag,
+           "MAX6675 %s failure status=%s raw=0x%04X attempt=%u "
+           "CS=GPIO%" PRId32 " SCK=GPIO%" PRId32 " SO=GPIO%" PRId32,
+           phase, thermocouple_status_name(reading.status),
+           static_cast<unsigned>(reading.raw_frame), attempt,
+           philcoino::config::kBoilerThermocoupleChipSelectGpio,
+           philcoino::config::kBoilerThermocoupleClockGpio,
+           philcoino::config::kBoilerThermocoupleDataGpio);
 }
 
-std::uint32_t period_deviation_us(std::uint64_t current,
-                                  std::uint64_t previous,
-                                  std::uint64_t expected) {
-  const auto actual = current - previous;
-  return bounded_u32(actual > expected ? actual - expected : expected - actual);
+philcoino::peripherals::ThermocoupleReading read_startup_temperature(
+    philcoino::peripherals::Max6675& thermocouple) {
+  constexpr unsigned kMaximumStartupAttempts = 3U;
+  philcoino::peripherals::ThermocoupleReading reading{};
+  for (unsigned attempt = 1U; attempt <= kMaximumStartupAttempts; ++attempt) {
+    vTaskDelay(pdMS_TO_TICKS(
+        philcoino::peripherals::kMax6675SampleIntervalMs));
+    reading = thermocouple.read(uptime_ms());
+    if (reading.status ==
+        philcoino::peripherals::ThermocoupleStatus::kOk) {
+      ESP_LOGI(kLogTag,
+               "MAX6675 startup sample ready temperature=%.2fC raw=0x%04X "
+               "attempt=%u",
+               static_cast<double>(reading.temperature_c),
+               static_cast<unsigned>(reading.raw_frame), attempt);
+      return reading;
+    }
+    log_thermocouple_failure("startup", reading, attempt);
+  }
+  return reading;
 }
 
 class FreeRtosApiSynchronization final
@@ -65,37 +106,16 @@ class FreeRtosApiSynchronization final
       SemaphoreHandle_t workflow_mutex,
       philcoino::peripherals::FailOffPump& pump,
       philcoino::peripherals::FailOffSsr& heater,
-      std::atomic<bool>& fail_safe_requested,
-      philcoino::diagnostics::PerformanceDiagnostics* performance_diagnostics)
+      std::atomic<bool>& fail_safe_requested)
       : workflow_mutex_(workflow_mutex),
         pump_(pump),
         heater_(heater),
-        fail_safe_requested_(fail_safe_requested),
-        performance_diagnostics_(performance_diagnostics) {}
+        fail_safe_requested_(fail_safe_requested) {}
 
   bool lock(philcoino::networking::ApiDomain) override {
-    std::uint64_t started_us = 0;
-    if constexpr (philcoino::config::kPerformanceDiagnosticsEnabled) {
-      started_us = monotonic_us();
-    }
     if (workflow_mutex_ != nullptr &&
         xSemaphoreTake(workflow_mutex_, pdMS_TO_TICKS(50)) == pdTRUE) {
-      if constexpr (philcoino::config::kPerformanceDiagnosticsEnabled) {
-        performance_diagnostics_->record(
-            philcoino::diagnostics::DurationMetric::kWorkflowMutexWaitUs,
-            bounded_u32(monotonic_us() - started_us));
-        performance_diagnostics_->increment(
-            philcoino::diagnostics::EventCounter::kWorkflowMutexAcquired);
-        lock_acquired_us_ = monotonic_us();
-      }
       return true;
-    }
-    if constexpr (philcoino::config::kPerformanceDiagnosticsEnabled) {
-      performance_diagnostics_->record(
-          philcoino::diagnostics::DurationMetric::kWorkflowMutexWaitUs,
-          bounded_u32(monotonic_us() - started_us));
-      performance_diagnostics_->increment(
-          philcoino::diagnostics::EventCounter::kWorkflowMutexTimeout);
     }
     pump_.emergency_off();
     heater_.emergency_off();
@@ -105,11 +125,6 @@ class FreeRtosApiSynchronization final
 
   void unlock(philcoino::networking::ApiDomain) override {
     if (workflow_mutex_ != nullptr) {
-      if constexpr (philcoino::config::kPerformanceDiagnosticsEnabled) {
-        performance_diagnostics_->record(
-            philcoino::diagnostics::DurationMetric::kWorkflowMutexHoldUs,
-            bounded_u32(monotonic_us() - lock_acquired_us_));
-      }
       xSemaphoreGive(workflow_mutex_);
     }
   }
@@ -119,8 +134,61 @@ class FreeRtosApiSynchronization final
   philcoino::peripherals::FailOffPump& pump_;
   philcoino::peripherals::FailOffSsr& heater_;
   std::atomic<bool>& fail_safe_requested_;
-  philcoino::diagnostics::PerformanceDiagnostics* performance_diagnostics_;
-  std::uint64_t lock_acquired_us_{0};
+};
+
+class FailOffFirmwareUpdateSafety final
+    : public philcoino::networking::FirmwareUpdateSafety {
+ public:
+  FailOffFirmwareUpdateSafety(
+      philcoino::control::TemperatureController& temperature,
+      philcoino::control::ExtractionController& extraction,
+      philcoino::control::CooldownController& cooldown,
+      philcoino::control::ScaleController& scale,
+      philcoino::peripherals::FailOffPump& pump,
+      philcoino::peripherals::FailOffSsr& heater,
+      FreeRtosApiSynchronization& synchronization)
+      : temperature_(temperature),
+        extraction_(extraction),
+        cooldown_(cooldown),
+        scale_(scale),
+        pump_(pump),
+        heater_(heater),
+        synchronization_(synchronization) {}
+
+  philcoino::networking::FirmwareUpdateSafetyResult prepare(
+      std::uint32_t now_ms) override {
+    if (!synchronization_.lock(
+            philcoino::networking::ApiDomain::kExtraction)) {
+      return philcoino::networking::FirmwareUpdateSafetyResult::kOutputFailure;
+    }
+    const auto scale = scale_.snapshot(now_ms);
+    if (extraction_.active() || cooldown_.active() ||
+        temperature_.temperature_calibration_active() ||
+        scale.calibration_status ==
+            philcoino::control::ScaleCalibrationStatus::kCalibrating) {
+      synchronization_.unlock(
+          philcoino::networking::ApiDomain::kExtraction);
+      return philcoino::networking::FirmwareUpdateSafetyResult::kBusy;
+    }
+    const bool permission_disabled =
+        temperature_.set_heater_enabled(false, now_ms);
+    const bool heater_off = heater_.force_off();
+    const bool pump_off = pump_.force_off();
+    synchronization_.unlock(
+        philcoino::networking::ApiDomain::kExtraction);
+    return permission_disabled && heater_off && pump_off
+               ? philcoino::networking::FirmwareUpdateSafetyResult::kReady
+               : philcoino::networking::FirmwareUpdateSafetyResult::kOutputFailure;
+  }
+
+ private:
+  philcoino::control::TemperatureController& temperature_;
+  philcoino::control::ExtractionController& extraction_;
+  philcoino::control::CooldownController& cooldown_;
+  philcoino::control::ScaleController& scale_;
+  philcoino::peripherals::FailOffPump& pump_;
+  philcoino::peripherals::FailOffSsr& heater_;
+  FreeRtosApiSynchronization& synchronization_;
 };
 
 struct NetworkStartContext {
@@ -131,9 +199,12 @@ struct NetworkStartContext {
 
 void network_start_task(void* argument) {
   const auto* context = static_cast<const NetworkStartContext*>(argument);
-  if (!context->server->start(context->ssid, context->password)) {
+  std::uint32_t retry_delay_ms = 1000U;
+  while (!context->server->start(context->ssid, context->password)) {
     ESP_LOGE(kLogTag,
-             "Network API startup failed; temperature control remains active");
+             "Secure network API startup failed; retrying while temperature control remains active");
+    vTaskDelay(pdMS_TO_TICKS(retry_delay_ms));
+    retry_delay_ms = std::min<std::uint32_t>(retry_delay_ms * 2U, 30'000U);
   }
   vTaskDelete(nullptr);
 }
@@ -147,9 +218,7 @@ struct WorkflowTaskContext {
   std::atomic<bool>* fail_safe_requested;
   FreeRtosApiSynchronization* synchronization;
   philcoino::control::ScaleController* scale;
-  philcoino::networking::WeightedTraceBuffer* weighted_trace;
   philcoino::networking::ExtractionTelemetryBuffer* extraction_telemetry;
-  philcoino::diagnostics::PerformanceDiagnostics* performance_diagnostics;
 };
 
 philcoino::control::CooldownInput cooldown_input(
@@ -168,31 +237,13 @@ philcoino::control::CooldownInput cooldown_input(
 void workflow_control_task(void* argument) {
   auto* context = static_cast<WorkflowTaskContext*>(argument);
   TickType_t last_wake = xTaskGetTickCount();
-  std::uint64_t previous_started_us = 0;
   while (true) {
-    std::uint64_t started_us = 0;
-    if constexpr (philcoino::config::kPerformanceDiagnosticsEnabled) {
-      started_us = monotonic_us();
-      if (previous_started_us != 0U) {
-        context->performance_diagnostics->record(
-            philcoino::diagnostics::DurationMetric::kWorkflowPeriodDeviationUs,
-            period_deviation_us(started_us, previous_started_us, 10'000U));
-      }
-      previous_started_us = started_us;
-    }
     if (!context->synchronization->lock(
             philcoino::networking::ApiDomain::kExtraction)) {
       context->pump->force_off();
       context->heater->force_off();
       ESP_LOGE(kLogTag,
                "Workflow synchronization deadline missed; output-off commands issued");
-      if constexpr (philcoino::config::kPerformanceDiagnosticsEnabled) {
-        context->performance_diagnostics->increment(
-            philcoino::diagnostics::EventCounter::kWorkflowDeadlineMiss);
-        context->performance_diagnostics->record(
-            philcoino::diagnostics::DurationMetric::kWorkflowWorkUs,
-            bounded_u32(monotonic_us() - started_us));
-      }
       xTaskDelayUntil(&last_wake, pdMS_TO_TICKS(10));
       continue;
     }
@@ -201,7 +252,6 @@ void workflow_control_task(void* argument) {
     philcoino::control::ExtractionSnapshot trace_extraction{};
     philcoino::control::ScaleSnapshot trace_scale{};
     philcoino::control::WeightExtractionSnapshot trace_weight{};
-    bool capture_trace = false;
     bool capture_telemetry = false;
     bool trace_scale_copied = false;
     auto extraction_result =
@@ -245,11 +295,6 @@ void workflow_control_task(void* argument) {
       trace_scale = context->scale->snapshot(now_ms);
     }
     trace_weight = context->extraction->weight_snapshot(trace_scale, now_ms);
-    if (!context->cooldown->active()) {
-      capture_trace = (trace_weight.active || trace_weight.terminal) &&
-                      context->weighted_trace->capture_due(
-                          now_ms, trace_weight.extraction_id);
-    }
     capture_telemetry =
         (!trace_extraction.extraction_id.empty() &&
          (trace_extraction.status ==
@@ -258,15 +303,11 @@ void workflow_control_task(void* argument) {
               philcoino::control::ExtractionOutcome::kNone)) &&
         context->extraction_telemetry->capture_due(
             now_ms, trace_extraction.extraction_id);
-    if (capture_trace || capture_telemetry) {
+    if (capture_telemetry) {
       trace_machine = context->temperature->snapshot(now_ms);
     }
     context->synchronization->unlock(
         philcoino::networking::ApiDomain::kExtraction);
-    if (capture_trace) {
-      context->weighted_trace->record(now_ms, trace_machine, trace_extraction,
-                                      trace_scale, trace_weight);
-    }
     if (capture_telemetry) {
       context->extraction_telemetry->record(
           now_ms, trace_machine, trace_extraction, trace_scale, trace_weight);
@@ -280,11 +321,6 @@ void workflow_control_task(void* argument) {
       ESP_LOGE(kLogTag,
                "Cooldown output or input failed; output-off commands issued and fault latched");
     }
-    if constexpr (philcoino::config::kPerformanceDiagnosticsEnabled) {
-      context->performance_diagnostics->record(
-          philcoino::diagnostics::DurationMetric::kWorkflowWorkUs,
-          bounded_u32(monotonic_us() - started_us));
-    }
     xTaskDelayUntil(&last_wake, pdMS_TO_TICKS(10));
   }
 }
@@ -294,7 +330,6 @@ struct ScaleTaskContext {
   philcoino::peripherals::EspHx711ReadyWaiter* ready_waiter;
   philcoino::control::ScaleController* scale;
   FreeRtosApiSynchronization* synchronization;
-  philcoino::diagnostics::PerformanceDiagnostics* performance_diagnostics;
 };
 
 void scale_sample_task(void* argument) {
@@ -302,49 +337,16 @@ void scale_sample_task(void* argument) {
   if (!context->ready_waiter->initialize_for_current_task()) {
     ESP_LOGW(
         kLogTag,
-        "HX711 data-ready interrupt initialization failed; weighted extraction remains blocked");
-    if (context->synchronization->lock(
-            philcoino::networking::ApiDomain::kExtraction)) {
-      context->scale->update(
-          {philcoino::peripherals::Hx711Status::kTransportError, 0},
-          uptime_ms());
-      context->synchronization->unlock(
-          philcoino::networking::ApiDomain::kExtraction);
-    }
-    while (true) {
-      vTaskDelay(pdMS_TO_TICKS(
-          philcoino::config::kScaleUnavailableTimeoutMs));
-    }
+        "HX711 data-ready interrupt unavailable; using 10 ms polling fallback");
   }
   auto last_usable_sample_ms = uptime_ms();
-  std::uint64_t previous_started_us = 0;
   bool usable_sample_received = false;
   bool unavailable_reported = false;
   while (true) {
-    std::uint64_t started_us = 0;
-    if constexpr (philcoino::config::kPerformanceDiagnosticsEnabled) {
-      started_us = monotonic_us();
-      if (previous_started_us != 0U) {
-        context->performance_diagnostics->record(
-            philcoino::diagnostics::DurationMetric::kScalePeriodDeviationUs,
-            period_deviation_us(started_us, previous_started_us, 10'000U));
-      }
-      previous_started_us = started_us;
-    }
     const auto reading = context->acquisition->acquire(
         philcoino::config::kScaleUnavailableTimeoutMs);
     const auto now_ms = uptime_ms();
-    if constexpr (philcoino::config::kPerformanceDiagnosticsEnabled) {
-      if (reading.status == philcoino::peripherals::Hx711Status::kNotReady) {
-        context->performance_diagnostics->increment(
-            philcoino::diagnostics::EventCounter::kScaleNotReady);
-      }
-    }
     if (reading.status == philcoino::peripherals::Hx711Status::kOk) {
-      if constexpr (philcoino::config::kPerformanceDiagnosticsEnabled) {
-        context->performance_diagnostics->increment(
-            philcoino::diagnostics::EventCounter::kScaleAcceptedSample);
-      }
       last_usable_sample_ms = now_ms;
       if (!usable_sample_received) {
         ESP_LOGI(kLogTag, "HX711 samples ready: DT=GPIO%" PRId32
@@ -389,116 +391,6 @@ void scale_sample_task(void* argument) {
             philcoino::networking::ApiDomain::kExtraction);
       }
     }
-    if constexpr (philcoino::config::kPerformanceDiagnosticsEnabled) {
-      context->performance_diagnostics->record(
-          philcoino::diagnostics::DurationMetric::kScaleWorkUs,
-          bounded_u32(monotonic_us() - started_us));
-    }
-  }
-}
-
-void report_performance_diagnostics(
-    philcoino::diagnostics::PerformanceDiagnostics& diagnostics,
-    TaskHandle_t temperature_task, TaskHandle_t workflow_task,
-    TaskHandle_t scale_task, philcoino::peripherals::FailOffSsr& heater) {
-  using philcoino::diagnostics::DurationMetric;
-  using philcoino::diagnostics::EventCounter;
-  using philcoino::diagnostics::StackRole;
-
-  diagnostics.observe_stack_free(
-      StackRole::kTemperature,
-      static_cast<std::uint32_t>(
-          uxTaskGetStackHighWaterMark(temperature_task)));
-  diagnostics.observe_stack_free(
-      StackRole::kWorkflow,
-      static_cast<std::uint32_t>(uxTaskGetStackHighWaterMark(workflow_task)));
-  if (scale_task != nullptr) {
-    diagnostics.observe_stack_free(
-        StackRole::kScale,
-        static_cast<std::uint32_t>(uxTaskGetStackHighWaterMark(scale_task)));
-  }
-  diagnostics.observe_stack_free(
-      StackRole::kDiagnostics,
-      static_cast<std::uint32_t>(uxTaskGetStackHighWaterMark(nullptr)));
-  static bool lease_trip_recorded = false;
-  if (!lease_trip_recorded && heater.safety_cutoff_tripped()) {
-    diagnostics.increment(EventCounter::kHeaterLeaseTripObserved);
-    lease_trip_recorded = true;
-  }
-
-  const auto snapshot = diagnostics.snapshot();
-  const auto counter = [&snapshot](EventCounter value) {
-    return snapshot.counters[static_cast<std::size_t>(value)];
-  };
-  const auto maximum = [&snapshot](DurationMetric value) {
-    return snapshot.durations[static_cast<std::size_t>(value)].maximum;
-  };
-  const auto stack = [&snapshot](StackRole value) {
-    return snapshot
-        .minimum_stack_free_bytes[static_cast<std::size_t>(value)];
-  };
-
-  ESP_LOGI(
-      kLogTag,
-      "PERF bounded counters lock_ok=%" PRIu32 " lock_timeout=%" PRIu32
-      " deadline_miss=%" PRIu32 " scale_ok=%" PRIu32
-      " scale_not_ready=%" PRIu32 " api=%" PRIu32 " lease_trip=%" PRIu32,
-      counter(EventCounter::kWorkflowMutexAcquired),
-      counter(EventCounter::kWorkflowMutexTimeout),
-      counter(EventCounter::kWorkflowDeadlineMiss),
-      counter(EventCounter::kScaleAcceptedSample),
-      counter(EventCounter::kScaleNotReady),
-      counter(EventCounter::kApiRequest),
-      counter(EventCounter::kHeaterLeaseTripObserved));
-  ESP_LOGI(
-      kLogTag,
-      "PERF maxima_us workflow_jitter=%" PRIu32 " workflow_work=%" PRIu32
-      " scale_jitter=%" PRIu32 " scale_work=%" PRIu32
-      " temperature_lateness=%" PRIu32 " temperature_work=%" PRIu32
-      " mutex_wait=%" PRIu32 " mutex_hold=%" PRIu32
-      " api_latency=%" PRIu32 " api_heap_drop_bytes=%" PRIu32
-      " api_new_min_heap_drop_bytes=%" PRIu32,
-      maximum(DurationMetric::kWorkflowPeriodDeviationUs),
-      maximum(DurationMetric::kWorkflowWorkUs),
-      maximum(DurationMetric::kScalePeriodDeviationUs),
-      maximum(DurationMetric::kScaleWorkUs),
-      maximum(DurationMetric::kTemperaturePeriodDeviationUs),
-      maximum(DurationMetric::kTemperatureWorkUs),
-      maximum(DurationMetric::kWorkflowMutexWaitUs),
-      maximum(DurationMetric::kWorkflowMutexHoldUs),
-      maximum(DurationMetric::kApiLatencyUs),
-      maximum(DurationMetric::kApiHeapDecreaseBytes),
-      maximum(DurationMetric::kApiNewMinimumHeapDropBytes));
-  ESP_LOGI(
-      kLogTag,
-      "PERF resources heap_free=%u heap_min=%u largest_block=%u"
-      " stack_free_bytes temperature=%" PRIu32 " workflow=%" PRIu32
-      " scale=%" PRIu32 " http=%" PRIu32 " diagnostics=%" PRIu32,
-      static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)),
-      static_cast<unsigned>(
-          heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL)),
-      static_cast<unsigned>(
-          heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL)),
-      stack(StackRole::kTemperature), stack(StackRole::kWorkflow),
-      stack(StackRole::kScale), stack(StackRole::kHttp),
-      stack(StackRole::kDiagnostics));
-}
-
-struct PerformanceTaskContext {
-  philcoino::diagnostics::PerformanceDiagnostics* diagnostics;
-  TaskHandle_t temperature_task;
-  TaskHandle_t workflow_task;
-  TaskHandle_t scale_task;
-  philcoino::peripherals::FailOffSsr* heater;
-};
-
-void performance_diagnostics_task(void* argument) {
-  const auto* context = static_cast<const PerformanceTaskContext*>(argument);
-  while (true) {
-    vTaskDelay(pdMS_TO_TICKS(60'000U));
-    report_performance_diagnostics(
-        *context->diagnostics, context->temperature_task,
-        context->workflow_task, context->scale_task, *context->heater);
   }
 }
 
@@ -506,6 +398,8 @@ void performance_diagnostics_task(void* argument) {
 
 extern "C" void app_main() {
   using namespace philcoino::peripherals;
+
+  philcoino::networking::EspOtaBootValidationGuard ota_boot_validation;
 
   static EspGpioOutput pump_gpio(philcoino::config::kPumpGpio);
   static EspOutputCriticalSection pump_critical_section;
@@ -528,17 +422,6 @@ extern "C" void app_main() {
     return;
   }
 
-#ifdef CONFIG_PHILCOINO_PERFORMANCE_DIAGNOSTICS
-  static philcoino::diagnostics::PerformanceDiagnostics
-      performance_diagnostics_storage;
-  auto* const performance_diagnostics = &performance_diagnostics_storage;
-  ESP_LOGI(kLogTag, "Bounded performance diagnostics enabled reset_reason=%d",
-           static_cast<int>(esp_reset_reason()));
-#else
-  philcoino::diagnostics::PerformanceDiagnostics* const
-      performance_diagnostics = nullptr;
-#endif
-
   std::array<std::uint8_t, 6> station_mac{};
   if (esp_read_mac(station_mac.data(), ESP_MAC_WIFI_STA) != ESP_OK) {
     ESP_LOGE(kLogTag, "Failed to read station MAC");
@@ -551,12 +434,16 @@ extern "C" void app_main() {
   ESP_LOGI(kLogTag, "%s firmware %s booted as %s",
            philcoino::config::kFriendlyName,
            philcoino::config::kFirmwareVersion, device_id.c_str());
+#ifdef CONFIG_PHILCOINO_RAW_TEMPERATURE_LOGGING
+  ESP_LOGW(kLogTag,
+           "Raw temperature serial logging enabled; diagnostic output can affect task timing");
+#endif
 
   if (!philcoino::config::kWifiEnabled) {
     ESP_LOGW(kLogTag, "Wi-Fi disabled for low-voltage sensor diagnosis");
   } else if (!secrets_are_configured()) {
     ESP_LOGW(kLogTag,
-             "Wi-Fi and bearer-token secrets are not configured; values are never logged");
+             "Wi-Fi credentials or the eight-digit pairing code are not configured; values are never logged");
   }
   static EspNvsTargetBackend nvs_backend;
   if (!nvs_backend.initialize()) {
@@ -640,8 +527,7 @@ extern "C" void app_main() {
   }
   static std::atomic<bool> fail_safe_requested{false};
   static FreeRtosApiSynchronization synchronization(
-      workflow_mutex, pump, ssr, fail_safe_requested,
-      performance_diagnostics);
+      workflow_mutex, pump, ssr, fail_safe_requested);
 
   static EspNvsScaleCalibrationBackend scale_calibration_backend;
   const bool scale_storage_ready = scale_calibration_backend.initialize();
@@ -680,8 +566,8 @@ extern "C" void app_main() {
   }
   static Max6675 thermocouple(max6675_transport, uptime_ms());
 
-  vTaskDelay(pdMS_TO_TICKS(kMax6675SampleIntervalMs));
-  auto snapshot = controller.update(thermocouple.read(uptime_ms()), uptime_ms());
+  const auto startup_temperature = read_startup_temperature(thermocouple);
+  auto snapshot = controller.update(startup_temperature, uptime_ms());
 
   std::array<char, 33> boot_id{};
   std::snprintf(boot_id.data(), boot_id.size(),
@@ -690,19 +576,16 @@ extern "C" void app_main() {
                 static_cast<unsigned long>(esp_random()),
                 static_cast<unsigned long>(esp_random()),
                 static_cast<unsigned long>(esp_random()));
-  static philcoino::networking::WeightedTraceBuffer weighted_trace(
-      boot_id.data());
   static philcoino::networking::ExtractionTelemetryBuffer extraction_telemetry(
       boot_id.data());
 
   static WorkflowTaskContext workflow_context{
       &controller, &extraction_controller, &cooldown_controller,
       &pump, &ssr, &fail_safe_requested, &synchronization, &scale_controller,
-      &weighted_trace, &extraction_telemetry, performance_diagnostics};
-  TaskHandle_t workflow_task = nullptr;
+      &extraction_telemetry};
   if (xTaskCreate(workflow_control_task, "philcoino-workflow", 4096,
                   &workflow_context, configMAX_PRIORITIES - 2,
-                  &workflow_task) != pdPASS) {
+                  nullptr) != pdPASS) {
     ESP_LOGE(kLogTag, "Workflow controller task creation failed");
     pump.force_off();
     ssr.force_off();
@@ -711,12 +594,11 @@ extern "C" void app_main() {
 
   static ScaleTaskContext scale_context{
       &hx711_acquisition, &hx711_ready_waiter, &scale_controller,
-      &synchronization, performance_diagnostics};
-  TaskHandle_t scale_task = nullptr;
+      &synchronization};
   if (hx711_initialized &&
       xTaskCreate(scale_sample_task, "philcoino-scale", 3072,
                   &scale_context, configMAX_PRIORITIES - 3,
-                  &scale_task) != pdPASS) {
+                  nullptr) != pdPASS) {
     ESP_LOGW(kLogTag,
              "Scale sampling task creation failed; weighted extraction remains blocked");
   }
@@ -727,65 +609,93 @@ extern "C" void app_main() {
       philcoino::config::kDeviceModel,
       philcoino::config::kFirmwareVersion,
   };
+  static philcoino::networking::EspTlsIdentity tls_identity;
+  static philcoino::networking::EspPairingCrypto pairing_crypto;
+  static philcoino::networking::NvsPairingStorage pairing_storage;
+  static philcoino::networking::EspPairingSrpFactory pairing_srp_factory(
+      CONFIG_PHILCOINO_PAIRING_CODE);
+  const bool network_requested =
+      philcoino::config::kWifiEnabled && secrets_are_configured();
+  const bool identity_ready =
+      network_requested && tls_identity.initialize(device_id.c_str());
+  if (network_requested && !identity_ready) {
+    ESP_LOGE(kLogTag,
+             "Secure network identity initialization failed; API remains offline");
+  }
+  static philcoino::networking::PairingService pairing(
+      identity, CONFIG_PHILCOINO_PAIRING_CODE, tls_identity.spki_sha256(),
+      pairing_crypto, pairing_storage, pairing_srp_factory);
+  const bool pairing_ready = identity_ready && pairing.initialize();
+  if (identity_ready && !pairing_ready) {
+    ESP_LOGE(kLogTag,
+             "Pairing credential storage initialization failed; API remains offline");
+  }
+  const bool secure_network_ready = network_requested && pairing_ready;
   static philcoino::networking::FirmwareApi api(
-      identity, CONFIG_PHILCOINO_BEARER_TOKEN, controller, target_storage,
+      identity, pairing, controller, target_storage,
       temperature_calibration_storage, extraction_controller,
       cooldown_controller, scale_calibration_storage,
-      synchronization, &scale_controller, &weighted_trace,
-      &steam_control_settings_storage);
+      synchronization, &scale_controller,
+      &steam_control_settings_storage, boot_id.data());
+  static FailOffFirmwareUpdateSafety firmware_update_safety(
+      controller, extraction_controller, cooldown_controller,
+      scale_controller, pump, ssr, synchronization);
+  static philcoino::networking::EspOtaUpdateBackend firmware_update_backend;
+  static philcoino::networking::FirmwareUpdateCoordinator firmware_update(
+      firmware_update_safety, firmware_update_backend);
   static philcoino::networking::EspNetworkServer network(
-      api, identity, performance_diagnostics, &extraction_telemetry);
+      api, identity, tls_identity, &extraction_telemetry, &firmware_update);
   static const NetworkStartContext network_context{
       &network,
       CONFIG_PHILCOINO_WIFI_SSID,
       CONFIG_PHILCOINO_WIFI_PASSWORD,
   };
-  if (philcoino::config::kWifiEnabled && secrets_are_configured() &&
-      xTaskCreate(network_start_task, "philcoino-network", 6144,
-                  const_cast<NetworkStartContext*>(&network_context), 5,
-                  nullptr) != pdPASS) {
-    ESP_LOGE(kLogTag,
-             "Network startup task creation failed; temperature control remains active");
-  }
-
-  TaskHandle_t temperature_task = nullptr;
-  if constexpr (philcoino::config::kPerformanceDiagnosticsEnabled) {
-    temperature_task = xTaskGetCurrentTaskHandle();
-    static PerformanceTaskContext performance_context{
-        performance_diagnostics, temperature_task, workflow_task, scale_task,
-        &ssr};
-    if (xTaskCreate(performance_diagnostics_task, "philcoino-perf", 3072,
-                    &performance_context, 2, nullptr) != pdPASS) {
-      ESP_LOGW(kLogTag,
-               "Performance diagnostics reporter task could not be started");
+  bool network_task_started = false;
+  if (secure_network_ready) {
+    network_task_started =
+        xTaskCreate(network_start_task, "philcoino-network", 6144,
+                    const_cast<NetworkStartContext*>(&network_context), 5,
+                    nullptr) == pdPASS;
+    if (!network_task_started) {
+      ESP_LOGE(kLogTag,
+               "Network startup task creation failed; temperature control remains active");
     }
   }
+  if (ota_boot_validation.pending() &&
+      (!secure_network_ready || !network_task_started)) {
+    ESP_LOGE(kLogTag,
+             "OTA image cannot restore the secure update service; rollback requested");
+    pump.force_off();
+    ssr.force_off();
+    return;
+  }
+  if (!ota_boot_validation.confirm()) {
+    ESP_LOGE(kLogTag, "OTA image validation state could not be confirmed");
+    pump.force_off();
+    ssr.force_off();
+    return;
+  }
+
+  // app_main otherwise keeps ESP-IDF's low main-task priority. Temperature
+  // acquisition and heater-lease refresh must preempt TLS/Wi-Fi work when the
+  // 500 ms control period becomes runnable.
+  vTaskPrioritySet(nullptr, configMAX_PRIORITIES - 1);
   const TickType_t temperature_period_ticks =
       pdMS_TO_TICKS(kMax6675SampleIntervalMs);
   TickType_t temperature_last_wake = xTaskGetTickCount();
   while (true) {
     xTaskDelayUntil(&temperature_last_wake, temperature_period_ticks);
     const auto temperature_woke_at = xTaskGetTickCount();
-    const auto temperature_lateness_ticks =
-        philcoino::diagnostics::fixed_period_lateness_ticks(
-            static_cast<std::uint32_t>(temperature_woke_at),
-            static_cast<std::uint32_t>(temperature_last_wake));
-    temperature_last_wake = static_cast<TickType_t>(
-        philcoino::diagnostics::fixed_period_catch_up_deadline(
-            static_cast<std::uint32_t>(temperature_last_wake),
-            static_cast<std::uint32_t>(temperature_woke_at),
-            static_cast<std::uint32_t>(temperature_period_ticks)));
-    std::uint64_t temperature_started_us = 0;
-    if constexpr (philcoino::config::kPerformanceDiagnosticsEnabled) {
-      temperature_started_us = monotonic_us();
-      performance_diagnostics->record(
-          philcoino::diagnostics::DurationMetric::
-              kTemperaturePeriodDeviationUs,
-          bounded_u32(
-              static_cast<std::uint64_t>(temperature_lateness_ticks) *
-              portTICK_PERIOD_MS * 1000U));
+    const auto lateness_ticks = static_cast<std::int32_t>(
+        temperature_woke_at - temperature_last_wake);
+    if (lateness_ticks > 0 && temperature_period_ticks > 0) {
+      temperature_last_wake += static_cast<TickType_t>(
+          lateness_ticks / temperature_period_ticks) * temperature_period_ticks;
     }
     const auto reading = thermocouple.read(uptime_ms());
+    if (reading.status != ThermocoupleStatus::kOk) {
+      log_thermocouple_failure("runtime", reading);
+    }
     if (!synchronization.lock(philcoino::networking::ApiDomain::kTemperature)) {
       pump.force_off();
       ssr.force_off();
@@ -807,10 +717,14 @@ extern "C" void app_main() {
     }
     snapshot = controller.update(reading, pump.command(), uptime_ms());
     synchronization.unlock(philcoino::networking::ApiDomain::kTemperature);
-    if constexpr (philcoino::config::kPerformanceDiagnosticsEnabled) {
-      performance_diagnostics->record(
-          philcoino::diagnostics::DurationMetric::kTemperatureWorkUs,
-          bounded_u32(monotonic_us() - temperature_started_us));
+#ifdef CONFIG_PHILCOINO_RAW_TEMPERATURE_LOGGING
+    if (reading.status == ThermocoupleStatus::kOk &&
+        std::isfinite(reading.temperature_c)) {
+      ESP_LOGI(kLogTag,
+               "MAX6675 runtime sample raw_temperature_c=%.2f raw_frame=0x%04X",
+               static_cast<double>(reading.temperature_c),
+               static_cast<unsigned>(reading.raw_frame));
     }
+#endif
   }
 }

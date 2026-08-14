@@ -86,6 +86,7 @@ export function useTemperatureHistory(
       extraction,
       Date.now(),
     );
+    if (sample === null) return;
     const current = generation.current;
     const operation = queue.current.then(async () => {
       await repository.append(sample);

@@ -110,7 +110,8 @@ export function machineActivityLabel(snapshot: MachineState): string {
     return translate("viewModel.status.heating");
   }
 
-  return boilerTemperatureC(snapshot) > boilerTargetC(snapshot) + 1
+  const temperatureC = boilerTemperatureC(snapshot);
+  return temperatureC !== null && temperatureC > boilerTargetC(snapshot) + 1
     ? translate("viewModel.status.cooling")
     : translate("viewModel.status.stabilizing");
 }
@@ -161,7 +162,7 @@ export function steamCountdownContext(snapshot: MachineState): string {
   return translate("viewModel.availableInSteam");
 }
 
-export function boilerTemperatureC(sample: MachineState): number {
+export function boilerTemperatureC(sample: MachineState): number | null {
   return sample.boilerTemperatureC;
 }
 

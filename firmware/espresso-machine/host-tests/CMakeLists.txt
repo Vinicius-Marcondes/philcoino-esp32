@@ -45,7 +45,6 @@ add_executable(
   control_test
   control_test.cpp
   ../components/control/src/control.cpp
-  ../components/control/src/brew_pi.cpp
   ../components/peripherals/src/peripherals.cpp
 )
 
@@ -60,63 +59,6 @@ target_compile_features(control_test PRIVATE cxx_std_17)
 target_compile_options(control_test PRIVATE -Wall -Wextra -Werror)
 
 add_test(NAME control_test COMMAND control_test)
-
-add_executable(
-  brew_pi_test
-  brew_pi_test.cpp
-  ../components/control/src/brew_pi.cpp
-)
-
-target_include_directories(
-  brew_pi_test
-  PRIVATE
-    ../components/control/include
-    ../components/firmware_config/include
-)
-target_compile_features(brew_pi_test PRIVATE cxx_std_17)
-target_compile_options(brew_pi_test PRIVATE -Wall -Wextra -Werror)
-
-add_test(NAME brew_pi_test COMMAND brew_pi_test)
-
-function(add_controller_authority_test target)
-  add_executable(
-    ${target}
-    controller_authority_test.cpp
-    ../components/control/src/control.cpp
-    ../components/control/src/brew_pi.cpp
-    ../components/peripherals/src/peripherals.cpp
-  )
-  target_include_directories(
-    ${target}
-    PRIVATE
-      ../components/control/include
-      ../components/peripherals/include
-      ../components/firmware_config/include
-  )
-  target_compile_features(${target} PRIVATE cxx_std_17)
-  target_compile_options(${target} PRIVATE -Wall -Wextra -Werror)
-  add_test(NAME ${target} COMMAND ${target})
-endfunction()
-
-add_controller_authority_test(controller_authority_legacy_test)
-add_controller_authority_test(controller_authority_pi_test)
-target_compile_definitions(
-  controller_authority_pi_test
-  PRIVATE CONFIG_PHILCOINO_BREW_PI_CONTROL=1
-)
-
-add_executable(resource_budget_test resource_budget_test.cpp)
-target_include_directories(
-  resource_budget_test
-  PRIVATE
-    ../components/networking/include
-    ../components/control/include
-    ../components/peripherals/include
-    ../components/firmware_config/include
-)
-target_compile_features(resource_budget_test PRIVATE cxx_std_17)
-target_compile_options(resource_budget_test PRIVATE -Wall -Wextra -Werror)
-add_test(NAME resource_budget_test COMMAND resource_budget_test)
 
 add_executable(
   extraction_telemetry_test
@@ -136,6 +78,38 @@ target_compile_options(extraction_telemetry_test PRIVATE -Wall -Wextra -Werror)
 add_test(NAME extraction_telemetry_test COMMAND extraction_telemetry_test)
 
 add_executable(
+  firmware_update_test
+  firmware_update_test.cpp
+  ../components/networking/src/firmware_update.cpp
+)
+target_include_directories(
+  firmware_update_test
+  PRIVATE ../components/networking/include
+)
+target_compile_features(firmware_update_test PRIVATE cxx_std_17)
+target_compile_options(firmware_update_test PRIVATE -Wall -Wextra -Werror)
+add_test(NAME firmware_update_test COMMAND firmware_update_test)
+
+add_executable(
+  pairing_test
+  pairing_test.cpp
+  ../components/networking/src/pairing.cpp
+  ../components/networking/src/api_codec.cpp
+  ../components/networking/src/api_json.cpp
+)
+target_include_directories(
+  pairing_test
+  PRIVATE
+    ../components/networking/include
+    ../components/control/include
+    ../components/peripherals/include
+    ../components/firmware_config/include
+)
+target_compile_features(pairing_test PRIVATE cxx_std_17)
+target_compile_options(pairing_test PRIVATE -Wall -Wextra -Werror)
+add_test(NAME pairing_test COMMAND pairing_test)
+
+add_executable(
   firmware_api_test
   firmware_api_test.cpp
   ../components/networking/src/api.cpp
@@ -143,11 +117,10 @@ add_executable(
   ../components/networking/src/api_json.cpp
   ../components/networking/src/api_machine_codec.cpp
   ../components/networking/src/api_routes.cpp
-    ../components/networking/src/api_workflow_codec.cpp
-    ../components/networking/src/extraction_telemetry.cpp
-  ../components/networking/src/weighted_trace.cpp
+  ../components/networking/src/api_workflow_codec.cpp
+  ../components/networking/src/extraction_telemetry.cpp
+  ../components/networking/src/pairing.cpp
   ../components/control/src/control.cpp
-  ../components/control/src/brew_pi.cpp
   ../components/peripherals/src/peripherals.cpp
 )
 
@@ -171,9 +144,7 @@ set(
   ../components/networking/src/api_machine_codec.cpp
   ../components/networking/src/api_workflow_codec.cpp
   ../components/networking/src/extraction_telemetry.cpp
-  ../components/networking/src/weighted_trace.cpp
   ../components/control/src/control.cpp
-  ../components/control/src/brew_pi.cpp
   ../components/peripherals/src/peripherals.cpp
 )
 

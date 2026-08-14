@@ -5,6 +5,7 @@ import type {
   ExtractionState,
   MachineState,
   Mode,
+  ScaleState,
   TemperatureSettingsRequest,
   WeightControl,
 } from "@philcoino/protocol";
@@ -55,6 +56,7 @@ export interface MachineDashboardState {
   profileStorageError: string | null;
   profileWritePending: boolean;
   saveMobileProfiles: (profiles: ProfileSet) => Promise<boolean>;
+  scaleSnapshot: ScaleState | null;
   startExtraction: (
     selection: ExtractionSelection,
     weightControl?: WeightControl,
@@ -90,6 +92,7 @@ export function useMachineDashboard(
   const [modeMutation, setModeMutation] =
     useState<DashboardMutationState>(idleMutationState);
   const [snapshot, setSnapshot] = useState<MachineState | null>(null);
+  const [scaleSnapshot, setScaleSnapshot] = useState<ScaleState | null>(null);
   const [snapshotRevision, setSnapshotRevision] = useState(0);
   const [extraction, setExtraction] = useState<ExtractionState | null>(null);
   const [extractionStartMutation, setExtractionStartMutation] =
@@ -121,6 +124,7 @@ export function useMachineDashboard(
         },
         onSnapshotChange: (nextSnapshot) => {
           setSnapshot(nextSnapshot?.machine ?? null);
+          setScaleSnapshot(nextSnapshot?.scale ?? null);
           setExtraction(nextSnapshot?.extraction ?? null);
           setCompensation(nextSnapshot?.compensation ?? null);
           setCooldown(nextSnapshot?.cooldown ?? null);
@@ -152,6 +156,7 @@ export function useMachineDashboard(
         },
         onConnectionLost: (nextConnection) => {
           setSnapshot(null);
+          setScaleSnapshot(null);
           setExtraction(null);
           setCompensation(null);
           setCooldown(null);
@@ -336,6 +341,7 @@ export function useMachineDashboard(
     profileStorageError,
     profileWritePending,
     saveMobileProfiles,
+    scaleSnapshot,
     startExtraction,
     startCooldown,
     stopExtraction,

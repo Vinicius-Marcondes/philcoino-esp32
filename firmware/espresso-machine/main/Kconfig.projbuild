@@ -13,28 +13,21 @@ menu "PhilcoINO"
         help
             Stored only in the generated, ignored sdkconfig file. Never log it.
 
-    config PHILCOINO_BEARER_TOKEN
-        string "HTTP bearer token"
+    config PHILCOINO_PAIRING_CODE
+        string "Pairing code (exactly 8 digits)"
         default ""
         help
-            Stored only in the generated, ignored sdkconfig file. Never log it.
+            Unique provisioned eight-digit numeric code, including any leading
+            zeroes. Stored only in the generated, ignored sdkconfig file. The
+            build rejects values that are not exactly eight digits. Never log it.
 
-    config PHILCOINO_PERFORMANCE_DIAGNOSTICS
-        bool "Enable bounded performance diagnostics"
+    config PHILCOINO_RAW_TEMPERATURE_LOGGING
+        bool "Log raw boiler Celsius samples to the serial monitor"
         default n
         help
-            Enables fixed-allocation runtime counters and cold-path summary
-            logging for supervised performance measurement. Adds no public API
-            and remains disabled in normal builds.
-
-    config PHILCOINO_BREW_PI_CONTROL
-        bool "Use PI as Brew heater-duty authority"
-        default n
-        help
-            Disabled keeps the legacy nonlinear Brew curve authoritative while
-            PI runs in shadow diagnostics. Enabled makes PI the Brew requested-
-            duty authority through the existing ten-second SSR window. Steam,
-            faults, timeouts, cooldown, permission, lease, and fail-off
-            ownership remain unchanged.
+            Logs each valid, uncalibrated MAX6675 boiler sample at INFO level
+            after the temperature controller update completes. This diagnostic
+            option does not change control inputs or outputs. Keep it disabled
+            in normal builds because serial logging can affect task timing.
 
 endmenu

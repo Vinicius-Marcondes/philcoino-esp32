@@ -1,60 +1,26 @@
 import {
-  ApiV2ErrorResponseSchema,
-  CooldownActiveConflictResponseSchema,
-  DeviceResponseSchema,
-  ErrorResponseSchema,
-  ExtractionActiveConflictResponseSchema,
-  HeaterSettingsRequestSchema,
-  HeaterSettingsResponseSchema,
-  HealthResponseSchema,
-  MachineStateSchema,
-  MachineStateV2Schema,
-  ModeRequestSchema,
-  ModeResponseSchema,
-  OverTemperatureDismissResponseSchema,
-  StartCooldownRequestSchema,
-  StartCooldownResponseSchema,
-  StartExtractionRequestSchema,
-  StartExtractionResponseSchema,
-  SteamControlSettingsRequestSchema,
-  SteamControlStateSchema,
-  ScaleStateSchema,
-  ScaleTraceResponseSchema,
+  ApiErrorResponseSchema,
   CompleteScaleCalibrationRequestSchema,
-  StopExtractionResponseSchema,
-  StopCooldownResponseSchema,
-  TemperatureSettingsRequestSchema,
-  TemperatureSettingsResponseSchema,
+  ExtractionTelemetryCursorSchema,
+  HeaterSettingsRequestSchema,
+  HealthResponseSchema,
+  MachineStateV3Schema,
+  ModeRequestSchema,
+  SettingsRequestSchema,
+  StartCooldownRequestSchema,
+  StartExtractionRequestSchema,
   TemperatureCalibrationSessionRequestSchema,
-  TemperatureCalibrationStateSchema,
   UpdateTemperatureCalibrationCandidateRequestSchema,
-  type DeviceResponse,
+  type CompleteScaleCalibrationRequest,
   type ExtractionTelemetryCursor,
   type ExtractionTelemetryPage,
-  type HeaterSettingsRequest,
-  type HeaterSettingsResponse,
   type HealthResponse,
-  type MachineState,
-  type MachineStateV2,
+  type MachineStateV3,
   type ModeRequest,
-  type ModeResponse,
-  type OverTemperatureDismissResponse,
+  type SettingsRequest,
   type StartCooldownRequest,
-  type StartCooldownResponse,
   type StartExtractionRequest,
-  type StartExtractionResponse,
-  type SteamControlSettingsRequest,
-  type SteamControlState,
-  type ScaleState,
-  type ScaleTraceResponse,
-  type WeightedExtractionTraceCursor,
-  type CompleteScaleCalibrationRequest,
-  type StopExtractionResponse,
-  type StopCooldownResponse,
-  type TemperatureSettingsRequest,
-  type TemperatureSettingsResponse,
   type TemperatureCalibrationSessionRequest,
-  type TemperatureCalibrationState,
   type UpdateTemperatureCalibrationCandidateRequest,
 } from "@philcoino/protocol";
 
@@ -79,7 +45,7 @@ interface RuntimeSchema<T> {
 export interface DeviceFetchRequestInit {
   body?: string;
   headers: Record<string, string>;
-  method: "GET" | "PATCH" | "POST" | "PUT";
+  method: "DELETE" | "GET" | "PATCH" | "POST" | "PUT";
   signal: AbortSignal;
 }
 
@@ -96,10 +62,11 @@ export type FetchImplementation = (
 ) => Promise<DeviceFetchResponse>;
 
 export interface DeviceApiClientOptions {
-  address: string;
+  accessToken: string;
+  certificateSpkiSha256: string;
   fetch: FetchImplementation;
+  origin: string;
   timeoutMs?: number;
-  token?: string;
 }
 
 export interface RequestOptions {
@@ -107,89 +74,216 @@ export interface RequestOptions {
 }
 
 export class DeviceApiClient {
-  readonly address: string;
+  readonly origin: string;
 
+  private readonly accessToken: string;
+  private readonly certificateSpkiSha256: string;
   private readonly fetch: FetchImplementation;
   private readonly timeoutMs: number;
-  private readonly token?: string;
+  private acceptedBootId: string | null = null;
+  private acceptedRevision = -1;
 
   constructor(options: DeviceApiClientOptions) {
-    this.address = normalizeDeviceAddress(options.address);
+    this.origin = normalizeDeviceAddress(options.origin);
     this.timeoutMs = validateTimeout(options.timeoutMs ?? DEFAULT_TIMEOUT_MS);
-
-    if (options.token !== undefined && options.token.length === 0) {
-      throw new TypeError("The bearer token must not be empty.");
+    if (!/^[A-Za-z0-9_-]{43}$/u.test(options.accessToken)) {
+      throw new TypeError("The access token must be a 256-bit base64url value.");
     }
-
-    this.token = options.token;
+    if (!/^[A-Za-z0-9_-]{43}$/u.test(options.certificateSpkiSha256)) {
+      throw new TypeError("The certificate pin must be a SHA-256 base64url value.");
+    }
+    this.accessToken = options.accessToken;
+    this.certificateSpkiSha256 = options.certificateSpkiSha256;
     this.fetch = options.fetch;
   }
 
   getHealth(options: RequestOptions = {}): Promise<HealthResponse> {
-    return this.request("/healthz", HealthResponseSchema, {}, options);
+    return this.request("/healthz", HealthResponseSchema, "GET", undefined, options);
   }
 
-  getDevice(options: RequestOptions = {}): Promise<DeviceResponse> {
-    return this.request("/api/v1/device", DeviceResponseSchema, {}, options);
+  getState(options: RequestOptions = {}): Promise<MachineStateV3> {
+    return this.requestState("/api/v3/state", "GET", undefined, options);
   }
 
-  getState(options: RequestOptions = {}): Promise<MachineState> {
-    return this.request(
-      "/api/v1/state",
-      MachineStateSchema,
-      { authenticated: true },
-      options,
-    );
-  }
-
-  getStateV2(options: RequestOptions = {}): Promise<MachineStateV2> {
-    return this.request(
-      "/api/v2/state",
-      MachineStateV2Schema,
-      { authenticated: true, errorVersion: "v2" },
-      options,
-    );
-  }
-
-  getSteamControlSettings(
+  updateSettings(
+    settings: SettingsRequest,
     options: RequestOptions = {},
-  ): Promise<SteamControlState> {
-    return this.request(
-      "/api/v2/settings/steam-control",
-      SteamControlStateSchema,
-      { authenticated: true, errorVersion: "v2" },
+  ): Promise<MachineStateV3> {
+    const parsed = SettingsRequestSchema.safeParse(settings);
+    if (!parsed.success) {
+      throw new ApiClientError("invalid-request", "The settings request is invalid.");
+    }
+    return this.requestState(
+      "/api/v3/settings",
+      "PATCH",
+      parsed.data,
       options,
     );
   }
 
-  async updateSteamControlSettings(
-    request: SteamControlSettingsRequest,
+  updateTemperatureSettings(
+    settings: Pick<SettingsRequest, "brewTargetC" | "steamTargetC">,
     options: RequestOptions = {},
-  ): Promise<SteamControlState> {
-    const parsed = SteamControlSettingsRequestSchema.safeParse(request);
+  ): Promise<MachineStateV3> {
+    return this.updateSettings(settings, options);
+  }
+
+  updateSteamControlSettings(
+    steamControl: NonNullable<SettingsRequest["steamControl"]>,
+    options: RequestOptions = {},
+  ): Promise<MachineStateV3> {
+    return this.updateSettings({ steamControl }, options);
+  }
+
+  setMode(
+    request: ModeRequest,
+    options: RequestOptions = {},
+  ): Promise<MachineStateV3> {
+    const parsed = ModeRequestSchema.safeParse(request);
+    if (!parsed.success) {
+      throw new ApiClientError("invalid-request", "The mode request is invalid.");
+    }
+    return this.requestState("/api/v3/mode", "PUT", parsed.data, options);
+  }
+
+  setHeaterEnabled(
+    request: { enabled: boolean },
+    options: RequestOptions = {},
+  ): Promise<MachineStateV3> {
+    const parsed = HeaterSettingsRequestSchema.safeParse(request);
     if (!parsed.success) {
       throw new ApiClientError(
         "invalid-request",
-        "The steam-control settings request is invalid.",
+        "The heater permission request is invalid.",
       );
     }
-    return await this.request(
-      "/api/v2/settings/steam-control",
-      SteamControlStateSchema,
-      {
-        authenticated: true,
-        body: parsed.data,
-        errorVersion: "v2",
-        method: "PATCH",
-      },
+    return this.requestState(
+      "/api/v3/heater-permission",
+      "PUT",
+      parsed.data,
       options,
     );
   }
 
-  async startExtraction(
+  dismissOverTemperature(
+    options: RequestOptions = {},
+  ): Promise<MachineStateV3> {
+    return this.requestState(
+      "/api/v3/faults/over-temperature/dismiss",
+      "POST",
+      undefined,
+      options,
+    );
+  }
+
+  startTemperatureCalibration(
+    options: RequestOptions = {},
+  ): Promise<MachineStateV3> {
+    return this.requestState(
+      "/api/v3/temperature-calibrations/current",
+      "POST",
+      undefined,
+      options,
+    );
+  }
+
+  updateTemperatureCalibrationCandidate(
+    request: UpdateTemperatureCalibrationCandidateRequest,
+    options: RequestOptions = {},
+  ): Promise<MachineStateV3> {
+    const parsed =
+      UpdateTemperatureCalibrationCandidateRequestSchema.safeParse(request);
+    if (!parsed.success) {
+      throw new ApiClientError(
+        "invalid-request",
+        "The temperature calibration candidate is invalid.",
+      );
+    }
+    return this.requestState(
+      "/api/v3/temperature-calibrations/current",
+      "PATCH",
+      parsed.data,
+      options,
+    );
+  }
+
+  saveTemperatureCalibration(
+    request: TemperatureCalibrationSessionRequest,
+    options: RequestOptions = {},
+  ): Promise<MachineStateV3> {
+    return this.temperatureCalibrationMutation("PUT", request, options);
+  }
+
+  cancelTemperatureCalibration(
+    request: TemperatureCalibrationSessionRequest,
+    options: RequestOptions = {},
+  ): Promise<MachineStateV3> {
+    return this.temperatureCalibrationMutation("DELETE", request, options);
+  }
+
+  renewTemperatureCalibration(
+    request: TemperatureCalibrationSessionRequest,
+    options: RequestOptions = {},
+  ): Promise<MachineStateV3> {
+    return this.temperatureCalibrationMutation("POST", request, options, true);
+  }
+
+  startScaleCalibration(
+    options: RequestOptions = {},
+  ): Promise<MachineStateV3> {
+    return this.requestState(
+      "/api/v3/scale-calibrations/current",
+      "POST",
+      undefined,
+      options,
+    );
+  }
+
+  completeScaleCalibration(
+    request: CompleteScaleCalibrationRequest,
+    options: RequestOptions = {},
+  ): Promise<MachineStateV3> {
+    const parsed = CompleteScaleCalibrationRequestSchema.safeParse(request);
+    if (!parsed.success) {
+      throw new ApiClientError(
+        "invalid-request",
+        "The calibration reference weight is invalid.",
+      );
+    }
+    return this.requestState(
+      "/api/v3/scale-calibrations/current",
+      "PUT",
+      parsed.data,
+      options,
+    );
+  }
+
+  cancelScaleCalibration(
+    options: RequestOptions = {},
+  ): Promise<MachineStateV3> {
+    return this.requestState(
+      "/api/v3/scale-calibrations/current",
+      "DELETE",
+      undefined,
+      options,
+    );
+  }
+
+  acknowledgeScaleWarning(
+    options: RequestOptions = {},
+  ): Promise<MachineStateV3> {
+    return this.requestState(
+      "/api/v3/scale/warnings/acknowledge",
+      "POST",
+      undefined,
+      options,
+    );
+  }
+
+  startExtraction(
     request: StartExtractionRequest,
     options: RequestOptions = {},
-  ): Promise<StartExtractionResponse> {
+  ): Promise<MachineStateV3> {
     const parsed = StartExtractionRequestSchema.safeParse(request);
     if (!parsed.success) {
       throw new ApiClientError(
@@ -197,26 +291,47 @@ export class DeviceApiClient {
         "The extraction Start request is invalid.",
       );
     }
-    return await this.request(
-      "/api/v2/extractions/start",
-      StartExtractionResponseSchema,
-      {
-        authenticated: true,
-        body: parsed.data,
-        errorVersion: "v2",
-        method: "POST",
-      },
+    return this.requestState(
+      "/api/v3/extractions",
+      "POST",
+      parsed.data,
       options,
     );
   }
 
-  stopExtraction(
+  stopExtraction(options: RequestOptions = {}): Promise<MachineStateV3> {
+    return this.requestState(
+      "/api/v3/extractions/current",
+      "DELETE",
+      undefined,
+      options,
+    );
+  }
+
+  startCooldown(
+    request: StartCooldownRequest,
     options: RequestOptions = {},
-  ): Promise<StopExtractionResponse> {
-    return this.request(
-      "/api/v2/extractions/stop",
-      StopExtractionResponseSchema,
-      { authenticated: true, errorVersion: "v2", method: "POST" },
+  ): Promise<MachineStateV3> {
+    const parsed = StartCooldownRequestSchema.safeParse(request);
+    if (!parsed.success) {
+      throw new ApiClientError(
+        "invalid-request",
+        "The cooldown Start request is invalid.",
+      );
+    }
+    return this.requestState(
+      "/api/v3/cooldowns",
+      "POST",
+      parsed.data,
+      options,
+    );
+  }
+
+  stopCooldown(options: RequestOptions = {}): Promise<MachineStateV3> {
+    return this.requestState(
+      "/api/v3/cooldowns/current",
+      "DELETE",
+      undefined,
       options,
     );
   }
@@ -227,34 +342,35 @@ export class DeviceApiClient {
       onPage(page: ExtractionTelemetryPage): Promise<void> | void;
     },
   ): Promise<void> {
+    if (
+      cursor !== undefined &&
+      !ExtractionTelemetryCursorSchema.safeParse(cursor).success
+    ) {
+      throw new ApiClientError("invalid-request", "The telemetry cursor is invalid.");
+    }
     const query =
       cursor === undefined
         ? ""
         : `?extractionId=${encodeURIComponent(cursor.extractionId)}&bootId=${encodeURIComponent(cursor.bootId)}&afterSequence=${cursor.afterSequence}`;
-    const endpoint = `/api/v2/extractions/stream${query}`;
-    const controller = new AbortController();
-    const cancel = () => controller.abort();
-    options.signal?.addEventListener("abort", cancel, { once: true });
-    if (options.signal?.aborted) controller.abort();
+    const endpoint = `/api/v3/extractions/current/stream${query}`;
+    const abort = createRequestAbort(options.signal, this.timeoutMs);
     try {
-      const headers: Record<string, string> = { Accept: "text/event-stream" };
-      if (this.token !== undefined) {
-        headers.Authorization = `Bearer ${this.token}`;
-      }
-      const response = await this.fetch(`${this.address}${endpoint}`, {
-        headers,
+      const response = await this.fetch(`${this.origin}${endpoint}`, {
+        headers: {
+          Accept: "text/event-stream",
+          Authorization: `Bearer ${this.accessToken}`,
+          "X-Philcoino-SPKI-SHA256": this.certificateSpkiSha256,
+        },
         method: "GET",
-        signal: controller.signal,
+        signal: abort.controller.signal,
       });
-      if (!response.ok) {
-        await throwResponseError(response, "v2", endpoint);
-      }
+      abort.disableTimeout();
+      if (!response.ok) await throwResponseError(response, endpoint);
       if (response.body === undefined || response.body === null) {
-        throw new ApiClientError(
-          "protocol",
-          "The device did not return a readable telemetry stream.",
-          { endpoint, status: response.status },
-        );
+        throw new ApiClientError("protocol", "The telemetry stream has no body.", {
+          endpoint,
+          status: response.status,
+        });
       }
       const reader = response.body.getReader();
       const parser = new ExtractionSseParser();
@@ -262,307 +378,40 @@ export class DeviceApiClient {
         while (true) {
           const { done, value } = await reader.read();
           const pages = done ? parser.finish() : parser.push(value);
-          for (const page of pages) {
-            await options.onPage(page);
-          }
+          for (const page of pages) await options.onPage(page);
           if (done) return;
         }
       } finally {
         reader.releaseLock();
       }
     } catch (error) {
-      if (controller.signal.aborted) {
-        throw new ApiClientError(
-          "cancelled",
-          "The extraction telemetry stream was cancelled.",
-          { endpoint },
-        );
+      if (abort.controller.signal.aborted) {
+        throw abort.reason() === "timeout"
+          ? new ApiClientError("timeout", "The telemetry stream timed out.", {
+              endpoint,
+            })
+          : new ApiClientError("cancelled", "The telemetry stream was cancelled.", {
+              endpoint,
+            });
       }
       if (error instanceof ExtractionSseProtocolError) {
         throw new ApiClientError("protocol", error.message, { endpoint });
       }
       if (error instanceof ApiClientError) throw error;
-      throw new ApiClientError(
-        "offline",
-        "The extraction telemetry stream disconnected.",
-        { endpoint },
-      );
+      throw new ApiClientError("offline", "The telemetry stream disconnected.", {
+        endpoint,
+      });
     } finally {
-      options.signal?.removeEventListener("abort", cancel);
+      abort.dispose();
     }
   }
 
-  async startCooldown(
-    request: StartCooldownRequest,
-    options: RequestOptions = {},
-  ): Promise<StartCooldownResponse> {
-    const parsed = StartCooldownRequestSchema.safeParse(request);
-    if (!parsed.success) {
-      throw new ApiClientError(
-        "invalid-request",
-        "The cooldown Start request is invalid.",
-      );
-    }
-    return await this.request(
-      "/api/v2/cooldowns/start",
-      StartCooldownResponseSchema,
-      {
-        authenticated: true,
-        body: parsed.data,
-        errorVersion: "v2",
-        method: "POST",
-      },
-      options,
-    );
-  }
-
-  stopCooldown(options: RequestOptions = {}): Promise<StopCooldownResponse> {
-    return this.request(
-      "/api/v2/cooldowns/stop",
-      StopCooldownResponseSchema,
-      { authenticated: true, errorVersion: "v2", method: "POST" },
-      options,
-    );
-  }
-
-  getScale(options: RequestOptions = {}): Promise<ScaleState> {
-    return this.request(
-      "/api/v2/scale",
-      ScaleStateSchema,
-      { authenticated: true, errorVersion: "v2" },
-      options,
-    );
-  }
-
-  getScaleTrace(
-    cursor?: WeightedExtractionTraceCursor,
-    options: RequestOptions = {},
-  ): Promise<ScaleTraceResponse> {
-    const query =
-      cursor === undefined
-        ? ""
-        : `?extractionId=${encodeURIComponent(cursor.extractionId)}&bootId=${encodeURIComponent(cursor.bootId)}&afterSequence=${cursor.afterSequence}`;
-    return this.request(
-      `/api/v2/scale/trace${query}`,
-      ScaleTraceResponseSchema,
-      { authenticated: true, errorVersion: "v2" },
-      options,
-    );
-  }
-
-  startScaleCalibration(options: RequestOptions = {}): Promise<ScaleState> {
-    return this.request(
-      "/api/v2/scale/calibration/start",
-      ScaleStateSchema,
-      { authenticated: true, errorVersion: "v2", method: "POST" },
-      options,
-    );
-  }
-
-  async completeScaleCalibration(
-    request: CompleteScaleCalibrationRequest,
-    options: RequestOptions = {},
-  ): Promise<ScaleState> {
-    const parsed = CompleteScaleCalibrationRequestSchema.safeParse(request);
-    if (!parsed.success) {
-      throw new ApiClientError(
-        "invalid-request",
-        "The calibration reference weight is invalid.",
-      );
-    }
-    return await this.request(
-      "/api/v2/scale/calibration/complete",
-      ScaleStateSchema,
-      {
-        authenticated: true,
-        body: parsed.data,
-        errorVersion: "v2",
-        method: "POST",
-      },
-      options,
-    );
-  }
-
-  cancelScaleCalibration(options: RequestOptions = {}): Promise<ScaleState> {
-    return this.request(
-      "/api/v2/scale/calibration/cancel",
-      ScaleStateSchema,
-      { authenticated: true, errorVersion: "v2", method: "POST" },
-      options,
-    );
-  }
-
-  acknowledgeScaleWarning(options: RequestOptions = {}): Promise<ScaleState> {
-    return this.request(
-      "/api/v2/scale/warnings/acknowledge",
-      ScaleStateSchema,
-      { authenticated: true, errorVersion: "v2", method: "POST" },
-      options,
-    );
-  }
-
-  getTemperatureCalibration(
-    calibrationId?: string,
-    options: RequestOptions = {},
-  ): Promise<TemperatureCalibrationState> {
-    const query =
-      calibrationId === undefined
-        ? ""
-        : `?calibrationId=${encodeURIComponent(calibrationId)}`;
-    return this.request(
-      `/api/v2/temperature-calibration${query}`,
-      TemperatureCalibrationStateSchema,
-      { authenticated: true, errorVersion: "v2" },
-      options,
-    );
-  }
-
-  startTemperatureCalibration(
-    options: RequestOptions = {},
-  ): Promise<TemperatureCalibrationState> {
-    return this.request(
-      "/api/v2/temperature-calibration/start",
-      TemperatureCalibrationStateSchema,
-      { authenticated: true, errorVersion: "v2", method: "POST" },
-      options,
-    );
-  }
-
-  async updateTemperatureCalibrationCandidate(
-    request: UpdateTemperatureCalibrationCandidateRequest,
-    options: RequestOptions = {},
-  ): Promise<TemperatureCalibrationState> {
-    const parsed =
-      UpdateTemperatureCalibrationCandidateRequestSchema.safeParse(request);
-    if (!parsed.success) {
-      throw new ApiClientError(
-        "invalid-request",
-        "The temperature calibration candidate is invalid.",
-      );
-    }
-    return await this.request(
-      "/api/v2/temperature-calibration/candidate",
-      TemperatureCalibrationStateSchema,
-      {
-        authenticated: true,
-        body: parsed.data,
-        errorVersion: "v2",
-        method: "PUT",
-      },
-      options,
-    );
-  }
-
-  saveTemperatureCalibration(
-    request: TemperatureCalibrationSessionRequest,
-    options: RequestOptions = {},
-  ): Promise<TemperatureCalibrationState> {
-    return this.temperatureCalibrationSessionMutation(
-      "save",
-      request,
-      options,
-    );
-  }
-
-  cancelTemperatureCalibration(
-    request: TemperatureCalibrationSessionRequest,
-    options: RequestOptions = {},
-  ): Promise<TemperatureCalibrationState> {
-    return this.temperatureCalibrationSessionMutation(
-      "cancel",
-      request,
-      options,
-    );
-  }
-
-  async updateTemperatureSettings(
-    settings: TemperatureSettingsRequest,
-    options: RequestOptions = {},
-  ): Promise<TemperatureSettingsResponse> {
-    const parsed = TemperatureSettingsRequestSchema.safeParse(settings);
-    if (!parsed.success) {
-      throw new ApiClientError(
-        "invalid-request",
-        "The temperature settings request is invalid.",
-      );
-    }
-
-    return await this.request(
-      "/api/v1/settings/temperatures",
-      TemperatureSettingsResponseSchema,
-      {
-        authenticated: true,
-        body: parsed.data,
-        method: "PATCH",
-      },
-      options,
-    );
-  }
-
-  async setMode(
-    request: ModeRequest,
-    options: RequestOptions = {},
-  ): Promise<ModeResponse> {
-    const parsed = ModeRequestSchema.safeParse(request);
-    if (!parsed.success) {
-      throw new ApiClientError("invalid-request", "The mode request is invalid.");
-    }
-
-    return await this.request(
-      "/api/v1/mode",
-      ModeResponseSchema,
-      {
-        authenticated: true,
-        body: parsed.data,
-        method: "PUT",
-      },
-      options,
-    );
-  }
-
-  async setHeaterEnabled(
-    request: HeaterSettingsRequest,
-    options: RequestOptions = {},
-  ): Promise<HeaterSettingsResponse> {
-    const parsed = HeaterSettingsRequestSchema.safeParse(request);
-    if (!parsed.success) {
-      throw new ApiClientError(
-        "invalid-request",
-        "The heater permission request is invalid.",
-      );
-    }
-
-    return await this.request(
-      "/api/v1/heater",
-      HeaterSettingsResponseSchema,
-      {
-        authenticated: true,
-        body: parsed.data,
-        method: "PUT",
-      },
-      options,
-    );
-  }
-
-  dismissOverTemperature(
-    options: RequestOptions = {},
-  ): Promise<OverTemperatureDismissResponse> {
-    return this.request(
-      "/api/v1/faults/over-temperature/dismiss",
-      OverTemperatureDismissResponseSchema,
-      {
-        authenticated: true,
-        method: "POST",
-      },
-      options,
-    );
-  }
-
-  private async temperatureCalibrationSessionMutation(
-    operation: "cancel" | "save",
+  private temperatureCalibrationMutation(
+    method: "DELETE" | "POST" | "PUT",
     request: TemperatureCalibrationSessionRequest,
     options: RequestOptions,
-  ): Promise<TemperatureCalibrationState> {
+    lease = false,
+  ): Promise<MachineStateV3> {
     const parsed = TemperatureCalibrationSessionRequestSchema.safeParse(request);
     if (!parsed.success) {
       throw new ApiClientError(
@@ -570,262 +419,164 @@ export class DeviceApiClient {
         "The temperature calibration session is invalid.",
       );
     }
-    return await this.request(
-      `/api/v2/temperature-calibration/${operation}`,
-      TemperatureCalibrationStateSchema,
-      {
-        authenticated: true,
-        body: parsed.data,
-        errorVersion: "v2",
-        method: "POST",
-      },
+    return this.requestState(
+      lease
+        ? "/api/v3/temperature-calibrations/current/lease"
+        : "/api/v3/temperature-calibrations/current",
+      method,
+      parsed.data,
       options,
     );
+  }
+
+  private async requestState(
+    path: string,
+    method: DeviceFetchRequestInit["method"],
+    body: unknown,
+    options: RequestOptions,
+  ): Promise<MachineStateV3> {
+    const state = await this.request(
+      path,
+      MachineStateV3Schema,
+      method,
+      body,
+      options,
+    );
+    if (this.acceptedBootId === state.bootId) {
+      if (state.revision < this.acceptedRevision) {
+        throw new ApiClientError(
+          "protocol",
+          "The device returned an older state revision.",
+          { endpoint: path },
+        );
+      }
+    } else {
+      this.acceptedBootId = state.bootId;
+      this.acceptedRevision = -1;
+    }
+    this.acceptedRevision = state.revision;
+    return state;
   }
 
   private async request<T>(
     path: string,
     schema: RuntimeSchema<T>,
-    request: {
-      authenticated?: boolean;
-      body?: unknown;
-      errorVersion?: "v1" | "v2";
-      method?: "GET" | "PATCH" | "POST" | "PUT";
-    },
+    method: DeviceFetchRequestInit["method"],
+    body: unknown,
     options: RequestOptions,
   ): Promise<T> {
     const abort = createRequestAbort(options.signal, this.timeoutMs);
-
     try {
-      if (abort.controller.signal.aborted) {
-        throw new ApiClientError(
-          "cancelled",
-          "The device request was cancelled.",
-        );
-      }
-
-      const headers: Record<string, string> = { Accept: "application/json" };
-      if (request.authenticated && this.token !== undefined) {
-        headers.Authorization = `Bearer ${this.token}`;
-      }
-      if (request.body !== undefined) {
-        headers["Content-Type"] = "application/json";
-      }
-
-      const response = await this.fetch(`${this.address}${path}`, {
-        body:
-          request.body === undefined ? undefined : JSON.stringify(request.body),
+      const headers: Record<string, string> = {
+        Accept: "application/json",
+        Authorization: `Bearer ${this.accessToken}`,
+        "X-Philcoino-SPKI-SHA256": this.certificateSpkiSha256,
+      };
+      if (body !== undefined) headers["Content-Type"] = "application/json";
+      const response = await this.fetch(`${this.origin}${path}`, {
+        body: body === undefined ? undefined : JSON.stringify(body),
         headers,
-        method: request.method ?? "GET",
+        method,
         signal: abort.controller.signal,
       });
-
-      if (!response.ok) {
-        await throwResponseError(response, request.errorVersion ?? "v1", path);
+      if (!response.ok) await throwResponseError(response, path);
+      const parsed = schema.safeParse(await response.json());
+      if (!parsed.success) {
+        throw new ApiClientError(
+          "protocol",
+          "The device response does not match API v3.",
+          { endpoint: path, status: response.status },
+        );
       }
-
-      return await parseResponse(response, schema, path);
+      return parsed.data;
     } catch (error) {
-      if (abort.reason() === "timeout") {
-        throw new ApiClientError("timeout", "The device request timed out.");
+      if (abort.controller.signal.aborted) {
+        throw abort.reason() === "timeout"
+          ? new ApiClientError("timeout", "The device request timed out.", {
+              endpoint: path,
+            })
+          : new ApiClientError("cancelled", "The device request was cancelled.", {
+              endpoint: path,
+            });
       }
-      if (abort.reason() === "cancelled") {
-        throw new ApiClientError("cancelled", "The device request was cancelled.");
-      }
-      if (error instanceof ApiClientError) {
-        throw error;
-      }
-      throw new ApiClientError("offline", "The device could not be reached.");
+      if (error instanceof ApiClientError) throw error;
+      throw new ApiClientError("offline", "The device could not be reached.", {
+        endpoint: path,
+      });
     } finally {
       abort.dispose();
     }
   }
 }
 
-async function parseResponse<T>(
-  response: DeviceFetchResponse,
-  schema: RuntimeSchema<T>,
-  endpoint: string,
-): Promise<T> {
-  const body = await readJson(response, endpoint);
-  const parsed = schema.safeParse(body);
-  if (!parsed.success) {
-    throw new ApiClientError(
-      "protocol",
-      "The device returned an invalid response.",
-      {
-        endpoint,
-        issuePaths: protocolIssuePaths(parsed.error),
-        status: response.status,
-      },
-    );
-  }
-  return parsed.data;
-}
-
 async function throwResponseError(
   response: DeviceFetchResponse,
-  version: "v1" | "v2",
   endpoint: string,
 ): Promise<never> {
-  if (response.status === 404) {
-    throw new ApiClientError("not-found", "No Philcoino device was found.", {
+  let body: unknown;
+  try {
+    body = await response.json();
+  } catch {
+    throw new ApiClientError("http", "The device rejected the request.", {
       endpoint,
       status: response.status,
     });
   }
-
-  const body = await readJson(response, endpoint);
-  const parsed =
-    version === "v1"
-      ? ErrorResponseSchema.safeParse(body)
-      : parseV2ErrorResponse(body);
-  if (!parsed.success) {
+  const parsed = ApiErrorResponseSchema.safeParse(body);
+  if (parsed.success) {
     throw new ApiClientError(
-      "protocol",
-      "The device returned an invalid error response.",
+      parsed.data.error.code === "unauthorized" ? "unauthorized" : "http",
+      parsed.data.error.message,
       {
         endpoint,
-        issuePaths: protocolIssuePaths(parsed.error),
+        response: parsed.data,
         status: response.status,
       },
     );
   }
-
-  if (response.status === 401) {
-    if (parsed.data.error.code !== "unauthorized") {
-      throw new ApiClientError(
-        "protocol",
-        "The device returned an inconsistent authentication response.",
-        { endpoint, status: response.status },
-      );
-    }
-    throw new ApiClientError("unauthorized", "The bearer token was rejected.", {
-      endpoint,
-      response: parsed.data,
-      status: response.status,
-    });
-  }
-
   throw new ApiClientError("http", "The device rejected the request.", {
     endpoint,
-    response: parsed.data,
     status: response.status,
   });
-}
-
-function parseV2ErrorResponse(body: unknown) {
-  const cooldownConflict = CooldownActiveConflictResponseSchema.safeParse(body);
-  if (cooldownConflict.success) {
-    return cooldownConflict;
-  }
-  const activeConflict = ExtractionActiveConflictResponseSchema.safeParse(body);
-  if (activeConflict.success) {
-    return activeConflict;
-  }
-  return ApiV2ErrorResponseSchema.safeParse(body);
-}
-
-async function readJson(
-  response: DeviceFetchResponse,
-  endpoint: string,
-): Promise<unknown> {
-  try {
-    return await response.json();
-  } catch {
-    throw new ApiClientError(
-      "protocol",
-      "The device returned a non-JSON response.",
-      { endpoint, status: response.status },
-    );
-  }
-}
-
-function protocolIssuePaths(error: unknown): readonly string[] | undefined {
-  const paths = new Set<string>();
-  const visited = new Set<object>();
-
-  const visit = (value: unknown): void => {
-    if (paths.size >= 8 || value === null || typeof value !== "object") {
-      return;
-    }
-    if (visited.has(value)) {
-      return;
-    }
-    visited.add(value);
-    if (Array.isArray(value)) {
-      for (const item of value) {
-        visit(item);
-      }
-      return;
-    }
-
-    const record = value as Record<string, unknown>;
-    if (Array.isArray(record.path)) {
-      const components = record.path.filter(
-        (component): component is number | string =>
-          typeof component === "number" || typeof component === "string",
-      );
-      paths.add(
-        components.length === 0
-          ? "$"
-          : components
-              .map((component) =>
-                typeof component === "number" ? `[${component}]` : component,
-              )
-              .join("."),
-      );
-    }
-    visit(record.issues);
-    visit(record.errors);
-  };
-
-  visit(error);
-  return paths.size === 0 ? undefined : [...paths];
-}
-
-function createRequestAbort(
-  externalSignal: AbortSignal | undefined,
-  timeoutMs: number,
-) {
-  const controller = new AbortController();
-  let abortReason: "cancelled" | "timeout" | null = null;
-
-  const abort = (reason: "cancelled" | "timeout") => {
-    if (abortReason === null) {
-      abortReason = reason;
-      controller.abort();
-    }
-  };
-
-  const abortFromCaller = () => abort("cancelled");
-  if (externalSignal?.aborted) {
-    abortFromCaller();
-  } else {
-    externalSignal?.addEventListener("abort", abortFromCaller, { once: true });
-  }
-
-  const timeout = setTimeout(() => abort("timeout"), timeoutMs);
-
-  return {
-    controller,
-    dispose: () => {
-      clearTimeout(timeout);
-      externalSignal?.removeEventListener("abort", abortFromCaller);
-    },
-    reason: () => abortReason,
-  };
 }
 
 function validateTimeout(timeoutMs: number): number {
   if (
     !Number.isInteger(timeoutMs) ||
-    timeoutMs < 1 ||
+    timeoutMs <= 0 ||
     timeoutMs > MAX_TIMEOUT_MS
   ) {
-    throw new RangeError(
-      `Request timeout must be a whole number from 1 to ${MAX_TIMEOUT_MS} milliseconds.`,
-    );
+    throw new TypeError("The timeout must be a positive bounded integer.");
   }
   return timeoutMs;
+}
+
+function createRequestAbort(parent: AbortSignal | undefined, timeoutMs: number) {
+  const controller = new AbortController();
+  let firstCause: "cancelled" | "timeout" | null = null;
+  const cancel = () => {
+    firstCause ??= "cancelled";
+    controller.abort();
+  };
+  parent?.addEventListener("abort", cancel, { once: true });
+  if (parent?.aborted) cancel();
+  let timeout: ReturnType<typeof setTimeout> | null = setTimeout(() => {
+    firstCause ??= "timeout";
+    controller.abort();
+  }, timeoutMs);
+  const disableTimeout = () => {
+    if (timeout !== null) {
+      clearTimeout(timeout);
+      timeout = null;
+    }
+  };
+  return {
+    controller,
+    disableTimeout,
+    dispose() {
+      disableTimeout();
+      parent?.removeEventListener("abort", cancel);
+    },
+    reason: () => firstCause,
+  };
 }

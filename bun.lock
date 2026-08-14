@@ -75,6 +75,10 @@
         "typescript": "~5.9.2",
       },
     },
+    "tools/firmware-ota": {
+      "name": "@philcoino/firmware-ota",
+      "version": "0.1.0",
+    },
   },
   "packages": {
     "@0no-co/graphql.web": ["@0no-co/graphql.web@1.3.2", "", { "peerDependencies": { "graphql": "^14.0.0 || ^15.0.0 || ^16.0.0" }, "optionalPeers": ["graphql"] }, "sha512-Q1+pRlLhE31GOY/2c9BAEnFTNxO7Awtc6fhhEDlxyCBQ2N0IhD32cPVvPChrK9mwBNSgRdW/sF1kd2e0ojHj1Q=="],
@@ -392,6 +396,8 @@
     "@nolyfill/is-core-module": ["@nolyfill/is-core-module@1.0.39", "", {}, "sha512-nn5ozdjYQpUCZlWGuxcJY/KpxkWQs4DcbMCmKojjyrYDEAGy4Ce19NN4v5MduafTwJlbKc99UA8YhSVqq9yPZA=="],
 
     "@philcoino/device-simulator": ["@philcoino/device-simulator@workspace:tools/device-simulator"],
+
+    "@philcoino/firmware-ota": ["@philcoino/firmware-ota@workspace:tools/firmware-ota"],
 
     "@philcoino/mobile": ["@philcoino/mobile@workspace:apps/mobile"],
 

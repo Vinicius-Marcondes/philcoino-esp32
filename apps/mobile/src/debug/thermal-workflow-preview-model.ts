@@ -1,10 +1,9 @@
 import {
   CooldownStateSchema,
   IdleExtractionStateSchema,
-  MachineStateV2Schema,
   type CooldownOutcome,
   type MachineState,
-  type MachineStateV2,
+  type MachineStateV3,
 } from "@philcoino/protocol";
 
 export type ThermalPreviewScenario =
@@ -23,8 +22,13 @@ export type ThermalPreviewScenario =
 
 export interface ThermalWorkflowPreviewState {
   scenario: ThermalPreviewScenario;
-  snapshot: MachineStateV2 | null;
+  snapshot: ThermalWorkflowSnapshot | null;
 }
+
+export type ThermalWorkflowSnapshot = Pick<
+  MachineStateV3,
+  "machine" | "extraction" | "compensation" | "cooldown"
+>;
 
 const idleExtraction = IdleExtractionStateSchema.parse({
   status: "idle",
@@ -213,7 +217,7 @@ function stabilizingState(
   >,
   outcome: Exclude<CooldownOutcome, "failed">,
   elapsedMs: number,
-  boilerTemperatureC: number,
+  boilerTemperatureC: number | null,
 ): ThermalWorkflowPreviewState {
   return previewState(
     scenario,
@@ -233,20 +237,20 @@ function stabilizingState(
   );
 }
 
-function createIdleSnapshot(): MachineStateV2 {
+function createIdleSnapshot(): ThermalWorkflowSnapshot {
   return createSnapshot({ machine: createMachine({ boilerTemperatureC: 104.3 }) });
 }
 
 function createSnapshot(
-  overrides: Partial<Pick<MachineStateV2, "machine" | "extraction" | "compensation" | "cooldown">>,
-): MachineStateV2 {
-  return MachineStateV2Schema.parse({
+  overrides: Partial<ThermalWorkflowSnapshot>,
+): ThermalWorkflowSnapshot {
+  return {
     machine: overrides.machine ?? createMachine(),
     extraction: overrides.extraction ?? idleExtraction,
     compensation:
       overrides.compensation ?? { status: "inactive", phase: null },
     cooldown: overrides.cooldown ?? idleCooldown,
-  });
+  };
 }
 
 function createMachine(overrides: Partial<MachineState> = {}): MachineState {
@@ -279,7 +283,7 @@ function createMachine(overrides: Partial<MachineState> = {}): MachineState {
 
 function previewState(
   scenario: ThermalPreviewScenario,
-  snapshot: MachineStateV2,
+  snapshot: ThermalWorkflowSnapshot,
 ): ThermalWorkflowPreviewState {
   return { scenario, snapshot };
 }

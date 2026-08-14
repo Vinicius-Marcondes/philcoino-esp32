@@ -75,54 +75,26 @@ const char* fault_message(FaultCode code) {
   return "Temperature control entered a safe fault state.";
 }
 
-const char* extraction_phase_name(ExtractionPhase phase) {
-  switch (phase) {
-    case ExtractionPhase::kIdle: return "idle";
-    case ExtractionPhase::kManual: return "manual";
-    case ExtractionPhase::kPreInfusion: return "pre-infusion";
-    case ExtractionPhase::kSoak: return "soak";
-    case ExtractionPhase::kMainExtraction: return "main-extraction";
-  }
-  return "idle";
-}
-
-const char* controller_operating_mode_name(ControllerOperatingMode mode) {
-  switch (mode) {
-    case ControllerOperatingMode::kWarmup: return "warmup";
-    case ControllerOperatingMode::kIdleStable: return "idle_stable";
-    case ControllerOperatingMode::kBrewing: return "brewing";
-    case ControllerOperatingMode::kPostBrewRecovery:
-      return "post_brew_recovery";
-    case ControllerOperatingMode::kSteam: return "steam";
-    case ControllerOperatingMode::kInhibited: return "inhibited";
-    case ControllerOperatingMode::kFault: return "fault";
-  }
-  return "fault";
-}
-
 TemperatureController::TemperatureController(
-    peripherals::TemperatureTargets targets, peripherals::FailOffSsr& heater,
-    BrewPiConfig pi_configuration)
-    : TemperatureController(targets, {}, {}, heater, pi_configuration) {}
+    peripherals::TemperatureTargets targets, peripherals::FailOffSsr& heater)
+    : TemperatureController(targets, {}, {}, heater) {}
 
 TemperatureController::TemperatureController(
     peripherals::TemperatureTargets targets,
     peripherals::TemperatureCalibration calibration,
-    peripherals::FailOffSsr& heater, BrewPiConfig pi_configuration)
-    : TemperatureController(targets, calibration, {}, heater,
-                            pi_configuration) {}
+    peripherals::FailOffSsr& heater)
+    : TemperatureController(targets, calibration, {}, heater) {}
 
 TemperatureController::TemperatureController(
     peripherals::TemperatureTargets targets,
     peripherals::TemperatureCalibration calibration,
     peripherals::SteamControlSettings steam_control_settings,
-    peripherals::FailOffSsr& heater, BrewPiConfig pi_configuration)
+    peripherals::FailOffSsr& heater)
     : heater_(heater),
       targets_(targets),
       temperature_calibration_(calibration),
       steam_control_settings_(steam_control_settings),
-      pending_steam_control_settings_(steam_control_settings),
-      brew_pi_(pi_configuration) {
+      pending_steam_control_settings_(steam_control_settings) {
   if (!peripherals::targets_are_reachable(targets_,
                                           temperature_calibration_) ||
       !peripherals::steam_control_settings_are_valid(
@@ -256,6 +228,85 @@ bool TemperatureController::rollback_steam_control_settings_update(
   return heater_.force_off();
 }
 
+bool TemperatureController::prepare_settings_update(
+    const peripherals::TemperatureTargets& targets,
+    const peripherals::SteamControlSettings& steam_settings,
+    bool update_targets, bool update_steam, std::uint32_t now_ms) {
+  if (fault_latched_ || temperature_calibration_active_ ||
+      target_update_in_progress_ || steam_control_settings_update_in_progress_ ||
+      (update_targets && !targets_reachable(targets)) ||
+      (update_steam &&
+       !peripherals::steam_control_settings_are_valid(steam_settings))) {
+    return false;
+  }
+
+  const bool targets_changed =
+      update_targets &&
+      (targets.brew_c != targets_.brew_c || targets.steam_c != targets_.steam_c);
+  const bool steam_changed =
+      update_steam &&
+      (steam_settings.initial_compensation_c !=
+           steam_control_settings_.initial_compensation_c ||
+       steam_settings.decay_duration_ms !=
+           steam_control_settings_.decay_duration_ms ||
+       steam_settings.ready_timeout_ms !=
+           steam_control_settings_.ready_timeout_ms);
+  if (!targets_changed && !steam_changed) return true;
+
+  if (targets_changed) {
+    pending_targets_ = targets;
+    pending_active_target_change_ =
+        mode_ == ControlMode::kBrew ? targets.brew_c != targets_.brew_c
+                                    : targets.steam_c != targets_.steam_c;
+    target_update_in_progress_ = true;
+  }
+  if (steam_changed) {
+    pending_steam_control_settings_ = steam_settings;
+    steam_control_settings_update_in_progress_ = true;
+  }
+  reset_heater_control_window(now_ms);
+  if (heater_.force_off()) return true;
+  latch_fault(FaultCode::kInternalError);
+  return false;
+}
+
+bool TemperatureController::adopt_persisted_settings(
+    const peripherals::TemperatureTargets& targets,
+    const peripherals::SteamControlSettings& steam_settings,
+    bool update_targets, bool update_steam, std::uint32_t now_ms) {
+  const bool targets_changed =
+      update_targets &&
+      (targets.brew_c != targets_.brew_c || targets.steam_c != targets_.steam_c);
+  const bool steam_changed =
+      update_steam &&
+      (steam_settings.initial_compensation_c !=
+           steam_control_settings_.initial_compensation_c ||
+       steam_settings.decay_duration_ms !=
+           steam_control_settings_.decay_duration_ms ||
+       steam_settings.ready_timeout_ms !=
+           steam_control_settings_.ready_timeout_ms);
+  if (targets_changed && !adopt_persisted_targets(targets, now_ms)) {
+    return false;
+  }
+  if (steam_changed &&
+      !adopt_persisted_steam_control_settings(steam_settings, now_ms)) {
+    return false;
+  }
+  return true;
+}
+
+bool TemperatureController::rollback_settings_update(
+    bool update_targets, bool update_steam, std::uint32_t now_ms) {
+  bool ok = true;
+  if (update_targets && target_update_in_progress_) {
+    ok = rollback_target_update(now_ms) && ok;
+  }
+  if (update_steam && steam_control_settings_update_in_progress_) {
+    ok = rollback_steam_control_settings_update(now_ms) && ok;
+  }
+  return ok;
+}
+
 bool TemperatureController::raw_temperature(float& temperature_c) const {
   if (!reading_ok(raw_boiler_temperature_)) {
     return false;
@@ -330,7 +381,6 @@ TemperatureController::start_temperature_calibration(
   recovery_deadline_active_ = false;
   readiness_achieved_ = false;
   reset_recovery_heat();
-  brew_pi_.reset();
   status_ = ControlStatus::kHeating;
   if (!heater_.force_off()) {
     latch_fault(FaultCode::kInternalError);
@@ -561,7 +611,6 @@ void TemperatureController::set_extraction_phase(ExtractionPhase phase,
     last_pump_running_ms_ = now_ms;
   }
   extraction_phase_ = phase;
-  brew_pi_.reset();
   reset_heater_control_window(now_ms);
 }
 
@@ -619,7 +668,6 @@ bool TemperatureController::set_mode(ControlMode mode, std::uint32_t now_ms) {
       mode_ == ControlMode::kSteam
           ? applied_steam_compensation(now_ms)
           : 0.0F;
-  brew_pi_.reset();
   post_brew_recovery_active_ = false;
   reset_readiness(now_ms);
   reset_heater_control_window(now_ms);
@@ -716,7 +764,6 @@ bool TemperatureController::adopt_persisted_targets(
       readiness_achieved_ = false;
     }
     reset_recovery_heat();
-    brew_pi_.reset();
     post_brew_recovery_active_ = false;
   }
   pending_active_target_change_ = false;
@@ -754,7 +801,6 @@ bool TemperatureController::dismiss_over_temperature(std::uint32_t now_ms) {
     return false;
   }
   fault_latched_ = false;
-  brew_pi_.reset();
   reset_readiness(now_ms);
   reset_heater_control_window(now_ms);
   warmup_deadline_active_ = false;
@@ -772,7 +818,6 @@ ControlSnapshot TemperatureController::update(
 ControlSnapshot TemperatureController::update(
     const peripherals::ThermocoupleReading& reading,
     peripherals::PumpCommand pump_command, std::uint32_t now_ms) {
-  account_delivered_command(now_ms);
   expire_temperature_calibration(now_ms);
   raw_boiler_temperature_ = reading;
   if (pump_command == peripherals::PumpCommand::kRunning) {
@@ -781,22 +826,16 @@ ControlSnapshot TemperatureController::update(
 
   if (heater_.safety_cutoff_tripped()) {
     latch_fault(FaultCode::kInternalError);
-    update_controller_diagnostics(pump_command, now_ms, true);
-    last_heater_command_active_ = heater_.is_enabled();
     return snapshot(now_ms);
   }
 
   if (fault_latched_) {
     status_ = ControlStatus::kFault;
     heater_.force_off();
-    update_controller_diagnostics(pump_command, now_ms, true);
-    last_heater_command_active_ = heater_.is_enabled();
     return snapshot(now_ms);
   }
 
   if (!validate_readings(now_ms)) {
-    update_controller_diagnostics(pump_command, now_ms, true);
-    last_heater_command_active_ = heater_.is_enabled();
     return snapshot(now_ms);
   }
 
@@ -845,8 +884,6 @@ ControlSnapshot TemperatureController::update(
     if (recovery_deadline_active_ &&
         elapsed(now_ms, recovery_started_ms_, config::kHeatingTimeoutMs)) {
       latch_fault(FaultCode::kHeatingTimeout);
-      update_controller_diagnostics(pump_command, now_ms, true);
-      last_heater_command_active_ = heater_.is_enabled();
       return snapshot(now_ms);
     }
   } else {
@@ -857,8 +894,6 @@ ControlSnapshot TemperatureController::update(
     if (warmup_deadline_active_ &&
         elapsed(now_ms, warmup_started_ms_, config::kHeatingTimeoutMs)) {
       latch_fault(FaultCode::kHeatingTimeout);
-      update_controller_diagnostics(pump_command, now_ms, true);
-      last_heater_command_active_ = heater_.is_enabled();
       return snapshot(now_ms);
     }
   }
@@ -869,14 +904,9 @@ ControlSnapshot TemperatureController::update(
       active_temperature_in_ready_band()) {
     post_brew_recovery_active_ = false;
   }
-  update_controller_diagnostics(pump_command, now_ms, false);
-  if (!update_heater(now_ms, requested_heater_duty_)) {
+  if (!update_heater(now_ms)) {
     latch_fault(FaultCode::kInternalError);
-    update_controller_diagnostics(pump_command, now_ms, true);
   }
-  last_heater_command_active_ = heater_.is_enabled();
-  controller_diagnostics_.heater_command_active =
-      last_heater_command_active_;
 
   return snapshot(now_ms);
 }
@@ -897,36 +927,6 @@ ControlSnapshot TemperatureController::snapshot(std::uint32_t now_ms) const {
   value.fault = {fault_code_, fault_message(fault_code_)};
   value.steam_timeout = steam_timeout_snapshot(now_ms);
   value.steam_control = steam_control_snapshot(now_ms);
-  value.controller = controller_diagnostics_;
-  value.controller.temperature_raw_c =
-      boiler_reading_ok() ? raw_boiler_temperature_.temperature_c : 0.0F;
-  if (temperature_calibration_active_ || mode_ == ControlMode::kSteam ||
-      !boiler_reading_ok() ||
-      !brew_pi_.diagnostics().valid) {
-    value.controller.temperature_filtered_c =
-        boiler_reading_ok() ? control_temperature() : 0.0F;
-    value.controller.pi_requested_duty = 0.0F;
-    value.controller.proportional_contribution = 0.0F;
-    value.controller.integral_contribution = 0.0F;
-    value.controller.integral_state = 0.0F;
-    value.controller.pi_saturation = PiSaturation::kNone;
-    value.controller.pi_anti_windup_active = false;
-  }
-  value.controller.base_target_c = static_cast<float>(control_target());
-  value.controller.private_target_c =
-      static_cast<float>(heater_duty_target());
-  value.controller.error_c =
-      value.controller.private_target_c -
-      value.controller.temperature_filtered_c;
-  value.controller.selected_controller =
-      config::kBrewPiControlEnabled ? SelectedController::kPi
-                                    : SelectedController::kLegacyCurve;
-  value.controller.legacy_requested_duty = baseline_heater_duty();
-  value.controller.heater_command_active = value.heater_enabled;
-  value.controller.delivered_command_duty_1s =
-      delivered_command_duty_1s_;
-  value.controller.extraction_phase = extraction_phase_;
-  value.controller.operating_mode = controller_operating_mode();
   return value;
 }
 
@@ -941,7 +941,6 @@ void TemperatureController::latch_fault(FaultCode code) {
   status_ = ControlStatus::kFault;
   warmup_deadline_active_ = false;
   recovery_deadline_active_ = false;
-  brew_pi_.reset();
   heater_.force_off();
 }
 
@@ -1077,178 +1076,6 @@ std::uint32_t TemperatureController::heater_pulse_ms() const {
   return pulse_ms;
 }
 
-std::uint32_t TemperatureController::duty_pulse_ms(
-    float requested_duty) const {
-  if (!std::isfinite(requested_duty) || requested_duty <= 0.0F) {
-    return 0U;
-  }
-  const float bounded_duty = std::clamp(requested_duty, 0.0F, 1.0F);
-  auto pulse_ms = static_cast<std::uint32_t>(
-      static_cast<float>(config::kHeaterControlWindowMs) * bounded_duty);
-  if (pulse_ms < config::kMinimumHeaterPulseMs) {
-    pulse_ms = config::kMinimumHeaterPulseMs;
-  }
-  return std::min(pulse_ms, config::kHeaterControlWindowMs);
-}
-
-float TemperatureController::baseline_heater_duty() const {
-  if (fault_latched_ || target_update_in_progress_ || cooldown_inhibited_ ||
-      steam_control_settings_update_in_progress_ ||
-      !heater_enabled_permission_ || !boiler_reading_ok() ||
-      control_temperature() >= static_cast<float>(heater_duty_target())) {
-    return 0.0F;
-  }
-  return static_cast<float>(heater_pulse_ms()) /
-         static_cast<float>(config::kHeaterControlWindowMs);
-}
-
-ControllerOperatingMode TemperatureController::controller_operating_mode()
-    const {
-  if (fault_latched_ || !boiler_reading_ok()) {
-    return ControllerOperatingMode::kFault;
-  }
-  if (mode_ == ControlMode::kSteam) {
-    return ControllerOperatingMode::kSteam;
-  }
-  if (target_update_in_progress_ || cooldown_inhibited_ ||
-      !heater_enabled_permission_) {
-    return ControllerOperatingMode::kInhibited;
-  }
-  if (extraction_phase_ != ExtractionPhase::kIdle) {
-    return ControllerOperatingMode::kBrewing;
-  }
-  if (post_brew_recovery_active_) {
-    return ControllerOperatingMode::kPostBrewRecovery;
-  }
-  return readiness_achieved_ ? ControllerOperatingMode::kIdleStable
-                             : ControllerOperatingMode::kWarmup;
-}
-
-void TemperatureController::update_controller_diagnostics(
-    peripherals::PumpCommand pump_command, std::uint32_t now_ms,
-    bool reset_pi) {
-  if (reset_pi || mode_ != ControlMode::kBrew ||
-      temperature_calibration_active_) {
-    brew_pi_.reset();
-  }
-
-  const bool sensor_valid = boiler_reading_ok();
-  const float raw_temperature_c =
-      sensor_valid ? raw_boiler_temperature_.temperature_c : 0.0F;
-  const float control_temperature_c =
-      sensor_valid ? control_temperature() : 0.0F;
-  const float base_target_c = static_cast<float>(control_target());
-  const float private_target_c = static_cast<float>(heater_duty_target());
-  const bool inhibited =
-      fault_latched_ || target_update_in_progress_ ||
-      steam_control_settings_update_in_progress_ || cooldown_inhibited_ ||
-      !heater_enabled_permission_ || heater_.safety_cutoff_tripped();
-
-  BrewPiDiagnostics pi{};
-  if (mode_ == ControlMode::kBrew && !temperature_calibration_active_ &&
-      !reset_pi) {
-    pi = brew_pi_.update({
-        sensor_valid,
-        inhibited,
-        control_temperature_c,
-        private_target_c,
-        now_ms,
-    });
-  }
-
-  ControllerDiagnostics diagnostics{};
-  diagnostics.temperature_raw_c = raw_temperature_c;
-  diagnostics.temperature_filtered_c =
-      mode_ == ControlMode::kBrew && pi.valid
-          ? pi.filtered_temperature_c
-          : control_temperature_c;
-  diagnostics.base_target_c = base_target_c;
-  diagnostics.private_target_c = private_target_c;
-  diagnostics.error_c =
-      private_target_c - diagnostics.temperature_filtered_c;
-  diagnostics.selected_controller =
-      config::kBrewPiControlEnabled ? SelectedController::kPi
-                                    : SelectedController::kLegacyCurve;
-  diagnostics.legacy_requested_duty = baseline_heater_duty();
-  diagnostics.pi_requested_duty = pi.valid ? pi.requested_duty : 0.0F;
-  diagnostics.proportional_contribution =
-      pi.valid ? pi.proportional_contribution : 0.0F;
-  diagnostics.integral_contribution =
-      pi.valid ? pi.integral_contribution : 0.0F;
-  diagnostics.integral_state = pi.valid ? pi.integral_state : 0.0F;
-  diagnostics.pi_saturation =
-      pi.valid ? pi.saturation : PiSaturation::kNone;
-  diagnostics.pi_anti_windup_active =
-      pi.valid && pi.anti_windup_active;
-  diagnostics.heater_command_active = heater_.is_enabled();
-  diagnostics.delivered_command_duty_1s = delivered_command_duty_1s_;
-  diagnostics.pump_command = pump_command;
-  diagnostics.extraction_phase = extraction_phase_;
-  diagnostics.operating_mode = controller_operating_mode();
-  controller_diagnostics_ = diagnostics;
-
-  requested_heater_duty_ =
-      mode_ == ControlMode::kBrew && !temperature_calibration_active_ &&
-              config::kBrewPiControlEnabled
-          ? diagnostics.pi_requested_duty
-          : diagnostics.legacy_requested_duty;
-  if (inhibited || !sensor_valid) {
-    requested_heater_duty_ = 0.0F;
-  }
-}
-
-void TemperatureController::reset_delivered_command_tracking(
-    std::uint32_t now_ms) {
-  delivered_tracking_initialized_ = true;
-  last_heater_command_active_ = heater_.is_enabled();
-  delivered_bucket_started_ms_ = now_ms;
-  delivered_last_sample_ms_ = now_ms;
-  delivered_command_on_ms_ = 0U;
-  delivered_command_duty_1s_ = 0.0F;
-}
-
-void TemperatureController::account_delivered_command(std::uint32_t now_ms) {
-  constexpr std::uint32_t kDeliveredDutyBucketMs = 1000U;
-
-  if (!delivered_tracking_initialized_) {
-    reset_delivered_command_tracking(now_ms);
-    return;
-  }
-
-  auto remaining =
-      static_cast<std::uint32_t>(now_ms - delivered_last_sample_ms_);
-  if (remaining > 2U * config::kTemperatureControllerIntervalMs) {
-    reset_delivered_command_tracking(now_ms);
-    return;
-  }
-
-  auto cursor_ms = delivered_last_sample_ms_;
-  while (remaining > 0U) {
-    const auto bucket_elapsed_ms =
-        static_cast<std::uint32_t>(cursor_ms -
-                                   delivered_bucket_started_ms_);
-    const auto bucket_remaining_ms =
-        kDeliveredDutyBucketMs -
-        std::min(bucket_elapsed_ms, kDeliveredDutyBucketMs);
-    const auto step_ms = std::min(remaining, bucket_remaining_ms);
-    if (last_heater_command_active_) {
-      delivered_command_on_ms_ += step_ms;
-    }
-    cursor_ms += step_ms;
-    remaining -= step_ms;
-    if (static_cast<std::uint32_t>(
-            cursor_ms - delivered_bucket_started_ms_) >=
-        kDeliveredDutyBucketMs) {
-      delivered_command_duty_1s_ =
-          static_cast<float>(delivered_command_on_ms_) /
-          static_cast<float>(kDeliveredDutyBucketMs);
-      delivered_bucket_started_ms_ += kDeliveredDutyBucketMs;
-      delivered_command_on_ms_ = 0U;
-    }
-  }
-  delivered_last_sample_ms_ = now_ms;
-}
-
 void TemperatureController::reset_heater_control_window(std::uint32_t now_ms) {
   heater_control_window_started_ms_ = now_ms;
 }
@@ -1261,7 +1088,6 @@ void TemperatureController::reset_readiness(std::uint32_t now_ms) {
 void TemperatureController::return_to_brew(std::uint32_t now_ms) {
   mode_ = ControlMode::kBrew;
   current_steam_compensation_c_ = 0.0F;
-  brew_pi_.reset();
   post_brew_recovery_active_ = false;
   steam_timeout_active_ = false;
   reset_readiness(now_ms);
@@ -1302,11 +1128,24 @@ void TemperatureController::restore_ordinary_brew_control(
   return_to_brew(now_ms);
 }
 
-bool TemperatureController::validate_readings(std::uint32_t) {
+bool TemperatureController::validate_readings(std::uint32_t now_ms) {
   if (!boiler_reading_ok()) {
-    latch_fault(FaultCode::kSensorFailure);
+    sensor_failure_streak_ = std::min(
+        sensor_failure_streak_ + 1U,
+        config::kSensorFailureConsecutiveSamples);
+    status_ = ControlStatus::kHeating;
+    reset_readiness(now_ms);
+    reset_heater_control_window(now_ms);
+    if (!heater_.force_off()) {
+      latch_fault(FaultCode::kInternalError);
+    } else if (sensor_failure_streak_ >=
+               config::kSensorFailureConsecutiveSamples) {
+      latch_fault(FaultCode::kSensorFailure);
+    }
     return false;
   }
+
+  sensor_failure_streak_ = 0U;
 
   if (raw_over_temperature(raw_boiler_temperature_.temperature_c) ||
       effective_over_temperature(
@@ -1331,8 +1170,7 @@ bool TemperatureController::update_readiness(std::uint32_t now_ms) {
   return elapsed(now_ms, ready_band_since_ms_, config::kReadyStabilityMs);
 }
 
-bool TemperatureController::update_heater(std::uint32_t now_ms,
-                                          float requested_duty) {
+bool TemperatureController::update_heater(std::uint32_t now_ms) {
   if (fault_latched_) {
     return heater_.force_off();
   }
@@ -1363,11 +1201,7 @@ bool TemperatureController::update_heater(std::uint32_t now_ms,
   }
   const auto window_elapsed_ms =
       static_cast<std::uint32_t>(now_ms - heater_control_window_started_ms_);
-  const auto pulse_ms =
-      mode_ == ControlMode::kBrew && !temperature_calibration_active_ &&
-              config::kBrewPiControlEnabled
-          ? duty_pulse_ms(requested_duty)
-          : heater_pulse_ms();
+  const auto pulse_ms = heater_pulse_ms();
   return heater_.set_enabled(window_elapsed_ms < pulse_ms);
 }
 
@@ -1557,11 +1391,12 @@ bool ScaleController::available(std::uint32_t now_ms) const {
 
 bool ScaleController::stable() const {
   return sample_count_ == samples_.size() &&
-         cached_raw_spread_ <= stable_raw_spread_limit();
+         cached_trimmed_raw_spread_ <= stable_raw_spread_limit();
 }
 
 bool ScaleController::stable_for_calibration() const {
-  return sample_count_ == samples_.size() && cached_raw_spread_ <= 1000;
+  return sample_count_ == samples_.size() &&
+         cached_trimmed_raw_spread_ <= 1000;
 }
 
 std::int32_t ScaleController::median_raw() const {
@@ -1578,13 +1413,16 @@ std::int32_t ScaleController::stable_raw_spread_limit() const {
   const auto scaled =
       raw_span * config::kScaleStableSpreadDecigrams /
       calibration_.reference_decigrams;
-  return static_cast<std::int32_t>(std::max(1LL, scaled));
+  // Calibration accepts a settled raw window with up to 1000 counts of
+  // variation. Never make that same physical signal immediately unstable
+  // merely because converting 0.5 g to raw counts produces a smaller limit.
+  return static_cast<std::int32_t>(std::max(1000LL, scaled));
 }
 
 void ScaleController::refresh_cached_derived_state() {
   if (sample_count_ == 0U) {
     cached_median_raw_ = 0;
-    cached_raw_spread_ = 0;
+    cached_trimmed_raw_spread_ = 0;
     cached_gross_weight_available_ = false;
     cached_gross_weight_decigrams_ = 0;
     return;
@@ -1593,9 +1431,12 @@ void ScaleController::refresh_cached_derived_state() {
   std::copy_n(samples_.begin(), sample_count_, sorted.begin());
   std::sort(sorted.begin(), sorted.begin() + sample_count_);
   cached_median_raw_ = sorted[sample_count_ / 2U];
-  cached_raw_spread_ =
-      static_cast<std::int64_t>(sorted[sample_count_ - 1U]) -
-      static_cast<std::int64_t>(sorted[0]);
+  // Ignore one extreme sample at each end of the ten-sample window. A single
+  // HX711 impulse must not block tare/calibration forever, while sustained
+  // motion still expands the remaining eight-sample range.
+  cached_trimmed_raw_spread_ =
+      static_cast<std::int64_t>(sorted[sample_count_ - 2U]) -
+      static_cast<std::int64_t>(sorted[1]);
   cached_gross_weight_available_ =
       calibrated_ && peripherals::scale_raw_to_decigrams(
                          calibration_, cached_median_raw_,

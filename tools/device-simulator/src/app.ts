@@ -1,16 +1,17 @@
 import {
-  ApiV2ErrorResponseSchema,
-  CooldownActiveConflictResponseSchema,
+  ApiErrorResponseSchema,
   CompleteScaleCalibrationRequestSchema,
-  ErrorResponseSchema,
   EXTRACTION_TELEMETRY_HEARTBEAT_INTERVAL_MS,
   ExtractionTelemetryCursorSchema,
-  ExtractionActiveConflictResponseSchema,
   FaultCodeSchema,
+  FirmwareUpdateAcceptedSchema,
   HeaterSettingsRequestSchema,
-  HeaterSettingsResponseSchema,
   ModeRequestSchema,
-  ModeResponseSchema,
+  PairingClientBindingSchema,
+  PairingSessionCompleteRequestSchema,
+  PairingSessionProofRequestSchema,
+  PairingSessionStartRequestSchema,
+  SettingsRequestSchema,
   StartCooldownRequestSchema,
   StartExtractionRequestSchema,
   SteamControlSettingsRequestSchema,
@@ -18,13 +19,11 @@ import {
   TemperatureCalibrationSessionRequestSchema,
   TemperatureSettingsRequestSchema,
   UpdateTemperatureCalibrationCandidateRequestSchema,
-  WeightedExtractionTraceCursorSchema,
-  type ErrorCode,
-  type ErrorResponse,
-  type ApiV2ErrorCode,
-  type ApiV2ErrorResponse,
+  type ApiErrorCode,
+  type ApiErrorResponse,
   type ExtractionTelemetryCursor,
   type ExtractionTelemetryPage,
+  type TemperatureSettingsRequest,
 } from "@philcoino/protocol";
 import { Hono, type Context, type Next } from "hono";
 
@@ -34,16 +33,75 @@ import {
   type SimulatorMachineOptions,
   type TemperatureCalibrationOperationResult,
 } from "./model.ts";
+import {
+  incrementNonce,
+  SrpServerSession,
+  type RandomBytes,
+} from "./srp.ts";
 
-export const DEFAULT_SIMULATOR_TOKEN = "philcoino-dev-token";
+function encodeBase64Url(value: Uint8Array): string {
+  let binary = "";
+  for (const byte of value) binary += String.fromCharCode(byte);
+  return btoa(binary)
+    .replaceAll("+", "-")
+    .replaceAll("/", "_")
+    .replace(/=+$/u, "");
+}
+
+function decodeBase64Url(value: string): Uint8Array {
+  const padded = value.replaceAll("-", "+").replaceAll("_", "/").padEnd(
+    Math.ceil(value.length / 4) * 4,
+    "=",
+  );
+  return Uint8Array.from(atob(padded), (character) => character.charCodeAt(0));
+}
+
+function random(length: number): Uint8Array {
+  return crypto.getRandomValues(new Uint8Array(length));
+}
+
+function randomHex(length: number): string {
+  return [...random(length)]
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+async function sha256(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(value),
+  );
+  return encodeBase64Url(new Uint8Array(digest));
+}
+
+async function sha256Hex(value: Uint8Array): Promise<string> {
+  const digest = new Uint8Array(await crypto.subtle.digest(
+    "SHA-256",
+    value.slice().buffer,
+  ));
+  return [...digest]
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+export const DEFAULT_SIMULATOR_PAIRING_CODE = "12345678";
+export const DEFAULT_SIMULATOR_CERTIFICATE_PIN =
+  "U2ltdWxhdG9yU1BLSUZpbmdlcnByaW50MDAwMDAwMDA";
 
 export interface CreateSimulatorOptions extends SimulatorMachineOptions {
-  token?: string;
+  pairingCode?: string;
+  pairingRandomBytes?: RandomBytes;
+  pairingFailure?:
+    | "altered-binding"
+    | "forged-server-proof"
+    | "token-issue";
+  certificateSpkiSha256?: string;
 }
 
 export interface SimulatorApplication {
   app: Hono;
   machine: SimulatorMachine;
+  rotatePairingCode(pairingCode: string): void;
 }
 
 const MALFORMED_REQUEST_MESSAGE = "The JSON request body is malformed.";
@@ -52,21 +110,44 @@ export function createSimulator(
   options: CreateSimulatorOptions = {},
 ): SimulatorApplication {
   const machine = new SimulatorMachine(options);
-  const token = options.token ?? DEFAULT_SIMULATOR_TOKEN;
+  let pairingCode = options.pairingCode ?? DEFAULT_SIMULATOR_PAIRING_CODE;
+  const certificatePin =
+    options.certificateSpkiSha256 ?? DEFAULT_SIMULATOR_CERTIFICATE_PIN;
   const app = new Hono();
   let extractionStreamActive = false;
+  const clients: Array<{
+    clientId: string;
+    tokenHash: string;
+    issued: number;
+  }> = [];
+  const sessions = new Map<
+    string,
+    {
+      clientNonce: string;
+      deviceNonce: Uint8Array | null;
+      expiresAtUptimeMs: number;
+      srp: SrpServerSession;
+      stage: "proof" | "complete";
+    }
+  >();
+  let issued = 0;
 
-  if (token.length === 0) {
-    throw new Error("The simulator bearer token must not be empty.");
+  if (!/^[0-9]{8}$/.test(pairingCode)) {
+    throw new Error("The simulator pairing code must contain exactly eight digits.");
+  }
+  if (!/^[A-Za-z0-9_-]{43}$/.test(certificatePin)) {
+    throw new Error("The simulator certificate pin must be a SHA-256 base64url value.");
   }
 
   const requireBearer = async (c: Context, next: Next) => {
     const authorization = c.req.header("Authorization");
     const match = authorization?.match(/^Bearer\s+(.+)$/i);
 
-    if (!match || match[1] !== token) {
+    const supplied = match?.[1];
+    const hash = supplied === undefined ? "" : await sha256(supplied);
+    if (!match || !clients.some((client) => client.tokenHash === hash)) {
       c.header("WWW-Authenticate", 'Bearer realm="philcoino"');
-      return contractError(
+      return contractApiError(
         c,
         401,
         "unauthorized",
@@ -76,73 +157,371 @@ export function createSimulator(
 
     await next();
   };
-  const requireBearerV2 = async (c: Context, next: Next) => {
-    const authorization = c.req.header("Authorization");
-    const match = authorization?.match(/^Bearer\s+(.+)$/i);
-
-    if (!match || match[1] !== token) {
-      c.header("WWW-Authenticate", 'Bearer realm="philcoino"');
-      return contractV2Error(
-        c,
-        401,
-        "unauthorized",
-        "A valid bearer token is required.",
-      );
-    }
-
-    await next();
-  };
-
   app.get("/healthz", (c) => c.json(machine.getHealth()));
-  app.get("/api/v1/device", (c) => c.json(machine.getDevice()));
+  app.post("/api/v3/pairing/sessions", async (c) => {
+    const now = machine.getHealth().uptimeMs;
+    for (const [id, session] of sessions) {
+      if (now >= session.expiresAtUptimeMs) sessions.delete(id);
+    }
+    if (sessions.size >= 2) {
+      return contractApiError(
+        c,
+        409,
+        "pairing_busy",
+        "Two pairing sessions are already active.",
+      );
+    }
+    const body = await readJson(c);
+    const parsed = body.ok
+      ? PairingSessionStartRequestSchema.safeParse(body.value)
+      : null;
+    if (parsed === null || !parsed.success) {
+      return contractApiError(
+        c,
+        400,
+        "malformed_request",
+        "The SRP session request is malformed.",
+      );
+    }
+    let srp: SrpServerSession;
+    try {
+      srp = await SrpServerSession.create(
+        pairingCode,
+        decodeBase64Url(parsed.data.clientPublicKey),
+        options.pairingRandomBytes ?? random,
+      );
+    } catch {
+      return contractApiError(
+        c,
+        400,
+        "malformed_request",
+        "The SRP client public key is invalid.",
+      );
+    }
+    const sessionId = randomHex(16);
+    const expiresAtUptimeMs = now + 90_000;
+    sessions.set(sessionId, {
+      clientNonce: parsed.data.clientNonce,
+      deviceNonce: null,
+      expiresAtUptimeMs,
+      srp,
+      stage: "proof",
+    });
+    return c.json({
+      device: machine.getDevice(),
+      expiresAtUptimeMs,
+      salt: encodeBase64Url(srp.salt),
+      serverPublicKey: encodeBase64Url(srp.serverPublicKey),
+      sessionId,
+    });
+  });
 
-  app.use("/api/v1/state", requireBearer);
-  app.use("/api/v1/settings/temperatures", requireBearer);
-  app.use("/api/v1/mode", requireBearer);
-  app.use("/api/v1/heater", requireBearer);
-  app.use("/api/v1/faults/over-temperature/dismiss", requireBearer);
-  app.use("/api/v2/state", requireBearerV2);
-  app.use("/api/v2/settings/steam-control", requireBearerV2);
-  app.use("/api/v2/scale", requireBearerV2);
-  app.use("/api/v2/scale/*", requireBearerV2);
-  app.use("/api/v2/extractions/start", requireBearerV2);
-  app.use("/api/v2/extractions/stop", requireBearerV2);
-  app.use("/api/v2/extractions/stream", requireBearerV2);
-  app.use("/api/v2/cooldowns/start", requireBearerV2);
-  app.use("/api/v2/cooldowns/stop", requireBearerV2);
-  app.use("/api/v2/temperature-calibration", requireBearerV2);
-  app.use("/api/v2/temperature-calibration/*", requireBearerV2);
+  app.post("/api/v3/pairing/sessions/:sessionId/proof", async (c) => {
+    const sessionId = c.req.param("sessionId");
+    const session = sessions.get(sessionId);
+    if (session === undefined) {
+      return contractApiError(
+        c,
+        409,
+        "pairing_session_replayed",
+        "The pairing session is unavailable.",
+      );
+    }
+    if (machine.getHealth().uptimeMs >= session.expiresAtUptimeMs) {
+      sessions.delete(sessionId);
+      return contractApiError(
+        c,
+        409,
+        "pairing_session_expired",
+        "The pairing session expired.",
+      );
+    }
+    if (session.stage !== "proof") {
+      sessions.delete(sessionId);
+      return contractApiError(
+        c,
+        409,
+        "pairing_stage_mismatch",
+        "The pairing session is not awaiting a proof.",
+      );
+    }
+    const body = await readJson(c);
+    const parsed = body.ok
+      ? PairingSessionProofRequestSchema.safeParse(body.value)
+      : null;
+    if (parsed === null || !parsed.success) {
+      sessions.delete(sessionId);
+      return contractApiError(
+        c,
+        400,
+        "malformed_request",
+        "The SRP proof request is malformed.",
+      );
+    }
+    const verifiedProof = await session.srp.verify(
+      decodeBase64Url(parsed.data.clientProof),
+    );
+    if (verifiedProof === null) {
+      sessions.delete(sessionId);
+      return contractApiError(
+        c,
+        401,
+        "invalid_pairing_code",
+        "The pairing code or SRP proof is invalid.",
+      );
+    }
+    const deviceNonce = new Uint8Array(12);
+    deviceNonce.set((options.pairingRandomBytes ?? random)(8), 0);
+    deviceNonce[11] = 1;
+    session.deviceNonce = deviceNonce;
+    const binding = JSON.stringify({
+      certificateSpkiSha256: certificatePin,
+      clientNonce: session.clientNonce,
+      deviceId: machine.getDevice().deviceId,
+      domain: "philcoino:v3:device-binding",
+      sessionId,
+    });
+    let encryptedBinding = await session.srp.encrypt(deviceNonce, binding);
+    if (options.pairingFailure === "altered-binding") {
+      encryptedBinding = encryptedBinding.slice();
+      encryptedBinding[0] ^= 1;
+    }
+    let serverProof = verifiedProof;
+    if (options.pairingFailure === "forged-server-proof") {
+      serverProof = serverProof.slice();
+      serverProof[0] ^= 1;
+    }
+    session.stage = "complete";
+    return c.json({
+      deviceNonce: encodeBase64Url(deviceNonce),
+      encryptedDeviceBinding: encodeBase64Url(encryptedBinding),
+      serverProof: encodeBase64Url(serverProof),
+    });
+  });
 
-  app.get("/api/v1/state", (c) => c.json(machine.getState()));
+  app.post("/api/v3/pairing/sessions/:sessionId/complete", async (c) => {
+    const sessionId = c.req.param("sessionId");
+    const session = sessions.get(sessionId);
+    if (session === undefined) {
+      return contractApiError(
+        c,
+        409,
+        "pairing_session_replayed",
+        "The pairing session is unavailable.",
+      );
+    }
+    if (machine.getHealth().uptimeMs >= session.expiresAtUptimeMs) {
+      sessions.delete(sessionId);
+      return contractApiError(
+        c,
+        409,
+        "pairing_session_expired",
+        "The pairing session expired.",
+      );
+    }
+    if (session.stage !== "complete" || session.deviceNonce === null) {
+      sessions.delete(sessionId);
+      return contractApiError(
+        c,
+        409,
+        "pairing_stage_mismatch",
+        "The pairing session is not awaiting completion.",
+      );
+    }
+    const body = await readJson(c);
+    const parsed = body.ok
+      ? PairingSessionCompleteRequestSchema.safeParse(body.value)
+      : null;
+    if (parsed === null || !parsed.success) {
+      sessions.delete(sessionId);
+      return contractApiError(
+        c,
+        400,
+        "malformed_request",
+        "The pairing completion request is malformed.",
+      );
+    }
+    try {
+      const plaintext = await session.srp.decrypt(
+        incrementNonce(session.deviceNonce),
+        decodeBase64Url(parsed.data.encryptedClientBinding),
+      );
+      const binding = PairingClientBindingSchema.parse(
+        JSON.parse(plaintext) as unknown,
+      );
+      if (
+        binding.sessionId !== sessionId ||
+        binding.clientId !== parsed.data.clientId ||
+        binding.clientNonce !== session.clientNonce ||
+        binding.deviceId !== machine.getDevice().deviceId ||
+        binding.certificateSpkiSha256 !== certificatePin
+      ) {
+        throw new Error("Binding mismatch.");
+      }
+    } catch {
+      sessions.delete(sessionId);
+      return contractApiError(
+        c,
+        401,
+        "unauthorized",
+        "The encrypted certificate binding is invalid.",
+      );
+    }
+    sessions.delete(sessionId);
+    if (options.pairingFailure === "token-issue") {
+      return contractApiError(
+        c,
+        500,
+        "internal_error",
+        "Injected token-issuance failure.",
+      );
+    }
+    const accessToken = encodeBase64Url(random(32));
+    issued += 1;
+    const existing = clients.findIndex(
+      (client) => client.clientId === parsed.data.clientId,
+    );
+    if (existing >= 0) clients.splice(existing, 1);
+    if (clients.length === 4) {
+      clients.sort((left, right) => left.issued - right.issued);
+      clients.shift();
+    }
+    clients.push({
+      clientId: parsed.data.clientId,
+      tokenHash: await sha256(accessToken),
+      issued,
+    });
+    return c.json({
+      accessToken,
+      certificateSpkiSha256: certificatePin,
+      clientId: parsed.data.clientId,
+      device: machine.getDevice(),
+    });
+  });
 
-  app.patch("/api/v1/settings/temperatures", async (c) => {
+  app.use("/api/v3/state", requireBearer);
+  app.use("/api/v3/settings", requireBearer);
+  app.use("/api/v3/mode", requireBearer);
+  app.use("/api/v3/heater-permission", requireBearer);
+  app.use("/api/v3/faults/over-temperature/dismiss", requireBearer);
+  app.use("/api/v3/scale-calibrations/*", requireBearer);
+  app.use("/api/v3/scale/*", requireBearer);
+  app.use("/api/v3/extractions/*", requireBearer);
+  app.use("/api/v3/cooldowns/*", requireBearer);
+  app.use("/api/v3/temperature-calibrations/*", requireBearer);
+  app.use("/api/v3/firmware-updates", requireBearer);
+
+  app.post("/api/v3/firmware-updates", async (c) => {
+    if (c.req.header("Content-Type") !== "application/octet-stream") {
+      return contractApiError(
+        c,
+        415,
+        "unsupported_media_type",
+        "Firmware updates require application/octet-stream.",
+      );
+    }
+    const expectedDigest = c.req.header("X-Philcoino-Image-SHA256");
+    if (expectedDigest === undefined || !/^[0-9a-f]{64}$/u.test(expectedDigest)) {
+      return contractApiError(
+        c,
+        400,
+        "firmware_metadata_invalid",
+        "A lowercase hexadecimal image SHA-256 is required.",
+      );
+    }
+    const image = new Uint8Array(await c.req.arrayBuffer());
+    if (image.length === 0) {
+      return contractApiError(
+        c,
+        400,
+        "firmware_metadata_invalid",
+        "The firmware image is empty.",
+      );
+    }
+    if (image.length > 1_966_080) {
+      return contractApiError(
+        c,
+        413,
+        "firmware_image_too_large",
+        "The firmware image does not fit the inactive OTA slot.",
+      );
+    }
+    const state = machine.getStateV3();
+    if (
+      state.extraction.status !== "idle" ||
+      state.cooldown.status !== "idle" ||
+      state.temperatureCalibration.status === "calibrating" ||
+      state.scale.calibrationStatus === "calibrating"
+    ) {
+      return contractApiError(
+        c,
+        409,
+        "firmware_update_busy",
+        "Stop extraction, cooldown, and calibration before updating.",
+      );
+    }
+    if (await sha256Hex(image) !== expectedDigest) {
+      return contractApiError(
+        c,
+        422,
+        "firmware_digest_mismatch",
+        "The uploaded firmware SHA-256 does not match.",
+      );
+    }
+    machine.setHeaterEnabled(false);
+    return c.json(FirmwareUpdateAcceptedSchema.parse({
+      bytesWritten: image.length,
+      rebooting: true,
+      status: "accepted",
+    }), 202);
+  });
+
+  app.get("/api/v3/state", (c) => {
+    if ([...new URL(c.req.url).searchParams.keys()].length > 0) {
+      return contractApiError(
+        c,
+        400,
+        "malformed_request",
+        "The state query is malformed.",
+      );
+    }
+    return c.json(machine.getStateV3());
+  });
+
+  app.patch("/api/v3/settings", async (c) => {
     const body = await readJson(c);
     if (!body.ok) {
-      return contractError(c, 400, "malformed_request", MALFORMED_REQUEST_MESSAGE);
+      return contractApiError(c, 400, "malformed_request", MALFORMED_REQUEST_MESSAGE);
     }
 
-    const parsed = TemperatureSettingsRequestSchema.safeParse(body.value);
+    const parsed = SettingsRequestSchema.safeParse(body.value);
     if (!parsed.success) {
-      if (isTemperatureConstraintViolation(body.value)) {
-        return contractError(
-          c,
-          400,
-          "temperature_out_of_range",
-          "Temperature targets must be whole values within their allowed ranges.",
-        );
-      }
-      return contractError(c, 400, "malformed_request", MALFORMED_REQUEST_MESSAGE);
+      return contractApiError(c, 400, "malformed_request", MALFORMED_REQUEST_MESSAGE);
     }
     if (machine.abortTemperatureCalibrationForConflict()) {
-      return contractError(
+      return contractApiError(
         c,
         409,
         "sensor_unavailable",
         "Temperature calibration was cancelled before changing targets.",
       );
     }
-    if (!machine.temperatureTargetsAreSafe(parsed.data)) {
-      return contractError(
+    const temperatureUpdate: TemperatureSettingsRequest | null =
+      parsed.data.brewTargetC !== undefined
+        ? {
+            brewTargetC: parsed.data.brewTargetC,
+            ...(parsed.data.steamTargetC === undefined
+              ? {}
+              : { steamTargetC: parsed.data.steamTargetC }),
+          }
+        : parsed.data.steamTargetC !== undefined
+          ? { steamTargetC: parsed.data.steamTargetC }
+          : null;
+    if (
+      temperatureUpdate !== null &&
+      !machine.temperatureTargetsAreSafe(temperatureUpdate)
+    ) {
+      return contractApiError(
         c,
         400,
         "temperature_target_unsafe",
@@ -150,21 +529,42 @@ export function createSimulator(
       );
     }
 
-    return c.json(machine.updateTemperatureSettings(parsed.data));
+    if (parsed.data.steamControl !== undefined) {
+      if (machine.getState().status === "fault") {
+        return contractApiError(
+          c,
+          409,
+          "machine_faulted",
+          "Steam-control settings cannot change while a machine fault is latched.",
+        );
+      }
+      if (machine.updateSteamControlSettings(parsed.data.steamControl) === null) {
+        return contractApiError(
+          c,
+          500,
+          "persistence_failure",
+          "Steam-control settings could not be persisted.",
+        );
+      }
+    }
+    if (temperatureUpdate !== null) {
+      machine.updateTemperatureSettings(temperatureUpdate);
+    }
+    return c.json(machine.getStateV3());
   });
 
-  app.put("/api/v1/mode", async (c) => {
+  app.put("/api/v3/mode", async (c) => {
     const body = await readJson(c);
     if (!body.ok) {
-      return contractError(c, 400, "malformed_request", MALFORMED_REQUEST_MESSAGE);
+      return contractApiError(c, 400, "malformed_request", MALFORMED_REQUEST_MESSAGE);
     }
 
     const parsed = ModeRequestSchema.safeParse(body.value);
     if (!parsed.success) {
-      return contractError(c, 400, "malformed_request", MALFORMED_REQUEST_MESSAGE);
+      return contractApiError(c, 400, "malformed_request", MALFORMED_REQUEST_MESSAGE);
     }
     if (machine.abortTemperatureCalibrationForConflict()) {
-      return contractError(
+      return contractApiError(
         c,
         409,
         "sensor_unavailable",
@@ -173,7 +573,7 @@ export function createSimulator(
     }
 
     if (machine.getState().status === "fault") {
-      return contractError(
+      return contractApiError(
         c,
         409,
         "sensor_unavailable",
@@ -181,7 +581,7 @@ export function createSimulator(
       );
     }
     if (parsed.data.mode === "steam" && machine.hasActiveWorkflow()) {
-      return contractError(
+      return contractApiError(
         c,
         409,
         "sensor_unavailable",
@@ -189,21 +589,22 @@ export function createSimulator(
       );
     }
 
-    return c.json(ModeResponseSchema.parse({ mode: machine.setMode(parsed.data.mode) }));
+    machine.setMode(parsed.data.mode);
+    return c.json(machine.getStateV3());
   });
 
-  app.put("/api/v1/heater", async (c) => {
+  app.put("/api/v3/heater-permission", async (c) => {
     const body = await readJson(c);
     if (!body.ok) {
-      return contractError(c, 400, "malformed_request", MALFORMED_REQUEST_MESSAGE);
+      return contractApiError(c, 400, "malformed_request", MALFORMED_REQUEST_MESSAGE);
     }
 
     const parsed = HeaterSettingsRequestSchema.safeParse(body.value);
     if (!parsed.success) {
-      return contractError(c, 400, "malformed_request", MALFORMED_REQUEST_MESSAGE);
+      return contractApiError(c, 400, "malformed_request", MALFORMED_REQUEST_MESSAGE);
     }
     if (machine.abortTemperatureCalibrationForConflict()) {
-      return contractError(
+      return contractApiError(
         c,
         409,
         "sensor_unavailable",
@@ -211,105 +612,30 @@ export function createSimulator(
       );
     }
 
-    return c.json(
-      HeaterSettingsResponseSchema.parse(
-        machine.setHeaterEnabled(parsed.data.heaterEnabled),
-      ),
-    );
+    machine.setHeaterEnabled(parsed.data.enabled);
+    return c.json(machine.getStateV3());
   });
 
-  app.post("/api/v1/faults/over-temperature/dismiss", (c) => {
-    const state = machine.dismissOverTemperature();
-    if (state === null) {
-      return contractError(
+  app.post("/api/v3/faults/over-temperature/dismiss", (c) => {
+    if (!machine.dismissOverTemperature()) {
+      return contractApiError(
         c,
         409,
         "sensor_unavailable",
         "Over-temperature can only be dismissed after the active temperature returns to target.",
       );
     }
-    return c.json(state);
+    return c.json(machine.getStateV3());
   });
 
-  app.get("/api/v2/state", (c) => {
-    const query = new URL(c.req.url).searchParams;
-    if ([...query.keys()].length > 0) {
-      return contractV2Error(
-        c,
-        400,
-        "malformed_request",
-        "The state query is malformed.",
-      );
-    }
-    return c.json(machine.getStateV2());
-  });
-
-  app.get("/api/v2/settings/steam-control", (c) =>
-    c.json(machine.getSteamControlState()),
-  );
-
-  app.patch("/api/v2/settings/steam-control", async (c) => {
-    const body = await readJson(c);
-    if (!body.ok) {
-      return contractV2Error(
-        c,
-        400,
-        "malformed_request",
-        MALFORMED_REQUEST_MESSAGE,
-      );
-    }
-    const parsed = SteamControlSettingsRequestSchema.safeParse(body.value);
-    if (!parsed.success) {
-      return contractV2Error(
-        c,
-        400,
-        "malformed_request",
-        "Steam-control settings must use the documented whole-degree and whole-minute ranges.",
-      );
-    }
-    if (machine.getState().status === "fault") {
-      return contractV2Error(
-        c,
-        409,
-        "machine_faulted",
-        "Steam-control settings cannot change while a machine fault is latched.",
-      );
-    }
-    const state = machine.updateSteamControlSettings(parsed.data);
-    return state === null
-      ? contractV2Error(
-          c,
-          500,
-          "internal_error",
-          "The simulator failed off while persisting steam-control settings.",
-        )
-      : c.json(state);
-  });
-
-  app.get("/api/v2/temperature-calibration", (c) => {
-    const calibrationId = temperatureCalibrationQuery(c.req.url);
-    if (!calibrationId.ok) {
-      return contractV2Error(
-        c,
-        400,
-        "malformed_request",
-        "The temperature calibration query is malformed.",
-      );
-    }
-    const result = machine.getTemperatureCalibration(calibrationId.value);
-    return result.ok
-      ? c.json(result.state)
-      : temperatureCalibrationError(c, result.reason);
-  });
-
-  app.post("/api/v2/temperature-calibration/start", (c) => {
+  app.post("/api/v3/temperature-calibrations/current", (c) => {
     const result = machine.startTemperatureCalibration();
     return result.ok
-      ? c.json(result.state)
+      ? c.json(machine.getStateV3())
       : temperatureCalibrationError(c, result.reason);
   });
 
-  app.put("/api/v2/temperature-calibration/candidate", async (c) => {
+  app.patch("/api/v3/temperature-calibrations/current", async (c) => {
     const body = await readJson(c);
     const parsed = body.ok
       ? UpdateTemperatureCalibrationCandidateRequestSchema.safeParse(
@@ -317,7 +643,7 @@ export function createSimulator(
         )
       : null;
     if (parsed === null || !parsed.success) {
-      return contractV2Error(
+      return contractApiError(
         c,
         400,
         "malformed_request",
@@ -329,66 +655,55 @@ export function createSimulator(
       parsed.data.candidateRawTargetC,
     );
     return result.ok
-      ? c.json(result.state)
+      ? c.json(machine.getStateV3())
       : temperatureCalibrationError(c, result.reason);
   });
 
-  for (const operation of ["save", "cancel"] as const) {
-    app.post(
-      `/api/v2/temperature-calibration/${operation}`,
-      async (c) => {
-        const body = await readJson(c);
-        const parsed = body.ok
-          ? TemperatureCalibrationSessionRequestSchema.safeParse(body.value)
-          : null;
-        if (parsed === null || !parsed.success) {
-          return contractV2Error(
-            c,
-            400,
-            "malformed_request",
-            "The calibration session request is malformed.",
-          );
-        }
-        const result =
-          operation === "save"
-            ? machine.saveTemperatureCalibration(
-                parsed.data.calibrationId,
-              )
-            : machine.cancelTemperatureCalibration(
-                parsed.data.calibrationId,
-              );
-        return result.ok
-          ? c.json(result.state)
-          : temperatureCalibrationError(c, result.reason);
-      },
-    );
-  }
-
-  app.get("/api/v2/scale", (c) => c.json(machine.getScaleState()));
-  app.get("/api/v2/scale/trace", (c) => {
-    const cursor = weightedTraceCursor(c.req.url);
-    if (!cursor.ok) {
-      return contractV2Error(
-        c,
-        400,
-        "malformed_request",
-        "The weighted trace cursor is malformed.",
-      );
+  const readCalibrationSession = async (c: Context) => {
+    const body = await readJson(c);
+    return body.ok
+      ? TemperatureCalibrationSessionRequestSchema.safeParse(body.value)
+      : null;
+  };
+  app.put("/api/v3/temperature-calibrations/current", async (c) => {
+    const parsed = await readCalibrationSession(c);
+    if (parsed === null || !parsed.success) {
+      return contractApiError(c, 400, "malformed_request",
+        "The calibration session request is malformed.");
     }
-    const response = machine.getScaleTrace(cursor.value);
-    return response === null
-      ? contractV2Error(
-          c,
-          400,
-          "malformed_request",
-          "The weighted trace cursor is outside the retained sequence.",
-        )
-      : c.json(response);
+    const result = machine.saveTemperatureCalibration(parsed.data.calibrationId);
+    return result.ok
+      ? c.json(machine.getStateV3())
+      : temperatureCalibrationError(c, result.reason);
+  });
+  app.delete("/api/v3/temperature-calibrations/current", async (c) => {
+    const parsed = await readCalibrationSession(c);
+    if (parsed === null || !parsed.success) {
+      return contractApiError(c, 400, "malformed_request",
+        "The calibration session request is malformed.");
+    }
+    const result = machine.cancelTemperatureCalibration(
+      parsed.data.calibrationId,
+    );
+    return result.ok
+      ? c.json(machine.getStateV3())
+      : temperatureCalibrationError(c, result.reason);
+  });
+  app.post("/api/v3/temperature-calibrations/current/lease", async (c) => {
+    const parsed = await readCalibrationSession(c);
+    if (parsed === null || !parsed.success) {
+      return contractApiError(c, 400, "malformed_request",
+        "The calibration session request is malformed.");
+    }
+    const result = machine.getTemperatureCalibration(parsed.data.calibrationId);
+    return result.ok
+      ? c.json(machine.getStateV3())
+      : temperatureCalibrationError(c, result.reason);
   });
 
-  app.post("/api/v2/scale/calibration/start", (c) => {
+  app.post("/api/v3/scale-calibrations/current", (c) => {
     if (machine.abortTemperatureCalibrationForConflict()) {
-      return contractV2Error(
+      return contractApiError(
         c,
         409,
         "temperature_calibration_active",
@@ -397,9 +712,9 @@ export function createSimulator(
     }
     const result = machine.startScaleCalibration();
     if (result === "ok") {
-      return c.json(machine.getScaleState());
+      return c.json(machine.getStateV3());
     }
-    return contractV2Error(
+    return contractApiError(
       c,
       409,
       result === "active"
@@ -415,10 +730,10 @@ export function createSimulator(
     );
   });
 
-  app.post("/api/v2/scale/calibration/complete", async (c) => {
+  app.put("/api/v3/scale-calibrations/current", async (c) => {
     const body = await readJson(c);
     if (!body.ok) {
-      return contractV2Error(
+      return contractApiError(
         c,
         400,
         "malformed_request",
@@ -427,7 +742,7 @@ export function createSimulator(
     }
     const parsed = CompleteScaleCalibrationRequestSchema.safeParse(body.value);
     if (!parsed.success) {
-      return contractV2Error(
+      return contractApiError(
         c,
         400,
         "malformed_request",
@@ -438,17 +753,17 @@ export function createSimulator(
       parsed.data.referenceWeightDecigrams,
     );
     if (result === "ok") {
-      return c.json(machine.getScaleState());
+      return c.json(machine.getStateV3());
     }
     if (result === "persistence") {
-      return contractV2Error(
+      return contractApiError(
         c,
         500,
         "persistence_failure",
         "The scale calibration could not be persisted.",
       );
     }
-    return contractV2Error(
+    return contractApiError(
       c,
       409,
       result === "not-started"
@@ -464,20 +779,20 @@ export function createSimulator(
     );
   });
 
-  app.post("/api/v2/scale/calibration/cancel", (c) => {
+  app.delete("/api/v3/scale-calibrations/current", (c) => {
     machine.cancelScaleCalibration();
-    return c.json(machine.getScaleState());
+    return c.json(machine.getStateV3());
   });
 
-  app.post("/api/v2/scale/warnings/acknowledge", (c) => {
+  app.post("/api/v3/scale/warnings/acknowledge", (c) => {
     machine.acknowledgeScaleWarning();
-    return c.json(machine.getScaleState());
+    return c.json(machine.getStateV3());
   });
 
-  app.post("/api/v2/extractions/start", async (c) => {
+  app.post("/api/v3/extractions", async (c) => {
     const body = await readJson(c);
     if (!body.ok) {
-      return contractV2Error(
+      return contractApiError(
         c,
         400,
         "malformed_request",
@@ -486,7 +801,7 @@ export function createSimulator(
     }
     const parsed = StartExtractionRequestSchema.safeParse(body.value);
     if (!parsed.success) {
-      return contractV2Error(
+      return contractApiError(
         c,
         400,
         "malformed_request",
@@ -494,7 +809,7 @@ export function createSimulator(
       );
     }
     if (machine.abortTemperatureCalibrationForConflict()) {
-      return contractV2Error(
+      return contractApiError(
         c,
         409,
         "temperature_calibration_active",
@@ -508,21 +823,23 @@ export function createSimulator(
       "weightControl" in parsed.data ? parsed.data.weightControl : null,
     );
     if (!result.ok && result.reason === "active") {
-      return extractionActiveConflict(
+      return contractApiError(
         c,
-        result.activeExtraction,
+        409,
+        "extraction_active",
         "A different extraction is already active.",
       );
     }
     if (!result.ok && result.reason === "cooldown-active") {
-      return cooldownActiveConflict(
+      return contractApiError(
         c,
-        result.activeCooldown,
+        409,
+        "cooldown_active",
         "Extraction cannot start while cooldown is active.",
       );
     }
     if (!result.ok && result.reason === "brew-mode-required") {
-      return contractV2Error(
+      return contractApiError(
         c,
         409,
         "brew_mode_required",
@@ -530,7 +847,7 @@ export function createSimulator(
       );
     }
     if (!result.ok && result.reason === "idempotency-mismatch") {
-      return contractV2Error(
+      return contractApiError(
         c,
         409,
         "idempotency_mismatch",
@@ -538,8 +855,8 @@ export function createSimulator(
       );
     }
     if (!result.ok && result.reason.startsWith("scale-")) {
-      const code = result.reason.replaceAll("-", "_") as ApiV2ErrorCode;
-      return contractV2Error(
+      const code = result.reason.replaceAll("-", "_") as ApiErrorCode;
+      return contractApiError(
         c,
         409,
         code,
@@ -553,24 +870,25 @@ export function createSimulator(
       );
     }
     if (!result.ok) {
-      return contractV2Error(
+      return contractApiError(
         c,
         500,
         "internal_error",
         "The simulator could not start the validated extraction.",
       );
     }
-    return c.json(result.extraction);
+    return c.json(machine.getStateV3());
   });
 
-  app.post("/api/v2/extractions/stop", (c) =>
-    c.json(machine.stopExtraction()),
-  );
+  app.delete("/api/v3/extractions/current", (c) => {
+    machine.stopExtraction();
+    return c.json(machine.getStateV3());
+  });
 
-  app.get("/api/v2/extractions/stream", (c) => {
+  app.get("/api/v3/extractions/current/stream", (c) => {
     const cursor = extractionTelemetryCursor(c.req.url);
     if (!cursor.ok) {
-      return contractV2Error(
+      return contractApiError(
         c,
         400,
         "malformed_request",
@@ -578,7 +896,7 @@ export function createSimulator(
       );
     }
     if (extractionStreamActive) {
-      return contractV2Error(
+      return contractApiError(
         c,
         409,
         "stream_busy",
@@ -587,7 +905,7 @@ export function createSimulator(
     }
     const initial = machine.getExtractionTelemetryPage(cursor.value);
     if (!initial.ok) {
-      return contractV2Error(
+      return contractApiError(
         c,
         409,
         "stream_unavailable",
@@ -626,7 +944,9 @@ export function createSimulator(
         return;
       }
       controller?.enqueue(
-        encoder.encode(`event: telemetry\ndata: ${JSON.stringify(page)}\n\n`),
+        encoder.encode(
+          `id: ${page.bootId}.${page.extractionId}.${page.nextCursor.afterSequence}\nevent: telemetry\ndata: ${JSON.stringify(page)}\n\n`,
+        ),
       );
       lastSendAt = Date.now();
       activeCursor = page.nextCursor;
@@ -704,10 +1024,10 @@ export function createSimulator(
     });
   });
 
-  app.post("/api/v2/cooldowns/start", async (c) => {
+  app.post("/api/v3/cooldowns", async (c) => {
     const body = await readJson(c);
     if (!body.ok) {
-      return contractV2Error(
+      return contractApiError(
         c,
         400,
         "malformed_request",
@@ -716,7 +1036,7 @@ export function createSimulator(
     }
     const parsed = StartCooldownRequestSchema.safeParse(body.value);
     if (!parsed.success) {
-      return contractV2Error(
+      return contractApiError(
         c,
         400,
         "malformed_request",
@@ -724,7 +1044,7 @@ export function createSimulator(
       );
     }
     if (machine.abortTemperatureCalibrationForConflict()) {
-      return contractV2Error(
+      return contractApiError(
         c,
         409,
         "temperature_calibration_active",
@@ -734,24 +1054,26 @@ export function createSimulator(
 
     const result = machine.startCooldown(parsed.data.idempotencyKey);
     if (result.ok) {
-      return c.json(result.cooldown);
+      return c.json(machine.getStateV3());
     }
     if (result.reason === "extraction-active") {
-      return extractionActiveConflict(
+      return contractApiError(
         c,
-        result.activeExtraction,
+        409,
+        "extraction_active",
         "Cooldown cannot start while extraction is active.",
       );
     }
     if (result.reason === "cooldown-active") {
-      return cooldownActiveConflict(
+      return contractApiError(
         c,
-        result.activeCooldown,
+        409,
+        "cooldown_active",
         "A different cooldown is already active.",
       );
     }
     if (result.reason === "cooldown-not-required") {
-      return contractV2Error(
+      return contractApiError(
         c,
         409,
         "cooldown_not_required",
@@ -759,7 +1081,7 @@ export function createSimulator(
       );
     }
     if (result.reason === "sensor-unavailable") {
-      return contractV2Error(
+      return contractApiError(
         c,
         409,
         "sensor_unavailable",
@@ -767,14 +1089,14 @@ export function createSimulator(
       );
     }
     if (result.reason === "machine-faulted") {
-      return contractV2Error(
+      return contractApiError(
         c,
         409,
         "machine_faulted",
         "Cooldown cannot start while a machine fault is latched.",
       );
     }
-    return contractV2Error(
+    return contractApiError(
       c,
       500,
       "internal_error",
@@ -782,11 +1104,11 @@ export function createSimulator(
     );
   });
 
-  app.post("/api/v2/cooldowns/stop", (c) => {
+  app.delete("/api/v3/cooldowns/current", (c) => {
     const result = machine.stopCooldown();
     return result.ok
-      ? c.json(result.cooldown)
-      : contractV2Error(
+      ? c.json(machine.getStateV3())
+      : contractApiError(
           c,
           500,
           "internal_error",
@@ -807,7 +1129,7 @@ export function createSimulator(
   app.post("/_simulator/advance", async (c) => {
     const body = await readJson(c);
     if (!body.ok || !isAdvanceRequest(body.value)) {
-      return contractError(c, 400, "malformed_request", MALFORMED_REQUEST_MESSAGE);
+      return contractApiError(c, 400, "malformed_request", MALFORMED_REQUEST_MESSAGE);
     }
     machine.advance(body.value.milliseconds);
     return c.json(machine.getState());
@@ -816,7 +1138,7 @@ export function createSimulator(
   app.put("/_simulator/temperatures", async (c) => {
     const body = await readJson(c);
     if (!body.ok || !isTemperatureControlRequest(body.value)) {
-      return contractError(c, 400, "malformed_request", MALFORMED_REQUEST_MESSAGE);
+      return contractApiError(c, 400, "malformed_request", MALFORMED_REQUEST_MESSAGE);
     }
     machine.setTemperature(body.value.boilerTemperatureC);
     return c.json(machine.getState());
@@ -825,7 +1147,7 @@ export function createSimulator(
   app.put("/_simulator/raw-temperature", async (c) => {
     const body = await readJson(c);
     if (!body.ok || !isRawTemperatureControlRequest(body.value)) {
-      return contractError(c, 400, "malformed_request", MALFORMED_REQUEST_MESSAGE);
+      return contractApiError(c, 400, "malformed_request", MALFORMED_REQUEST_MESSAGE);
     }
     machine.setTemperature(body.value.boilerTemperatureRawC);
     return c.json(machine.getRawTemperature());
@@ -834,11 +1156,11 @@ export function createSimulator(
   app.put("/_simulator/fault", async (c) => {
     const body = await readJson(c);
     if (!body.ok || !isExactObject(body.value, ["code"])) {
-      return contractError(c, 400, "malformed_request", MALFORMED_REQUEST_MESSAGE);
+      return contractApiError(c, 400, "malformed_request", MALFORMED_REQUEST_MESSAGE);
     }
     const code = FaultCodeSchema.safeParse(body.value.code);
     if (!code.success) {
-      return contractError(c, 400, "malformed_request", MALFORMED_REQUEST_MESSAGE);
+      return contractApiError(c, 400, "malformed_request", MALFORMED_REQUEST_MESSAGE);
     }
     machine.injectFault(code.data);
     return c.json(machine.getState());
@@ -867,7 +1189,7 @@ export function createSimulator(
   app.post("/_simulator/fail-next-output-command", async (c) => {
     const body = await readJson(c);
     if (!body.ok || !isOutputFailureRequest(body.value)) {
-      return contractError(c, 400, "malformed_request", MALFORMED_REQUEST_MESSAGE);
+      return contractApiError(c, 400, "malformed_request", MALFORMED_REQUEST_MESSAGE);
     }
     machine.injectNextOutputFailure(body.value.command);
     return c.json({ command: body.value.command, status: "armed" });
@@ -876,68 +1198,27 @@ export function createSimulator(
   app.put("/_simulator/scale", async (c) => {
     const body = await readJson(c);
     if (!body.ok || !isScaleControlRequest(body.value)) {
-      return contractError(c, 400, "malformed_request", MALFORMED_REQUEST_MESSAGE);
+      return contractApiError(c, 400, "malformed_request", MALFORMED_REQUEST_MESSAGE);
     }
     machine.setScaleState(body.value);
     return c.json(machine.getScaleState());
   });
 
-  return { app, machine };
-}
-
-function contractError(
-  c: Context,
-  status: 400 | 401 | 409,
-  code: ErrorCode,
-  message: string,
-): Response {
-  const payload: ErrorResponse = ErrorResponseSchema.parse({
-    error: { code, message },
-  });
-  return c.json(payload, status);
-}
-
-function weightedTraceCursor(
-  requestUrl: string,
-):
-  | {
-      ok: true;
-      value:
-        | undefined
-        | { extractionId: string; bootId: string; afterSequence: number };
-    }
-  | { ok: false } {
-  const parameters = new URL(requestUrl).searchParams;
-  const allowed = new Set(["extractionId", "bootId", "afterSequence"]);
-  for (const key of parameters.keys()) {
-    if (!allowed.has(key) || parameters.getAll(key).length !== 1) {
-      return { ok: false };
-    }
-  }
-  const extractionId = parameters.get("extractionId");
-  const bootId = parameters.get("bootId");
-  const sequenceText = parameters.get("afterSequence");
-  if (
-    extractionId === null &&
-    bootId === null &&
-    sequenceText === null
-  ) {
-    return { ok: true, value: undefined };
-  }
-  if (
-    extractionId === null ||
-    bootId === null ||
-    sequenceText === null ||
-    !/^(0|[1-9][0-9]*)$/.test(sequenceText)
-  ) {
-    return { ok: false };
-  }
-  const parsed = WeightedExtractionTraceCursorSchema.safeParse({
-    extractionId,
-    bootId,
-    afterSequence: Number(sequenceText),
-  });
-  return parsed.success ? { ok: true, value: parsed.data } : { ok: false };
+  return {
+    app,
+    machine,
+    rotatePairingCode(nextPairingCode: string) {
+      if (!/^[0-9]{8}$/.test(nextPairingCode)) {
+        throw new Error(
+          "The simulator pairing code must contain exactly eight digits.",
+        );
+      }
+      if (nextPairingCode === pairingCode) return;
+      pairingCode = nextPairingCode;
+      clients.splice(0);
+      sessions.clear();
+    },
+  };
 }
 
 function extractionTelemetryCursor(
@@ -1012,7 +1293,7 @@ function temperatureCalibrationError(
 ): Response {
   const mapping: Record<
     typeof reason,
-    { code: ApiV2ErrorCode; message: string; status: 409 | 500 }
+    { code: ApiErrorCode; message: string; status: 409 | 500 }
   > = {
     active: {
       code: "temperature_calibration_active",
@@ -1082,7 +1363,7 @@ function temperatureCalibrationError(
     },
   };
   const error = mapping[reason];
-  return contractV2Error(
+  return contractApiError(
     c,
     error.status,
     error.code,
@@ -1090,13 +1371,13 @@ function temperatureCalibrationError(
   );
 }
 
-function contractV2Error(
+function contractApiError(
   c: Context,
-  status: 400 | 401 | 409 | 500,
-  code: ApiV2ErrorCode,
+  status: 400 | 401 | 409 | 413 | 415 | 422 | 429 | 500,
+  code: ApiErrorCode,
   message: string,
 ): Response {
-  const payload: ApiV2ErrorResponse = ApiV2ErrorResponseSchema.parse({
+  const payload: ApiErrorResponse = ApiErrorResponseSchema.parse({
     error: { code, message },
   });
   return c.json(payload, status);
@@ -1139,30 +1420,6 @@ function isScaleControlRequest(
   );
 }
 
-function extractionActiveConflict(
-  c: Context,
-  activeExtraction: ReturnType<SimulatorMachine["getExtractionState"]>,
-  message: string,
-): Response {
-  const payload = ExtractionActiveConflictResponseSchema.parse({
-    error: { code: "extraction_active", message },
-    activeExtraction,
-  });
-  return c.json(payload, 409);
-}
-
-function cooldownActiveConflict(
-  c: Context,
-  activeCooldown: ReturnType<SimulatorMachine["getCooldownState"]>,
-  message: string,
-): Response {
-  const payload = CooldownActiveConflictResponseSchema.parse({
-    error: { code: "cooldown_active", message },
-    activeCooldown,
-  });
-  return c.json(payload, 409);
-}
-
 async function readJson(
   c: Context,
 ): Promise<{ ok: true; value: unknown } | { ok: false }> {
@@ -1171,19 +1428,6 @@ async function readJson(
   } catch {
     return { ok: false };
   }
-}
-
-function isTemperatureConstraintViolation(value: unknown): boolean {
-  if (!isRecord(value)) {
-    return false;
-  }
-
-  const keys = Object.keys(value);
-  return (
-    keys.length > 0 &&
-    keys.every((key) => key === "brewTargetC" || key === "steamTargetC") &&
-    keys.every((key) => typeof value[key] === "number")
-  );
 }
 
 function isAdvanceRequest(value: unknown): value is { milliseconds: number } {

@@ -18,9 +18,6 @@
         "NSBonjourServices": [
           "_philcoino._tcp"
         ],
-        "NSAppTransportSecurity": {
-          "NSAllowsLocalNetworking": true
-        },
         "CFBundleLocalizations": [
           "en",
           "pt-BR"
@@ -79,7 +76,6 @@
           ]
         }
       ],
-      "./plugins/with-android-cleartext",
       [
         "expo-splash-screen",
         {

@@ -30,14 +30,20 @@ export interface ActivityRect {
 export interface WeightedTracePlot extends TelemetryPlotFrame {
   cutoffY: number | null;
   flowAreas: string[];
+  flowBand: TelemetryBand;
+  flowMaximum: number;
+  flowPaths: string[];
   flowY: (value: number) => number;
   phaseBoundaries: number[];
   settlingX: number | null;
   targetPaths: string[];
   temperatureBand: TelemetryBand;
+  temperatureMaximum: number;
+  temperatureMinimum: number;
   temperaturePaths: string[];
   temperatureY: (value: number) => number;
   weightBand: TelemetryBand;
+  weightMaximum: number;
   weightPaths: string[];
   weightY: (value: number) => number;
   x: (elapsedMs: number) => number;
@@ -55,7 +61,7 @@ export interface TemperatureHistoryPlot extends TelemetryPlotFrame {
   x: (recordedAtMs: number) => number;
 }
 
-export function weightedTracePlot({
+export function extractionTelemetryPlot({
   cutoffDecigrams,
   height,
   trace,
@@ -71,29 +77,26 @@ export function weightedTracePlot({
     trace.samples.at(-1)?.elapsedMs ?? MINIMUM_TRACE_SPAN_MS,
   );
   const frame = telemetryPlotFrame({
-    bandCount: 2,
+    bandCount: 3,
     height,
     maxElapsed,
     width,
   });
   const temperatureBand = frame.bands[0];
   const weightBand = frame.bands[1];
+  const flowBand = frame.bands[2];
 
   let temperatureLowest = TRACE_TEMPERATURE_FLOOR_C;
   let temperatureHighest = TRACE_TEMPERATURE_CEILING_C;
   let weightHighest = MINIMUM_WEIGHT_G;
   let flowHighest = MINIMUM_FLOW_G_PER_S;
   for (const sample of trace.samples) {
-    temperatureLowest = Math.min(
-      temperatureLowest,
-      sample.boilerTemperatureC,
-      sample.activeTargetC,
-    );
-    temperatureHighest = Math.max(
-      temperatureHighest,
-      sample.boilerTemperatureC,
-      sample.activeTargetC,
-    );
+    temperatureLowest = Math.min(temperatureLowest, sample.activeTargetC);
+    temperatureHighest = Math.max(temperatureHighest, sample.activeTargetC);
+    if (sample.boilerTemperatureC !== null) {
+      temperatureLowest = Math.min(temperatureLowest, sample.boilerTemperatureC);
+      temperatureHighest = Math.max(temperatureHighest, sample.boilerTemperatureC);
+    }
     if (sample.netWeightDecigrams !== null) {
       weightHighest = Math.max(weightHighest, sample.netWeightDecigrams / 10);
     }
@@ -118,10 +121,22 @@ export function weightedTracePlot({
   const weightY = (value: number) =>
     telemetryBandValueY(weightBand, Math.max(0, value), 0, weightHighest);
   const flowY = (value: number) =>
-    telemetryBandValueY(weightBand, Math.max(0, value), 0, flowHighest);
+    telemetryBandValueY(flowBand, Math.max(0, value), 0, flowHighest);
   const continuous = splitContinuous(
     trace.samples,
     (sample) => sample.gapStatus === "gap",
+  );
+  const temperatureSegments = availableSeriesSegments(
+    continuous,
+    (sample) => sample.boilerTemperatureC !== null,
+  );
+  const weightSegments = availableSeriesSegments(
+    continuous,
+    (sample) => sample.netWeightDecigrams !== null,
+  );
+  const flowSegments = availableSeriesSegments(
+    continuous,
+    (sample) => sample.derivedFlowGPerS !== null,
   );
   const settling = trace.samples.find((sample) => sample.phase === "settling");
 
@@ -131,21 +146,29 @@ export function weightedTracePlot({
       cutoffDecigrams === null || cutoffDecigrams === undefined
         ? null
         : weightY(cutoffDecigrams / 10),
-    flowAreas: continuous
+    flowAreas: flowSegments
       .map((segment) => {
-        const available = segment.filter(
-          (sample) => sample.derivedFlowGPerS !== null,
-        );
-        if (available.length < 2) return "";
+        if (segment.length < 2) return "";
         return `${linePath(
-          available,
+          segment,
           (sample) => x(sample.elapsedMs),
           (sample) => flowY(sample.derivedFlowGPerS!),
-        )} L ${x(available.at(-1)!.elapsedMs)} ${frame.bottom} L ${x(
-          available[0].elapsedMs,
-        )} ${frame.bottom} Z`;
+        )} L ${x(segment.at(-1)!.elapsedMs)} ${flowBand.bottom} L ${x(
+          segment[0].elapsedMs,
+        )} ${flowBand.bottom} Z`;
       })
       .filter(Boolean),
+    flowBand,
+    flowMaximum: flowHighest,
+    flowPaths: flowSegments
+      .filter((segment) => segment.length >= 2)
+      .map((segment) =>
+        linePath(
+          segment,
+          (sample) => x(sample.elapsedMs),
+          (sample) => flowY(sample.derivedFlowGPerS!),
+        ),
+      ),
     flowY,
     phaseBoundaries: trace.samples
       .filter(
@@ -162,27 +185,50 @@ export function weightedTracePlot({
       ),
     ),
     temperatureBand,
-    temperaturePaths: continuous.map((segment) =>
-      linePath(
+    temperatureMaximum: temperatureMax,
+    temperatureMinimum: temperatureMin,
+    temperaturePaths: temperatureSegments
+      .filter((segment) => segment.length >= 2)
+      .map((segment) => linePath(
         segment,
         (sample) => x(sample.elapsedMs),
-        (sample) => temperatureY(sample.boilerTemperatureC),
-      ),
-    ),
+        (sample) => temperatureY(sample.boilerTemperatureC!),
+      )),
     temperatureY,
     weightBand,
-    weightPaths: continuous
+    weightMaximum: weightHighest,
+    weightPaths: weightSegments
+      .filter((segment) => segment.length >= 2)
       .map((segment) =>
         linePath(
-          segment.filter((sample) => sample.netWeightDecigrams !== null),
+          segment,
           (sample) => x(sample.elapsedMs),
           (sample) => weightY(sample.netWeightDecigrams! / 10),
         ),
-      )
-      .filter(Boolean),
+      ),
     weightY,
     x,
   };
+}
+
+function availableSeriesSegments<T>(
+  segments: T[][],
+  isAvailable: (sample: T) => boolean,
+): T[][] {
+  const available: T[][] = [];
+  for (const segment of segments) {
+    let current: T[] = [];
+    for (const sample of segment) {
+      if (!isAvailable(sample)) {
+        if (current.length > 0) available.push(current);
+        current = [];
+        continue;
+      }
+      current.push(sample);
+    }
+    if (current.length > 0) available.push(current);
+  }
+  return available;
 }
 
 export function temperatureHistoryPlot({

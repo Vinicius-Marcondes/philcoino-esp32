@@ -32,10 +32,6 @@ export const COOLDOWN_STABILIZATION_MS = 5_000;
 export const COOLDOWN_MAX_DURATION_MS =
   COOLDOWN_PUMP_LIMIT_MS + COOLDOWN_STABILIZATION_MS;
 export const PROFILE_NAME_MAX_LENGTH = 12;
-export const WEIGHTED_TRACE_PAGE_SIZE = 16;
-export const WEIGHTED_TRACE_RETENTION_SAMPLES = 320;
-export const WEIGHTED_TRACE_SAMPLE_INTERVAL_MS = 250;
-export const WEIGHTED_TRACE_SETTLING_LIMIT_MS = 10_000;
 export const EXTRACTION_TELEMETRY_PAGE_SIZE = 16;
 export const EXTRACTION_TELEMETRY_RETENTION_SAMPLES = 320;
 export const EXTRACTION_TELEMETRY_SAMPLE_INTERVAL_MS = 250;
@@ -62,16 +58,6 @@ export const FaultCodeSchema = z.enum([
   "heating_timeout",
   "internal_error",
 ]);
-export const ErrorCodeSchema = z.enum([
-  "malformed_request",
-  "unauthorized",
-  "temperature_out_of_range",
-  "temperature_target_unsafe",
-  "sensor_unavailable",
-  "persistence_failure",
-  "internal_error",
-]);
-
 export const BrewTargetSchema = z
   .number()
   .int()
@@ -97,7 +83,7 @@ export const DeviceResponseSchema = z.strictObject({
     .regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/),
   name: z.string().min(1).max(64),
   model: z.string().min(1).max(64),
-  apiVersion: z.literal("2"),
+  apiVersion: z.literal("3"),
   firmwareVersion: z.string().min(1).max(32),
 });
 
@@ -159,7 +145,7 @@ export const SteamControlStateSchema = z.strictObject({
 
 const machineStateShape = {
   activeMode: ModeSchema,
-  boilerTemperatureC: z.number(),
+  boilerTemperatureC: z.number().finite().min(-60).max(180).nullable(),
   brewTargetC: BrewTargetSchema,
   steamTargetC: SteamTargetSchema,
   heaterEnabled: z.boolean(),
@@ -203,11 +189,6 @@ export const TemperatureSettingsRequestSchema = z.union([
     steamTargetC: SteamTargetSchema,
   }),
 ]);
-
-export const TemperatureSettingsResponseSchema = z.strictObject({
-  brewTargetC: BrewTargetSchema,
-  steamTargetC: SteamTargetSchema,
-});
 
 export const TemperatureCalibrationSessionIdSchema = z
   .string()
@@ -306,29 +287,12 @@ export const TemperatureCalibrationSessionRequestSchema = z.strictObject({
   calibrationId: TemperatureCalibrationSessionIdSchema,
 });
 
-export const OverTemperatureDismissResponseSchema = MachineStateSchema;
-
 export const ModeRequestSchema = z.strictObject({
   mode: ModeSchema,
 });
 
-export const ModeResponseSchema = z.strictObject({
-  mode: ModeSchema,
-});
-
 export const HeaterSettingsRequestSchema = z.strictObject({
-  heaterEnabled: z.boolean(),
-});
-
-export const HeaterSettingsResponseSchema = z.strictObject({
-  heaterEnabled: z.boolean(),
-});
-
-export const ErrorResponseSchema = z.strictObject({
-  error: z.strictObject({
-    code: ErrorCodeSchema,
-    message: z.string().min(1).max(160),
-  }),
+  enabled: z.boolean(),
 });
 
 export const WeightTargetDecigramsSchema = z
@@ -639,16 +603,16 @@ export const CooldownStateSchema = z.union([
   ActiveCooldownStateSchema,
 ]);
 
-const machineStateV2Shape = {
+const workflowStateShape = {
   machine: MachineStateSchema,
   extraction: ExtractionStateSchema,
   compensation: CompensationStateSchema,
   cooldown: CooldownStateSchema,
 };
-const MachineStateV2BaseSchema = z.strictObject(machineStateV2Shape);
+const WorkflowStateSchema = z.strictObject(workflowStateShape);
 
-function refineMachineStateV2(
-  state: z.infer<typeof MachineStateV2BaseSchema>,
+function refineWorkflowState(
+  state: z.infer<typeof WorkflowStateSchema>,
   context: z.RefinementCtx,
 ): void {
     if (
@@ -725,10 +689,8 @@ function refineMachineStateV2(
     }
 }
 
-export const MachineStateV2Schema =
-  MachineStateV2BaseSchema.superRefine(refineMachineStateV2);
-
-const ScaleWeightDecigramsSchema = z.number().int().min(-500).max(10_500);
+export const GrossWeightDecigramsSchema = z.number().int().min(-500).max(10_500);
+export const NetWeightDecigramsSchema = z.number().int().min(-11_000).max(11_000);
 export const ScaleAvailabilitySchema = z.enum([
   "unavailable",
   "unstable",
@@ -751,14 +713,14 @@ export const ActiveWeightExtractionSchema = z.strictObject({
   targetWeightDecigrams: WeightTargetDecigramsSchema,
   compensationDecigrams: WeightCompensationDecigramsSchema,
   cutoffWeightDecigrams: z.number().int().min(1).max(WEIGHT_TARGET_MAX_DECIGRAMS),
-  netWeightDecigrams: ScaleWeightDecigramsSchema.nullable(),
+  netWeightDecigrams: NetWeightDecigramsSchema.nullable(),
 });
 export const TerminalWeightExtractionSchema = z.strictObject({
   extractionId: ExtractionIdSchema,
   targetWeightDecigrams: WeightTargetDecigramsSchema,
   compensationDecigrams: WeightCompensationDecigramsSchema,
   cutoffWeightDecigrams: z.number().int().min(1).max(WEIGHT_TARGET_MAX_DECIGRAMS),
-  finalWeightDecigrams: ScaleWeightDecigramsSchema.nullable(),
+  finalWeightDecigrams: NetWeightDecigramsSchema.nullable(),
   settled: z.boolean(),
   completionReason: ScaleCompletionReasonSchema,
   fallbackOccurred: z.boolean(),
@@ -772,111 +734,19 @@ export const ScaleStateSchema = z.strictObject({
   availability: ScaleAvailabilitySchema,
   calibrationStatus: ScaleCalibrationStatusSchema,
   stable: z.boolean(),
-  grossWeightDecigrams: ScaleWeightDecigramsSchema.nullable(),
-  netWeightDecigrams: ScaleWeightDecigramsSchema.nullable(),
+  grossWeightDecigrams: GrossWeightDecigramsSchema.nullable(),
+  netWeightDecigrams: NetWeightDecigramsSchema.nullable(),
   activeExtraction: ActiveWeightExtractionSchema.nullable(),
   terminalExtraction: TerminalWeightExtractionSchema.nullable(),
   warning: ScaleWarningSchema.nullable(),
 });
 
-export const WeightedExtractionTraceSequenceSchema = z
+export const TelemetrySequenceSchema = z
   .number()
   .int()
   .nonnegative()
   .safe();
-export const WeightedExtractionTraceStatusSchema = z.enum([
-  "running",
-  "settling",
-  "terminal",
-]);
-export const WeightedExtractionTracePhaseSchema = z.enum([
-  "pre-infusion",
-  "soak",
-  "main-extraction",
-  "settling",
-]);
-export const WeightedExtractionTraceCursorSchema = z.strictObject({
-  extractionId: ExtractionIdSchema,
-  bootId: z
-    .string()
-    .length(32)
-    .regex(/^[0-9a-f]{32}$/),
-  afterSequence: WeightedExtractionTraceSequenceSchema,
-});
-export const WeightedExtractionTraceSampleSchema = z.strictObject({
-  sequence: WeightedExtractionTraceSequenceSchema,
-  uptimeMs: z.number().int().nonnegative().safe(),
-  elapsedMs: z
-    .number()
-    .int()
-    .nonnegative()
-    .max(EXTRACTION_MAX_DURATION_MS + WEIGHTED_TRACE_SETTLING_LIMIT_MS),
-  phase: WeightedExtractionTracePhaseSchema,
-  boilerTemperatureC: z.number().finite(),
-  activeTargetC: BrewTargetSchema,
-  netWeightDecigrams: ScaleWeightDecigramsSchema.nullable(),
-  scaleAvailability: ScaleAvailabilitySchema,
-  pumpCommand: PumpCommandSchema,
-});
-export const WeightedExtractionTracePageSchema = z
-  .strictObject({
-    deviceId: DeviceResponseSchema.shape.deviceId,
-    extractionId: ExtractionIdSchema,
-    bootId: WeightedExtractionTraceCursorSchema.shape.bootId,
-    capturedAtUptimeMs: z.number().int().nonnegative().safe(),
-    status: WeightedExtractionTraceStatusSchema,
-    oldestSequence: WeightedExtractionTraceSequenceSchema,
-    latestSequence: WeightedExtractionTraceSequenceSchema,
-    nextCursor: WeightedExtractionTraceCursorSchema,
-    hasMore: z.boolean(),
-    continuity: z.enum(["initial", "continuous", "truncated", "reset"]),
-    samples: z
-      .array(WeightedExtractionTraceSampleSchema)
-      .max(WEIGHTED_TRACE_PAGE_SIZE),
-  })
-  .superRefine((page, context) => {
-    if (
-      page.nextCursor.bootId !== page.bootId ||
-      page.nextCursor.extractionId !== page.extractionId
-    ) {
-      context.addIssue({
-        code: "custom",
-        path: ["nextCursor"],
-        message: "The trace cursor must identify the returned boot and extraction.",
-      });
-    }
-    if (page.oldestSequence > page.latestSequence) {
-      context.addIssue({
-        code: "custom",
-        path: ["oldestSequence"],
-        message: "The oldest trace sequence cannot exceed the latest sequence.",
-      });
-    }
-    for (let index = 1; index < page.samples.length; index += 1) {
-      if (page.samples[index].sequence <= page.samples[index - 1].sequence) {
-        context.addIssue({
-          code: "custom",
-          path: ["samples", index, "sequence"],
-          message: "Trace samples must be strictly sequence ordered.",
-        });
-      }
-    }
-    const last = page.samples.at(-1);
-    if (
-      last !== undefined &&
-      page.nextCursor.afterSequence !== last.sequence
-    ) {
-      context.addIssue({
-        code: "custom",
-        path: ["nextCursor", "afterSequence"],
-        message: "The next trace cursor must acknowledge the last returned sample.",
-      });
-    }
-  });
-export const ScaleTraceResponseSchema = z.strictObject({
-  scale: ScaleStateSchema,
-  trace: WeightedExtractionTracePageSchema.nullable(),
-});
+export const BootIdSchema = z.string().length(32).regex(/^[0-9a-f]{32}$/);
 
 export const ExtractionTelemetryControlModeSchema = z.enum([
   "manual",
@@ -897,11 +767,11 @@ export const ExtractionTelemetryPhaseSchema = z.enum([
 ]);
 export const ExtractionTelemetryCursorSchema = z.strictObject({
   extractionId: ExtractionIdSchema,
-  bootId: WeightedExtractionTraceCursorSchema.shape.bootId,
-  afterSequence: WeightedExtractionTraceSequenceSchema,
+  bootId: BootIdSchema,
+  afterSequence: TelemetrySequenceSchema,
 });
 export const ExtractionTelemetrySampleSchema = z.strictObject({
-  sequence: WeightedExtractionTraceSequenceSchema,
+  sequence: TelemetrySequenceSchema,
   uptimeMs: z.number().int().nonnegative().safe(),
   elapsedMs: z
     .number()
@@ -910,12 +780,12 @@ export const ExtractionTelemetrySampleSchema = z.strictObject({
     .max(EXTRACTION_MAX_DURATION_MS + EXTRACTION_TELEMETRY_SETTLING_LIMIT_MS),
   extractionElapsedMs: ExtractionElapsedMsSchema,
   phase: ExtractionTelemetryPhaseSchema,
-  boilerTemperatureC: z.number().finite(),
+  boilerTemperatureC: z.number().finite().min(-60).max(180).nullable(),
   activeTargetC: BrewTargetSchema,
   heaterActive: z.boolean(),
   pumpCommand: PumpCommandSchema,
   scaleAvailability: ScaleAvailabilitySchema,
-  netWeightDecigrams: ScaleWeightDecigramsSchema.nullable(),
+  netWeightDecigrams: NetWeightDecigramsSchema.nullable(),
 });
 export const ExtractionTelemetryPageSchema = z
   .strictObject({
@@ -927,12 +797,12 @@ export const ExtractionTelemetryPageSchema = z
     selection: ExtractionSelectionSchema,
     controlMode: ExtractionTelemetryControlModeSchema,
     weightControl: WeightControlSchema.nullable(),
-    baselineWeightDecigrams: ScaleWeightDecigramsSchema.nullable(),
+    baselineWeightDecigrams: GrossWeightDecigramsSchema.nullable(),
     status: ExtractionTelemetryStatusSchema,
     outcome: ExtractionOutcomeSchema.nullable(),
     terminalWeight: TerminalWeightExtractionSchema.nullable(),
-    oldestSequence: WeightedExtractionTraceSequenceSchema,
-    latestSequence: WeightedExtractionTraceSequenceSchema,
+    oldestSequence: TelemetrySequenceSchema,
+    latestSequence: TelemetrySequenceSchema,
     nextCursor: ExtractionTelemetryCursorSchema,
     hasMore: z.boolean(),
     continuity: z.enum(["initial", "continuous", "truncated", "reset"]),
@@ -1039,6 +909,143 @@ export const CompleteScaleCalibrationRequestSchema = z.strictObject({
   referenceWeightDecigrams: CalibrationReferenceDecigramsSchema,
 });
 
+export const Base64Url256Schema = z
+  .string()
+  .length(43)
+  .regex(/^[A-Za-z0-9_-]{43}$/);
+
+const Base64Url96Schema = z
+  .string()
+  .length(16)
+  .regex(/^[A-Za-z0-9_-]{16}$/);
+
+const Base64Url512Schema = z
+  .string()
+  .length(86)
+  .regex(/^[A-Za-z0-9_-]{86}$/);
+
+const SrpPublicKeySchema = z
+  .string()
+  .min(2)
+  .max(512)
+  .regex(/^[A-Za-z0-9_-]+$/)
+  .refine((value) => value.length % 4 !== 1, "Malformed Base64URL value.");
+
+const SrpSaltSchema = z
+  .string()
+  .min(22)
+  .max(86)
+  .regex(/^[A-Za-z0-9_-]+$/)
+  .refine((value) => value.length % 4 !== 1, "Malformed Base64URL value.");
+
+const EncryptedPairingBindingSchema = z
+  .string()
+  .min(23)
+  .max(1024)
+  .regex(/^[A-Za-z0-9_-]+$/)
+  .refine((value) => value.length % 4 !== 1, "Malformed Base64URL value.");
+
+export const PairingSessionIdSchema = z
+  .string()
+  .length(32)
+  .regex(/^[0-9a-f]{32}$/);
+
+export const PairingClientIdSchema = z
+  .string()
+  .length(32)
+  .regex(/^[0-9a-f]{32}$/);
+
+export const PairingSessionStartRequestSchema = z.strictObject({
+  clientName: z.string().trim().min(1).max(64),
+  clientNonce: Base64Url256Schema,
+  clientPublicKey: SrpPublicKeySchema,
+});
+
+export const PairingSessionStartResponseSchema = z.strictObject({
+  sessionId: PairingSessionIdSchema,
+  device: DeviceResponseSchema,
+  serverPublicKey: SrpPublicKeySchema,
+  salt: SrpSaltSchema,
+  expiresAtUptimeMs: z.number().int().nonnegative().safe(),
+});
+
+export const PairingSessionProofRequestSchema = z.strictObject({
+  clientProof: Base64Url512Schema,
+});
+
+export const PairingSessionProofResponseSchema = z.strictObject({
+  serverProof: Base64Url512Schema,
+  deviceNonce: Base64Url96Schema,
+  encryptedDeviceBinding: EncryptedPairingBindingSchema,
+});
+
+export const PairingSessionCompleteRequestSchema = z.strictObject({
+  clientId: PairingClientIdSchema,
+  encryptedClientBinding: EncryptedPairingBindingSchema,
+});
+
+export const PairingCompleteResponseSchema = z.strictObject({
+  device: DeviceResponseSchema,
+  clientId: PairingClientIdSchema,
+  accessToken: Base64Url256Schema,
+  certificateSpkiSha256: Base64Url256Schema,
+});
+
+export const PairingDeviceBindingSchema = z.strictObject({
+  domain: z.literal("philcoino:v3:device-binding"),
+  sessionId: PairingSessionIdSchema,
+  clientNonce: Base64Url256Schema,
+  deviceId: DeviceResponseSchema.shape.deviceId,
+  certificateSpkiSha256: Base64Url256Schema,
+});
+
+export const PairingClientBindingSchema = z.strictObject({
+  domain: z.literal("philcoino:v3:client-binding"),
+  sessionId: PairingSessionIdSchema,
+  clientId: PairingClientIdSchema,
+  clientNonce: Base64Url256Schema,
+  deviceId: DeviceResponseSchema.shape.deviceId,
+  certificateSpkiSha256: Base64Url256Schema,
+});
+
+export const SettingsRequestSchema = z
+  .strictObject({
+    brewTargetC: BrewTargetSchema.optional(),
+    steamTargetC: SteamTargetSchema.optional(),
+    steamControl: SteamControlSettingsRequestSchema.optional(),
+  })
+  .refine((settings) => Object.values(settings).some((value) => value !== undefined), {
+    message: "At least one setting is required.",
+  });
+
+const RevisionSchema = z.number().int().nonnegative().safe();
+
+export const MachineStateV3Schema = z
+  .strictObject({
+    apiVersion: z.literal("3"),
+    device: DeviceResponseSchema,
+    bootId: BootIdSchema,
+    revision: RevisionSchema,
+    capturedAtUptimeMs: z.number().int().nonnegative().safe(),
+    machine: MachineStateSchema,
+    scale: ScaleStateSchema,
+    temperatureCalibration: TemperatureCalibrationStateSchema,
+    extraction: ExtractionStateSchema,
+    compensation: CompensationStateSchema,
+    cooldown: CooldownStateSchema,
+  })
+  .superRefine((state, context) =>
+    refineWorkflowState(
+      {
+        machine: state.machine,
+        extraction: state.extraction,
+        compensation: state.compensation,
+        cooldown: state.cooldown,
+      },
+      context,
+    ),
+  );
+
 const TimedExtractionStartRequestSchema = z.strictObject({
   idempotencyKey: IdempotencyKeySchema,
   selection: ExtractionSelectionSchema,
@@ -1052,24 +1059,24 @@ export const StartExtractionRequestSchema = z.union([
   TimedExtractionStartRequestSchema,
   WeightedExtractionStartRequestSchema,
 ]);
-export const StartExtractionResponseSchema = z.union([
-  RunningExtractionStateSchema,
-  TerminalExtractionStateSchema,
-]);
-export const StopExtractionResponseSchema = z.union([
-  IdleExtractionStateSchema,
-  TerminalExtractionStateSchema,
-]);
-
 export const StartCooldownRequestSchema = z.strictObject({
   idempotencyKey: IdempotencyKeySchema,
 });
-export const StartCooldownResponseSchema = CooldownStateSchema;
-export const StopCooldownResponseSchema = CooldownStateSchema;
 
-export const ApiV2ErrorCodeSchema = z.enum([
+export const FirmwareUpdateAcceptedSchema = z.strictObject({
+  status: z.literal("accepted"),
+  rebooting: z.literal(true),
+  bytesWritten: z.number().int().min(1).max(1_966_080),
+});
+
+export const ApiErrorCodeSchema = z.enum([
   "malformed_request",
   "unauthorized",
+  "pairing_busy",
+  "pairing_session_expired",
+  "pairing_session_replayed",
+  "pairing_stage_mismatch",
+  "invalid_pairing_code",
   "extraction_active",
   "cooldown_active",
   "brew_mode_required",
@@ -1090,34 +1097,27 @@ export const ApiV2ErrorCodeSchema = z.enum([
   "temperature_target_unsafe",
   "stream_unavailable",
   "stream_busy",
+  "firmware_update_unavailable",
+  "firmware_metadata_invalid",
+  "unsupported_media_type",
+  "firmware_image_too_large",
+  "firmware_update_busy",
+  "output_shutdown_failed",
+  "firmware_digest_mismatch",
+  "firmware_image_invalid",
+  "firmware_update_failed",
   "persistence_failure",
   "internal_error",
 ]);
-export const ApiV2ErrorResponseSchema = z.strictObject({
+export const ApiErrorResponseSchema = z.strictObject({
   error: z.strictObject({
-    code: ApiV2ErrorCodeSchema,
+    code: ApiErrorCodeSchema,
     message: z.string().min(1).max(160),
   }),
 });
-export const ExtractionActiveConflictResponseSchema = z.strictObject({
-  error: z.strictObject({
-    code: z.literal("extraction_active"),
-    message: z.string().min(1).max(160),
-  }),
-  activeExtraction: RunningExtractionStateSchema,
-});
-export const CooldownActiveConflictResponseSchema = z.strictObject({
-  error: z.strictObject({
-    code: z.literal("cooldown_active"),
-    message: z.string().min(1).max(160),
-  }),
-  activeCooldown: ActiveCooldownStateSchema,
-});
-
 export type Mode = z.infer<typeof ModeSchema>;
 export type MachineStatus = z.infer<typeof MachineStatusSchema>;
 export type FaultCode = z.infer<typeof FaultCodeSchema>;
-export type ErrorCode = z.infer<typeof ErrorCodeSchema>;
 export type HealthResponse = z.infer<typeof HealthResponseSchema>;
 export type DeviceResponse = z.infer<typeof DeviceResponseSchema>;
 export type Fault = z.infer<typeof FaultSchema>;
@@ -1131,9 +1131,6 @@ export type SteamControlSettingsRequest = z.infer<
 export type SteamControlState = z.infer<typeof SteamControlStateSchema>;
 export type TemperatureSettingsRequest = z.infer<
   typeof TemperatureSettingsRequestSchema
->;
-export type TemperatureSettingsResponse = z.infer<
-  typeof TemperatureSettingsResponseSchema
 >;
 export type TemperatureCalibrationSessionId = z.infer<
   typeof TemperatureCalibrationSessionIdSchema
@@ -1168,18 +1165,10 @@ export type UpdateTemperatureCalibrationCandidateRequest = z.infer<
 export type TemperatureCalibrationSessionRequest = z.infer<
   typeof TemperatureCalibrationSessionRequestSchema
 >;
-export type OverTemperatureDismissResponse = z.infer<
-  typeof OverTemperatureDismissResponseSchema
->;
 export type ModeRequest = z.infer<typeof ModeRequestSchema>;
-export type ModeResponse = z.infer<typeof ModeResponseSchema>;
 export type HeaterSettingsRequest = z.infer<
   typeof HeaterSettingsRequestSchema
 >;
-export type HeaterSettingsResponse = z.infer<
-  typeof HeaterSettingsResponseSchema
->;
-export type ErrorResponse = z.infer<typeof ErrorResponseSchema>;
 export type WeightControl = z.infer<typeof WeightControlSchema>;
 export type ScaleAvailability = z.infer<typeof ScaleAvailabilitySchema>;
 export type ScaleCalibrationStatus = z.infer<
@@ -1195,7 +1184,6 @@ export type TerminalWeightExtraction = z.infer<
   typeof TerminalWeightExtractionSchema
 >;
 export type ScaleState = z.infer<typeof ScaleStateSchema>;
-export type ScaleTraceResponse = z.infer<typeof ScaleTraceResponseSchema>;
 export type ExtractionTelemetryControlMode = z.infer<
   typeof ExtractionTelemetryControlModeSchema
 >;
@@ -1213,21 +1201,6 @@ export type ExtractionTelemetrySample = z.infer<
 >;
 export type ExtractionTelemetryPage = z.infer<
   typeof ExtractionTelemetryPageSchema
->;
-export type WeightedExtractionTraceCursor = z.infer<
-  typeof WeightedExtractionTraceCursorSchema
->;
-export type WeightedExtractionTracePage = z.infer<
-  typeof WeightedExtractionTracePageSchema
->;
-export type WeightedExtractionTracePhase = z.infer<
-  typeof WeightedExtractionTracePhaseSchema
->;
-export type WeightedExtractionTraceSample = z.infer<
-  typeof WeightedExtractionTraceSampleSchema
->;
-export type WeightedExtractionTraceStatus = z.infer<
-  typeof WeightedExtractionTraceStatusSchema
 >;
 export type CompleteScaleCalibrationRequest = z.infer<
   typeof CompleteScaleCalibrationRequestSchema
@@ -1253,22 +1226,22 @@ export type CooldownOutcome = z.infer<typeof CooldownOutcomeSchema>;
 export type IdleCooldownState = z.infer<typeof IdleCooldownStateSchema>;
 export type ActiveCooldownState = z.infer<typeof ActiveCooldownStateSchema>;
 export type CooldownState = z.infer<typeof CooldownStateSchema>;
-export type MachineStateV2 = z.infer<typeof MachineStateV2Schema>;
+export type MachineStateV3 = z.infer<typeof MachineStateV3Schema>;
+export type PairingSessionStartRequest = z.infer<typeof PairingSessionStartRequestSchema>;
+export type PairingSessionStartResponse = z.infer<typeof PairingSessionStartResponseSchema>;
+export type PairingSessionProofRequest = z.infer<typeof PairingSessionProofRequestSchema>;
+export type PairingSessionProofResponse = z.infer<typeof PairingSessionProofResponseSchema>;
+export type PairingSessionCompleteRequest = z.infer<typeof PairingSessionCompleteRequestSchema>;
+export type PairingCompleteResponse = z.infer<typeof PairingCompleteResponseSchema>;
+export type PairingDeviceBinding = z.infer<typeof PairingDeviceBindingSchema>;
+export type PairingClientBinding = z.infer<typeof PairingClientBindingSchema>;
+export type SettingsRequest = z.infer<typeof SettingsRequestSchema>;
 export type StartExtractionRequest = z.infer<
   typeof StartExtractionRequestSchema
 >;
-export type StartExtractionResponse = z.infer<
-  typeof StartExtractionResponseSchema
->;
-export type StopExtractionResponse = z.infer<typeof StopExtractionResponseSchema>;
 export type StartCooldownRequest = z.infer<typeof StartCooldownRequestSchema>;
-export type StartCooldownResponse = z.infer<typeof StartCooldownResponseSchema>;
-export type StopCooldownResponse = z.infer<typeof StopCooldownResponseSchema>;
-export type ApiV2ErrorCode = z.infer<typeof ApiV2ErrorCodeSchema>;
-export type ApiV2ErrorResponse = z.infer<typeof ApiV2ErrorResponseSchema>;
-export type ExtractionActiveConflictResponse = z.infer<
-  typeof ExtractionActiveConflictResponseSchema
+export type FirmwareUpdateAccepted = z.infer<
+  typeof FirmwareUpdateAcceptedSchema
 >;
-export type CooldownActiveConflictResponse = z.infer<
-  typeof CooldownActiveConflictResponseSchema
->;
+export type ApiErrorCode = z.infer<typeof ApiErrorCodeSchema>;
+export type ApiErrorResponse = z.infer<typeof ApiErrorResponseSchema>;

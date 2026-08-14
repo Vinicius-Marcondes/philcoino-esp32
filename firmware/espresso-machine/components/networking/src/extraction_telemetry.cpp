@@ -16,20 +16,56 @@ constexpr std::uint8_t kPumpRunning = 1U << 1U;
 constexpr std::uint8_t kHeaterActive = 1U << 2U;
 constexpr unsigned kAvailabilityShift = 3U;
 constexpr unsigned kPhaseShift = 5U;
+constexpr std::int16_t kUnavailableTemperature =
+    std::numeric_limits<std::int16_t>::min();
 
-class FlagGuard {
+class MetadataWrite {
  public:
-  explicit FlagGuard(std::atomic_flag& lock)
-      : lock_(lock), acquired_(!lock_.test_and_set(std::memory_order_acquire)) {}
-  ~FlagGuard() {
-    if (acquired_) lock_.clear(std::memory_order_release);
+  explicit MetadataWrite(std::atomic<std::uint32_t>& commit)
+      : commit_(commit) {
+    commit_.fetch_add(1U, std::memory_order_acq_rel);
   }
-  bool acquired() const { return acquired_; }
+  ~MetadataWrite() { commit_.fetch_add(1U, std::memory_order_release); }
 
  private:
-  std::atomic_flag& lock_;
-  bool acquired_;
+  std::atomic<std::uint32_t>& commit_;
 };
+
+std::uint64_t combine_u64(std::uint32_t low, std::uint32_t high) {
+  return static_cast<std::uint64_t>(low) |
+         (static_cast<std::uint64_t>(high) << 32U);
+}
+
+bool read_slot(const ExtractionTelemetrySlot& slot,
+               ExtractionTelemetrySample& output) {
+  for (unsigned attempt = 0; attempt < 4U; ++attempt) {
+    const auto before = slot.commit.load(std::memory_order_acquire);
+    if ((before & 1U) != 0U) continue;
+    ExtractionTelemetrySample candidate{};
+    candidate.sequence = combine_u64(
+        slot.sequence_low.load(std::memory_order_relaxed),
+        slot.sequence_high.load(std::memory_order_relaxed));
+    candidate.uptime_ms = combine_u64(
+        slot.uptime_ms_low.load(std::memory_order_relaxed),
+        slot.uptime_ms_high.load(std::memory_order_relaxed));
+    candidate.elapsed_ms = slot.elapsed_ms.load(std::memory_order_relaxed);
+    candidate.extraction_elapsed_ms =
+        slot.extraction_elapsed_ms.load(std::memory_order_relaxed);
+    candidate.net_weight_decigrams =
+        slot.net_weight_decigrams.load(std::memory_order_relaxed);
+    candidate.temperature_quarters_c =
+        slot.temperature_quarters_c.load(std::memory_order_relaxed);
+    candidate.active_target_c =
+        slot.active_target_c.load(std::memory_order_relaxed);
+    candidate.flags = slot.flags.load(std::memory_order_relaxed);
+    std::atomic_thread_fence(std::memory_order_acquire);
+    if (slot.commit.load(std::memory_order_relaxed) == before) {
+      output = candidate;
+      return true;
+    }
+  }
+  return false;
+}
 
 bool valid_boot_id(const std::string& value) {
   return value.size() == 32U &&
@@ -130,6 +166,28 @@ ExtractionTelemetryBuffer::ExtractionTelemetryBuffer(
     const std::string& boot_id) {
   if (!valid_boot_id(boot_id)) return;
   std::copy(boot_id.begin(), boot_id.end(), boot_id_.begin());
+  publish_metadata();
+}
+
+void ExtractionTelemetryBuffer::publish_metadata() {
+  ExtractionTelemetryMetadata metadata{};
+  metadata.extraction_id = extraction_id_;
+  metadata.start = start_;
+  metadata.count = count_;
+  metadata.status = status_;
+  metadata.selection = selection_;
+  metadata.weight_control = weight_control_;
+  metadata.outcome = outcome_;
+  metadata.weight_completion_reason = weight_completion_reason_;
+  metadata.baseline_weight_decigrams = baseline_weight_decigrams_;
+  metadata.terminal_weight_decigrams = terminal_weight_decigrams_;
+  metadata.present = present_;
+  metadata.weighted = weighted_;
+  metadata.baseline_available = baseline_available_;
+  metadata.terminal_weight_available = terminal_weight_available_;
+  metadata.terminal_weight_settled = terminal_weight_settled_;
+  metadata.weight_fallback = weight_fallback_;
+  published_metadata_.store(metadata);
 }
 
 bool ExtractionTelemetryBuffer::record(
@@ -144,14 +202,9 @@ bool ExtractionTelemetryBuffer::record(
       extraction.outcome != control::ExtractionOutcome::kNone;
   if (!running && !retained_terminal) return false;
 
-  FlagGuard guard(lock_);
-  if (!guard.acquired()) {
-    latest_attempt_sequence_.fetch_add(1U, std::memory_order_acq_rel);
-    return false;
-  }
+  MetadataWrite write(metadata_commit_);
   if (running &&
       std::strcmp(extraction_id_.data(), extraction.extraction_id.c_str()) != 0) {
-    samples_ = {};
     extraction_id_ = {};
     std::copy(extraction.extraction_id.begin(), extraction.extraction_id.end(),
               extraction_id_.begin());
@@ -182,9 +235,9 @@ bool ExtractionTelemetryBuffer::record(
     outcome_ = control::ExtractionOutcome::kNone;
     weight_completion_reason_ = control::WeightCompletionReason::kNone;
     present_ = true;
-    terminal_sample_captured_.store(false, std::memory_order_release);
-    latest_attempt_sequence_.store(0, std::memory_order_release);
-    next_capture_ms_.store(uptime_ms, std::memory_order_release);
+    terminal_sample_captured_ = false;
+    latest_attempt_sequence_ = 0;
+    next_capture_ms_ = uptime_ms;
   }
   if (!present_ ||
       std::strcmp(extraction_id_.data(), extraction.extraction_id.c_str()) != 0) {
@@ -211,10 +264,10 @@ bool ExtractionTelemetryBuffer::record(
     weight_completion_reason_ = weight.completion_reason;
   }
 
-  const auto due = next_capture_ms_.load(std::memory_order_acquire);
+  const auto due = next_capture_ms_;
   if (uptime_ms < due ||
       (status_ == ExtractionTelemetryStatus::kTerminal &&
-       terminal_sample_captured_.load(std::memory_order_acquire))) {
+       terminal_sample_captured_)) {
     return false;
   }
   const auto next_capture =
@@ -222,9 +275,8 @@ bool ExtractionTelemetryBuffer::record(
                       kExtractionTelemetryIntervalMs
           ? std::numeric_limits<std::uint64_t>::max()
           : uptime_ms + kExtractionTelemetryIntervalMs;
-  next_capture_ms_.store(next_capture, std::memory_order_release);
-  const auto sequence =
-      latest_attempt_sequence_.fetch_add(1U, std::memory_order_acq_rel) + 1U;
+  next_capture_ms_ = next_capture;
+  const auto sequence = ++latest_attempt_sequence_;
 
   ExtractionTelemetrySample sample{};
   sample.sequence = sequence;
@@ -237,11 +289,18 @@ bool ExtractionTelemetryBuffer::record(
           : terminal_elapsed_ms_ + static_cast<std::uint32_t>(std::min<
                 std::uint64_t>(uptime_ms - settling_started_uptime_ms_,
                                kExtractionTelemetrySettlingLimitMs));
-  const auto temperature = std::lround(
-      static_cast<double>(machine.boiler_temperature.temperature_c) * 4.0);
-  sample.temperature_quarters_c = static_cast<std::int16_t>(
-      std::clamp<long>(temperature, std::numeric_limits<std::int16_t>::min(),
-                       std::numeric_limits<std::int16_t>::max()));
+  if (machine.boiler_temperature.status ==
+          peripherals::ThermocoupleStatus::kOk &&
+      std::isfinite(machine.boiler_temperature.temperature_c)) {
+    const auto temperature = std::lround(
+        static_cast<double>(machine.boiler_temperature.temperature_c) * 4.0);
+    sample.temperature_quarters_c = static_cast<std::int16_t>(
+        std::clamp<long>(temperature,
+                         std::numeric_limits<std::int16_t>::min() + 1L,
+                         std::numeric_limits<std::int16_t>::max()));
+  } else {
+    sample.temperature_quarters_c = kUnavailableTemperature;
+  }
   sample.active_target_c = static_cast<std::uint8_t>(machine.targets.brew_c);
   bool net_available = false;
   if (weighted_ && weight.extraction_id == extraction.extraction_id &&
@@ -269,16 +328,38 @@ bool ExtractionTelemetryBuffer::record(
       phase_bits(extraction.phase, !running) << kPhaseShift);
 
   const auto index = (start_ + count_) % kExtractionTelemetryCapacity;
+  auto& slot = samples_[index];
+  const auto writing =
+      static_cast<std::uint32_t>(sequence * 2U - 1U);
+  slot.commit.store(writing, std::memory_order_release);
+  slot.sequence_low.store(static_cast<std::uint32_t>(sample.sequence),
+                          std::memory_order_relaxed);
+  slot.sequence_high.store(static_cast<std::uint32_t>(sample.sequence >> 32U),
+                           std::memory_order_relaxed);
+  slot.uptime_ms_low.store(static_cast<std::uint32_t>(sample.uptime_ms),
+                           std::memory_order_relaxed);
+  slot.uptime_ms_high.store(static_cast<std::uint32_t>(sample.uptime_ms >> 32U),
+                            std::memory_order_relaxed);
+  slot.elapsed_ms.store(sample.elapsed_ms, std::memory_order_relaxed);
+  slot.extraction_elapsed_ms.store(sample.extraction_elapsed_ms,
+                                   std::memory_order_relaxed);
+  slot.net_weight_decigrams.store(sample.net_weight_decigrams,
+                                  std::memory_order_relaxed);
+  slot.temperature_quarters_c.store(sample.temperature_quarters_c,
+                                    std::memory_order_relaxed);
+  slot.active_target_c.store(sample.active_target_c,
+                             std::memory_order_relaxed);
+  slot.flags.store(sample.flags, std::memory_order_relaxed);
+  slot.commit.store(writing + 1U, std::memory_order_release);
   if (count_ == kExtractionTelemetryCapacity) {
-    samples_[start_] = sample;
     start_ = (start_ + 1U) % kExtractionTelemetryCapacity;
   } else {
-    samples_[index] = sample;
     ++count_;
   }
   if (status_ == ExtractionTelemetryStatus::kTerminal) {
-    terminal_sample_captured_.store(true, std::memory_order_release);
+    terminal_sample_captured_ = true;
   }
+  publish_metadata();
   const auto notification = notification_.load(std::memory_order_acquire);
   if (notification != nullptr) {
     notification(notification_context_.load(std::memory_order_acquire));
@@ -289,85 +370,134 @@ bool ExtractionTelemetryBuffer::record(
 bool ExtractionTelemetryBuffer::page(
     const ExtractionTelemetryCursor& cursor,
     std::uint64_t captured_at_uptime_ms, ExtractionTelemetryPage& output) {
-  FlagGuard guard(lock_);
-  if (!guard.acquired() || !present_ || count_ == 0U) return false;
-  output = {};
-  output.boot_id = boot_id_;
-  output.extraction_id = extraction_id_;
-  output.captured_at_uptime_ms = captured_at_uptime_ms;
-  output.oldest_sequence = samples_[start_].sequence;
-  output.latest_sequence =
-      samples_[(start_ + count_ - 1U) % kExtractionTelemetryCapacity].sequence;
-  output.status = status_;
-  output.selection = selection_;
-  output.weight_control = weight_control_;
-  output.outcome = outcome_;
-  output.weight_completion_reason = weight_completion_reason_;
-  output.baseline_weight_decigrams = baseline_weight_decigrams_;
-  output.terminal_weight_decigrams = terminal_weight_decigrams_;
-  output.weighted = weighted_;
-  output.baseline_available = baseline_available_;
-  output.terminal_weight_available = terminal_weight_available_;
-  output.terminal_weight_settled = terminal_weight_settled_;
-  output.weight_fallback = weight_fallback_;
+  for (unsigned attempt = 0; attempt < 6U; ++attempt) {
+    const auto before = metadata_commit_.load(std::memory_order_acquire);
+    if ((before & 1U) != 0U) continue;
+    const auto metadata = published_metadata_.load();
+    if (!metadata.present || metadata.count == 0U) return false;
 
-  std::uint64_t after = cursor.after_sequence;
-  if (!cursor.supplied) {
-    output.continuity = ExtractionTelemetryContinuity::kInitial;
-    after = output.oldest_sequence - 1U;
-  } else if (cursor.boot_id != boot_id_ ||
-             cursor.extraction_id != extraction_id_) {
-    output.continuity = ExtractionTelemetryContinuity::kReset;
-    after = output.oldest_sequence - 1U;
-  } else if (after > output.latest_sequence) {
-    return false;
-  } else if (after + 1U < output.oldest_sequence) {
-    output.continuity = ExtractionTelemetryContinuity::kTruncated;
-    after = output.oldest_sequence - 1U;
-  } else {
-    output.continuity = ExtractionTelemetryContinuity::kContinuous;
-  }
+    ExtractionTelemetryPage candidate{};
+    candidate.boot_id = boot_id_;
+    candidate.extraction_id = metadata.extraction_id;
+    candidate.captured_at_uptime_ms = captured_at_uptime_ms;
+    const auto start = metadata.start;
+    const auto count = metadata.count;
+    candidate.status = metadata.status;
+    candidate.selection = metadata.selection;
+    candidate.weight_control = metadata.weight_control;
+    candidate.outcome = metadata.outcome;
+    candidate.weight_completion_reason = metadata.weight_completion_reason;
+    candidate.baseline_weight_decigrams = metadata.baseline_weight_decigrams;
+    candidate.terminal_weight_decigrams = metadata.terminal_weight_decigrams;
+    candidate.weighted = metadata.weighted;
+    candidate.baseline_available = metadata.baseline_available;
+    candidate.terminal_weight_available = metadata.terminal_weight_available;
+    candidate.terminal_weight_settled = metadata.terminal_weight_settled;
+    candidate.weight_fallback = metadata.weight_fallback;
 
-  for (std::size_t index = 0;
-       index < count_ && output.sample_count < kExtractionTelemetryPageSize;
-       ++index) {
-    const auto& sample =
-        samples_[(start_ + index) % kExtractionTelemetryCapacity];
-    if (sample.sequence > after) {
-      output.samples[output.sample_count++] = sample;
+    ExtractionTelemetrySample oldest{};
+    ExtractionTelemetrySample latest{};
+    if (!read_slot(samples_[start], oldest) ||
+        !read_slot(samples_[(start + count - 1U) %
+                            kExtractionTelemetryCapacity],
+                   latest)) {
+      continue;
     }
+    candidate.oldest_sequence = oldest.sequence;
+    candidate.latest_sequence = latest.sequence;
+
+    std::uint64_t after = cursor.after_sequence;
+    if (!cursor.supplied) {
+      candidate.continuity = ExtractionTelemetryContinuity::kInitial;
+      after = candidate.oldest_sequence - 1U;
+    } else if (cursor.boot_id != candidate.boot_id ||
+               cursor.extraction_id != candidate.extraction_id) {
+      candidate.continuity = ExtractionTelemetryContinuity::kReset;
+      after = candidate.oldest_sequence - 1U;
+    } else if (after > candidate.latest_sequence) {
+      return false;
+    } else if (after + 1U < candidate.oldest_sequence) {
+      candidate.continuity = ExtractionTelemetryContinuity::kTruncated;
+      after = candidate.oldest_sequence - 1U;
+    } else {
+      candidate.continuity = ExtractionTelemetryContinuity::kContinuous;
+    }
+
+    bool consistent = true;
+    for (std::size_t index = 0;
+         index < count &&
+         candidate.sample_count < kExtractionTelemetryPageSize;
+         ++index) {
+      ExtractionTelemetrySample sample{};
+      if (!read_slot(samples_[(start + index) %
+                              kExtractionTelemetryCapacity],
+                     sample)) {
+        consistent = false;
+        break;
+      }
+      if (sample.sequence > after) {
+        candidate.samples[candidate.sample_count++] = sample;
+      }
+    }
+    std::atomic_thread_fence(std::memory_order_acquire);
+    if (!consistent ||
+        metadata_commit_.load(std::memory_order_relaxed) != before) {
+      continue;
+    }
+    candidate.next_sequence =
+        candidate.sample_count == 0U
+            ? after
+            : candidate.samples[candidate.sample_count - 1U].sequence;
+    candidate.has_more =
+        candidate.next_sequence < candidate.latest_sequence;
+    output = candidate;
+    return output.sample_count > 0U;
   }
-  output.next_sequence =
-      output.sample_count == 0U
-          ? after
-          : output.samples[output.sample_count - 1U].sequence;
-  output.has_more = output.next_sequence < output.latest_sequence;
-  return output.sample_count > 0U;
+  return false;
 }
 
 bool ExtractionTelemetryBuffer::cursor_available(
     const ExtractionTelemetryCursor& cursor) {
-  FlagGuard guard(lock_);
-  if (!guard.acquired()) return true;
-  if (!present_ || count_ == 0U) return false;
-  if (!cursor.supplied || cursor.boot_id != boot_id_ ||
-      cursor.extraction_id != extraction_id_) {
-    return true;
+  for (unsigned attempt = 0; attempt < 4U; ++attempt) {
+    const auto before = metadata_commit_.load(std::memory_order_acquire);
+    if ((before & 1U) != 0U) continue;
+    const auto metadata = published_metadata_.load();
+    if (!metadata.present || metadata.count == 0U) return false;
+    const auto extraction_id = metadata.extraction_id;
+    const auto start = metadata.start;
+    const auto count = metadata.count;
+    ExtractionTelemetrySample latest{};
+    if (!read_slot(samples_[(start + count - 1U) %
+                            kExtractionTelemetryCapacity],
+                   latest)) {
+      continue;
+    }
+    if (metadata_commit_.load(std::memory_order_acquire) != before) {
+      continue;
+    }
+    if (!cursor.supplied || cursor.boot_id != boot_id_ ||
+        cursor.extraction_id != extraction_id) {
+      return true;
+    }
+    return cursor.after_sequence <= latest.sequence;
   }
-  const auto latest =
-      samples_[(start_ + count_ - 1U) % kExtractionTelemetryCapacity].sequence;
-  return cursor.after_sequence <= latest;
+  return true;
 }
 
 bool ExtractionTelemetryBuffer::capture_due(
     std::uint64_t uptime_ms, const std::string& extraction_id) {
-  FlagGuard guard(lock_);
-  if (!guard.acquired() ||
-      std::strcmp(extraction_id_.data(), extraction_id.c_str()) != 0) {
-    return true;
+  for (unsigned attempt = 0; attempt < 3U; ++attempt) {
+    const auto before = metadata_commit_.load(std::memory_order_acquire);
+    if ((before & 1U) != 0U) continue;
+    const bool same =
+        std::strcmp(extraction_id_.data(), extraction_id.c_str()) == 0;
+    const bool due =
+        uptime_ms >= next_capture_ms_ && !terminal_sample_captured_;
+    if (metadata_commit_.load(std::memory_order_acquire) == before) {
+      return !same || due;
+    }
   }
-  return uptime_ms >= next_capture_ms_.load(std::memory_order_acquire) &&
-         !terminal_sample_captured_.load(std::memory_order_acquire);
+  return true;
 }
 
 void ExtractionTelemetryBuffer::set_notification(Notification notification,
@@ -501,9 +631,13 @@ std::string serialize_extraction_telemetry_page(
            << ",\"elapsedMs\":" << sample.elapsed_ms
            << ",\"extractionElapsedMs\":" << sample.extraction_elapsed_ms
            << ",\"phase\":\"" << phase_name(sample.flags)
-           << "\",\"boilerTemperatureC\":"
-           << static_cast<double>(sample.temperature_quarters_c) / 4.0
-           << ",\"activeTargetC\":"
+           << "\",\"boilerTemperatureC\":";
+    if (sample.temperature_quarters_c == kUnavailableTemperature) {
+      output << "null";
+    } else {
+      output << static_cast<double>(sample.temperature_quarters_c) / 4.0;
+    }
+    output << ",\"activeTargetC\":"
            << static_cast<unsigned>(sample.active_target_c)
            << ",\"heaterActive\":"
            << ((sample.flags & kHeaterActive) ? "true" : "false")

@@ -4,6 +4,7 @@ import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 
 import { translate } from "@/src/localization/i18n";
 import {
+  currentScaleWeightDecigrams,
   formatDecigrams,
   formatWeightReadout,
 } from "@/src/telemetry/telemetry-readouts";
@@ -117,7 +118,9 @@ export function WeightModeCard({
             {startPending
               ? translate("mutation.weightedExtractionStartPending")
               : translate("scale.liveWeight", {
-                  weight: formatWeightReadout(scale?.netWeightDecigrams),
+                  weight: formatWeightReadout(
+                    currentScaleWeightDecigrams(scale),
+                  ),
                 })}
           </Text>
         </>

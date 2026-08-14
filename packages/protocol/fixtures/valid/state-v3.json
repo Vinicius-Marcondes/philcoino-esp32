@@ -1,0 +1,80 @@
+{
+  "apiVersion": "3",
+  "device": {
+    "deviceId": "philcoino-test",
+    "name": "Philcoino test",
+    "model": "espresso-machine",
+    "apiVersion": "3",
+    "firmwareVersion": "3.0.0"
+  },
+  "bootId": "00000000000000000000000000000001",
+  "revision": 7,
+  "capturedAtUptimeMs": 12000,
+  "machine": {
+    "status": "heating",
+    "activeMode": "brew",
+    "boilerTemperatureC": null,
+    "brewTargetC": 93,
+    "steamTargetC": 120,
+    "heaterEnabled": true,
+    "heaterActive": false,
+    "fault": null,
+    "steamTimeoutRemainingMs": null,
+    "steamControl": {
+      "settings": {
+        "initialCompensationC": 12,
+        "decayDurationMs": 720000,
+        "readyTimeoutMs": 300000
+      },
+      "compensationActive": false,
+      "appliedCompensationC": 0,
+      "controlTemperatureC": null,
+      "heatSoakElapsedMs": null
+    },
+    "uptimeMs": 12000
+  },
+  "scale": {
+    "availability": "unavailable",
+    "calibrationStatus": "uncalibrated",
+    "stable": false,
+    "grossWeightDecigrams": null,
+    "netWeightDecigrams": null,
+    "activeExtraction": null,
+    "terminalExtraction": null,
+    "warning": null
+  },
+  "temperatureCalibration": {
+    "status": "uncalibrated",
+    "savedOffsetC": 0,
+    "boilerTemperatureRawC": null,
+    "boilerTemperatureC": null,
+    "heaterActive": false,
+    "ready": false,
+    "safeTargetBounds": {
+      "brewMinimumC": 85,
+      "brewMaximumC": 95,
+      "steamMinimumC": 110,
+      "steamMaximumC": 135
+    }
+  },
+  "extraction": {
+    "status": "idle",
+    "extractionId": null,
+    "selection": null,
+    "phase": "idle",
+    "elapsedMs": 0,
+    "remainingMs": null,
+    "pumpCommand": "off"
+  },
+  "compensation": { "status": "inactive", "phase": null },
+  "cooldown": {
+    "status": "idle",
+    "cooldownId": null,
+    "brewTargetC": null,
+    "elapsedMs": 0,
+    "remainingMs": null,
+    "pumpCommand": "off",
+    "heaterInhibited": false,
+    "outcome": null
+  }
+}

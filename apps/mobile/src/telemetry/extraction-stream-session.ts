@@ -4,7 +4,10 @@ import type {
 } from "@philcoino/protocol";
 
 import type { ShotHistoryRepository } from "../history/shot-history-repository";
-import type { StoredExtractionTrace } from "../history/extraction-trace";
+import {
+  mergeExtractionTracePage,
+  type StoredExtractionTrace,
+} from "../history/extraction-trace";
 import { extractionSummaryFromPage } from "../history/shot-history";
 import { ApiClientError } from "../networking/api-client-error";
 
@@ -48,6 +51,7 @@ export class ExtractionStreamSession {
   private generation = 0;
   private retryIndex = 0;
   private timer: unknown | null = null;
+  private trace: StoredExtractionTrace | null = null;
   private unsupported = false;
 
   constructor(
@@ -70,12 +74,15 @@ export class ExtractionStreamSession {
       this.expectedExtractionId = extractionId;
       this.cursor = undefined;
       this.cursorReady = false;
+      this.trace = null;
       this.armed = true;
       this.retryIndex = 0;
       void this.options.repository
         .loadTrace(this.options.deviceId, extractionId)
         .then((trace) => {
           if (this.expectedExtractionId !== extractionId) return;
+          this.trace = trace;
+          if (trace !== null) this.options.onTrace(trace);
           const lastSample = trace?.samples.at(-1);
           if (trace !== null && lastSample !== undefined) {
             this.cursor = {
@@ -144,10 +151,20 @@ export class ExtractionStreamSession {
               "The telemetry stream changed device identity.",
             );
           }
-          const trace = await this.options.repository.commitExtractionTracePage(
+          const trace = mergeExtractionTracePage(
+            this.trace,
             this.options.deviceId,
             page,
           );
+          this.trace = trace;
+          this.options.onSupportChanged(true);
+          this.options.onStatus("live");
+          this.options.onTrace(trace);
+          const persistedTrace = await this.options.repository.commitExtractionTracePage(
+            this.options.deviceId,
+            page,
+          );
+          this.trace = persistedTrace;
           if (page.status === "terminal") {
             const summary = extractionSummaryFromPage(this.options.deviceId, page);
             await this.options.repository.append({
@@ -161,9 +178,6 @@ export class ExtractionStreamSession {
           if (!this.isCurrent(generation)) return;
           this.cursor = page.nextCursor;
           this.retryIndex = 0;
-          this.options.onSupportChanged(true);
-          this.options.onStatus("live");
-          this.options.onTrace(trace);
           if (page.status === "terminal") {
             this.armed = false;
             this.options.onStatus("idle");

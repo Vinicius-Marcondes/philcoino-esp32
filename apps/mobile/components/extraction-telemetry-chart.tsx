@@ -1,9 +1,17 @@
 import { useEffect, useMemo, useState } from "react";
 import { Pressable, Text, useWindowDimensions } from "react-native";
-import Svg, { Circle, Line, Path, Rect } from "react-native-svg";
+import Svg, {
+  Circle,
+  G,
+  Line,
+  Path,
+  Rect,
+  Text as SvgText,
+} from "react-native-svg";
 
 import type { StoredExtractionTrace } from "@/src/history/extraction-trace";
 import { translate } from "@/src/localization/i18n";
+import type { ExtractionStreamStatus } from "@/src/telemetry/extraction-stream-session";
 import {
   TELEMETRY_COLORS,
   TelemetryGrid,
@@ -15,7 +23,8 @@ import {
   type TelemetryChartVariant,
 } from "@/src/telemetry/telemetry-plot-frame";
 import {
-  weightedTracePlot,
+  extractionTelemetryPlot,
+  formatGraphTick,
   type WeightedTracePlot,
 } from "@/src/telemetry/telemetry-plot";
 import {
@@ -29,36 +38,49 @@ import {
 interface WeightedTraceChartProps {
   compact?: boolean;
   cutoffDecigrams?: number | null;
-  trace: StoredExtractionTrace;
+  streamStatus?: ExtractionStreamStatus;
+  trace: StoredExtractionTrace | null;
   variant?: TelemetryChartVariant;
 }
+
+const EMPTY_TRACE: StoredExtractionTrace = {
+  bootId: "",
+  completeness: "live",
+  deviceId: "",
+  extractionId: "",
+  samples: [],
+};
 
 export function WeightedTraceChart({
   compact = false,
   cutoffDecigrams,
+  streamStatus = "idle",
   trace,
   variant = "trace-detail",
 }: WeightedTraceChartProps) {
+  const plottedTrace = trace ?? EMPTY_TRACE;
   const windowSize = useWindowDimensions();
   // Seeded from the window so the first frame is not drawn at a stale scale.
   const [width, setWidth] = useState(windowSize.width);
   const [cursorIndex, setCursorIndex] = useState(
-    Math.max(0, trace.samples.length - 1),
+    Math.max(0, plottedTrace.samples.length - 1),
   );
   useEffect(() => {
-    if (trace.completeness === "live") {
-      setCursorIndex(Math.max(0, trace.samples.length - 1));
+    if (plottedTrace.completeness === "live") {
+      setCursorIndex(Math.max(0, plottedTrace.samples.length - 1));
     }
-  }, [trace.completeness, trace.samples.length]);
+  }, [plottedTrace.completeness, plottedTrace.samples.length]);
 
   const height = telemetryChartHeight(variant, compact);
   const plot = useMemo(
-    () => weightedTracePlot({ cutoffDecigrams, height, trace, width }),
-    [cutoffDecigrams, height, trace, width],
+    () => extractionTelemetryPlot({ cutoffDecigrams, height, trace: plottedTrace, width }),
+    [cutoffDecigrams, height, plottedTrace, width],
   );
   const selected =
-    trace.samples[Math.min(cursorIndex, trace.samples.length - 1)] ?? null;
-  const latest = trace.samples.at(-1) ?? null;
+    plottedTrace.samples[
+      Math.min(cursorIndex, plottedTrace.samples.length - 1)
+    ] ?? null;
+  const latest = plottedTrace.samples.at(-1) ?? null;
 
   const inspect = (locationX: number) => {
     const ratio = Math.max(
@@ -66,7 +88,7 @@ export function WeightedTraceChart({
       Math.min(1, (locationX - plot.left) / plot.plotWidth),
     );
     const nearest = nearestTraceSampleIndex(
-      trace.samples,
+      plottedTrace.samples,
       ratio * plot.maxElapsed,
     );
     if (nearest !== null) setCursorIndex(nearest);
@@ -75,8 +97,8 @@ export function WeightedTraceChart({
   return (
     <TelemetrySurface
       accessibilityLabel={translate("scale.traceAccessibility", {
-        count: trace.samples.length,
-        status: trace.completeness,
+        count: plottedTrace.samples.length,
+        status: trace === null ? streamStatus : plottedTrace.completeness,
       })}
       alerts={null}
       footer={
@@ -92,7 +114,11 @@ export function WeightedTraceChart({
               ? translate("scale.telemetryFlowUnavailable")
               : formatFlowReadout(selected.derivedFlowGPerS, 2)}
           </Text>
-        ) : null
+        ) : (
+          <Text selectable style={telemetrySurfaceStyles.inspection}>
+            {streamPlaceholder(streamStatus)}
+          </Text>
+        )
       }
       metrics={[
         {
@@ -128,6 +154,14 @@ export function WeightedTraceChart({
   );
 }
 
+function streamPlaceholder(status: ExtractionStreamStatus): string {
+  if (status === "stale") return translate("scale.telemetryStreamReconnecting");
+  if (status === "unsupported") {
+    return translate("scale.telemetryStreamUnsupported");
+  }
+  return translate("scale.telemetryStreamWaiting");
+}
+
 function WeightedTraceSvg({
   height,
   latest,
@@ -155,6 +189,7 @@ function WeightedTraceSvg({
         />
       ) : null}
       <TelemetryGrid height={height} plot={plot} />
+      <SeriesAxisLabels plot={plot} />
       {plot.phaseBoundaries.map((x) => (
         <Line
           key={`phase-${x}`}
@@ -173,6 +208,15 @@ function WeightedTraceSvg({
           key={`flow-${index}`}
           opacity={0.14}
           stroke="none"
+        />
+      ))}
+      {plot.flowPaths.map((path, index) => (
+        <Path
+          d={path}
+          fill="none"
+          key={`flow-line-${index}`}
+          stroke={TELEMETRY_COLORS.flow}
+          strokeWidth={2}
         />
       ))}
       {plot.targetPaths.map((path, index) => (
@@ -224,8 +268,9 @@ function WeightedTraceSvg({
           y2={plot.bottom}
         />
       ) : null}
-      {latest ? (
+      {latest !== null ? (
         <>
+          {latest.boilerTemperatureC !== null ? (
           <Circle
             cx={plot.x(latest.elapsedMs)}
             cy={plot.temperatureY(latest.boilerTemperatureC)}
@@ -234,6 +279,7 @@ function WeightedTraceSvg({
             stroke={TELEMETRY_COLORS.temperature}
             strokeWidth={2}
           />
+          ) : null}
           {latest.netWeightDecigrams !== null ? (
             <Circle
               cx={plot.x(latest.elapsedMs)}
@@ -244,8 +290,95 @@ function WeightedTraceSvg({
               strokeWidth={2}
             />
           ) : null}
+          {latest.derivedFlowGPerS !== null ? (
+            <Circle
+              cx={plot.x(latest.elapsedMs)}
+              cy={plot.flowY(latest.derivedFlowGPerS)}
+              fill={TELEMETRY_COLORS.background}
+              r={4}
+              stroke={TELEMETRY_COLORS.flow}
+              strokeWidth={2}
+            />
+          ) : null}
         </>
       ) : null}
     </Svg>
+  );
+}
+
+function SeriesAxisLabels({ plot }: { plot: WeightedTracePlot }) {
+  return (
+    <G>
+      <SeriesAxisLabel
+        band={plot.temperatureBand}
+        color={TELEMETRY_COLORS.temperature}
+        label="°C"
+        maximum={plot.temperatureMaximum}
+        minimum={plot.temperatureMinimum}
+        plot={plot}
+      />
+      <SeriesAxisLabel
+        band={plot.weightBand}
+        color={TELEMETRY_COLORS.weight}
+        label="g"
+        maximum={plot.weightMaximum}
+        minimum={0}
+        plot={plot}
+      />
+      <SeriesAxisLabel
+        band={plot.flowBand}
+        color={TELEMETRY_COLORS.flow}
+        label="g/s"
+        maximum={plot.flowMaximum}
+        minimum={0}
+        plot={plot}
+      />
+    </G>
+  );
+}
+
+function SeriesAxisLabel({
+  band,
+  color,
+  label,
+  maximum,
+  minimum,
+  plot,
+}: {
+  band: WeightedTracePlot["temperatureBand"];
+  color: string;
+  label: string;
+  maximum: number;
+  minimum: number;
+  plot: WeightedTracePlot;
+}) {
+  return (
+    <G>
+      <SvgText
+        fill={color}
+        fontSize={9}
+        fontWeight="700"
+        textAnchor="end"
+        x={plot.left - 5}
+        y={band.top + 9}>
+        {label}
+      </SvgText>
+      <SvgText
+        fill="#74695E"
+        fontSize={8}
+        textAnchor="start"
+        x={plot.right + 4}
+        y={band.top + 8}>
+        {formatGraphTick(maximum)}
+      </SvgText>
+      <SvgText
+        fill="#74695E"
+        fontSize={8}
+        textAnchor="start"
+        x={plot.right + 4}
+        y={band.bottom}>
+        {formatGraphTick(minimum)}
+      </SvgText>
+    </G>
   );
 }

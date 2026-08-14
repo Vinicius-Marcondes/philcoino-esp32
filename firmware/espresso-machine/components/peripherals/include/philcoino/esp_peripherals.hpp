@@ -26,6 +26,7 @@ class EspMax6675Transport final : public Max6675Transport {
   bool read_frame(std::uint16_t& frame) override;
 
  private:
+  portMUX_TYPE bus_lock_ = portMUX_INITIALIZER_UNLOCKED;
   bool initialized_{false};
 };
 
@@ -35,6 +36,7 @@ class EspHx711Transport final : public Hx711Transport {
   Hx711Reading read() override;
 
  private:
+  portMUX_TYPE bus_lock_ = portMUX_INITIALIZER_UNLOCKED;
   bool initialized_{false};
 };
 

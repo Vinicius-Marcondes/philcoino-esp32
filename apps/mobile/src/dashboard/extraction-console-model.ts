@@ -1,9 +1,9 @@
 import type {
   ExtractionPhase,
+  ExtractionTelemetryPhase,
   ExtractionState,
   MachineState,
   ScaleState,
-  WeightedExtractionTracePhase,
 } from "@philcoino/protocol";
 
 import type { StoredExtractionTrace } from "../history/extraction-trace";
@@ -17,7 +17,7 @@ import {
 
 export type ExtractionConsolePhase =
   | ExtractionPhase
-  | WeightedExtractionTracePhase;
+  | ExtractionTelemetryPhase;
 
 export interface ExtractionConsoleReadouts {
   elapsed: string;
@@ -69,10 +69,13 @@ export function extractionConsoleReadouts({
   const temperatureC = snapshot?.boilerTemperatureC ?? latest?.boilerTemperatureC ?? null;
   const targetC = snapshot === null ? (latest?.activeTargetC ?? null) : snapshot.brewTargetC;
   const weightDecigrams =
-    scale?.activeExtraction?.netWeightDecigrams ??
-    currentScaleWeightDecigrams(scale) ??
-    latest?.netWeightDecigrams ??
-    null;
+    running
+      ? latest?.netWeightDecigrams ??
+        scale?.activeExtraction?.netWeightDecigrams ??
+        currentScaleWeightDecigrams(scale)
+      : currentScaleWeightDecigrams(scale) ??
+        latest?.netWeightDecigrams ??
+        null;
   return {
     elapsed: formatElapsedReadout(elapsedMs),
     flow: formatFlowReadout(latest?.derivedFlowGPerS ?? null),

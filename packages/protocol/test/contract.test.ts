@@ -1,1016 +1,304 @@
-import { describe, expect, test } from "bun:test";
-import type { ZodType } from "zod";
+import { describe, expect, it } from "bun:test";
 
 import {
-  ActiveCompensationStateSchema,
-  ActiveCooldownStateSchema,
-  ActiveTemperatureCalibrationStateSchema,
-  ApiV2ErrorCodeSchema,
-  ApiV2ErrorResponseSchema,
-  BREW_TARGET_MAX_C,
-  BREW_TARGET_MIN_C,
-  CalibratedTemperatureCalibrationStateSchema,
-  CompleteScaleCalibrationRequestSchema,
-  BrewTargetSchema,
-  COOLDOWN_MAX_DURATION_MS,
-  COOLDOWN_PUMP_LIMIT_MS,
-  COOLDOWN_STABILIZATION_MS,
-  CompensationPhaseSchema,
-  CompensationStateSchema,
-  CooldownActiveConflictResponseSchema,
-  CooldownOutcomeSchema,
-  CooldownStateSchema,
-  CooldownStatusSchema,
-  DeviceResponseSchema,
-  ErrorCodeSchema,
-  ErrorResponseSchema,
-  EXTRACTION_MAX_DURATION_MS,
-  EXTRACTION_MAX_DURATION_SECONDS,
-  EXTRACTION_TELEMETRY_HEARTBEAT_INTERVAL_MS,
-  EXTRACTION_TELEMETRY_PAGE_SIZE,
-  EXTRACTION_TELEMETRY_RETENTION_SAMPLES,
-  EXTRACTION_TELEMETRY_SAMPLE_INTERVAL_MS,
-  EXTRACTION_TELEMETRY_SETTLING_LIMIT_MS,
-  ExtractionActiveConflictResponseSchema,
-  ExtractionOutcomeSchema,
+  ApiErrorResponseSchema,
   ExtractionTelemetryPageSchema,
-  ExtractionPhaseSchema,
-  ExtractionProfileSchema,
-  ExtractionStateSchema,
-  FaultCodeSchema,
-  HeaterSettingsRequestSchema,
-  HeaterSettingsResponseSchema,
-  HealthResponseSchema,
-  IdempotencyKeySchema,
-  IdleCooldownStateSchema,
-  IdleExtractionStateSchema,
-  InactiveCompensationStateSchema,
-  MachineStateSchema,
-  MachineStateV2Schema,
-  MachineStatusSchema,
-  ModeRequestSchema,
-  ModeResponseSchema,
-  ModeSchema,
-  OverTemperatureDismissResponseSchema,
-  PROFILE_NAME_MAX_LENGTH,
-  PROFILE_SLOT_IDS,
-  ProfileNameSchema,
-  ProfileSlotIdSchema,
-  PumpCommandSchema,
-  PumpingCooldownStateSchema,
-  RunningExtractionStateSchema,
-  RAW_BOILER_OVER_TEMPERATURE_C,
-  ScaleStateSchema,
-  ScaleTraceResponseSchema,
-  TerminalExtractionStateSchema,
-  STEAM_TARGET_MAX_C,
-  STEAM_TARGET_MIN_C,
-  STEAM_OVER_TEMPERATURE_C,
-  STEAM_COMPENSATION_DECAY_DEFAULT_MS,
-  STEAM_COMPENSATION_DECAY_MAX_MS,
-  STEAM_COMPENSATION_DECAY_MIN_MS,
-  STEAM_COMPENSATION_INITIAL_DEFAULT_C,
-  STEAM_COMPENSATION_INITIAL_MAX_C,
-  STEAM_COMPENSATION_INITIAL_MIN_C,
-  STEAM_READY_TIMEOUT_DEFAULT_MS,
-  STEAM_READY_TIMEOUT_MAX_MS,
-  STEAM_READY_TIMEOUT_MIN_MS,
-  STEAM_SETTING_TIME_STEP_MS,
-  SteamControlSettingsRequestSchema,
-  SteamControlSettingsSchema,
-  SteamControlStateSchema,
-  SteamTargetSchema,
-  StartExtractionRequestSchema,
-  StartCooldownRequestSchema,
-  StabilizingCooldownStateSchema,
-  TemperatureSettingsRequestSchema,
-  TemperatureSettingsResponseSchema,
-  TEMPERATURE_CALIBRATION_CANDIDATE_MAX_C,
-  TEMPERATURE_CALIBRATION_CANDIDATE_MIN_C,
-  TEMPERATURE_CALIBRATION_OFFSET_MAX_C,
-  TEMPERATURE_CALIBRATION_OFFSET_MIN_C,
-  TEMPERATURE_CALIBRATION_REFERENCE_C,
-  TEMPERATURE_CALIBRATION_SESSION_LEASE_MS,
-  TEMPERATURE_CALIBRATION_STEP_C,
-  TemperatureCalibrationSessionRequestSchema,
-  TemperatureCalibrationStateSchema,
-  UncalibratedTemperatureCalibrationStateSchema,
-  UpdateTemperatureCalibrationCandidateRequestSchema,
+  FirmwareUpdateAcceptedSchema,
+  GrossWeightDecigramsSchema,
+  MachineStateV3Schema,
+  NetWeightDecigramsSchema,
+  PairingClientBindingSchema,
+  PairingCompleteResponseSchema,
+  PairingDeviceBindingSchema,
+  PairingSessionCompleteRequestSchema,
+  PairingSessionProofRequestSchema,
+  PairingSessionProofResponseSchema,
+  PairingSessionStartRequestSchema,
+  PairingSessionStartResponseSchema,
+  SettingsRequestSchema,
 } from "../src/index.ts";
 
-type OpenApiSchema = {
-  const?: unknown;
-  description?: string;
-  enum?: unknown[];
-  examples?: unknown[];
-  maximum?: number;
-  minimum?: number;
-  multipleOf?: number;
-  oneOf?: OpenApiSchema[];
-  properties?: Record<string, OpenApiSchema>;
-};
+const base64 = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+const bootId = "00000000000000000000000000000001";
 
-type OpenApiDocument = {
-  paths: Record<string, Record<string, Record<string, unknown>>>;
-  components: {
-    schemas: Record<string, OpenApiSchema>;
-  };
-};
-
-async function fixture(path: string): Promise<unknown> {
-  return Bun.file(new URL(`../fixtures/${path}`, import.meta.url)).json();
+async function fixture(
+  kind: "invalid" | "valid",
+  name: string,
+): Promise<unknown> {
+  return Bun.file(
+    new URL(`../fixtures/${kind}/${name}`, import.meta.url),
+  ).json();
 }
 
-const openApi = JSON.parse(
-  await Bun.file(new URL("../openapi.yaml", import.meta.url)).text(),
-) as OpenApiDocument;
-
-const documentedSchemas: Record<string, ZodType> = {
-  HealthResponse: HealthResponseSchema,
-  DeviceResponse: DeviceResponseSchema,
-  MachineState: MachineStateSchema,
-  SteamControlSettings: SteamControlSettingsSchema,
-  SteamControlSettingsRequest: SteamControlSettingsRequestSchema,
-  SteamControlState: SteamControlStateSchema,
-  TemperatureSettingsRequest: TemperatureSettingsRequestSchema,
-  TemperatureSettingsResponse: TemperatureSettingsResponseSchema,
-  UncalibratedTemperatureCalibrationState:
-    UncalibratedTemperatureCalibrationStateSchema,
-  ActiveTemperatureCalibrationState:
-    ActiveTemperatureCalibrationStateSchema,
-  CalibratedTemperatureCalibrationState:
-    CalibratedTemperatureCalibrationStateSchema,
-  TemperatureCalibrationState: TemperatureCalibrationStateSchema,
-  UpdateTemperatureCalibrationCandidateRequest:
-    UpdateTemperatureCalibrationCandidateRequestSchema,
-  TemperatureCalibrationSessionRequest:
-    TemperatureCalibrationSessionRequestSchema,
-  ModeRequest: ModeRequestSchema,
-  ModeResponse: ModeResponseSchema,
-  HeaterSettingsRequest: HeaterSettingsRequestSchema,
-  HeaterSettingsResponse: HeaterSettingsResponseSchema,
-  OverTemperatureDismissResponse: OverTemperatureDismissResponseSchema,
-  ErrorResponse: ErrorResponseSchema,
-  IdleExtractionState: IdleExtractionStateSchema,
-  RunningExtractionState: RunningExtractionStateSchema,
-  TerminalExtractionState: TerminalExtractionStateSchema,
-  MachineStateV2: MachineStateV2Schema,
-  StartExtractionRequest: StartExtractionRequestSchema,
-  ScaleState: ScaleStateSchema,
-  ScaleTraceResponse: ScaleTraceResponseSchema,
-  ExtractionTelemetryPage: ExtractionTelemetryPageSchema,
-  CompleteScaleCalibrationRequest: CompleteScaleCalibrationRequestSchema,
-  ApiV2ErrorResponse: ApiV2ErrorResponseSchema,
-  ExtractionActiveConflictResponse: ExtractionActiveConflictResponseSchema,
-  InactiveCompensationState: InactiveCompensationStateSchema,
-  ActiveCompensationState: ActiveCompensationStateSchema,
-  IdleCooldownState: IdleCooldownStateSchema,
-  PumpingCooldownState: PumpingCooldownStateSchema,
-  StabilizingCooldownState: StabilizingCooldownStateSchema,
-  StartCooldownRequest: StartCooldownRequestSchema,
-  CooldownActiveConflictResponse: CooldownActiveConflictResponseSchema,
-};
-
-const validFixtures = [
-  ["valid/health.json", HealthResponseSchema],
-  ["valid/device.json", DeviceResponseSchema],
-  ["valid/state.json", MachineStateSchema],
-  ["valid/state-fault.json", MachineStateSchema],
-  [
-    "valid/steam-control-settings-request.json",
-    SteamControlSettingsRequestSchema,
-  ],
-  ["valid/steam-control-state.json", SteamControlStateSchema],
-  ["valid/temperatures-request.json", TemperatureSettingsRequestSchema],
-  ["valid/temperatures-response.json", TemperatureSettingsResponseSchema],
-  [
-    "valid/temperature-calibration-uncalibrated.json",
-    TemperatureCalibrationStateSchema,
-  ],
-  [
-    "valid/temperature-calibration-active.json",
-    TemperatureCalibrationStateSchema,
-  ],
-  [
-    "valid/temperature-calibration-calibrated.json",
-    TemperatureCalibrationStateSchema,
-  ],
-  [
-    "valid/temperature-calibration-candidate-request.json",
-    UpdateTemperatureCalibrationCandidateRequestSchema,
-  ],
-  [
-    "valid/temperature-calibration-session-request.json",
-    TemperatureCalibrationSessionRequestSchema,
-  ],
-  ["valid/mode-request.json", ModeRequestSchema],
-  ["valid/mode-response.json", ModeResponseSchema],
-  ["valid/heater-request.json", HeaterSettingsRequestSchema],
-  ["valid/heater-response.json", HeaterSettingsResponseSchema],
-  ["valid/error.json", ErrorResponseSchema],
-  ["valid/extraction-idle.json", IdleExtractionStateSchema],
-  ["valid/extraction-running.json", RunningExtractionStateSchema],
-  ["valid/extraction-terminal-replay.json", TerminalExtractionStateSchema],
-  ["valid/extraction-start-request.json", StartExtractionRequestSchema],
-  [
-    "valid/extraction-start-weight-request.json",
-    StartExtractionRequestSchema,
-  ],
-  ["valid/scale-state.json", ScaleStateSchema],
-  ["valid/scale-trace-response.json", ScaleTraceResponseSchema],
-  ["valid/extraction-telemetry-page.json", ExtractionTelemetryPageSchema],
-  [
-    "valid/scale-calibration-complete-request.json",
-    CompleteScaleCalibrationRequestSchema,
-  ],
-  [
-    "valid/extraction-active-conflict.json",
-    ExtractionActiveConflictResponseSchema,
-  ],
-  ["valid/compensation-inactive.json", InactiveCompensationStateSchema],
-  ["valid/compensation-active.json", ActiveCompensationStateSchema],
-  ["valid/cooldown-idle.json", IdleCooldownStateSchema],
-  ["valid/cooldown-pumping.json", PumpingCooldownStateSchema],
-  ["valid/cooldown-stabilizing.json", StabilizingCooldownStateSchema],
-  ["valid/cooldown-terminal-replay.json", IdleCooldownStateSchema],
-  ["valid/cooldown-terminal-failed-running.json", IdleCooldownStateSchema],
-  ["valid/cooldown-start-request.json", StartCooldownRequestSchema],
-  ["valid/cooldown-active-conflict.json", CooldownActiveConflictResponseSchema],
-  ["valid/brew-mode-required-error.json", ApiV2ErrorResponseSchema],
-  ["valid/cooldown-not-required-error.json", ApiV2ErrorResponseSchema],
-  ["valid/cooldown-sensor-unavailable-error.json", ApiV2ErrorResponseSchema],
-  ["valid/cooldown-machine-faulted-error.json", ApiV2ErrorResponseSchema],
-  ["valid/temperature-target-unsafe-error.json", ApiV2ErrorResponseSchema],
-  ["valid/machine-v2-failed-cooldown.json", MachineStateV2Schema],
-] as const;
-
-const invalidFixtures = [
-  ["invalid/device-api-version.json", DeviceResponseSchema],
-  ["invalid/state-extra-property.json", MachineStateSchema],
-  [
-    "invalid/scale-trace-cursor-mismatch.json",
-    ScaleTraceResponseSchema,
-  ],
-  [
-    "invalid/extraction-telemetry-page-inconsistent.json",
-    ExtractionTelemetryPageSchema,
-  ],
-  ["invalid/state-legacy-temperatures.json", MachineStateSchema],
-  ["invalid/state-fault-heater-active.json", MachineStateSchema],
-  ["invalid/state-fault-without-details.json", MachineStateSchema],
-  [
-    "invalid/steam-control-settings-empty.json",
-    SteamControlSettingsRequestSchema,
-  ],
-  [
-    "invalid/steam-control-settings-duration-step.json",
-    SteamControlSettingsRequestSchema,
-  ],
-  ["invalid/temperatures-request-empty.json", TemperatureSettingsRequestSchema],
-  ["invalid/brew-target-too-low.json", TemperatureSettingsRequestSchema],
-  ["invalid/brew-target-fractional.json", TemperatureSettingsRequestSchema],
-  ["invalid/steam-target-too-high.json", TemperatureSettingsRequestSchema],
-  [
-    "invalid/temperature-calibration-candidate-too-high.json",
-    UpdateTemperatureCalibrationCandidateRequestSchema,
-  ],
-  [
-    "invalid/temperature-calibration-candidate-extra-property.json",
-    UpdateTemperatureCalibrationCandidateRequestSchema,
-  ],
-  [
-    "invalid/temperature-calibration-active-preview-mismatch.json",
-    TemperatureCalibrationStateSchema,
-  ],
-  [
-    "invalid/temperature-calibration-session-short.json",
-    TemperatureCalibrationSessionRequestSchema,
-  ],
-  ["invalid/mode-invalid.json", ModeRequestSchema],
-  ["invalid/heater-invalid.json", HeaterSettingsRequestSchema],
-  ["invalid/error-extra-property.json", ErrorResponseSchema],
-  ["invalid/profile-name-symbol.json", ExtractionProfileSchema],
-  ["invalid/profile-name-too-long.json", ExtractionProfileSchema],
-  ["invalid/profile-fractional-duration.json", ExtractionProfileSchema],
-  ["invalid/profile-soak-without-preinfusion.json", ExtractionProfileSchema],
-  ["invalid/profile-duration-overflow.json", ExtractionProfileSchema],
-  ["invalid/extraction-start-key-short.json", StartExtractionRequestSchema],
-  [
-    "invalid/extraction-start-weight-manual.json",
-    StartExtractionRequestSchema,
-  ],
-  [
-    "invalid/extraction-start-weight-compensation.json",
-    StartExtractionRequestSchema,
-  ],
-  ["invalid/extraction-running-wrong-command.json", ExtractionStateSchema],
-  [
-    "invalid/extraction-terminal-running-completed.json",
-    ExtractionStateSchema,
-  ],
-  [
-    "invalid/extraction-conflict-with-idle.json",
-    ExtractionActiveConflictResponseSchema,
-  ],
-  ["invalid/compensation-active-preinfusion.json", CompensationStateSchema],
-  ["invalid/compensation-extra-property.json", CompensationStateSchema],
-  ["invalid/cooldown-pumping-wrong-command.json", CooldownStateSchema],
-  ["invalid/cooldown-pumping-inconsistent-timing.json", CooldownStateSchema],
-  ["invalid/cooldown-pumping-time-overflow.json", CooldownStateSchema],
-  [
-    "invalid/cooldown-stabilizing-failed-outcome.json",
-    CooldownStateSchema,
-  ],
-  ["invalid/cooldown-terminal-without-outcome.json", CooldownStateSchema],
-  ["invalid/cooldown-terminal-running-cutoff.json", CooldownStateSchema],
-  ["invalid/cooldown-start-key-short.json", StartCooldownRequestSchema],
-  [
-    "invalid/cooldown-conflict-with-idle.json",
-    CooldownActiveConflictResponseSchema,
-  ],
-  ["invalid/machine-v2-steam-extraction.json", MachineStateV2Schema],
-  ["invalid/machine-v2-active-workflows.json", MachineStateV2Schema],
-  ["invalid/machine-v2-compensation-disabled.json", MachineStateV2Schema],
-  [
-    "invalid/machine-v2-failed-cooldown-without-fault.json",
-    MachineStateV2Schema,
-  ],
-  [
-    "invalid/machine-v2-failed-extraction-without-fault.json",
-    MachineStateV2Schema,
-  ],
-] as const;
-
-describe("contract fixtures", () => {
-  for (const [path, schema] of validFixtures) {
-    test(`${path} parses`, async () => {
-      expect(schema.safeParse(await fixture(path)).success).toBe(true);
-    });
-  }
-
-  for (const [path, schema] of invalidFixtures) {
-    test(`${path} is rejected`, async () => {
-      expect(schema.safeParse(await fixture(path)).success).toBe(false);
-    });
-  }
-});
-
-describe("documented OpenAPI examples", () => {
-  for (const [schemaName, zodSchema] of Object.entries(documentedSchemas)) {
-    test(`${schemaName} examples parse with Zod`, () => {
-      const examples = openApi.components.schemas[schemaName]?.examples;
-
-      expect(examples?.length).toBeGreaterThan(0);
-      for (const example of examples ?? []) {
-        expect(zodSchema.safeParse(example).success).toBe(true);
-      }
-    });
-  }
-
-  test("examples remain aligned with valid fixtures", async () => {
-    const fixturesBySchema = {
-      HealthResponse: [await fixture("valid/health.json")],
-      DeviceResponse: [await fixture("valid/device.json")],
-      MachineState: [
-        await fixture("valid/state.json"),
-        await fixture("valid/state-fault.json"),
-      ],
-      SteamControlSettings: [
-        (await fixture("valid/steam-control-state.json") as {
-          settings: unknown;
-        }).settings,
-      ],
-      SteamControlSettingsRequest: [
-        await fixture("valid/steam-control-settings-request.json"),
-      ],
-      SteamControlState: [await fixture("valid/steam-control-state.json")],
-      TemperatureSettingsRequest: [
-        await fixture("valid/temperatures-request.json"),
-      ],
-      TemperatureSettingsResponse: [
-        await fixture("valid/temperatures-response.json"),
-      ],
-      UncalibratedTemperatureCalibrationState: [
-        await fixture("valid/temperature-calibration-uncalibrated.json"),
-      ],
-      ActiveTemperatureCalibrationState: [
-        await fixture("valid/temperature-calibration-active.json"),
-      ],
-      CalibratedTemperatureCalibrationState: [
-        await fixture("valid/temperature-calibration-calibrated.json"),
-      ],
-      TemperatureCalibrationState: [
-        await fixture("valid/temperature-calibration-calibrated.json"),
-      ],
-      UpdateTemperatureCalibrationCandidateRequest: [
-        await fixture("valid/temperature-calibration-candidate-request.json"),
-      ],
-      TemperatureCalibrationSessionRequest: [
-        await fixture("valid/temperature-calibration-session-request.json"),
-      ],
-      ModeRequest: [await fixture("valid/mode-request.json")],
-      ModeResponse: [await fixture("valid/mode-response.json")],
-      HeaterSettingsRequest: [await fixture("valid/heater-request.json")],
-      HeaterSettingsResponse: [await fixture("valid/heater-response.json")],
-      OverTemperatureDismissResponse: [
-        openApi.components.schemas.OverTemperatureDismissResponse.examples?.[0],
-      ],
-      ErrorResponse: [await fixture("valid/error.json")],
-      IdleExtractionState: [await fixture("valid/extraction-idle.json")],
-      RunningExtractionState: [await fixture("valid/extraction-running.json")],
-      TerminalExtractionState: [
-        await fixture("valid/extraction-terminal-replay.json"),
-      ],
-      MachineStateV2: [
-        openApi.components.schemas.MachineStateV2.examples?.[0],
-      ],
-      StartExtractionRequest: [
-        await fixture("valid/extraction-start-request.json"),
-        await fixture("valid/extraction-start-weight-request.json"),
-      ],
-      ScaleState: [await fixture("valid/scale-state.json")],
-      ExtractionTelemetryPage: [
-        await fixture("valid/extraction-telemetry-page.json"),
-      ],
-      CompleteScaleCalibrationRequest: [
-        await fixture("valid/scale-calibration-complete-request.json"),
-      ],
-      ApiV2ErrorResponse: [
-        await fixture("valid/brew-mode-required-error.json"),
-        await fixture("valid/cooldown-not-required-error.json"),
-        await fixture("valid/cooldown-sensor-unavailable-error.json"),
-        await fixture("valid/cooldown-machine-faulted-error.json"),
-        await fixture("valid/temperature-target-unsafe-error.json"),
-      ],
-      ExtractionActiveConflictResponse: [
-        await fixture("valid/extraction-active-conflict.json"),
-      ],
-      InactiveCompensationState: [
-        await fixture("valid/compensation-inactive.json"),
-      ],
-      ActiveCompensationState: [
-        await fixture("valid/compensation-active.json"),
-      ],
-      IdleCooldownState: [
-        await fixture("valid/cooldown-idle.json"),
-        await fixture("valid/cooldown-terminal-replay.json"),
-        await fixture("valid/cooldown-terminal-failed-running.json"),
-      ],
-      PumpingCooldownState: [await fixture("valid/cooldown-pumping.json")],
-      StabilizingCooldownState: [
-        await fixture("valid/cooldown-stabilizing.json"),
-      ],
-      StartCooldownRequest: [
-        await fixture("valid/cooldown-start-request.json"),
-      ],
-      CooldownActiveConflictResponse: [
-        await fixture("valid/cooldown-active-conflict.json"),
-      ],
-    };
-
-    for (const [schemaName, examples] of Object.entries(fixturesBySchema)) {
-      expect(openApi.components.schemas[schemaName]?.examples).toEqual(examples);
-    }
-  });
-
-  test("protocol documentation JSON examples parse with Zod", async () => {
-    const documentation = await Bun.file(
-      new URL("../../../docs/protocol/api-v1-outline.md", import.meta.url),
-    ).text();
-    const jsonBlocks = [...documentation.matchAll(/```json\n([\s\S]*?)\n```/g)].map(
-      ([, json]) => JSON.parse(json),
-    );
-
-    expect(jsonBlocks).toHaveLength(2);
-    expect(MachineStateSchema.safeParse(jsonBlocks[0]).success).toBe(true);
-    expect(ErrorResponseSchema.safeParse(jsonBlocks[1]).success).toBe(true);
-  });
-});
-
-describe("temperature boundaries and drift", () => {
-  test("documents calibrated and transient Steam temperature semantics", () => {
-    const description =
-      openApi.components.schemas.MachineState.properties?.boilerTemperatureC
-        ?.description;
-
-    expect(description).toContain("globally calibrated");
-    expect(description).toContain(
-      "one persisted signed global temperature-calibration offset exactly once",
-    );
-    expect(description).toContain("offset is zero");
-    expect(
-      openApi.components.schemas.SteamControlState.description,
-    ).toContain("transient positive-only Steam estimator");
-  });
-
-  test("accepts every inclusive whole-degree boundary", () => {
-    expect(BrewTargetSchema.parse(BREW_TARGET_MIN_C)).toBe(85);
-    expect(BrewTargetSchema.parse(BREW_TARGET_MAX_C)).toBe(95);
-    expect(SteamTargetSchema.parse(STEAM_TARGET_MIN_C)).toBe(110);
-    expect(SteamTargetSchema.parse(STEAM_TARGET_MAX_C - 1)).toBe(134);
-    expect(SteamTargetSchema.parse(STEAM_TARGET_MAX_C)).toBe(135);
-  });
-
-  test("rejects adjacent and fractional values", () => {
-    for (const value of [84, 85.5, 96]) {
-      expect(BrewTargetSchema.safeParse(value).success).toBe(false);
-    }
-
-    for (const value of [109, 110.5, 136]) {
-      expect(SteamTargetSchema.safeParse(value).success).toBe(false);
-    }
-  });
-
-  test("OpenAPI limits match exported Zod limits", () => {
-    expect(openApi.components.schemas.BrewTarget).toMatchObject({
-      minimum: BREW_TARGET_MIN_C,
-      maximum: BREW_TARGET_MAX_C,
-    });
-    expect(openApi.components.schemas.SteamTarget).toMatchObject({
-      minimum: STEAM_TARGET_MIN_C,
-      maximum: STEAM_TARGET_MAX_C,
-    });
-  });
-
-  test("calibration constants and offset arithmetic remain aligned", async () => {
-    expect(TEMPERATURE_CALIBRATION_REFERENCE_C).toBe(100);
-    expect(TEMPERATURE_CALIBRATION_CANDIDATE_MIN_C).toBe(90);
-    expect(TEMPERATURE_CALIBRATION_CANDIDATE_MAX_C).toBe(120);
-    expect(TEMPERATURE_CALIBRATION_STEP_C).toBe(1);
-    expect(TEMPERATURE_CALIBRATION_OFFSET_MIN_C).toBe(-20);
-    expect(TEMPERATURE_CALIBRATION_OFFSET_MAX_C).toBe(10);
-    expect(TEMPERATURE_CALIBRATION_SESSION_LEASE_MS).toBe(15_000);
-    expect(STEAM_OVER_TEMPERATURE_C).toBe(135);
-    expect(RAW_BOILER_OVER_TEMPERATURE_C).toBe(135);
-
-    const activeFixture = await fixture(
-      "valid/temperature-calibration-active.json",
-    );
-    for (const [candidateRawTargetC, expectedOffsetC] of [
-      [108, -8],
-      [95, 5],
-      [100, 0],
-    ] as const) {
-      const state = TemperatureCalibrationStateSchema.parse({
-        ...(activeFixture as Record<string, unknown>),
-        candidateRawTargetC,
-        offsetPreviewC: expectedOffsetC,
-      });
-      expect(state.offsetPreviewC).toBe(
-        TEMPERATURE_CALIBRATION_REFERENCE_C - candidateRawTargetC,
-      );
-    }
-  });
-
-  test("Steam heat-soak settings use bounded whole-unit defaults", () => {
-    expect(STEAM_COMPENSATION_INITIAL_MIN_C).toBe(0);
-    expect(STEAM_COMPENSATION_INITIAL_MAX_C).toBe(20);
-    expect(STEAM_COMPENSATION_INITIAL_DEFAULT_C).toBe(12);
-    expect(STEAM_COMPENSATION_DECAY_MIN_MS).toBe(60_000);
-    expect(STEAM_COMPENSATION_DECAY_MAX_MS).toBe(1_800_000);
-    expect(STEAM_COMPENSATION_DECAY_DEFAULT_MS).toBe(720_000);
-    expect(STEAM_READY_TIMEOUT_MIN_MS).toBe(60_000);
-    expect(STEAM_READY_TIMEOUT_MAX_MS).toBe(900_000);
-    expect(STEAM_READY_TIMEOUT_DEFAULT_MS).toBe(300_000);
-    expect(STEAM_SETTING_TIME_STEP_MS).toBe(60_000);
-    expect(
-      SteamControlSettingsRequestSchema.safeParse({
-        initialCompensationC: 0,
-      }).success,
-    ).toBe(true);
-    expect(
-      SteamControlSettingsRequestSchema.safeParse({
-        readyTimeoutMs: STEAM_READY_TIMEOUT_MAX_MS,
-      }).success,
-    ).toBe(true);
-  });
-
-  test("accepts calibration candidates only at whole-degree boundaries", () => {
-    for (const candidateRawTargetC of [
-      TEMPERATURE_CALIBRATION_CANDIDATE_MIN_C,
-      TEMPERATURE_CALIBRATION_CANDIDATE_MAX_C,
-    ]) {
-      expect(
-        UpdateTemperatureCalibrationCandidateRequestSchema.safeParse({
-          calibrationId: "temp-cal-01J2ABCDEF",
-          candidateRawTargetC,
-        }).success,
-      ).toBe(true);
-    }
-
-    for (const candidateRawTargetC of [89, 90.5, 121]) {
-      expect(
-        UpdateTemperatureCalibrationCandidateRequestSchema.safeParse({
-          calibrationId: "temp-cal-01J2ABCDEF",
-          candidateRawTargetC,
-        }).success,
-      ).toBe(false);
-    }
-
-    expect(
-      openApi.components.schemas.TemperatureCalibrationCandidateRawTarget,
-    ).toMatchObject({
-      minimum: TEMPERATURE_CALIBRATION_CANDIDATE_MIN_C,
-      maximum: TEMPERATURE_CALIBRATION_CANDIDATE_MAX_C,
-      multipleOf: TEMPERATURE_CALIBRATION_STEP_C,
-    });
-    expect(
-      openApi.components.schemas.TemperatureCalibrationOffset,
-    ).toMatchObject({
-      minimum: TEMPERATURE_CALIBRATION_OFFSET_MIN_C,
-      maximum: TEMPERATURE_CALIBRATION_OFFSET_MAX_C,
-      multipleOf: TEMPERATURE_CALIBRATION_STEP_C,
-    });
-  });
-
-  test("OpenAPI enums match exported Zod enums", () => {
-    expect(openApi.components.schemas.Mode.enum).toEqual(ModeSchema.options);
-    expect(openApi.components.schemas.MachineStatus.enum).toEqual(
-      MachineStatusSchema.options,
-    );
-    expect(openApi.components.schemas.FaultCode.enum).toEqual(
-      FaultCodeSchema.options,
-    );
-    expect(openApi.components.schemas.ErrorCode.enum).toEqual(
-      ErrorCodeSchema.options,
-    );
-  });
-});
-
-describe("strict payload handling", () => {
-  test("rejects unknown properties", () => {
-    expect(
-      ModeRequestSchema.safeParse({ mode: "brew", optimistic: true }).success,
-    ).toBe(false);
-    expect(
-      DeviceResponseSchema.safeParse({
-        deviceId: "device-1",
-        name: "Machine",
-        model: "philcoino-esp32-c3",
-        apiVersion: "2",
-        firmwareVersion: "1.0.0",
-        token: "must-not-leak",
-      }).success,
-    ).toBe(false);
-  });
-
-  test("requires at least one temperature target", () => {
-    expect(TemperatureSettingsRequestSchema.safeParse({}).success).toBe(false);
-    expect(
-      TemperatureSettingsRequestSchema.safeParse({ brewTargetC: 93 }).success,
-    ).toBe(true);
-    expect(
-      TemperatureSettingsRequestSchema.safeParse({ steamTargetC: 115 }).success,
-    ).toBe(true);
-  });
-});
-
-describe("API v2 profile boundaries and drift", () => {
-  test("keeps exactly four immutable lowercase slot identifiers", () => {
-    expect(PROFILE_SLOT_IDS).toEqual([
-      "profile-1",
-      "profile-2",
-      "profile-3",
-      "profile-4",
-    ]);
-    expect(openApi.components.schemas.ProfileSlotId.enum).toEqual(
-      ProfileSlotIdSchema.options,
-    );
-    expect(ProfileSlotIdSchema.safeParse("Profile-1").success).toBe(false);
-    expect(ProfileSlotIdSchema.safeParse("profile-5").success).toBe(false);
-  });
-
-  test("accepts only bounded ASCII alphanumeric names", () => {
-    expect(ProfileNameSchema.parse("A")).toBe("A");
-    expect(ProfileNameSchema.parse("Abc123456789")).toHaveLength(
-      PROFILE_NAME_MAX_LENGTH,
-    );
-    for (const name of ["", "Abc1234567890", "Pre 5", "Café", "slot_one"]) {
-      expect(ProfileNameSchema.safeParse(name).success).toBe(false);
-    }
-  });
-
-  test("enforces whole-second phase combinations and total duration", () => {
-    const base = {
-      name: "Boundary",
-      preInfusionSeconds: 5,
-      soakSeconds: 5,
-      mainExtractionSeconds: 50,
-    };
-    expect(ExtractionProfileSchema.safeParse(base).success).toBe(true);
-    expect(
-      ExtractionProfileSchema.safeParse({
-        ...base,
-        preInfusionSeconds: 0,
-        soakSeconds: 0,
-        mainExtractionSeconds: EXTRACTION_MAX_DURATION_SECONDS,
-      }).success,
-    ).toBe(true);
-    expect(
-      ExtractionProfileSchema.safeParse({ ...base, mainExtractionSeconds: 51 })
-        .success,
-    ).toBe(false);
-    expect(
-      ExtractionProfileSchema.safeParse({
-        ...base,
-        preInfusionSeconds: 0,
-        soakSeconds: 1,
-      }).success,
-    ).toBe(false);
-    expect(
-      ExtractionProfileSchema.safeParse({
-        ...base,
-        mainExtractionSeconds: 0,
-      }).success,
-    ).toBe(false);
-  });
-});
-
-describe("API v2 extraction acknowledgement boundaries", () => {
-  test("requires bounded client-generated idempotency keys", () => {
-    expect(IdempotencyKeySchema.safeParse("start-01J2ABCDEF1234").success).toBe(
-      true,
-    );
-    for (const key of ["short", "contains spaces key", `a${"b".repeat(64)}`]) {
-      expect(IdempotencyKeySchema.safeParse(key).success).toBe(false);
-    }
-  });
-
-  test("binds phases to the GPIO command semantics", () => {
-    expect(PumpCommandSchema.options).toEqual(["running", "off"]);
-    expect(ExtractionPhaseSchema.options).toEqual([
-      "idle",
-      "manual",
-      "pre-infusion",
-      "soak",
-      "main-extraction",
-    ]);
-    expect(
-      RunningExtractionStateSchema.safeParse({
-        status: "running",
-        extractionId: "run-1",
-        selection: {
-          kind: "profile",
-          profileId: "profile-1",
-          profile: {
-            name: "Classic30",
-            preInfusionSeconds: 0,
-            soakSeconds: 0,
-            mainExtractionSeconds: 30,
-          },
+function state(overrides: Record<string, unknown> = {}) {
+  return {
+    apiVersion: "3",
+    device: {
+      deviceId: "philcoino-test",
+      name: "Philcoino test",
+      model: "espresso-machine",
+      apiVersion: "3",
+      firmwareVersion: "3.0.0",
+    },
+    bootId,
+    revision: 7,
+    capturedAtUptimeMs: 12_000,
+    machine: {
+      status: "heating",
+      activeMode: "brew",
+      boilerTemperatureC: null,
+      brewTargetC: 93,
+      steamTargetC: 120,
+      heaterEnabled: true,
+      heaterActive: false,
+      steamTimeoutRemainingMs: null,
+      steamControl: {
+        settings: {
+          initialCompensationC: 12,
+          decayDurationMs: 720_000,
+          readyTimeoutMs: 300_000,
         },
-        phase: "soak",
-        elapsedMs: 5000,
-        remainingMs: EXTRACTION_MAX_DURATION_MS - 5000,
-        pumpCommand: "off",
-      }).success,
-    ).toBe(true);
-  });
-
-  test("requires a complete immutable inline profile", () => {
-    const request = {
-      idempotencyKey: "start-inline-0001",
-      selection: { kind: "profile", profileId: "profile-1" },
-    };
-    expect(StartExtractionRequestSchema.safeParse(request).success).toBe(false);
-    expect(StartExtractionRequestSchema.safeParse({
-      ...request,
-      selection: {
-        ...request.selection,
-        profile: {
-          name: "Classic30",
-          preInfusionSeconds: 0,
-          soakSeconds: 0,
-          mainExtractionSeconds: 30,
-        },
+        compensationActive: false,
+        appliedCompensationC: 0,
+        controlTemperatureC: null,
+        heatSoakElapsedMs: null,
       },
-    }).success).toBe(true);
-  });
-
-  test("keeps v1 paths temperature-control-only while adding v2", () => {
-    const v1Paths = Object.keys(openApi.paths)
-      .filter((path) => path.startsWith("/api/v1/"))
-      .sort();
-    expect(v1Paths).toEqual([
-      "/api/v1/device",
-      "/api/v1/faults/over-temperature/dismiss",
-      "/api/v1/heater",
-      "/api/v1/mode",
-      "/api/v1/settings/temperatures",
-      "/api/v1/state",
-    ]);
-    expect(v1Paths.some((path) => path.includes("extraction"))).toBe(false);
-    expect(ApiV2ErrorCodeSchema.options).toContain("extraction_active");
-    expect(ErrorCodeSchema.options).not.toContain("extraction_active");
-  });
-});
-
-describe("API v2 thermal workflow boundaries", () => {
-  test("exposes compensation activity without a runtime bias value", () => {
-    expect(CompensationPhaseSchema.options).toEqual([
-      "manual",
-      "main-extraction",
-    ]);
-    expect(
-      Object.keys(
-        openApi.components.schemas.ActiveCompensationState.properties ?? {},
-      ),
-    ).toEqual(["status", "phase"]);
-    expect(
-      ActiveCompensationStateSchema.safeParse({
-        status: "active",
-        phase: "pre-infusion",
-      }).success,
-    ).toBe(false);
-  });
-
-  test("binds cooldown phases to command and inhibit states", () => {
-    expect(CooldownStatusSchema.options).toEqual([
-      "idle",
-      "pumping",
-      "stabilizing",
-    ]);
-    expect(CooldownOutcomeSchema.options).toEqual([
-      "target-reached",
-      "cutoff",
-      "stopped",
-      "failed",
-    ]);
-    expect(ActiveCooldownStateSchema.safeParse({
-      status: "pumping",
-      cooldownId: "cooldown-boundary",
-      brewTargetC: 93,
-      elapsedMs: COOLDOWN_PUMP_LIMIT_MS,
-      remainingMs: 0,
-      pumpCommand: "running",
-      heaterInhibited: true,
-      outcome: null,
-    }).success).toBe(true);
-    expect(StabilizingCooldownStateSchema.safeParse({
-      status: "stabilizing",
-      cooldownId: "cooldown-boundary",
-      brewTargetC: 93,
-      elapsedMs: COOLDOWN_MAX_DURATION_MS,
-      remainingMs: 0,
+      uptimeMs: 12_000,
+      fault: null,
+    },
+    scale: {
+      availability: "unavailable",
+      calibrationStatus: "uncalibrated",
+      stable: false,
+      grossWeightDecigrams: null,
+      netWeightDecigrams: null,
+      activeExtraction: null,
+      terminalExtraction: null,
+      warning: null,
+    },
+    temperatureCalibration: {
+      status: "uncalibrated",
+      savedOffsetC: 0,
+      boilerTemperatureRawC: null,
+      boilerTemperatureC: null,
+      heaterActive: false,
+      ready: false,
+      safeTargetBounds: {
+        brewMinimumC: 85,
+        brewMaximumC: 95,
+        steamMinimumC: 110,
+        steamMaximumC: 135,
+      },
+    },
+    extraction: {
+      status: "idle",
+      extractionId: null,
+      selection: null,
+      phase: "idle",
+      elapsedMs: 0,
+      remainingMs: null,
       pumpCommand: "off",
-      heaterInhibited: true,
-      outcome: "cutoff",
-    }).success).toBe(true);
-    expect(COOLDOWN_STABILIZATION_MS).toBe(5_000);
-  });
+    },
+    compensation: { status: "inactive", phase: null },
+    cooldown: {
+      status: "idle",
+      cooldownId: null,
+      brewTargetC: null,
+      elapsedMs: 0,
+      remainingMs: null,
+      pumpCommand: "off",
+      heaterInhibited: false,
+      outcome: null,
+    },
+    ...overrides,
+  };
+}
 
-  test("requires strict cooldown idempotency keys", () => {
-    expect(
-      StartCooldownRequestSchema.safeParse({
-        idempotencyKey: "cooldown-01J2ABCDEF1",
-      }).success,
-    ).toBe(true);
-    expect(
-      StartCooldownRequestSchema.safeParse({
-        idempotencyKey: "cooldown-01J2ABCDEF1",
-        restartDeadline: true,
-      }).success,
-    ).toBe(false);
-  });
-
-  test("documents replay as returning retained state without a new deadline", () => {
-    const operation = openApi.paths["/api/v2/cooldowns/start"]?.post;
-    const description = operation?.description;
-    const responseSchema = (
-      operation?.responses as Record<
-        string,
-        { content?: Record<string, { schema?: { $ref?: string } }> }
-      >
-    )?.["200"]?.content?.["application/json"]?.schema;
-
-    expect(description).toContain("without restarting the 45-second pump deadline");
-    expect(responseSchema?.$ref).toBe("#/components/schemas/CooldownState");
-  });
-
-  test("keeps workflow conflicts distinguishable and versioned", () => {
-    expect(ApiV2ErrorCodeSchema.options).toEqual(
-      openApi.components.schemas.ApiV2ErrorCode.enum,
-    );
-    for (const code of [
-      "brew_mode_required",
-      "cooldown_active",
-      "cooldown_not_required",
-      "machine_faulted",
-    ]) {
-      expect(ApiV2ErrorCodeSchema.options).toContain(code);
-      expect(ErrorCodeSchema.options).not.toContain(code);
-    }
-    expect(ApiV2ErrorCodeSchema.options).toContain("sensor_unavailable");
-    expect(ErrorCodeSchema.options).toContain("sensor_unavailable");
-  });
-
-  test("adds only the approved API v2 workflow, settings, scale, and calibration paths", () => {
-    const v2Paths = Object.keys(openApi.paths)
-      .filter((path) => path.startsWith("/api/v2/"))
-      .sort();
-    expect(v2Paths).toEqual([
-      "/api/v2/cooldowns/start",
-      "/api/v2/cooldowns/stop",
-      "/api/v2/extractions/start",
-      "/api/v2/extractions/stop",
-      "/api/v2/extractions/stream",
-      "/api/v2/scale",
-      "/api/v2/scale/calibration/cancel",
-      "/api/v2/scale/calibration/complete",
-      "/api/v2/scale/calibration/start",
-      "/api/v2/scale/trace",
-      "/api/v2/scale/warnings/acknowledge",
-      "/api/v2/settings/steam-control",
-      "/api/v2/state",
-      "/api/v2/temperature-calibration",
-      "/api/v2/temperature-calibration/cancel",
-      "/api/v2/temperature-calibration/candidate",
-      "/api/v2/temperature-calibration/save",
-      "/api/v2/temperature-calibration/start",
-    ]);
-  });
-
-  test("documents the bounded authenticated extraction telemetry stream", () => {
-    expect(EXTRACTION_TELEMETRY_PAGE_SIZE).toBe(16);
-    expect(EXTRACTION_TELEMETRY_RETENTION_SAMPLES).toBe(320);
-    expect(EXTRACTION_TELEMETRY_SAMPLE_INTERVAL_MS).toBe(250);
-    expect(EXTRACTION_TELEMETRY_SETTLING_LIMIT_MS).toBe(10_000);
-    expect(EXTRACTION_TELEMETRY_HEARTBEAT_INTERVAL_MS).toBe(2_000);
-
-    const operation = openApi.paths["/api/v2/extractions/stream"]?.get as {
-      security?: Array<Record<string, unknown>>;
-      parameters?: Array<{ name?: string; required?: boolean }>;
-      responses?: Record<
-        string,
-        { content?: Record<string, { schema?: { type?: string } }> }
-      >;
+describe("API v3 contract", () => {
+  it("keeps the stored v3 fixtures executable and rejects their negative pairs", async () => {
+    const validState = await fixture("valid", "state-v3.json");
+    const validSettings = await fixture("valid", "settings-v3.json");
+    const validSession = await fixture("valid", "pairing-session-v3.json");
+    const validProof = await fixture("valid", "pairing-proof-v3.json");
+    const validComplete = await fixture("valid", "pairing-complete-v3.json");
+    const validError = await fixture("valid", "error-v3.json");
+    const validTelemetry = await fixture("valid", "telemetry-page-v3.json");
+    const validWeights = await fixture("valid", "weight-boundaries-v3.json") as {
+      gross: number[];
+      net: number[];
     };
-    expect(operation.security).toEqual([{ bearerAuth: [] }]);
-    expect(operation.parameters?.map(({ name, required }) => ({ name, required }))).toEqual([
-      { name: "extractionId", required: false },
-      { name: "bootId", required: false },
-      { name: "afterSequence", required: false },
-    ]);
-    expect(operation.responses?.["200"]?.content?.["text/event-stream"]?.schema).toEqual({
-      type: "string",
+    const validFirmwareUpdate = await fixture(
+      "valid",
+      "firmware-update-accepted-v3.json",
+    );
+
+    expect(MachineStateV3Schema.safeParse(validState).success).toBe(true);
+    expect(SettingsRequestSchema.safeParse(validSettings).success).toBe(true);
+    expect(PairingSessionStartResponseSchema.safeParse(validSession).success).toBe(true);
+    expect(PairingSessionProofResponseSchema.safeParse(validProof).success).toBe(true);
+    expect(PairingCompleteResponseSchema.safeParse(validComplete).success).toBe(true);
+    expect(ApiErrorResponseSchema.safeParse(validError).success).toBe(true);
+    expect(ExtractionTelemetryPageSchema.safeParse(validTelemetry).success).toBe(true);
+    expect(FirmwareUpdateAcceptedSchema.safeParse(validFirmwareUpdate).success).toBe(true);
+    expect(validWeights.gross.every((value) =>
+      GrossWeightDecigramsSchema.safeParse(value).success)).toBe(true);
+    expect(validWeights.net.every((value) =>
+      NetWeightDecigramsSchema.safeParse(value).success)).toBe(true);
+
+    expect(SettingsRequestSchema.safeParse(
+      await fixture("invalid", "settings-unknown-v3.json"),
+    ).success).toBe(false);
+    expect(PairingSessionProofRequestSchema.safeParse(
+      await fixture("invalid", "pairing-malformed-proof-v3.json"),
+    ).success).toBe(false);
+    expect(ApiErrorResponseSchema.safeParse(
+      await fixture("invalid", "error-extra-field-v3.json"),
+    ).success).toBe(false);
+    expect(FirmwareUpdateAcceptedSchema.safeParse(
+      await fixture("invalid", "firmware-update-extra-field-v3.json"),
+    ).success).toBe(false);
+
+    const invalidContinuity = await fixture(
+      "invalid",
+      "telemetry-continuity-v3.json",
+    ) as { continuity: string };
+    expect(ExtractionTelemetryPageSchema.safeParse({
+      ...(validTelemetry as Record<string, unknown>),
+      continuity: invalidContinuity.continuity,
+    }).success).toBe(false);
+
+    const invalidWeights = await fixture(
+      "invalid",
+      "weight-boundaries-v3.json",
+    ) as { gross: number[]; net: number[] };
+    expect(invalidWeights.gross.every((value) =>
+      !GrossWeightDecigramsSchema.safeParse(value).success)).toBe(true);
+    expect(invalidWeights.net.every((value) =>
+      !NetWeightDecigramsSchema.safeParse(value).success)).toBe(true);
+  });
+
+  it("accepts one coherent snapshot with unavailable readings represented by null", () => {
+    expect(MachineStateV3Schema.parse(state()).machine.boilerTemperatureC).toBeNull();
+  });
+
+  it("rejects unknown snapshot and settings fields", () => {
+    expect(MachineStateV3Schema.safeParse(state({ legacy: true })).success).toBe(false);
+    expect(SettingsRequestSchema.safeParse({ brewTargetC: 93, legacy: true }).success).toBe(false);
+  });
+
+  it("enforces distinct gross and net weight boundaries", () => {
+    expect(GrossWeightDecigramsSchema.safeParse(-500).success).toBe(true);
+    expect(GrossWeightDecigramsSchema.safeParse(10_500).success).toBe(true);
+    expect(GrossWeightDecigramsSchema.safeParse(-501).success).toBe(false);
+    expect(NetWeightDecigramsSchema.safeParse(-11_000).success).toBe(true);
+    expect(NetWeightDecigramsSchema.safeParse(11_000).success).toBe(true);
+    expect(NetWeightDecigramsSchema.safeParse(11_001).success).toBe(false);
+  });
+
+  it("validates the strict three-stage SRP session and encrypted bindings", () => {
+    const startRequest = PairingSessionStartRequestSchema.parse({
+      clientName: "Philcoino mobile",
+      clientNonce: base64,
+      clientPublicKey: "A".repeat(512),
     });
-    expect(operation.responses?.["409"]).toBeDefined();
-    expect(ApiV2ErrorCodeSchema.options).toContain("stream_unavailable");
-    expect(ApiV2ErrorCodeSchema.options).toContain("stream_busy");
-    const telemetryPage = openApi.components.schemas.ExtractionTelemetryPage as {
-      properties?: {
-        outcome?: { oneOf?: Array<{ enum?: string[] }> };
-      };
-    };
-    expect(telemetryPage.properties?.outcome?.oneOf?.[0]?.enum).toEqual(
-      ExtractionOutcomeSchema.options,
-    );
+    const session = PairingSessionStartResponseSchema.parse({
+      sessionId: bootId,
+      device: state().device,
+      serverPublicKey: "B".repeat(512),
+      salt: "C".repeat(22),
+      expiresAtUptimeMs: 90_000,
+    });
+    const proofRequest = PairingSessionProofRequestSchema.parse({
+      clientProof: "D".repeat(86),
+    });
+    const proof = PairingSessionProofResponseSchema.parse({
+      serverProof: "E".repeat(86),
+      deviceNonce: "F".repeat(16),
+      encryptedDeviceBinding: "G".repeat(64),
+    });
+    const completeRequest = PairingSessionCompleteRequestSchema.parse({
+      clientId: bootId,
+      encryptedClientBinding: "H".repeat(64),
+    });
+    const complete = PairingCompleteResponseSchema.parse({
+      device: session.device,
+      clientId: completeRequest.clientId,
+      accessToken: base64,
+      certificateSpkiSha256: base64,
+    });
+    const deviceBinding = PairingDeviceBindingSchema.parse({
+      domain: "philcoino:v3:device-binding",
+      sessionId: session.sessionId,
+      clientNonce: startRequest.clientNonce,
+      deviceId: session.device.deviceId,
+      certificateSpkiSha256: complete.certificateSpkiSha256,
+    });
+    expect(PairingClientBindingSchema.safeParse({
+      ...deviceBinding,
+      domain: "philcoino:v3:client-binding",
+      clientId: completeRequest.clientId,
+    }).success).toBe(true);
+    expect(proofRequest.clientProof).toHaveLength(86);
+    expect(proof.deviceNonce).toHaveLength(16);
+    expect(complete.accessToken).toHaveLength(43);
   });
 
-  test("keeps temperature calibration conflicts and failures distinguishable", () => {
-    for (const code of [
-      "heater_disabled",
-      "temperature_calibration_active",
-      "temperature_calibration_inactive",
-      "temperature_calibration_session_mismatch",
-      "temperature_calibration_expired",
-      "temperature_target_unsafe",
-      "persistence_failure",
-    ]) {
-      expect(ApiV2ErrorCodeSchema.options).toContain(code);
-    }
-    expect(ErrorCodeSchema.options).toContain("temperature_target_unsafe");
-  });
-});
-
-describe("API v2 local state", () => {
-  test("exposes only the strict queryless machine state", () => {
-    const operation = openApi.paths["/api/v2/state"]?.get as {
-      parameters?: unknown[];
-      responses?: Record<
-        string,
-        {
-          content?: Record<
-            string,
-            { schema?: { $ref?: string; oneOf?: unknown[] } }
-          >;
-        }
-      >;
-    };
-    expect(operation.parameters).toBeUndefined();
-    expect(
-      operation.responses?.["200"]?.content?.["application/json"]?.schema,
-    ).toEqual({ $ref: "#/components/schemas/MachineStateV2" });
-    expect(openApi.components.schemas).not.toHaveProperty(
-      "MachineStateWithPredictionV2",
-    );
-    expect(operation.responses?.["400"]).toBeDefined();
+  it("rejects unknown SRP fields and malformed Base64URL", () => {
+    expect(PairingSessionStartRequestSchema.safeParse({
+      clientName: "iPhone",
+      clientNonce: base64,
+      clientPublicKey: "A===",
+    }).success).toBe(false);
+    expect(PairingSessionCompleteRequestSchema.safeParse({
+      clientId: bootId,
+      encryptedClientBinding: "A".repeat(64),
+      legacyProof: base64,
+    }).success).toBe(false);
   });
 
-  test("removes the machine-history endpoint", () => {
-    expect(openApi.paths["/api/v2/history"]).toBeUndefined();
-    expect(openApi.paths["/api/v2/profiles"]).toBeUndefined();
-    expect(openApi.components.schemas).not.toHaveProperty("HistoryPage");
-    expect(openApi.components.schemas).not.toHaveProperty("ProfileSet");
+  it("validates strict API error payloads", () => {
+    expect(ApiErrorResponseSchema.parse({
+      error: { code: "unauthorized", message: "Pair again." },
+    }).error.code).toBe("unauthorized");
+    expect(ApiErrorResponseSchema.safeParse({
+      error: { code: "unauthorized", message: "Pair again." }, extra: true,
+    }).success).toBe(false);
+  });
+
+  it("accepts nullable acquisition data and strict SSE continuity", () => {
+    const page = ExtractionTelemetryPageSchema.parse({
+      version: 1,
+      deviceId: "philcoino-test",
+      extractionId: "extraction-0001",
+      bootId,
+      capturedAtUptimeMs: 250,
+      selection: { kind: "manual" },
+      controlMode: "manual",
+      weightControl: null,
+      baselineWeightDecigrams: null,
+      status: "running",
+      outcome: null,
+      terminalWeight: null,
+      oldestSequence: 1,
+      latestSequence: 1,
+      nextCursor: { extractionId: "extraction-0001", bootId, afterSequence: 1 },
+      hasMore: false,
+      continuity: "initial",
+      samples: [{
+        sequence: 1,
+        uptimeMs: 250,
+        elapsedMs: 250,
+        extractionElapsedMs: 250,
+        phase: "manual",
+        boilerTemperatureC: null,
+        activeTargetC: 93,
+        heaterActive: false,
+        pumpCommand: "running",
+        scaleAvailability: "unavailable",
+        netWeightDecigrams: null,
+      }],
+    });
+    expect(page.continuity).toBe("initial");
+    expect(page.samples[0].boilerTemperatureC).toBeNull();
   });
 });

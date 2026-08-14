@@ -1,16 +1,9 @@
 import type { ExtractionSummary, WeightedShotSummary } from "./shot-history";
-import type {
-  ExtractionTelemetryPage,
-  WeightedExtractionTracePage,
-} from "@philcoino/protocol";
+import type { ExtractionTelemetryPage } from "@philcoino/protocol";
 import {
   mergeExtractionTracePage,
   type StoredExtractionTrace,
 } from "./extraction-trace";
-import {
-  mergeTracePage,
-  type StoredWeightedShotTrace,
-} from "./weighted-shot-trace";
 
 export interface ShotHistoryRepository {
   append(summary: ExtractionSummary | WeightedShotSummary): Promise<void>;
@@ -18,10 +11,6 @@ export interface ShotHistoryRepository {
     deviceId: string,
     page: ExtractionTelemetryPage,
   ): Promise<StoredExtractionTrace>;
-  commitTracePage(
-    deviceId: string,
-    page: WeightedExtractionTracePage,
-  ): Promise<StoredWeightedShotTrace>;
   clearDevice(deviceId: string): Promise<void>;
   load(deviceId: string, nowMs?: number): Promise<ExtractionSummary[]>;
   loadTrace(
@@ -89,21 +78,6 @@ export class InMemoryShotHistoryRepository implements ShotHistoryRepository {
     for (const [key, trace] of this.traces) {
       if (trace.deviceId === deviceId) this.traces.delete(key);
     }
-  }
-
-  async commitTracePage(
-    deviceId: string,
-    page: WeightedExtractionTracePage,
-  ): Promise<StoredWeightedShotTrace> {
-    const key = traceKey(deviceId, page.extractionId, page.bootId);
-    const previous = this.traces.get(key);
-    const trace = mergeTracePage(
-      previous === undefined ? null : legacyTrace(previous),
-      deviceId,
-      page,
-    );
-    this.traces.set(key, trace);
-    return trace;
   }
 
   async load(
@@ -187,34 +161,6 @@ function normalizeSummary(
       },
     },
     recordStatus: "complete",
-  };
-}
-
-function legacyTrace(trace: StoredExtractionTrace): StoredWeightedShotTrace {
-  return {
-    bootId: trace.bootId,
-    completeness: trace.completeness,
-    deviceId: trace.deviceId,
-    extractionId: trace.extractionId,
-    samples: trace.samples
-      .filter(
-        (sample): sample is typeof sample & {
-          phase: Exclude<typeof sample.phase, "manual">;
-        } => sample.phase !== "manual",
-      )
-      .map((sample) => ({
-        activeTargetC: sample.activeTargetC,
-        boilerTemperatureC: sample.boilerTemperatureC,
-        derivedFlowGPerS: sample.derivedFlowGPerS,
-        elapsedMs: sample.elapsedMs,
-        gapStatus: sample.gapStatus,
-        netWeightDecigrams: sample.netWeightDecigrams,
-        phase: sample.phase,
-        pumpCommand: sample.pumpCommand,
-        scaleAvailability: sample.scaleAvailability,
-        sequence: sample.sequence,
-        uptimeMs: sample.uptimeMs,
-      })),
   };
 }
 

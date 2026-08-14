@@ -8,37 +8,31 @@
 
 #include "philcoino/api_codec.hpp"
 #include "philcoino/api_routes.hpp"
-#include "philcoino/weighted_trace.hpp"
+#include "philcoino/pairing.hpp"
 
 namespace philcoino::networking {
 namespace {
 
-using codec::cooldown_conflict;
 using codec::error_response;
-using codec::extraction_conflict;
 using codec::json_response;
 using codec::kMalformedMessage;
 using codec::parse_cooldown_start;
 using codec::parse_heater_enabled;
 using codec::parse_mode;
 using codec::parse_scale_calibration_complete;
-using codec::parse_steam_control_settings;
+using codec::parse_settings;
 using codec::parse_start;
 using codec::parse_temperature_calibration_candidate;
 using codec::parse_temperature_calibration_query;
 using codec::parse_temperature_calibration_session;
-using codec::parse_temperatures;
 using codec::serialize_compensation;
 using codec::serialize_cooldown;
 using codec::serialize_device;
 using codec::serialize_extraction;
 using codec::serialize_health;
-using codec::serialize_heater_enabled;
-using codec::serialize_mode;
 using codec::serialize_scale;
 using codec::serialize_state;
 using codec::serialize_steam_control;
-using codec::serialize_targets;
 using codec::serialize_temperature_calibration;
 
 class ScopedApiLock {
@@ -76,16 +70,6 @@ control::CooldownInput current_cooldown_input(
       controller.brew_effective_temperature(temperature_c);
   return {sensor_valid, controller.has_fault(), extraction.active(),
           temperature_c};
-}
-
-bool ascii_case_equal(char left, char right) {
-  if (left >= 'A' && left <= 'Z') {
-    left = static_cast<char>(left - 'A' + 'a');
-  }
-  if (right >= 'A' && right <= 'Z') {
-    right = static_cast<char>(right - 'A' + 'a');
-  }
-  return left == right;
 }
 
 HttpResponse temperature_calibration_error(
@@ -153,49 +137,7 @@ DiscoveryTxt discovery_txt(const DeviceIdentity& identity) {
            {"model", identity.model}}};
 }
 
-bool constant_time_bearer_matches(const char* authorization,
-                                  const std::string& expected_token) {
-  const char* supplied = "";
-  std::size_t supplied_length = 0;
-  bool valid_scheme = authorization != nullptr;
-  constexpr char kScheme[] = "Bearer";
-  if (valid_scheme) {
-    for (std::size_t index = 0; index < sizeof(kScheme) - 1; ++index) {
-      if (authorization[index] == '\0' ||
-          !ascii_case_equal(authorization[index], kScheme[index])) {
-        valid_scheme = false;
-        break;
-      }
-    }
-  }
-  if (valid_scheme) {
-    const char* cursor = authorization + sizeof(kScheme) - 1;
-    if (*cursor != ' ' && *cursor != '\t') {
-      valid_scheme = false;
-    } else {
-      while (*cursor == ' ' || *cursor == '\t') {
-        ++cursor;
-      }
-      supplied = cursor;
-      supplied_length = std::strlen(supplied);
-      valid_scheme = supplied_length > 0;
-    }
-  }
-
-  volatile unsigned difference = static_cast<unsigned>(
-      supplied_length ^ expected_token.size());
-  for (std::size_t index = 0; index < expected_token.size(); ++index) {
-    const unsigned supplied_byte =
-        index < supplied_length
-            ? static_cast<unsigned char>(supplied[index])
-            : 0U;
-    difference |= supplied_byte ^
-                  static_cast<unsigned char>(expected_token[index]);
-  }
-  return valid_scheme && !expected_token.empty() && difference == 0U;
-}
-
-FirmwareApi::FirmwareApi(DeviceIdentity identity, std::string bearer_token,
+FirmwareApi::FirmwareApi(DeviceIdentity identity, PairingService& pairing,
                          control::TemperatureController& controller,
                          peripherals::TargetStorage& target_storage,
                          peripherals::TemperatureCalibrationStorage&
@@ -206,11 +148,11 @@ FirmwareApi::FirmwareApi(DeviceIdentity identity, std::string bearer_token,
                              scale_calibration_storage,
                          ApiSynchronization& synchronization,
                          control::ScaleController* scale_controller,
-                         WeightedTraceBuffer* weighted_trace,
                          peripherals::SteamControlSettingsStorage*
-                             steam_control_settings_storage)
+                             steam_control_settings_storage,
+                         std::string boot_id)
     : identity_(std::move(identity)),
-      bearer_token_(std::move(bearer_token)),
+      pairing_(pairing),
       controller_(controller),
       target_storage_(target_storage),
       temperature_calibration_storage_(temperature_calibration_storage),
@@ -219,11 +161,11 @@ FirmwareApi::FirmwareApi(DeviceIdentity identity, std::string bearer_token,
       scale_calibration_storage_(scale_calibration_storage),
       synchronization_(synchronization),
       scale_controller_(scale_controller),
-      weighted_trace_(weighted_trace),
-      steam_control_settings_storage_(steam_control_settings_storage) {}
+      steam_control_settings_storage_(steam_control_settings_storage),
+      boot_id_(std::move(boot_id)) {}
 
 bool FirmwareApi::authorized(const char* authorization) const {
-  return constant_time_bearer_matches(authorization, bearer_token_);
+  return pairing_.authorized(authorization);
 }
 
 HttpResponse FirmwareApi::handle(HttpMethod method, const std::string& path,
@@ -250,9 +192,7 @@ HttpResponse FirmwareApi::handle_resolved(const ApiRouteDescriptor& route,
   const std::string query = query_separator == std::string::npos
                                 ? std::string{}
                                 : path.substr(query_separator + 1U);
-  if (route.id != ApiRouteId::kStateV2 &&
-      route.id != ApiRouteId::kScaleTrace &&
-      route.id != ApiRouteId::kTemperatureCalibrationGet &&
+  if (route.id != ApiRouteId::kExtractionStream &&
       query_separator != std::string::npos) {
     return error_response(404, "internal_error",
                           "The requested endpoint does not exist.");
@@ -260,44 +200,71 @@ HttpResponse FirmwareApi::handle_resolved(const ApiRouteDescriptor& route,
 
   switch (route.id) {
     case ApiRouteId::kHealth: return health(uptime_ms);
-    case ApiRouteId::kDevice: return device();
-    case ApiRouteId::kTemperatures:
-      return update_temperatures(body, uptime_ms);
-    case ApiRouteId::kStateV2: return state_v2(query, uptime_ms);
-    case ApiRouteId::kSteamControlSettingsGet:
-      return steam_control_settings(uptime_ms);
-    case ApiRouteId::kSteamControlSettingsPatch:
-      return update_steam_control_settings(body, uptime_ms);
-    case ApiRouteId::kTemperatureCalibrationGet:
-      return temperature_calibration(query, uptime_ms);
+    case ApiRouteId::kPairingSessionStart:
+      return pairing_.start_session(body, uptime_ms);
+    case ApiRouteId::kPairingSessionAction: {
+      constexpr char kPrefix[] = "/api/v3/pairing/sessions/";
+      const auto session_start = sizeof(kPrefix) - 1U;
+      const auto separator = path.find('/', session_start);
+      const std::string session_id =
+          path.substr(session_start, separator - session_start);
+      const std::string action = path.substr(separator + 1U);
+      return action == "proof"
+                 ? pairing_.verify_proof(session_id, body, uptime_ms)
+                 : pairing_.complete_session(session_id, body, uptime_ms);
+    }
+    case ApiRouteId::kState: return state_v3(uptime_ms);
+    case ApiRouteId::kSettings:
+      return acknowledged_mutation(update_settings(body, uptime_ms), uptime_ms);
     case ApiRouteId::kTemperatureCalibrationStart:
-      return start_temperature_calibration(uptime_ms);
+      return acknowledged_mutation(start_temperature_calibration(uptime_ms),
+                                   uptime_ms);
     case ApiRouteId::kTemperatureCalibrationCandidate:
-      return update_temperature_calibration_candidate(body, uptime_ms);
+      return acknowledged_mutation(
+          update_temperature_calibration_candidate(body, uptime_ms), uptime_ms);
     case ApiRouteId::kTemperatureCalibrationSave:
-      return save_temperature_calibration(body, uptime_ms);
+      return acknowledged_mutation(
+          save_temperature_calibration(body, uptime_ms), uptime_ms);
     case ApiRouteId::kTemperatureCalibrationCancel:
-      return cancel_temperature_calibration(body, uptime_ms);
-    case ApiRouteId::kScaleGet: return scale(uptime_ms);
-    case ApiRouteId::kScaleTrace: return scale_trace(query, uptime_ms);
+      return acknowledged_mutation(
+          cancel_temperature_calibration(body, uptime_ms), uptime_ms);
+    case ApiRouteId::kTemperatureCalibrationRenew:
+      return acknowledged_mutation(
+          renew_temperature_calibration(body, uptime_ms), uptime_ms);
     case ApiRouteId::kScaleCalibrationStart:
-      return start_scale_calibration(uptime_ms);
+      return acknowledged_mutation(start_scale_calibration(uptime_ms),
+                                   uptime_ms);
     case ApiRouteId::kScaleCalibrationComplete:
-      return complete_scale_calibration(body, uptime_ms);
+      return acknowledged_mutation(
+          complete_scale_calibration(body, uptime_ms), uptime_ms);
     case ApiRouteId::kScaleCalibrationCancel:
-      return cancel_scale_calibration(uptime_ms);
+      return acknowledged_mutation(cancel_scale_calibration(uptime_ms),
+                                   uptime_ms);
     case ApiRouteId::kScaleWarningAcknowledge:
-      return acknowledge_scale_warning(uptime_ms);
+      return acknowledged_mutation(acknowledge_scale_warning(uptime_ms),
+                                   uptime_ms);
     case ApiRouteId::kExtractionStart:
-      return start_extraction(body, uptime_ms);
-    case ApiRouteId::kExtractionStop: return stop_extraction(uptime_ms);
-    case ApiRouteId::kCooldownStart: return start_cooldown(body, uptime_ms);
-    case ApiRouteId::kCooldownStop: return stop_cooldown(uptime_ms);
-    case ApiRouteId::kStateV1: return state(uptime_ms);
-    case ApiRouteId::kMode: return update_mode(body, uptime_ms);
-    case ApiRouteId::kHeater: return update_heater(body, uptime_ms);
+      return acknowledged_mutation(start_extraction(body, uptime_ms),
+                                   uptime_ms);
+    case ApiRouteId::kExtractionStop:
+      return acknowledged_mutation(stop_extraction(uptime_ms), uptime_ms);
+    case ApiRouteId::kExtractionStream:
+      return error_response(409, "stream_unavailable",
+                            "The SSE transport owns this route.");
+    case ApiRouteId::kFirmwareUpdate:
+      return error_response(409, "firmware_update_unavailable",
+                            "The OTA transport owns this route.");
+    case ApiRouteId::kCooldownStart:
+      return acknowledged_mutation(start_cooldown(body, uptime_ms), uptime_ms);
+    case ApiRouteId::kCooldownStop:
+      return acknowledged_mutation(stop_cooldown(uptime_ms), uptime_ms);
+    case ApiRouteId::kMode:
+      return acknowledged_mutation(update_mode(body, uptime_ms), uptime_ms);
+    case ApiRouteId::kHeaterPermission:
+      return acknowledged_mutation(update_heater(body, uptime_ms), uptime_ms);
     case ApiRouteId::kDismissOverTemperature:
-      return dismiss_over_temperature(uptime_ms);
+      return acknowledged_mutation(dismiss_over_temperature(uptime_ms),
+                                   uptime_ms);
   }
   return error_response(404, "internal_error",
                         "The requested endpoint does not exist.");
@@ -307,151 +274,16 @@ HttpResponse FirmwareApi::health(std::uint64_t uptime_ms) const {
   return json_response(200, serialize_health(uptime_ms));
 }
 
-HttpResponse FirmwareApi::device() const {
-  return json_response(200, serialize_device(identity_));
+HttpResponse FirmwareApi::acknowledged_mutation(
+    HttpResponse response, std::uint64_t uptime_ms) {
+  if (response.status != 200) return response;
+  return state_v3(uptime_ms);
 }
 
-HttpResponse FirmwareApi::state(std::uint64_t uptime_ms) const {
-  control::ControlSnapshot snapshot{};
-  {
-    ScopedApiLock lock(synchronization_, ApiDomain::kTemperature);
-    if (!lock.locked()) {
-      return error_response(500, "internal_error",
-                            "Temperature control synchronization failed.");
-    }
-    snapshot = controller_.snapshot(static_cast<std::uint32_t>(uptime_ms));
-  }
-  return json_response(200, serialize_state(snapshot, uptime_ms));
-}
-
-HttpResponse FirmwareApi::steam_control_settings(
-    std::uint64_t uptime_ms) const {
-  control::SteamControlSnapshot snapshot{};
-  {
-    ScopedApiLock lock(synchronization_, ApiDomain::kTemperature);
-    if (!lock.locked()) {
-      return error_response(500, "internal_error",
-                            "Temperature control synchronization failed.");
-    }
-    snapshot = controller_.steam_control_snapshot(
-        static_cast<std::uint32_t>(uptime_ms));
-  }
-  return json_response(200, serialize_steam_control(snapshot));
-}
-
-HttpResponse FirmwareApi::update_steam_control_settings(
-    const std::string& body, std::uint64_t uptime_ms) {
-  if (steam_control_settings_storage_ == nullptr) {
-    return error_response(500, "internal_error",
-                          "Steam control settings storage is unavailable.");
-  }
-  peripherals::SteamControlSettings current{};
-  {
-    ScopedApiLock lock(synchronization_, ApiDomain::kTemperature);
-    if (!lock.locked()) {
-      return error_response(500, "internal_error",
-                            "Temperature control synchronization failed.");
-    }
-    if (controller_.has_fault()) {
-      return error_response(
-          409, "machine_faulted",
-          "Steam control settings cannot change while a fault is latched.");
-    }
-    current = controller_.steam_control_settings();
-  }
-
-  peripherals::SteamControlSettings updated{};
-  bool constraint_violation = false;
-  if (!parse_steam_control_settings(body, current, updated,
-                                    constraint_violation)) {
-    return error_response(400, "malformed_request", kMalformedMessage);
-  }
-  if (constraint_violation) {
-    return error_response(
-        400, "malformed_request",
-        "Steam control settings must use whole bounded units.");
-  }
-
-  bool no_change = false;
-  bool prepared = false;
-  {
-    ScopedApiLock lock(synchronization_, ApiDomain::kTemperature);
-    if (!lock.locked()) {
-      return error_response(500, "internal_error",
-                            "Temperature control synchronization failed.");
-    }
-    current = controller_.steam_control_settings();
-    peripherals::SteamControlSettings revalidated{};
-    if (!parse_steam_control_settings(body, current, revalidated,
-                                      constraint_violation) ||
-        constraint_violation) {
-      return error_response(400, "malformed_request", kMalformedMessage);
-    }
-    updated = revalidated;
-    no_change =
-        updated.initial_compensation_c == current.initial_compensation_c &&
-        updated.decay_duration_ms == current.decay_duration_ms &&
-        updated.ready_timeout_ms == current.ready_timeout_ms;
-    prepared =
-        no_change ||
-        controller_.prepare_steam_control_settings_update(
-            updated, static_cast<std::uint32_t>(uptime_ms));
-  }
-  if (!prepared) {
-    return error_response(
-        409, "internal_error",
-        "Another temperature mutation is active or heater fail-off failed.");
-  }
-  if (!no_change && !steam_control_settings_storage_->save(updated)) {
-    bool rolled_back = false;
-    {
-      ScopedApiLock lock(synchronization_, ApiDomain::kTemperature);
-      rolled_back =
-          lock.locked() &&
-          controller_.rollback_steam_control_settings_update(
-              static_cast<std::uint32_t>(uptime_ms));
-    }
-    if (!rolled_back) {
-      return error_response(
-          500, "internal_error",
-          "Steam settings persistence failed and rollback was not acknowledged.");
-    }
-    return error_response(500, "persistence_failure",
-                          "Steam control settings could not be persisted.");
-  }
-
-  control::SteamControlSnapshot snapshot{};
-  {
-    ScopedApiLock lock(synchronization_, ApiDomain::kTemperature);
-    if (!lock.locked()) {
-      return error_response(500, "internal_error",
-                            "Persisted Steam settings could not be acknowledged.");
-    }
-    if (!no_change &&
-        !controller_.adopt_persisted_steam_control_settings(
-            updated, static_cast<std::uint32_t>(uptime_ms))) {
-      return error_response(500, "internal_error",
-                            "Persisted Steam settings could not be adopted.");
-    }
-    snapshot = controller_.steam_control_snapshot(
-        static_cast<std::uint32_t>(uptime_ms));
-  }
-  return json_response(200, serialize_steam_control(snapshot));
-}
-
-HttpResponse FirmwareApi::temperature_calibration(
-    const std::string& query, std::uint64_t uptime_ms) {
-  bool calibration_id_supplied = false;
-  std::string calibration_id;
-  if (!parse_temperature_calibration_query(
-          query, calibration_id_supplied, calibration_id)) {
-    return error_response(400, "malformed_request",
-                          "The temperature calibration query is malformed.");
-  }
-
-  control::TemperatureCalibrationSnapshot snapshot{};
-  control::TemperatureCalibrationResult result{
-      control::TemperatureCalibrationResult::kOk};
+HttpResponse FirmwareApi::update_settings(const std::string& body,
+                                          std::uint64_t uptime_ms) {
+  peripherals::TemperatureTargets current_targets{};
+  peripherals::SteamControlSettings current_steam{};
   {
     ScopedApiLock lock(synchronization_, ApiDomain::kTemperature);
     if (!lock.locked()) {
@@ -459,27 +291,118 @@ HttpResponse FirmwareApi::temperature_calibration(
                             "Temperature control synchronization failed.");
     }
     if (controller_.temperature_calibration_active()) {
-      result = calibration_id_supplied
-                   ? controller_.renew_temperature_calibration(
-                         calibration_id,
-                         static_cast<std::uint32_t>(uptime_ms))
-                   : control::TemperatureCalibrationResult::kSessionMismatch;
-    } else if (calibration_id_supplied) {
-      result = controller_.renew_temperature_calibration(
-          calibration_id, static_cast<std::uint32_t>(uptime_ms));
-    }
-    if (result == control::TemperatureCalibrationResult::kOk) {
-      snapshot = controller_.temperature_calibration_snapshot(
+      controller_.abort_temperature_calibration(
           static_cast<std::uint32_t>(uptime_ms));
+      return error_response(
+          409, "temperature_calibration_active",
+          "Temperature calibration was cancelled before changing settings.");
+    }
+    if (controller_.has_fault()) {
+      return error_response(
+          409, "machine_faulted",
+          "Settings cannot change while a machine fault is latched.");
+    }
+    current_targets = controller_.targets();
+    current_steam = controller_.steam_control_settings();
+  }
+
+  peripherals::TemperatureTargets updated_targets{};
+  peripherals::SteamControlSettings updated_steam{};
+  bool has_targets = false;
+  bool has_steam = false;
+  bool constraint_violation = false;
+  if (!parse_settings(body, current_targets, current_steam, updated_targets,
+                      updated_steam, has_targets, has_steam,
+                      constraint_violation)) {
+    return error_response(400, "malformed_request", kMalformedMessage);
+  }
+  if (constraint_violation) {
+    return error_response(
+        400, "malformed_request",
+        "Settings must use whole values within their allowed ranges.");
+  }
+  if (has_steam && steam_control_settings_storage_ == nullptr) {
+    return error_response(500, "internal_error",
+                          "Steam control settings storage is unavailable.");
+  }
+
+  {
+    ScopedApiLock lock(synchronization_, ApiDomain::kTemperature);
+    if (!lock.locked()) {
+      return error_response(500, "internal_error",
+                            "Temperature control synchronization failed.");
+    }
+    current_targets = controller_.targets();
+    current_steam = controller_.steam_control_settings();
+    if (!parse_settings(body, current_targets, current_steam, updated_targets,
+                        updated_steam, has_targets, has_steam,
+                        constraint_violation) ||
+        constraint_violation) {
+      return error_response(400, "malformed_request", kMalformedMessage);
+    }
+    if (!controller_.prepare_settings_update(
+            updated_targets, updated_steam, has_targets, has_steam,
+            static_cast<std::uint32_t>(uptime_ms))) {
+      return error_response(
+          409, "internal_error",
+          "Another temperature mutation is active or heater fail-off failed.");
     }
   }
-  return result == control::TemperatureCalibrationResult::kOk
-             ? json_response(200,
-                             serialize_temperature_calibration(snapshot))
-             : temperature_calibration_error(result);
+
+  const bool targets_changed =
+      has_targets &&
+      (updated_targets.brew_c != current_targets.brew_c ||
+       updated_targets.steam_c != current_targets.steam_c);
+  const bool steam_changed =
+      has_steam &&
+      (updated_steam.initial_compensation_c !=
+           current_steam.initial_compensation_c ||
+       updated_steam.decay_duration_ms != current_steam.decay_duration_ms ||
+       updated_steam.ready_timeout_ms != current_steam.ready_timeout_ms);
+
+  if (targets_changed && !target_storage_.save(updated_targets)) {
+    ScopedApiLock lock(synchronization_, ApiDomain::kTemperature);
+    const bool rolled_back =
+        lock.locked() && controller_.rollback_settings_update(
+                             has_targets, has_steam,
+                             static_cast<std::uint32_t>(uptime_ms));
+    return error_response(
+        500, rolled_back ? "persistence_failure" : "internal_error",
+        rolled_back
+            ? "Temperature settings could not be persisted."
+            : "Settings persistence failed and rollback was not acknowledged.");
+  }
+  if (steam_changed &&
+      !steam_control_settings_storage_->save(updated_steam)) {
+    const bool storage_rolled_back =
+        !targets_changed || target_storage_.save(current_targets);
+    ScopedApiLock lock(synchronization_, ApiDomain::kTemperature);
+    const bool controller_rolled_back =
+        lock.locked() && controller_.rollback_settings_update(
+                             has_targets, has_steam,
+                             static_cast<std::uint32_t>(uptime_ms));
+    const bool rolled_back = storage_rolled_back && controller_rolled_back;
+    return error_response(
+        500, rolled_back ? "persistence_failure" : "internal_error",
+        rolled_back
+            ? "Steam settings could not be persisted."
+            : "Settings persistence failed and rollback was not acknowledged.");
+  }
+
+  {
+    ScopedApiLock lock(synchronization_, ApiDomain::kTemperature);
+    if (!lock.locked() || !controller_.adopt_persisted_settings(
+                              updated_targets, updated_steam, has_targets,
+                              has_steam,
+                              static_cast<std::uint32_t>(uptime_ms))) {
+      return error_response(500, "internal_error",
+                            "Persisted settings could not be adopted.");
+    }
+  }
+  return json_response(200, "{}");
 }
 
-HttpResponse FirmwareApi::start_temperature_calibration(
+  HttpResponse FirmwareApi::start_temperature_calibration(
     std::uint64_t uptime_ms) {
   control::TemperatureCalibrationSnapshot snapshot{};
   control::TemperatureCalibrationResult result{
@@ -653,111 +576,29 @@ HttpResponse FirmwareApi::cancel_temperature_calibration(
              : temperature_calibration_error(result);
 }
 
-HttpResponse FirmwareApi::update_temperatures(const std::string& body,
-                                              std::uint64_t uptime_ms) {
-  peripherals::TemperatureTargets current{};
-  bool calibration_conflict = false;
+HttpResponse FirmwareApi::renew_temperature_calibration(
+    const std::string& body, std::uint64_t uptime_ms) {
+  std::string calibration_id;
+  if (!parse_temperature_calibration_session(body, calibration_id)) {
+    return error_response(400, "malformed_request", kMalformedMessage);
+  }
+  control::TemperatureCalibrationResult result{
+      control::TemperatureCalibrationResult::kOk};
   {
     ScopedApiLock lock(synchronization_, ApiDomain::kTemperature);
     if (!lock.locked()) {
       return error_response(500, "internal_error",
                             "Temperature control synchronization failed.");
     }
-    if (controller_.temperature_calibration_active()) {
-      controller_.abort_temperature_calibration(
-          static_cast<std::uint32_t>(uptime_ms));
-      calibration_conflict = true;
-    } else {
-      current = controller_.targets();
-    }
+    result = controller_.renew_temperature_calibration(
+        calibration_id, static_cast<std::uint32_t>(uptime_ms));
   }
-  if (calibration_conflict) {
-    return error_response(
-        409, "temperature_calibration_active",
-        "Temperature calibration was cancelled before changing targets.");
-  }
-  peripherals::TemperatureTargets updated{};
-  bool constraint_violation = false;
-  if (!parse_temperatures(body, current, updated, constraint_violation)) {
-    return error_response(400, "malformed_request", kMalformedMessage);
-  }
-  if (constraint_violation) {
-    return error_response(
-        400, "temperature_out_of_range",
-        "Temperature targets must be whole values within their allowed ranges.");
-  }
-  bool no_change = false;
-  bool revalidation_failed = false;
-  bool unsafe_target = false;
-  bool prepare_failed = false;
-  {
-    ScopedApiLock lock(synchronization_, ApiDomain::kTemperature);
-    if (!lock.locked()) {
-      return error_response(500, "internal_error",
-                            "Temperature control synchronization failed.");
-    }
-    current = controller_.targets();
-    if (!parse_temperatures(body, current, updated, constraint_violation) ||
-        constraint_violation) {
-      revalidation_failed = true;
-    } else if (!controller_.targets_reachable(updated)) {
-      unsafe_target = true;
-    } else {
-      no_change = updated.brew_c == current.brew_c &&
-                  updated.steam_c == current.steam_c;
-      prepare_failed =
-          !no_change &&
-          !controller_.prepare_target_update(
-              updated, static_cast<std::uint32_t>(uptime_ms));
-    }
-  }
-  if (revalidation_failed) {
-    return error_response(400, "malformed_request", kMalformedMessage);
-  }
-  if (unsafe_target) {
-    return error_response(
-        400, "temperature_target_unsafe",
-        "The requested effective target would exceed the raw temperature ceiling.");
-  }
-  if (prepare_failed) {
-    return error_response(500, "internal_error",
-                          "Temperature control synchronization failed.");
-  }
-  if (no_change) {
-    return json_response(200, serialize_targets(current));
-  }
-  if (!target_storage_.save(updated)) {
-    bool rollback_acknowledged = false;
-    {
-      ScopedApiLock lock(synchronization_, ApiDomain::kTemperature);
-      rollback_acknowledged =
-          lock.locked() &&
-          controller_.rollback_target_update(
-              static_cast<std::uint32_t>(uptime_ms));
-    }
-    if (!rollback_acknowledged) {
-      return error_response(
-          500, "internal_error",
-          "Target persistence failed and safe rollback could not be acknowledged.");
-    }
-    return error_response(500, "persistence_failure",
-                          "Temperature targets could not be persisted.");
-  }
-  bool adopted = false;
-  {
-    ScopedApiLock lock(synchronization_, ApiDomain::kTemperature);
-    adopted = lock.locked() &&
-              controller_.adopt_persisted_targets(
-                  updated, static_cast<std::uint32_t>(uptime_ms));
-  }
-  if (!adopted) {
-    return error_response(500, "internal_error",
-                          "Persisted targets could not be acknowledged.");
-  }
-  return json_response(200, serialize_targets(updated));
+  return result == control::TemperatureCalibrationResult::kOk
+             ? json_response(200, "{}")
+             : temperature_calibration_error(result);
 }
 
-HttpResponse FirmwareApi::update_mode(const std::string& body,
+ HttpResponse FirmwareApi::update_mode(const std::string& body,
                                       std::uint64_t uptime_ms) {
   control::ControlMode mode{};
   if (!parse_mode(body, mode)) {
@@ -771,7 +612,6 @@ HttpResponse FirmwareApi::update_mode(const std::string& body,
     kFailed,
   };
   Result result = Result::kOk;
-  control::ControlMode acknowledged{};
   {
     ScopedApiLock lock(synchronization_, ApiDomain::kTemperature);
     if (!lock.locked()) {
@@ -791,8 +631,6 @@ HttpResponse FirmwareApi::update_mode(const std::string& body,
     } else if (!controller_.set_mode(
                    mode, static_cast<std::uint32_t>(uptime_ms))) {
       result = Result::kFailed;
-    } else {
-      acknowledged = controller_.mode();
     }
   }
   if (result == Result::kFault) {
@@ -814,7 +652,7 @@ HttpResponse FirmwareApi::update_mode(const std::string& body,
     return error_response(500, "internal_error",
                           "The control mode could not be changed safely.");
   }
-  return json_response(200, serialize_mode(acknowledged));
+  return json_response(200, "{}");
 }
 
 HttpResponse FirmwareApi::update_heater(const std::string& body,
@@ -824,7 +662,6 @@ HttpResponse FirmwareApi::update_heater(const std::string& body,
     return error_response(400, "malformed_request", kMalformedMessage);
   }
   bool updated = false;
-  bool acknowledged = false;
   bool calibration_conflict = false;
   {
     ScopedApiLock lock(synchronization_, ApiDomain::kTemperature);
@@ -839,7 +676,6 @@ HttpResponse FirmwareApi::update_heater(const std::string& body,
     } else {
       updated = controller_.set_heater_enabled(
           enabled, static_cast<std::uint32_t>(uptime_ms));
-      acknowledged = controller_.heater_enabled_permission();
     }
   }
   if (calibration_conflict) {
@@ -851,7 +687,7 @@ HttpResponse FirmwareApi::update_heater(const std::string& body,
     return error_response(500, "internal_error",
                           "The heater permission could not be changed safely.");
   }
-  return json_response(200, serialize_heater_enabled(acknowledged));
+  return json_response(200, "{}");
 }
 
 HttpResponse FirmwareApi::dismiss_over_temperature(std::uint64_t uptime_ms) {
@@ -875,16 +711,15 @@ HttpResponse FirmwareApi::dismiss_over_temperature(std::uint64_t uptime_ms) {
   return json_response(200, serialize_state(snapshot, uptime_ms));
 }
 
-HttpResponse FirmwareApi::state_v2(const std::string& query,
-                                   std::uint64_t uptime_ms) const {
-  if (!query.empty()) {
-    return error_response(400, "malformed_request",
-                          "The state query is malformed.");
-  }
+HttpResponse FirmwareApi::state_v3(std::uint64_t uptime_ms) {
   control::ControlSnapshot machine{};
   control::ExtractionSnapshot extraction{};
   control::CooldownSnapshot cooldown{};
+  control::ScaleSnapshot scale_snapshot{};
+  control::WeightExtractionSnapshot weight{};
+  control::TemperatureCalibrationSnapshot temperature_calibration{};
   bool compensation_active = false;
+  std::uint64_t revision = 0;
   {
     ScopedApiLock lock(synchronization_, ApiDomain::kTemperature);
     if (!lock.locked()) {
@@ -895,19 +730,47 @@ HttpResponse FirmwareApi::state_v2(const std::string& query,
     extraction = extraction_controller_.snapshot(now_ms);
     cooldown = cooldown_controller_.snapshot(now_ms);
     machine = controller_.snapshot(now_ms);
+    temperature_calibration =
+        controller_.temperature_calibration_snapshot(now_ms);
+    if (scale_controller_ != nullptr) {
+      scale_snapshot = scale_controller_->snapshot(now_ms);
+      weight = extraction_controller_.weight_snapshot(scale_snapshot, now_ms);
+    }
     compensation_active = controller_.extraction_compensation_active();
+    revision = ++revision_;
   }
+  if (scale_controller_ == nullptr) {
+    return error_response(500, "internal_error", "Scale support is unavailable.");
+  }
+  const auto serialized_device = serialize_device(identity_);
   const auto serialized_machine = serialize_state(machine, uptime_ms);
+  const auto serialized_scale = serialize_scale(scale_snapshot, weight);
+  const auto serialized_temperature_calibration =
+      serialize_temperature_calibration(temperature_calibration);
   const auto serialized_extraction = serialize_extraction(extraction);
   const auto compensation =
       serialize_compensation(compensation_active, extraction);
   const auto serialized_cooldown = serialize_cooldown(cooldown);
   std::string response;
-  response.reserve(64U + serialized_machine.size() +
+  response.reserve(192U + serialized_device.size() + serialized_machine.size() +
+                   serialized_scale.size() +
+                   serialized_temperature_calibration.size() +
                    serialized_extraction.size() + compensation.size() +
                    serialized_cooldown.size());
-  response.append("{\"machine\":");
+  response.append("{\"apiVersion\":\"3\",\"device\":");
+  response.append(serialized_device);
+  response.append(",\"bootId\":\"");
+  response.append(boot_id_);
+  response.append("\",\"revision\":");
+  response.append(std::to_string(revision));
+  response.append(",\"capturedAtUptimeMs\":");
+  response.append(std::to_string(uptime_ms));
+  response.append(",\"machine\":");
   response.append(serialized_machine);
+  response.append(",\"scale\":");
+  response.append(serialized_scale);
+  response.append(",\"temperatureCalibration\":");
+  response.append(serialized_temperature_calibration);
   response.append(",\"extraction\":");
   response.append(serialized_extraction);
   response.append(",\"compensation\":");
@@ -918,67 +781,7 @@ HttpResponse FirmwareApi::state_v2(const std::string& query,
   return json_response(200, std::move(response));
 }
 
-HttpResponse FirmwareApi::scale(std::uint64_t uptime_ms) const {
-  if (scale_controller_ == nullptr) {
-    return error_response(500, "internal_error", "Scale support is unavailable.");
-  }
-  control::ScaleSnapshot current{};
-  control::WeightExtractionSnapshot weight{};
-  {
-    ScopedApiLock lock(synchronization_, ApiDomain::kExtraction);
-    if (!lock.locked()) {
-      return error_response(500, "internal_error",
-                            "Scale synchronization failed.");
-    }
-    const auto now_ms = static_cast<std::uint32_t>(uptime_ms);
-    current = scale_controller_->snapshot(now_ms);
-    weight = extraction_controller_.weight_snapshot(current, now_ms);
-  }
-  return json_response(200, serialize_scale(current, weight));
-}
-
-HttpResponse FirmwareApi::scale_trace(const std::string& query,
-                                      std::uint64_t uptime_ms) const {
-  if (scale_controller_ == nullptr || weighted_trace_ == nullptr) {
-    return error_response(500, "internal_error",
-                          "Scale trace support is unavailable.");
-  }
-  WeightedTraceCursor cursor{};
-  if (!parse_weighted_trace_cursor(query, cursor)) {
-    return error_response(400, "malformed_request",
-                          "The scale trace cursor is malformed.");
-  }
-  control::ScaleSnapshot current{};
-  control::WeightExtractionSnapshot weight{};
-  {
-    ScopedApiLock lock(synchronization_, ApiDomain::kExtraction);
-    if (!lock.locked()) {
-      return error_response(500, "internal_error",
-                            "Scale synchronization failed.");
-    }
-    const auto now_ms = static_cast<std::uint32_t>(uptime_ms);
-    current = scale_controller_->snapshot(now_ms);
-    weight = extraction_controller_.weight_snapshot(current, now_ms);
-  }
-  WeightedTracePage page{};
-  const bool has_page = weighted_trace_->page(cursor, uptime_ms, page);
-  if (cursor.supplied && !has_page && weighted_trace_->has_trace()) {
-    return error_response(400, "malformed_request",
-                          "The scale trace cursor is outside the retained trace.");
-  }
-  std::string response{"{\"scale\":"};
-  response.append(serialize_scale(current, weight));
-  response.append(",\"trace\":");
-  if (has_page) {
-    response.append(serialize_weighted_trace_page(identity_.device_id, page));
-  } else {
-    response.append("null");
-  }
-  response.push_back('}');
-  return json_response(200, std::move(response));
-}
-
-HttpResponse FirmwareApi::start_scale_calibration(std::uint64_t uptime_ms) {
+ HttpResponse FirmwareApi::start_scale_calibration(std::uint64_t uptime_ms) {
   if (scale_controller_ == nullptr) {
     return error_response(500, "internal_error", "Scale support is unavailable.");
   }
@@ -1183,11 +986,9 @@ HttpResponse FirmwareApi::start_extraction(const std::string& body,
           409, "idempotency_mismatch",
           "The idempotency key was already used with a different selection.");
     }
-    const auto cooldown = cooldown_controller_.snapshot(now_ms);
     lock.unlock();
-    return cooldown_conflict(
-        cooldown,
-        "Extraction cannot start while cooldown is active.");
+    return error_response(409, "cooldown_active",
+                          "Extraction cannot start while cooldown is active.");
   }
   switch (extraction_controller_.replay_status(
       key, selection, requested_weight)) {
@@ -1221,8 +1022,8 @@ HttpResponse FirmwareApi::start_extraction(const std::string& body,
     case control::StartExtractionResult::kReplay:
       return json_response(200, serialize_extraction(snapshot));
     case control::StartExtractionResult::kConflict:
-      return extraction_conflict(snapshot,
-                                 "A different extraction is already active.");
+      return error_response(409, "extraction_active",
+                            "A different extraction is already active.");
     case control::StartExtractionResult::kIdempotencyMismatch:
       return error_response(
           409, "idempotency_mismatch",
@@ -1294,19 +1095,17 @@ HttpResponse FirmwareApi::start_cooldown(const std::string& body,
   const auto result = cooldown_controller_.start(
       key, current_cooldown_input(controller_, extraction_controller_), now_ms);
   const auto cooldown = cooldown_controller_.snapshot(now_ms);
-  const auto extraction = extraction_controller_.snapshot(now_ms);
   lock.unlock();
   switch (result) {
     case control::StartCooldownResult::kStarted:
     case control::StartCooldownResult::kReplay:
       return json_response(200, serialize_cooldown(cooldown));
     case control::StartCooldownResult::kConflict:
-      return cooldown_conflict(cooldown,
-                               "A different cooldown is already active.");
+      return error_response(409, "cooldown_active",
+                            "A different cooldown is already active.");
     case control::StartCooldownResult::kExtractionActive:
-      return extraction_conflict(
-          extraction,
-          "Cooldown cannot start while extraction is active.");
+      return error_response(409, "extraction_active",
+                            "Cooldown cannot start while extraction is active.");
     case control::StartCooldownResult::kSensorUnavailable:
       return error_response(
           409, "sensor_unavailable",

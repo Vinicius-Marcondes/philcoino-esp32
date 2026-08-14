@@ -9,15 +9,15 @@
 
 namespace philcoino::networking {
 
-class WeightedTraceBuffer;
 struct ApiRouteDescriptor;
+class PairingService;
 
-inline constexpr char kApiVersion[] = "2";
+inline constexpr char kApiVersion[] = "3";
 inline constexpr char kMdnsServiceType[] = "_philcoino";
 inline constexpr char kMdnsProtocol[] = "_tcp";
-inline constexpr std::uint16_t kHttpPort = 80;
+inline constexpr std::uint16_t kHttpsPort = 443;
 
-enum class HttpMethod { kGet, kPatch, kPost, kPut };
+enum class HttpMethod { kDelete, kGet, kPatch, kPost, kPut };
 enum class ApiDomain { kTemperature, kExtraction };
 
 class ApiSynchronization {
@@ -49,12 +49,9 @@ using DiscoveryTxt = std::array<DiscoveryTxtItem, 5>;
 
 DiscoveryTxt discovery_txt(const DeviceIdentity& identity);
 
-bool constant_time_bearer_matches(const char* authorization,
-                                  const std::string& expected_token);
-
 class FirmwareApi {
  public:
-  FirmwareApi(DeviceIdentity identity, std::string bearer_token,
+  FirmwareApi(DeviceIdentity identity, PairingService& pairing,
               control::TemperatureController& controller,
               peripherals::TargetStorage& target_storage,
               peripherals::TemperatureCalibrationStorage&
@@ -64,9 +61,9 @@ class FirmwareApi {
               peripherals::ScaleCalibrationStorage& scale_calibration_storage,
               ApiSynchronization& synchronization,
               control::ScaleController* scale_controller = nullptr,
-              WeightedTraceBuffer* weighted_trace = nullptr,
               peripherals::SteamControlSettingsStorage*
-                  steam_control_settings_storage = nullptr);
+                  steam_control_settings_storage = nullptr,
+              std::string boot_id = "00000000000000000000000000000000");
 
   HttpResponse handle(HttpMethod method, const std::string& path,
                       const char* authorization, const std::string& body,
@@ -79,20 +76,16 @@ class FirmwareApi {
 
  private:
   HttpResponse health(std::uint64_t uptime_ms) const;
-  HttpResponse device() const;
-  HttpResponse state(std::uint64_t uptime_ms) const;
-  HttpResponse steam_control_settings(std::uint64_t uptime_ms) const;
-  HttpResponse update_steam_control_settings(const std::string& body,
-                                             std::uint64_t uptime_ms);
-  HttpResponse update_temperatures(const std::string& body,
-                                   std::uint64_t uptime_ms);
+  HttpResponse state_v3(std::uint64_t uptime_ms);
+  HttpResponse acknowledged_mutation(HttpResponse response,
+                                     std::uint64_t uptime_ms);
+  HttpResponse update_settings(const std::string& body,
+                               std::uint64_t uptime_ms);
   HttpResponse update_mode(const std::string& body,
                            std::uint64_t uptime_ms);
   HttpResponse update_heater(const std::string& body,
                              std::uint64_t uptime_ms);
   HttpResponse dismiss_over_temperature(std::uint64_t uptime_ms);
-  HttpResponse temperature_calibration(const std::string& query,
-                                       std::uint64_t uptime_ms);
   HttpResponse start_temperature_calibration(std::uint64_t uptime_ms);
   HttpResponse update_temperature_calibration_candidate(
       const std::string& body, std::uint64_t uptime_ms);
@@ -100,11 +93,8 @@ class FirmwareApi {
                                             std::uint64_t uptime_ms);
   HttpResponse cancel_temperature_calibration(const std::string& body,
                                               std::uint64_t uptime_ms);
-  HttpResponse state_v2(const std::string& query,
-                        std::uint64_t uptime_ms) const;
-  HttpResponse scale(std::uint64_t uptime_ms) const;
-  HttpResponse scale_trace(const std::string& query,
-                           std::uint64_t uptime_ms) const;
+  HttpResponse renew_temperature_calibration(const std::string& body,
+                                             std::uint64_t uptime_ms);
   HttpResponse start_scale_calibration(std::uint64_t uptime_ms);
   HttpResponse complete_scale_calibration(const std::string& body,
                                           std::uint64_t uptime_ms);
@@ -118,7 +108,7 @@ class FirmwareApi {
   HttpResponse stop_cooldown(std::uint64_t uptime_ms);
 
   DeviceIdentity identity_;
-  std::string bearer_token_;
+  PairingService& pairing_;
   control::TemperatureController& controller_;
   peripherals::TargetStorage& target_storage_;
   peripherals::TemperatureCalibrationStorage&
@@ -128,9 +118,10 @@ class FirmwareApi {
   peripherals::ScaleCalibrationStorage& scale_calibration_storage_;
   ApiSynchronization& synchronization_;
   control::ScaleController* scale_controller_;
-  WeightedTraceBuffer* weighted_trace_;
   peripherals::SteamControlSettingsStorage*
       steam_control_settings_storage_;
+  std::string boot_id_;
+  std::uint64_t revision_{0};
   std::uint32_t temperature_calibration_sequence_{0};
 };
 

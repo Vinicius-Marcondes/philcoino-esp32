@@ -43,6 +43,28 @@ Run `idf.py menuconfig` and enter the Wi-Fi SSID, Wi-Fi password, and bearer tok
 
 Never place secrets in `sdkconfig.defaults`, source files, tests, logs, screenshots, or documentation. Firmware logs only whether required values are missing.
 
+## Optional raw-temperature logging
+
+`CONFIG_PHILCOINO_RAW_TEMPERATURE_LOGGING` defaults off. For a supervised,
+low-voltage diagnostic with the heater and pump loads disconnected, run
+`idf.py menuconfig`, then enable:
+
+```text
+PhilcoINO > Log raw boiler Celsius samples to the serial monitor
+```
+
+Rebuild, flash, and open the monitor:
+
+```bash
+idf.py build
+idf.py flash monitor
+```
+
+Each valid 500 ms MAX6675 sample then produces an INFO log containing the
+uncalibrated Celsius value and raw sensor frame. Logging happens only after the
+temperature controller update and synchronization release. Disable the option
+for normal builds because serial output can affect task timing.
+
 ## Host tests
 
 From the repository root:

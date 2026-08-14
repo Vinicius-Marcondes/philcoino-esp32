@@ -34,6 +34,7 @@ import {
 } from "@/src/dashboard/extraction-console-model";
 import type { StoredExtractionTrace } from "@/src/history/extraction-trace";
 import { translate } from "@/src/localization/i18n";
+import type { ExtractionStreamStatus } from "@/src/telemetry/extraction-stream-session";
 import { formatWeightReadout } from "@/src/telemetry/telemetry-readouts";
 
 export interface ExtractionConsoleScreenProps {
@@ -53,6 +54,7 @@ export interface ExtractionConsoleScreenProps {
   startPending: boolean;
   state: ExtractionPreviewState;
   stopPending: boolean;
+  streamStatus: ExtractionStreamStatus;
   trace: StoredExtractionTrace | null;
   visible: boolean;
   workflowBlock: "cooldown" | "steam" | null;
@@ -75,6 +77,7 @@ export function ExtractionConsoleScreen({
   startPending,
   state,
   stopPending,
+  streamStatus,
   trace,
   visible,
   workflowBlock,
@@ -97,25 +100,16 @@ export function ExtractionConsoleScreen({
     !live || mutationPending || workflowBlock !== null || !canStartPreview(state);
   const controlsDisabled = !live || running || mutationPending;
 
-  const chart =
-    displayedTrace === null ? (
-      <View style={styles.controlPanel}>
-        <Text selectable style={styles.contextTitle}>
-          {translate("extractionConsole.readyTitle")}
-        </Text>
-        <Text selectable style={styles.contextText}>
-          {translate("extractionConsole.readyDetail")}
-        </Text>
-      </View>
-    ) : (
-      <WeightedTraceChart
-        compact={landscape}
-        cutoffDecigrams={cutoffDecigrams}
-        key={displayedTrace.extractionId}
-        trace={displayedTrace}
-        variant="console"
-      />
-    );
+  const chart = (
+    <WeightedTraceChart
+      compact={landscape}
+      cutoffDecigrams={cutoffDecigrams}
+      key={displayedTrace?.extractionId ?? "awaiting-stream"}
+      streamStatus={streamStatus}
+      trace={displayedTrace}
+      variant="console"
+    />
+  );
 
   const controls = (
     <View style={styles.controls}>

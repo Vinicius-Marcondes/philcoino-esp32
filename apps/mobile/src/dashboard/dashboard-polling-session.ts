@@ -1,4 +1,4 @@
-import type { MachineStateV2 } from "@philcoino/protocol";
+import type { MachineStateV3 } from "@philcoino/protocol";
 
 import {
   connectingState,
@@ -8,9 +8,10 @@ import {
 } from "../networking/connection-state";
 
 export const DASHBOARD_POLL_INTERVAL_MS = 1_000;
+export const DASHBOARD_TRANSIENT_RETRY_DELAY_MS = 100;
 
 export interface DashboardStateClient {
-  getStateV2(options?: { signal?: AbortSignal }): Promise<MachineStateV2>;
+  getState(options?: { signal?: AbortSignal }): Promise<MachineStateV3>;
 }
 
 interface PollingScheduler {
@@ -23,7 +24,7 @@ interface DashboardPollingSessionOptions {
   intervalMs?: number;
   onConnectionChange: (connection: ConnectionState) => void;
   onDeviceRestart?: () => void;
-  onSnapshotChange: (snapshot: MachineStateV2 | null) => void;
+  onSnapshotChange: (snapshot: MachineStateV3 | null) => void;
   scheduler?: PollingScheduler;
 }
 
@@ -39,7 +40,7 @@ export class DashboardPollingSession {
   private readonly onConnectionChange: (connection: ConnectionState) => void;
   private readonly onDeviceRestart: () => void;
   private readonly onSnapshotChange: (
-    snapshot: MachineStateV2 | null,
+    snapshot: MachineStateV3 | null,
   ) => void;
   private readonly scheduler: PollingScheduler;
 
@@ -48,7 +49,8 @@ export class DashboardPollingSession {
   private paused = false;
   private running = false;
   private timer: unknown | null = null;
-  private lastUptimeMs: number | null = null;
+  private lastBootId: string | null = null;
+  private lastRevision = -1;
 
   constructor(options: DashboardPollingSessionOptions) {
     this.client = options.client;
@@ -82,6 +84,22 @@ export class DashboardPollingSession {
     this.cancelScheduledWork();
   }
 
+  pauseForMutation(): void {
+    if (!this.running || this.paused) {
+      return;
+    }
+
+    this.paused = true;
+    this.generation += 1;
+    if (this.timer !== null) {
+      this.scheduler.clearTimeout(this.timer);
+      this.timer = null;
+    }
+    // Let an already-written poll finish on the persistent native connection.
+    // Cancelling it can close the socket and force the command to perform a
+    // multi-second TLS handshake. Its stale result is ignored by generation.
+  }
+
   resume(): void {
     if (!this.running || !this.paused) {
       return;
@@ -110,24 +128,31 @@ export class DashboardPollingSession {
     this.activeController = null;
   }
 
-  private async poll(generation: number): Promise<void> {
+  private async poll(generation: number, transientAttempt = 0): Promise<void> {
     const controller = new AbortController();
     this.activeController = controller;
+    let nextDelayMs = this.intervalMs;
+    let nextTransientAttempt = 0;
 
     try {
-      const snapshot = await this.client.getStateV2({
+      const snapshot = await this.client.getState({
         signal: controller.signal,
       });
       if (!this.isCurrent(generation)) {
         return;
       }
-      if (
-        this.lastUptimeMs !== null &&
-        snapshot.machine.uptimeMs < this.lastUptimeMs
-      ) {
+      if (this.lastBootId !== null && snapshot.bootId !== this.lastBootId) {
         this.onDeviceRestart();
+        this.lastRevision = -1;
       }
-      this.lastUptimeMs = snapshot.machine.uptimeMs;
+      if (
+        snapshot.bootId === this.lastBootId &&
+        snapshot.revision <= this.lastRevision
+      ) {
+        return;
+      }
+      this.lastBootId = snapshot.bootId;
+      this.lastRevision = snapshot.revision;
       this.onSnapshotChange(snapshot);
       this.onConnectionChange(onlineState);
     } catch (error) {
@@ -136,8 +161,16 @@ export class DashboardPollingSession {
       }
       const connection = connectionStateFromError(error);
       if (connection !== null) {
-        this.onSnapshotChange(null);
-        this.onConnectionChange(connection);
+        if (connection.status === "offline" && transientAttempt === 0) {
+          // A single lost local packet should not blank the dashboard for a
+          // full poll interval. Retry once immediately; a repeated failure is
+          // surfaced and clears the snapshot normally.
+          nextDelayMs = DASHBOARD_TRANSIENT_RETRY_DELAY_MS;
+          nextTransientAttempt = 1;
+        } else {
+          this.onSnapshotChange(null);
+          this.onConnectionChange(connection);
+        }
       }
     } finally {
       if (this.activeController === controller) {
@@ -146,8 +179,8 @@ export class DashboardPollingSession {
       if (this.isCurrent(generation)) {
         this.timer = this.scheduler.setTimeout(() => {
           this.timer = null;
-          void this.poll(generation);
-        }, this.intervalMs);
+          void this.poll(generation, nextTransientAttempt);
+        }, nextDelayMs);
       }
     }
   }

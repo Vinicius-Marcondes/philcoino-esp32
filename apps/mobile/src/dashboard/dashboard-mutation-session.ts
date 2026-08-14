@@ -1,19 +1,13 @@
 import type {
-  ApiV2ErrorCode,
+  ApiErrorCode,
   CooldownState,
-  ErrorCode,
   ExtractionSelection,
   ExtractionState,
-  HeaterSettingsResponse,
   MachineState,
+  MachineStateV3,
   Mode,
-  ModeResponse,
-  OverTemperatureDismissResponse,
-  StartExtractionResponse,
   StartExtractionRequest,
-  StopExtractionResponse,
   TemperatureSettingsRequest,
-  TemperatureSettingsResponse,
   WeightControl,
 } from "@philcoino/protocol";
 
@@ -65,42 +59,49 @@ export interface DashboardMutationClient {
   startCooldown(
     request: { idempotencyKey: string },
     options?: { signal?: AbortSignal },
-  ): Promise<CooldownState>;
-  stopCooldown(options?: { signal?: AbortSignal }): Promise<CooldownState>;
+  ): Promise<MachineStateV3>;
+  stopCooldown(options?: { signal?: AbortSignal }): Promise<MachineStateV3>;
   dismissOverTemperature(
     options?: { signal?: AbortSignal },
-  ): Promise<OverTemperatureDismissResponse>;
+  ): Promise<MachineStateV3>;
   startExtraction(
     request: StartExtractionRequest,
     options?: { signal?: AbortSignal },
-  ): Promise<StartExtractionResponse>;
+  ): Promise<MachineStateV3>;
   stopExtraction(
     options?: { signal?: AbortSignal },
-  ): Promise<StopExtractionResponse>;
+  ): Promise<MachineStateV3>;
   setMode(
     request: { mode: Mode },
     options?: { signal?: AbortSignal },
-  ): Promise<ModeResponse>;
+  ): Promise<MachineStateV3>;
   setHeaterEnabled(
-    request: { heaterEnabled: boolean },
+    request: { enabled: boolean },
     options?: { signal?: AbortSignal },
-  ): Promise<HeaterSettingsResponse>;
+  ): Promise<MachineStateV3>;
   updateTemperatureSettings(
     settings: TemperatureSettingsRequest,
     options?: { signal?: AbortSignal },
-  ): Promise<TemperatureSettingsResponse>;
+  ): Promise<MachineStateV3>;
 }
 
 interface DashboardPollingControl {
   pause(): void;
+  pauseForMutation(): void;
   resume(): void;
 }
+
+type HeaterAcknowledgement = Pick<MachineState, "heaterEnabled">;
+type TemperatureSettingsAcknowledgement = Pick<
+  MachineState,
+  "brewTargetC" | "steamTargetC"
+>;
 
 interface DashboardMutationSessionOptions {
   client: DashboardMutationClient;
   onConnectionLost: (connection: ConnectionState) => void;
   onCooldownAcknowledged: (cooldown: CooldownState) => void;
-  onHeaterAcknowledged: (settings: HeaterSettingsResponse) => void;
+  onHeaterAcknowledged: (settings: HeaterAcknowledgement) => void;
   onExtractionAcknowledged: (extraction: ExtractionState) => void;
   onModeAcknowledged: (mode: Mode) => void;
   onMutationChange: (
@@ -109,7 +110,7 @@ interface DashboardMutationSessionOptions {
   ) => void;
   onOverTemperatureDismissed: (snapshot: MachineState) => void;
   onTemperatureSettingsAcknowledged: (
-    settings: TemperatureSettingsResponse,
+    settings: TemperatureSettingsAcknowledgement,
   ) => void;
   polling: DashboardPollingControl;
   startKeyFactory?: () => string;
@@ -120,7 +121,7 @@ export class DashboardMutationSession {
   private readonly client: DashboardMutationClient;
   private readonly onCooldownAcknowledged: (cooldown: CooldownState) => void;
   private readonly onConnectionLost: (connection: ConnectionState) => void;
-  private readonly onHeaterAcknowledged: (settings: HeaterSettingsResponse) => void;
+  private readonly onHeaterAcknowledged: (settings: HeaterAcknowledgement) => void;
   private readonly onExtractionAcknowledged: (extraction: ExtractionState) => void;
   private readonly onModeAcknowledged: (mode: Mode) => void;
   private readonly onMutationChange: DashboardMutationSessionOptions["onMutationChange"];
@@ -215,9 +216,9 @@ export class DashboardMutationSession {
       "mode",
       (signal) => this.client.setMode({ mode }, { signal }),
       (response) => {
-        this.onModeAcknowledged(response.mode);
+        this.onModeAcknowledged(response.machine.activeMode);
         return translate("mutation.modeAcknowledged", {
-          mode: localizedMode(response.mode),
+          mode: localizedMode(response.machine.activeMode),
         });
       },
       translate("mutation.modePending", { mode: localizedMode(mode) }),
@@ -227,10 +228,12 @@ export class DashboardMutationSession {
   setHeaterEnabled(heaterEnabled: boolean): void {
     void this.perform(
       "heater",
-      (signal) => this.client.setHeaterEnabled({ heaterEnabled }, { signal }),
+      (signal) => this.client.setHeaterEnabled({ enabled: heaterEnabled }, { signal }),
       (response) => {
-        this.onHeaterAcknowledged(response);
-        return response.heaterEnabled
+        this.onHeaterAcknowledged({
+          heaterEnabled: response.machine.heaterEnabled,
+        });
+        return response.machine.heaterEnabled
           ? translate("mutation.heaterAllowed")
           : translate("mutation.heaterOff");
       },
@@ -249,10 +252,13 @@ export class DashboardMutationSession {
           { signal },
         ),
       (response) => {
-        this.onTemperatureSettingsAcknowledged(response);
+        this.onTemperatureSettingsAcknowledged({
+          brewTargetC: response.machine.brewTargetC,
+          steamTargetC: response.machine.steamTargetC,
+        });
         return translate("mutation.targetsSaved", {
-          brew: response.brewTargetC,
-          steam: response.steamTargetC,
+          brew: response.machine.brewTargetC,
+          steam: response.machine.steamTargetC,
         });
       },
       pendingTemperatureMessage(settings),
@@ -264,7 +270,7 @@ export class DashboardMutationSession {
       "fault",
       (signal) => this.client.dismissOverTemperature({ signal }),
       (response) => {
-        this.onOverTemperatureDismissed(response);
+        this.onOverTemperatureDismissed(response.machine);
         return translate("mutation.faultDismissed");
       },
       translate("mutation.faultPending"),
@@ -295,7 +301,7 @@ export class DashboardMutationSession {
       (signal) => this.client.startExtraction(request, { signal }),
       (response) => {
         this.pendingStart = null;
-        this.onExtractionAcknowledged(response);
+        this.onExtractionAcknowledged(response.extraction);
         return translate("mutation.extractionStarted");
       },
       translate(
@@ -320,7 +326,7 @@ export class DashboardMutationSession {
       (signal) => this.client.stopExtraction({ signal }),
       (response) => {
         this.pendingStart = null;
-        this.onExtractionAcknowledged(response);
+        this.onExtractionAcknowledged(response.extraction);
         return translate("mutation.extractionStopped");
       },
       translate("mutation.extractionStopPending"),
@@ -335,7 +341,7 @@ export class DashboardMutationSession {
       (signal) => this.client.startCooldown({ idempotencyKey }, { signal }),
       (response) => {
         this.pendingCooldownStartKey = null;
-        this.onCooldownAcknowledged(response);
+        this.onCooldownAcknowledged(response.cooldown);
         return translate("mutation.cooldownStarted");
       },
       translate("mutation.cooldownStartPending"),
@@ -356,9 +362,9 @@ export class DashboardMutationSession {
       (signal) => this.client.stopCooldown({ signal }),
       (response) => {
         this.pendingCooldownStartKey = null;
-        this.onCooldownAcknowledged(response);
+        this.onCooldownAcknowledged(response.cooldown);
         return translate(
-          response.status === "stabilizing"
+          response.cooldown.status === "stabilizing"
             ? "mutation.cooldownStopped"
             : "mutation.cooldownStopAcknowledged",
         );
@@ -400,7 +406,7 @@ export class DashboardMutationSession {
       message: pendingMessage,
       status: "pending",
     });
-    this.polling.pause();
+    this.polling.pauseForMutation();
 
     try {
       const response = await request(controller.signal);
@@ -499,7 +505,7 @@ export function mutationOutcomeFromError(error: unknown): {
 }
 
 function localizedRejectionMessage(
-  code: ApiV2ErrorCode | ErrorCode | undefined,
+  code: ApiErrorCode | undefined,
 ): string {
   switch (code) {
     case "brew_mode_required":
@@ -532,8 +538,6 @@ function localizedRejectionMessage(
       return translate("mutation.rejections.calibrationInProgress");
     case "sensor_unavailable":
       return translate("mutation.rejections.sensorUnavailable");
-    case "temperature_out_of_range":
-      return translate("mutation.rejections.temperatureOutOfRange");
     case "unauthorized":
       return translate("mutation.rejections.unauthorized");
     case undefined:

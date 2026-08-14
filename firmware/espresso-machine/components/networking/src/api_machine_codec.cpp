@@ -99,9 +99,15 @@ std::string serialize_state(const control::ControlSnapshot& snapshot,
   output.imbue(std::locale::classic());
   output << std::setprecision(6) << "{\"status\":\""
          << status_name(snapshot.status) << "\",\"activeMode\":\""
-         << mode_name(snapshot.mode) << "\",\"boilerTemperatureC\":"
-         << json_temperature(snapshot.boiler_temperature.temperature_c)
-         << ",\"brewTargetC\":" << snapshot.targets.brew_c
+         << mode_name(snapshot.mode) << "\",\"boilerTemperatureC\":";
+  if (snapshot.boiler_temperature.status ==
+          peripherals::ThermocoupleStatus::kOk &&
+      std::isfinite(snapshot.boiler_temperature.temperature_c)) {
+    output << snapshot.boiler_temperature.temperature_c;
+  } else {
+    output << "null";
+  }
+  output << ",\"brewTargetC\":" << snapshot.targets.brew_c
          << ",\"steamTargetC\":" << snapshot.targets.steam_c
          << ",\"heaterEnabled\":"
          << (snapshot.heater_enabled_permission ? "true" : "false")
@@ -141,7 +147,7 @@ std::string serialize_steam_control(
          << snapshot.applied_compensation_c
          << ",\"controlTemperatureC\":";
   if (snapshot.control_temperature_available) {
-    output << json_temperature(snapshot.control_temperature_c);
+    output << snapshot.control_temperature_c;
   } else {
     output << "null";
   }
@@ -153,22 +159,6 @@ std::string serialize_steam_control(
   }
   output << '}';
   return output.str();
-}
-
-std::string serialize_targets(peripherals::TemperatureTargets targets) {
-  std::ostringstream output;
-  output << "{\"brewTargetC\":" << targets.brew_c
-         << ",\"steamTargetC\":" << targets.steam_c << '}';
-  return output.str();
-}
-
-std::string serialize_mode(control::ControlMode mode) {
-  return std::string("{\"mode\":\"") + mode_name(mode) + "\"}";
-}
-
-std::string serialize_heater_enabled(bool enabled) {
-  return std::string("{\"heaterEnabled\":") +
-         (enabled ? "true}" : "false}");
 }
 
 bool parse_temperatures(const std::string& body,
@@ -243,7 +233,7 @@ bool parse_heater_enabled(const std::string& body, bool& enabled) {
   std::vector<JsonField> fields;
   JsonObjectParser parser(body);
   if (!parser.parse(fields) || fields.size() != 1U ||
-      fields[0].key != "heaterEnabled" ||
+      fields[0].key != "enabled" ||
       fields[0].value.type != JsonValue::Type::kBoolean) {
     return false;
   }
@@ -306,6 +296,74 @@ bool parse_steam_control_settings(
   constraint_violation = invalid;
   if (!invalid) {
     updated = candidate;
+  }
+  return true;
+}
+
+bool parse_settings(
+    const std::string& body,
+    peripherals::TemperatureTargets current_targets,
+    peripherals::SteamControlSettings current_steam,
+    peripherals::TemperatureTargets& updated_targets,
+    peripherals::SteamControlSettings& updated_steam,
+    bool& has_temperature_settings,
+    bool& has_steam_settings,
+    bool& constraint_violation) {
+  std::vector<JsonField> fields;
+  JsonObjectParser parser(body);
+  if (!parser.parse(fields) || fields.empty()) {
+    return false;
+  }
+
+  std::ostringstream temperatures;
+  temperatures.imbue(std::locale::classic());
+  temperatures << '{';
+  bool first_temperature = true;
+  has_temperature_settings = false;
+  has_steam_settings = false;
+  std::string steam_body;
+  for (const auto& field : fields) {
+    if (field.key == "steamControl") {
+      if (field.value.type != JsonValue::Type::kOther ||
+          field.value.string.empty() || has_steam_settings) {
+        return false;
+      }
+      has_steam_settings = true;
+      steam_body = field.value.string;
+      continue;
+    }
+    if (field.key != "brewTargetC" && field.key != "steamTargetC") {
+      return false;
+    }
+    if (field.value.type != JsonValue::Type::kNumber) {
+      return false;
+    }
+    if (!first_temperature) temperatures << ',';
+    first_temperature = false;
+    has_temperature_settings = true;
+    temperatures << '"' << field.key << "\":" << std::setprecision(17)
+                 << field.value.number;
+  }
+  temperatures << '}';
+
+  bool invalid = false;
+  auto parsed_targets = current_targets;
+  auto parsed_steam = current_steam;
+  if (has_temperature_settings &&
+      !parse_temperatures(temperatures.str(), current_targets,
+                          parsed_targets, invalid)) {
+    return false;
+  }
+  bool steam_invalid = false;
+  if (has_steam_settings &&
+      !parse_steam_control_settings(steam_body, current_steam,
+                                    parsed_steam, steam_invalid)) {
+    return false;
+  }
+  constraint_violation = invalid || steam_invalid;
+  if (!constraint_violation) {
+    updated_targets = parsed_targets;
+    updated_steam = parsed_steam;
   }
   return true;
 }

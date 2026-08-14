@@ -1,7 +1,0 @@
-{
-  "error": {
-    "code": "unauthorized",
-    "message": "Bearer token is missing or invalid.",
-    "retry": true
-  }
-}

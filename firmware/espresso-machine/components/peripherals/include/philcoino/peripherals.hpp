@@ -93,7 +93,6 @@ class Hx711EventDrivenAcquisition {
  private:
   Hx711& hx711_;
   Hx711ReadyWaiter& waiter_;
-  bool initial_read_pending_{true};
 };
 
 struct ScaleCalibration {

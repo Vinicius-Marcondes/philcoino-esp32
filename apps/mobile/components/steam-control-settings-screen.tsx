@@ -7,7 +7,7 @@ import {
   STEAM_READY_TIMEOUT_MIN_MS,
   type SteamControlSettings,
   type SteamControlSettingsRequest,
-  type SteamControlState,
+  type MachineStateV3,
 } from "@philcoino/protocol";
 import { useEffect, useState } from "react";
 import {
@@ -24,13 +24,13 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { translate } from "@/src/localization/i18n";
 
 export interface SteamControlSettingsClient {
-  getSteamControlSettings(options?: {
+  getState(options?: {
     signal?: AbortSignal;
-  }): Promise<SteamControlState>;
+  }): Promise<MachineStateV3>;
   updateSteamControlSettings(
     request: SteamControlSettingsRequest,
     options?: { signal?: AbortSignal },
-  ): Promise<SteamControlState>;
+  ): Promise<MachineStateV3>;
 }
 
 interface SteamControlSettingsScreenProps {
@@ -62,10 +62,10 @@ export function SteamControlSettingsScreen({
     setDraft(null);
     setStatus("loading");
     void client
-      .getSteamControlSettings({ signal: controller.signal })
+      .getState({ signal: controller.signal })
       .then((state) => {
-        setSaved(state.settings);
-        setDraft(state.settings);
+        setSaved(state.machine.steamControl.settings);
+        setDraft(state.machine.steamControl.settings);
         setStatus("idle");
       })
       .catch(() => {
@@ -92,8 +92,8 @@ export function SteamControlSettingsScreen({
     void client
       .updateSteamControlSettings(draft)
       .then((state) => {
-        setSaved(state.settings);
-        setDraft(state.settings);
+        setSaved(state.machine.steamControl.settings);
+        setDraft(state.machine.steamControl.settings);
         setStatus("idle");
       })
       .catch(() => setStatus("error"));

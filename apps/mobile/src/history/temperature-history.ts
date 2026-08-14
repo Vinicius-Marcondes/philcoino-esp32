@@ -53,7 +53,10 @@ export function createTemperatureHistorySample(
   snapshot: MachineState,
   extraction: ExtractionState,
   recordedAtMs = Date.now(),
-): TemperatureHistorySample {
+): TemperatureHistorySample | null {
+  if (snapshot.boilerTemperatureC === null) {
+    return null;
+  }
   return {
     activeMode: snapshot.activeMode,
     activeTargetC:

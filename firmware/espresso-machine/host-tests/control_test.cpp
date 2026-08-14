@@ -375,7 +375,6 @@ void test_global_offset_is_applied_once_for_control_readiness_and_snapshot() {
   auto snapshot = harness.controller.update(reading(88.0F), 0);
   assert(snapshot.mode == ControlMode::kBrew);
   assert(snapshot.boiler_temperature.temperature_c == 93.0F);
-  assert(snapshot.controller.temperature_raw_c == 88.0F);
   assert(!snapshot.heater_enabled);
 
   assert(harness.controller.set_mode(ControlMode::kSteam, 0));
@@ -413,7 +412,6 @@ void test_calibration_sign_examples_map_raw_boiling_to_100() {
     ControllerHarness harness({93, 115}, example.second);
     auto snapshot = harness.controller.update(reading(example.first), 0);
     assert(snapshot.boiler_temperature.temperature_c == 100.0F);
-    assert(snapshot.controller.temperature_raw_c == example.first);
     assert(harness.controller.set_mode(ControlMode::kSteam, 500));
     snapshot = harness.controller.snapshot(500);
     assert(snapshot.boiler_temperature.temperature_c == 100.0F);
@@ -1062,7 +1060,11 @@ void test_extraction_compensation_is_suppressed_by_steam_permission_and_faults()
 
   ControllerHarness sensor({93, 115});
   sensor.controller.set_extraction_phase(ExtractionPhase::kManual, 0);
-  snapshot = sensor.controller.update(open_boiler(), 0);
+  for (std::uint32_t sample = 0;
+       sample < philcoino::config::kSensorFailureConsecutiveSamples;
+       ++sample) {
+    snapshot = sensor.controller.update(open_boiler(), sample * 500U);
+  }
   assert(snapshot.fault.code == FaultCode::kSensorFailure);
   assert(!sensor.controller.extraction_compensation_active());
   assert(!snapshot.heater_enabled);
@@ -1121,13 +1123,26 @@ void test_extraction_phase_changes_preserve_steam_deadline() {
 void test_boiler_sensor_fault_latches_off() {
   ControllerHarness harness({93, 115});
   auto snapshot = harness.controller.update(open_boiler(), 0);
+  assert(snapshot.status == ControlStatus::kHeating);
+  assert(!snapshot.fault_active);
+  assert(!snapshot.heater_enabled);
+  assert(!harness.output.level);
+
+  snapshot = harness.controller.update(reading(80.0F), 500);
+  assert(!snapshot.fault_active);
+
+  for (std::uint32_t sample = 0;
+       sample < philcoino::config::kSensorFailureConsecutiveSamples;
+       ++sample) {
+    snapshot = harness.controller.update(open_boiler(), 1000U + sample * 500U);
+  }
   assert(snapshot.status == ControlStatus::kFault);
   assert(snapshot.fault_active);
   assert(snapshot.fault.code == FaultCode::kSensorFailure);
   assert(!snapshot.heater_enabled);
   assert(!harness.output.level);
 
-  snapshot = harness.controller.update(reading(93.0F), 1000);
+  snapshot = harness.controller.update(reading(93.0F), 3000);
   assert(snapshot.status == ControlStatus::kFault);
   assert(snapshot.fault.code == FaultCode::kSensorFailure);
   assert(!snapshot.heater_enabled);
@@ -1145,7 +1160,12 @@ void test_steam_raw_sensor_failures_precede_offset_and_over_temperature() {
        }) {
     ControllerHarness harness({93, 120});
     assert(harness.controller.set_mode(ControlMode::kSteam, 0));
-    const auto snapshot = harness.controller.update(reading_value, 0);
+    ControlSnapshot snapshot{};
+    for (std::uint32_t sample = 0;
+         sample < philcoino::config::kSensorFailureConsecutiveSamples;
+         ++sample) {
+      snapshot = harness.controller.update(reading_value, sample * 500U);
+    }
     assert(snapshot.status == ControlStatus::kFault);
     assert(snapshot.fault.code == FaultCode::kSensorFailure);
     assert(!snapshot.heater_enabled);
@@ -1162,7 +1182,6 @@ void test_effective_and_raw_steam_limits_fail_off_independently() {
   assert(!snapshot.heater_enabled);
   snapshot = effective.controller.update(reading(130.25F), 500);
   assert(snapshot.boiler_temperature.temperature_c == 135.25F);
-  assert(snapshot.controller.temperature_raw_c == 130.25F);
   assert(snapshot.status == ControlStatus::kFault);
   assert(snapshot.fault.code == FaultCode::kOverTemperature);
   assert(!snapshot.heater_enabled);
@@ -1175,7 +1194,6 @@ void test_effective_and_raw_steam_limits_fail_off_independently() {
   assert(!snapshot.heater_enabled);
   snapshot = raw.controller.update(reading(135.25F), 500);
   assert(snapshot.boiler_temperature.temperature_c == 127.25F);
-  assert(snapshot.controller.temperature_raw_c == 135.25F);
   assert(snapshot.status == ControlStatus::kFault);
   assert(snapshot.fault.code == FaultCode::kOverTemperature);
   assert(!snapshot.heater_enabled);
@@ -1420,7 +1438,13 @@ void test_extraction_wraparound_disconnect_and_heater_fault_independence() {
          StartExtractionResult::kStarted);
   heater.controller.set_extraction_phase(ExtractionPhase::kPreInfusion,
                                          started);
-  auto heater_snapshot = heater.controller.update(open_boiler(), started);
+  ControlSnapshot heater_snapshot{};
+  for (std::uint32_t sample = 0;
+       sample < philcoino::config::kSensorFailureConsecutiveSamples;
+       ++sample) {
+    heater_snapshot =
+        heater.controller.update(open_boiler(), started + sample * 500U);
+  }
   assert(heater_snapshot.fault.code == FaultCode::kSensorFailure);
   assert(!heater.controller.extraction_compensation_active());
   assert(extraction.controller.active());
@@ -1557,10 +1581,38 @@ void test_scale_recalibrates_after_the_retained_baseline_moves_out_of_range() {
   assert(scale.adopt_persisted_calibration(transaction));
   snapshot = scale.snapshot(300);
   assert(snapshot.calibration_status == ScaleCalibrationStatus::kCalibrated);
-  assert(snapshot.availability == ScaleAvailability::kUnstable);
+  assert(snapshot.availability == ScaleAvailability::kReady);
+  assert(snapshot.stable);
   assert(snapshot.gross_weight_available);
   assert(snapshot.gross_weight_decigrams >= 999 &&
          snapshot.gross_weight_decigrams <= 1001);
+
+  // Sustained motion remains unstable even though one isolated low and high
+  // impulse are excluded from the stability window.
+  for (std::int32_t index = 0; index < 10; ++index) {
+    scale.update({Hx711Status::kOk, 2100000 + index * 300},
+                 400U + index * 10U);
+  }
+  snapshot = scale.snapshot(500);
+  assert(snapshot.availability == ScaleAvailability::kUnstable);
+  assert(!snapshot.stable);
+}
+
+void test_scale_stability_ignores_one_impulse_at_each_extreme() {
+  const ScaleCalibration calibration{100000, 226000, 1260};
+  ScaleController scale(calibration, true);
+  const std::array<std::int32_t, 10> readings{
+      224000, 225995, 225998, 226000, 226001,
+      226002, 226004, 226006, 226008, 228000,
+  };
+  for (std::size_t index = 0; index < readings.size(); ++index) {
+    scale.update({Hx711Status::kOk, readings[index]},
+                 static_cast<std::uint32_t>(index * 10U));
+  }
+  const auto snapshot = scale.snapshot(100);
+  assert(snapshot.availability == ScaleAvailability::kReady);
+  assert(snapshot.stable);
+  assert(snapshot.gross_weight_available);
 }
 
 void test_scale_calibration_transaction_retry_and_adoption_guard() {
@@ -2062,6 +2114,7 @@ int main() {
   test_pump_output_failures_end_extraction_off();
   test_scale_filter_calibration_timeout_and_saturation();
   test_scale_recalibrates_after_the_retained_baseline_moves_out_of_range();
+  test_scale_stability_ignores_one_impulse_at_each_extreme();
   test_scale_calibration_transaction_retry_and_adoption_guard();
   test_weighted_extraction_tare_cutoff_fallback_and_acknowledgement();
   test_cooldown_start_orders_outputs_and_preserves_permission();

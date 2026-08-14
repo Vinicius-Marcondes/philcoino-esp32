@@ -38,6 +38,7 @@ export function scaleMutationErrorMessage(error: unknown): string {
       return translate("mutation.protocol");
     case "timeout":
       return translate("mutation.timeout");
+    case "certificate-changed":
     case "unauthorized":
       return translate("mutation.unauthorized");
     case "http":

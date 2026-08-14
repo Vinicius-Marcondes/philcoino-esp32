@@ -1,18 +1,12 @@
 import type {
-  ApiV2ErrorResponse,
-  CooldownActiveConflictResponse,
-  ErrorResponse,
-  ExtractionActiveConflictResponse,
+  ApiErrorResponse as ProtocolApiErrorResponse,
 } from "@philcoino/protocol";
 
-export type ApiErrorResponse =
-  | ApiV2ErrorResponse
-  | ErrorResponse
-  | CooldownActiveConflictResponse
-  | ExtractionActiveConflictResponse;
+export type ApiErrorResponse = ProtocolApiErrorResponse;
 
 export type ApiClientErrorKind =
   | "cancelled"
+  | "certificate-changed"
   | "http"
   | "invalid-request"
   | "not-found"
