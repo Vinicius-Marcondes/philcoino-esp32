@@ -21,4 +21,13 @@ menu "PhilcoINO"
             zeroes. Stored only in the generated, ignored sdkconfig file. The
             build rejects values that are not exactly eight digits. Never log it.
 
+    config PHILCOINO_RAW_TEMPERATURE_LOGGING
+        bool "Log raw boiler Celsius samples to the serial monitor"
+        default n
+        help
+            Logs each valid, uncalibrated MAX6675 boiler sample at INFO level
+            after the temperature controller update completes. This diagnostic
+            option does not change control inputs or outputs. Keep it disabled
+            in normal builds because serial logging can affect task timing.
+
 endmenu

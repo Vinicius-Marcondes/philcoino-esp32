@@ -434,6 +434,10 @@ extern "C" void app_main() {
   ESP_LOGI(kLogTag, "%s firmware %s booted as %s",
            philcoino::config::kFriendlyName,
            philcoino::config::kFirmwareVersion, device_id.c_str());
+#ifdef CONFIG_PHILCOINO_RAW_TEMPERATURE_LOGGING
+  ESP_LOGW(kLogTag,
+           "Raw temperature serial logging enabled; diagnostic output can affect task timing");
+#endif
 
   if (!philcoino::config::kWifiEnabled) {
     ESP_LOGW(kLogTag, "Wi-Fi disabled for low-voltage sensor diagnosis");
@@ -713,5 +717,14 @@ extern "C" void app_main() {
     }
     snapshot = controller.update(reading, pump.command(), uptime_ms());
     synchronization.unlock(philcoino::networking::ApiDomain::kTemperature);
+#ifdef CONFIG_PHILCOINO_RAW_TEMPERATURE_LOGGING
+    if (reading.status == ThermocoupleStatus::kOk &&
+        std::isfinite(reading.temperature_c)) {
+      ESP_LOGI(kLogTag,
+               "MAX6675 runtime sample raw_temperature_c=%.2f raw_frame=0x%04X",
+               static_cast<double>(reading.temperature_c),
+               static_cast<unsigned>(reading.raw_frame));
+    }
+#endif
   }
 }
