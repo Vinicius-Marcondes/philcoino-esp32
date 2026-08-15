@@ -30,4 +30,17 @@ menu "PhilcoINO"
             option does not change control inputs or outputs. Keep it disabled
             in normal builds because serial logging can affect task timing.
 
+    config PHILCOINO_RAW_SCALE_LOGGING
+        bool "Log rate-limited raw HX711 samples to the serial monitor"
+        default n
+        help
+            Logs valid HX711 raw samples at no more than four lines per second,
+            immediate transport and saturation failures, and data-ready outages
+            only after the normal availability timeout. Each valid log includes
+            the change since the previous logged raw sample; failure logs include
+            time since the last valid sample. This diagnostic does not change
+            scale filtering, availability, calibration, or control. Keep it
+            disabled in normal builds because serial logging can affect task
+            timing.
+
 endmenu

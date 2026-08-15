@@ -26,6 +26,13 @@ namespace {
 
 constexpr char kLogTag[] = "philcoino";
 
+// app_main performs dual-sensor initialization and may generate or validate
+// the device TLS identity before it becomes the temperature acquisition loop.
+// Keep a build using a stale generated sdkconfig from reintroducing the
+// observed S3 main-task stack overflow.
+static_assert(CONFIG_ESP_MAIN_TASK_STACK_SIZE >= 8192,
+              "PhilcoINO requires an app_main stack of at least 8192 bytes");
+
 constexpr bool configured_pairing_code_is_valid() {
   constexpr char kPairingCode[] = CONFIG_PHILCOINO_PAIRING_CODE;
   if (sizeof(kPairingCode) != 9U) return false;
@@ -60,6 +67,19 @@ const char* thermocouple_status_name(
   }
   return "unknown";
 }
+
+#ifdef CONFIG_PHILCOINO_RAW_SCALE_LOGGING
+const char* hx711_status_name(philcoino::peripherals::Hx711Status status) {
+  using philcoino::peripherals::Hx711Status;
+  switch (status) {
+    case Hx711Status::kOk: return "ok";
+    case Hx711Status::kNotReady: return "not_ready";
+    case Hx711Status::kTransportError: return "transport_error";
+    case Hx711Status::kSaturated: return "saturated";
+  }
+  return "unknown";
+}
+#endif
 
 void log_thermocouple_failure(
     const char* sensor_name, const char* phase,
@@ -346,10 +366,67 @@ void scale_sample_task(void* argument) {
   auto last_usable_sample_ms = uptime_ms();
   bool usable_sample_received = false;
   bool unavailable_reported = false;
+#ifdef CONFIG_PHILCOINO_RAW_SCALE_LOGGING
+  constexpr std::uint32_t kDiagnosticLogIntervalMs = 250U;
+  std::uint32_t diagnostic_last_sample_log_ms = 0U;
+  std::int32_t diagnostic_last_raw = 0;
+  auto diagnostic_previous_status =
+      philcoino::peripherals::Hx711Status::kNotReady;
+  bool diagnostic_status_known = false;
+  bool diagnostic_raw_known = false;
+#endif
   while (true) {
     const auto reading = context->acquisition->acquire(
         philcoino::config::kScaleUnavailableTimeoutMs);
     const auto now_ms = uptime_ms();
+#ifdef CONFIG_PHILCOINO_RAW_SCALE_LOGGING
+    const auto diagnostic_ms_since_valid =
+        static_cast<std::uint32_t>(now_ms - last_usable_sample_ms);
+    const bool diagnostic_status_changed =
+        !diagnostic_status_known ||
+        reading.status != diagnostic_previous_status;
+    const bool diagnostic_sample_due =
+        reading.status == philcoino::peripherals::Hx711Status::kOk &&
+        (!diagnostic_raw_known ||
+         static_cast<std::uint32_t>(now_ms - diagnostic_last_sample_log_ms) >=
+             kDiagnosticLogIntervalMs);
+    const bool diagnostic_failure_due =
+        ((reading.status ==
+              philcoino::peripherals::Hx711Status::kTransportError ||
+          reading.status == philcoino::peripherals::Hx711Status::kSaturated) &&
+         diagnostic_status_changed) ||
+        (reading.status == philcoino::peripherals::Hx711Status::kNotReady &&
+         diagnostic_ms_since_valid >=
+             philcoino::config::kScaleUnavailableTimeoutMs &&
+         !unavailable_reported);
+    if (diagnostic_sample_due || diagnostic_failure_due) {
+      if (diagnostic_sample_due) {
+        const auto delta = diagnostic_raw_known
+                               ? reading.raw - diagnostic_last_raw
+                               : 0;
+        ESP_LOGI(kLogTag,
+                 "HX711 diagnostic status=%s raw=%" PRId32
+                 " delta_since_log=%" PRId32 " DT=GPIO%" PRId32
+                 " SCK=GPIO%" PRId32,
+                 hx711_status_name(reading.status), reading.raw, delta,
+                 philcoino::config::kScaleDataGpio,
+                 philcoino::config::kScaleClockGpio);
+        diagnostic_last_raw = reading.raw;
+        diagnostic_raw_known = true;
+        diagnostic_last_sample_log_ms = now_ms;
+      } else {
+        ESP_LOGW(kLogTag,
+                 "HX711 diagnostic status=%s ms_since_valid=%" PRIu32
+                 " DT=GPIO%" PRId32 " SCK=GPIO%" PRId32,
+                 hx711_status_name(reading.status),
+                 diagnostic_ms_since_valid,
+                 philcoino::config::kScaleDataGpio,
+                 philcoino::config::kScaleClockGpio);
+      }
+    }
+    diagnostic_previous_status = reading.status;
+    diagnostic_status_known = true;
+#endif
     if (reading.status == philcoino::peripherals::Hx711Status::kOk) {
       last_usable_sample_ms = now_ms;
       if (!usable_sample_received) {
@@ -454,6 +531,10 @@ extern "C" void app_main() {
 #ifdef CONFIG_PHILCOINO_RAW_TEMPERATURE_LOGGING
   ESP_LOGW(kLogTag,
            "Raw temperature serial logging enabled; diagnostic output can affect task timing");
+#endif
+#ifdef CONFIG_PHILCOINO_RAW_SCALE_LOGGING
+  ESP_LOGW(kLogTag,
+           "Raw HX711 serial logging enabled at <=4Hz; diagnostic output can affect task timing");
 #endif
 
   if (!philcoino::config::kWifiEnabled) {

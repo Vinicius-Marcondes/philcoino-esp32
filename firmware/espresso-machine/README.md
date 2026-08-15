@@ -16,6 +16,7 @@ command boundaries. The only wire generation is HTTPS API v4.
 - ESP-IDF `6.0.2`, target `esp32s3` only.
 - ESP32-S3-WROOM-1 N16R8: 16 MB QIO/80 MHz flash, no PSRAM.
 - Native USB Serial/JTAG on reserved GPIO19/GPIO20.
+- 8 KB `app_main` stack for dual-sensor startup and TLS identity initialization.
 - `espressif/mdns` `1.11.3`.
 - `rbdimmer/rbdimmerESP32` manifest version `2.0.1`, resolved from immutable
   commit `ab50d09f924e3d5ecf8590ab71386caa72a8e282` in `dependencies.lock`.
@@ -31,6 +32,10 @@ idf.py build
 
 Set Wi-Fi and pairing configuration only through `idf.py menuconfig`. Never put
 secrets in source, defaults, tests, logs, screenshots, or documentation.
+Temporary HX711 diagnosis can enable `PHILCOINO_RAW_SCALE_LOGGING` through the
+same menu. It reports valid raw samples at no more than 4 Hz, immediate ADC or
+transport failures, and only sustained data-ready outages; keep it disabled
+during normal operation.
 
 ## Fixed GPIO map
 
