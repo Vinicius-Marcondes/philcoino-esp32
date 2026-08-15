@@ -15,7 +15,7 @@
 namespace philcoino::networking {
 namespace {
 
-constexpr char kNamespace[] = "security_v3";
+constexpr char kNamespace[] = "security_v4";
 constexpr char kPairingStateKey[] = "clients";
 constexpr char kCertificateKey[] = "tls_cert";
 constexpr char kPrivateKeyKey[] = "tls_key";

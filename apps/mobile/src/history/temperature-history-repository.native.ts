@@ -1,11 +1,10 @@
 import * as SQLite from "expo-sqlite";
-import { SteamControlStateSchema } from "@philcoino/protocol";
 
 import type { TemperatureHistorySample } from "./temperature-history";
 import { localDayRange } from "./temperature-history";
 import {
   createTemperatureHistoryTableSql,
-  rebuildTemperatureHistoryV7Sql,
+  rebuildTemperatureHistoryV8Sql,
   TEMPERATURE_HISTORY_DATABASE_VERSION,
 } from "./temperature-history-schema";
 import type { TemperatureHistoryRepository } from "./temperature-history-repository";
@@ -33,14 +32,15 @@ class SQLiteTemperatureHistoryRepository
           sample.uptimeMs - previous.uptime_ms > 2_500));
     await database.runAsync(
       `INSERT INTO temperature_history (
-        device_id, recorded_at_ms, uptime_ms, boiler_temperature_c,
+        device_id, recorded_at_ms, uptime_ms, boiler_temperature_c, steam_temperature_c,
         brew_target_c, steam_target_c, active_mode, active_target_c,
         heater_enabled, heater_active, pump_command, machine_status, fault_code,
-        steam_control_json, starts_after_history_gap
+        starts_after_history_gap
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(device_id, recorded_at_ms) DO UPDATE SET
         uptime_ms = excluded.uptime_ms,
         boiler_temperature_c = excluded.boiler_temperature_c,
+        steam_temperature_c = excluded.steam_temperature_c,
         brew_target_c = excluded.brew_target_c,
         steam_target_c = excluded.steam_target_c,
         active_mode = excluded.active_mode,
@@ -50,12 +50,12 @@ class SQLiteTemperatureHistoryRepository
         pump_command = excluded.pump_command,
         machine_status = excluded.machine_status,
         fault_code = excluded.fault_code,
-        steam_control_json = excluded.steam_control_json,
         starts_after_history_gap = excluded.starts_after_history_gap`,
       sample.deviceId,
       sample.recordedAtMs,
       sample.uptimeMs,
       sample.boilerTemperatureC,
+      sample.steamTemperatureC,
       sample.brewTargetC,
       sample.steamTargetC,
       sample.activeMode,
@@ -65,9 +65,6 @@ class SQLiteTemperatureHistoryRepository
       sample.pumpCommand,
       sample.machineStatus,
       sample.faultCode,
-      sample.steamControl === null || sample.steamControl === undefined
-        ? null
-        : JSON.stringify(sample.steamControl),
       startsAfterGap ? 1 : 0,
     );
   }
@@ -134,8 +131,8 @@ class SQLiteTemperatureHistoryRepository
         );
       }
     }
-    if (!names.has("steam_control_json")) {
-      await database.execAsync("ALTER TABLE temperature_history ADD COLUMN steam_control_json TEXT;");
+    if (!names.has("steam_temperature_c")) {
+      await database.execAsync("ALTER TABLE temperature_history ADD COLUMN steam_temperature_c REAL;");
     }
     if (!names.has("starts_after_history_gap")) {
       await database.execAsync(
@@ -149,9 +146,11 @@ class SQLiteTemperatureHistoryRepository
       names.has("controller_configuration_json") ||
       names.has("controller_diagnostics_json") ||
       names.has("predictive_temperature_json")
+      || names.has("steam_control_json")
+      || !names.has("steam_temperature_c")
     ) {
       await database.withExclusiveTransactionAsync((transaction) =>
-        transaction.execAsync(rebuildTemperatureHistoryV7Sql()),
+        transaction.execAsync(rebuildTemperatureHistoryV8Sql()),
       );
     }
     await database.execAsync(`
@@ -165,10 +164,10 @@ class SQLiteTemperatureHistoryRepository
 }
 
 function selectColumns(): string {
-  return `SELECT device_id, recorded_at_ms, uptime_ms, boiler_temperature_c,
+  return `SELECT device_id, recorded_at_ms, uptime_ms, boiler_temperature_c, steam_temperature_c,
     brew_target_c, steam_target_c, active_mode, active_target_c,
     heater_enabled, heater_active, pump_command, machine_status, fault_code,
-    steam_control_json, starts_after_history_gap FROM temperature_history`;
+    starts_after_history_gap FROM temperature_history`;
 }
 
 function rowToSample(row: Row): TemperatureHistorySample {
@@ -180,9 +179,6 @@ function rowToSample(row: Row): TemperatureHistorySample {
   if (status !== "heating" && status !== "ready" && status !== "fault") {
     throw new TypeError("Stored machine status is invalid.");
   }
-  const steamControl = row.steam_control_json === null
-    ? null
-    : SteamControlStateSchema.parse(JSON.parse(String(row.steam_control_json)));
   const faultCode = row.fault_code;
   if (
     faultCode !== null &&
@@ -196,7 +192,9 @@ function rowToSample(row: Row): TemperatureHistorySample {
   return {
     activeMode,
     activeTargetC: Number(row.active_target_c),
-    boilerTemperatureC: Number(row.boiler_temperature_c),
+    boilerTemperatureC: row.boiler_temperature_c === null
+      ? null
+      : Number(row.boiler_temperature_c),
     brewTargetC: Number(row.brew_target_c),
     deviceId: String(row.device_id),
     faultCode,
@@ -206,7 +204,9 @@ function rowToSample(row: Row): TemperatureHistorySample {
     pumpCommand: storedPumpCommand(row.pump_command),
     recordedAtMs: Number(row.recorded_at_ms),
     startsAfterHistoryGap: Number(row.starts_after_history_gap) === 1,
-    steamControl,
+    steamTemperatureC: row.steam_temperature_c === null
+      ? null
+      : Number(row.steam_temperature_c),
     steamTargetC: Number(row.steam_target_c),
     uptimeMs: Number(row.uptime_ms),
   };

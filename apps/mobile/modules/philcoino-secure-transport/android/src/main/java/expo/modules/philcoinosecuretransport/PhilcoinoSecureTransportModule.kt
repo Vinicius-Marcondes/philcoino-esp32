@@ -58,7 +58,7 @@ class PhilcoinoSecureTransportModule : Module() {
           "SRP session capacity is unavailable"
         }
         val client = SRP6ClientSession()
-        client.step1("philcoino-v3", pairingCode)
+        client.step1("philcoino-v4", pairingCode)
         val params = SRP6CryptoParams.getInstance(3072, "SHA-512")
         val publicKey = leftPad(
           BigIntegerUtils.bigIntegerToBytes(client.getClientPublicKey(params)),
@@ -387,8 +387,8 @@ class PhilcoinoSecureTransportModule : Module() {
     }
 
     private fun isUnpinnedPairingPath(path: String): Boolean =
-      path == "/api/v3/pairing/sessions" ||
-        Regex("^/api/v3/pairing/sessions/[0-9a-f]{32}/proof$").matches(path)
+      path == "/api/v4/pairing/sessions" ||
+        Regex("^/api/v4/pairing/sessions/[0-9a-f]{32}/proof$").matches(path)
   }
 
   private class SrpContext(

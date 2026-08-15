@@ -265,6 +265,9 @@ struct ApiHarness {
         storage(backend),
         temperature_calibration_backend(calibration),
         temperature_calibration_storage(temperature_calibration_backend),
+        steam_temperature_calibration_backend(calibration),
+        steam_temperature_calibration_storage(
+            steam_temperature_calibration_backend),
         ssr(output, safety_lease, ssr_critical_section),
         controller(memory.targets, calibration, ssr),
         pump(pump_output, pump_critical_section),
@@ -274,13 +277,14 @@ struct ApiHarness {
         scale_storage(scale_backend),
         scale(scale_backend.saved, true),
         pairing_storage(pairing_crypto),
-        pairing({"philcoino-0102AF", "PhilcoINO", "ESP32-C3 Super Mini",
-                 "0.3.0"},
+        pairing({"philcoino-0102AF", "PhilcoINO", "ESP32-S3-WROOM-1-N16R8",
+                 "0.5.0"},
                 "12345678", {}, pairing_crypto, pairing_storage,
                 srp_factory),
-        api({"philcoino-0102AF", "PhilcoINO", "ESP32-C3 Super Mini", "0.2.0"},
+        api({"philcoino-0102AF", "PhilcoINO", "ESP32-S3-WROOM-1-N16R8", "0.5.0"},
             pairing, controller, storage,
-            temperature_calibration_storage, extraction, cooldown,
+            temperature_calibration_storage,
+            steam_temperature_calibration_storage, extraction, cooldown,
             scale_storage, synchronization, &scale,
             &steam_control_storage) {
     assert(pairing.initialize());
@@ -288,6 +292,8 @@ struct ApiHarness {
     assert(pump.initialize());
     scale_backend.lock_held = &synchronization.held;
     temperature_calibration_backend.lock_held =
+        &synchronization.held;
+    steam_temperature_calibration_backend.lock_held =
         &synchronization.held;
     steam_control_backend.lock_held = &synchronization.held;
     controller.update(ok(87.5F), 1000);
@@ -310,6 +316,9 @@ struct ApiHarness {
   TemperatureCalibrationMemoryBackend
       temperature_calibration_backend;
   TemperatureCalibrationStorage temperature_calibration_storage;
+  TemperatureCalibrationMemoryBackend
+      steam_temperature_calibration_backend;
+  TemperatureCalibrationStorage steam_temperature_calibration_storage;
   FakeDigitalOutput output{};
   FakeSafetyLease safety_lease;
   FakeOutputCriticalSection ssr_critical_section;
@@ -340,7 +349,7 @@ void expect_error(const HttpResponse& response, int status,
          std::string::npos);
 }
 
-void test_v3_route_and_authentication_boundary() {
+void test_v4_route_and_authentication_boundary() {
   ApiHarness harness;
   const auto health = harness.request(HttpMethod::kGet, "/healthz");
   assert(health.status == 200);
@@ -352,16 +361,16 @@ void test_v3_route_and_authentication_boundary() {
                  "internal_error");
   }
 
-  auto response = harness.request(HttpMethod::kGet, "/api/v3/state");
+  auto response = harness.request(HttpMethod::kGet, "/api/v4/state");
   expect_error(response, 401, "unauthorized");
   assert(response.bearer_challenge);
-  response = harness.request(HttpMethod::kGet, "/api/v3/state",
+  response = harness.request(HttpMethod::kGet, "/api/v4/state",
                              "Bearer invalid");
   expect_error(response, 401, "unauthorized");
-  response = harness.request(HttpMethod::kGet, "/api/v3/state",
+  response = harness.request(HttpMethod::kGet, "/api/v4/state",
                              kTestAuthorization);
   assert(response.status == 200);
-  assert(response.body.find("\"apiVersion\":\"3\"") !=
+  assert(response.body.find("\"apiVersion\":\"4\"") !=
          std::string::npos);
   assert(response.body.find("\"revision\":") != std::string::npos);
   assert(response.body.find("\"capturedAtUptimeMs\":") !=
@@ -371,49 +380,48 @@ void test_v3_route_and_authentication_boundary() {
 void test_combined_settings_are_atomic_and_acknowledged_as_state() {
   ApiHarness harness;
   const auto response = harness.request(
-      HttpMethod::kPatch, "/api/v3/settings", kTestAuthorization,
+      HttpMethod::kPatch, "/api/v4/settings", kTestAuthorization,
       "{\"brewTargetC\":94,\"steamTargetC\":121,"
-      "\"steamControl\":{\"initialCompensationC\":10,"
-      "\"decayDurationMs\":600000,\"readyTimeoutMs\":420000}}");
+      "\"steamReadyTimeoutMs\":420000}");
   assert(response.status == 200);
-  assert(response.body.find("\"apiVersion\":\"3\"") !=
+  assert(response.body.find("\"apiVersion\":\"4\"") !=
          std::string::npos);
   assert(response.body.find("\"brewTargetC\":94") != std::string::npos);
   assert(response.body.find("\"steamTargetC\":121") != std::string::npos);
-  assert(response.body.find("\"initialCompensationC\":10") !=
+  assert(response.body.find("\"steamReadyTimeoutMs\":420000") !=
          std::string::npos);
   assert(harness.memory.targets.brew_c == 94);
   assert(harness.memory.targets.steam_c == 121);
-  assert(harness.steam_control_backend.saved.initial_compensation_c == 10);
+  assert(harness.steam_control_backend.saved.ready_timeout_ms == 420000U);
 
   ApiHarness failed;
   failed.steam_control_backend.fail_save = true;
   const auto rejected = failed.request(
-      HttpMethod::kPatch, "/api/v3/settings", kTestAuthorization,
+      HttpMethod::kPatch, "/api/v4/settings", kTestAuthorization,
       "{\"brewTargetC\":94,"
-      "\"steamControl\":{\"initialCompensationC\":10}}");
+      "\"steamReadyTimeoutMs\":420000}");
   expect_error(rejected, 500, "persistence_failure");
   assert(failed.memory.targets.brew_c == 93);
   assert(failed.controller.targets().brew_c == 93);
-  assert(failed.controller.steam_control_settings().initial_compensation_c ==
-         12);
+  assert(failed.controller.steam_control_settings().ready_timeout_ms ==
+         philcoino::config::kSteamReadyTimeoutMs);
 }
 
 void test_mutations_return_complete_state_and_stream_is_transport_owned() {
   ApiHarness harness;
   auto response = harness.request(HttpMethod::kPut,
-                                  "/api/v3/heater-permission",
+                                  "/api/v4/heater-permission",
                                   kTestAuthorization,
                                   "{\"enabled\":false}");
   assert(response.status == 200);
   assert(response.body.find("\"heaterEnabled\":false") !=
          std::string::npos);
   assert(response.body.find("\"scale\":") != std::string::npos);
-  assert(response.body.find("\"temperatureCalibration\":") !=
+  assert(response.body.find("\"temperatureCalibrations\":") !=
          std::string::npos);
 
   response = harness.request(HttpMethod::kGet,
-                             "/api/v3/extractions/current/stream",
+                             "/api/v4/extractions/current/stream",
                              kTestAuthorization);
   expect_error(response, 409, "stream_unavailable");
 }
@@ -421,26 +429,26 @@ void test_mutations_return_complete_state_and_stream_is_transport_owned() {
 void test_extraction_start_and_stop_apply_output_before_acknowledgement() {
   ApiHarness harness;
   auto response = harness.request(
-      HttpMethod::kPost, "/api/v3/extractions", kTestAuthorization,
+      HttpMethod::kPost, "/api/v4/extractions", kTestAuthorization,
       "{\"idempotencyKey\":\"instant-command-1\","
       "\"selection\":{\"kind\":\"manual\"}}", 1200);
   assert(response.status == 200);
   assert(harness.pump_output.level);
   assert(harness.pump_output.power_percent ==
          philcoino::config::kPumpMaximumPowerPercent);
-  assert(response.body.find("\"apiVersion\":\"3\"") != std::string::npos);
+  assert(response.body.find("\"apiVersion\":\"4\"") != std::string::npos);
   assert(response.body.find("\"status\":\"running\"") !=
          std::string::npos);
   assert(response.body.find("\"pumpCommand\":\"running\"") !=
          std::string::npos);
 
   response = harness.request(HttpMethod::kDelete,
-                             "/api/v3/extractions/current",
+                             "/api/v4/extractions/current",
                              kTestAuthorization, "", 1250);
   assert(response.status == 200);
   assert(!harness.pump_output.level);
   assert(harness.pump_output.power_percent == 0U);
-  assert(response.body.find("\"apiVersion\":\"3\"") != std::string::npos);
+  assert(response.body.find("\"apiVersion\":\"4\"") != std::string::npos);
   assert(response.body.find("\"pumpCommand\":\"off\"") !=
          std::string::npos);
 }
@@ -448,7 +456,7 @@ void test_extraction_start_and_stop_apply_output_before_acknowledgement() {
 void test_scale_calibration_acknowledges_live_weight() {
   ApiHarness harness;
   auto response = harness.request(
-      HttpMethod::kPost, "/api/v3/scale-calibrations/current",
+      HttpMethod::kPost, "/api/v4/scale-calibrations/current",
       kTestAuthorization, "", 1100);
   assert(response.status == 200);
   assert(response.body.find("\"calibrationStatus\":\"calibrating\"") !=
@@ -458,10 +466,10 @@ void test_scale_calibration_acknowledges_live_weight() {
     harness.scale.update({Hx711Status::kOk, 180000}, 1200U + index);
   }
   response = harness.request(
-      HttpMethod::kPut, "/api/v3/scale-calibrations/current",
+      HttpMethod::kPut, "/api/v4/scale-calibrations/current",
       kTestAuthorization, "{\"referenceWeightDecigrams\":1000}", 1250);
   assert(response.status == 200);
-  assert(response.body.find("\"apiVersion\":\"3\"") != std::string::npos);
+  assert(response.body.find("\"apiVersion\":\"4\"") != std::string::npos);
   assert(response.body.find("\"calibrationStatus\":\"calibrated\"") !=
          std::string::npos);
   assert(response.body.find("\"grossWeightDecigrams\":1000") !=
@@ -475,23 +483,98 @@ void test_settings_reject_unknown_and_fragmented_legacy_shapes() {
            "{}",
            "{\"heaterEnabled\":false}",
            "{\"brewTargetC\":93,\"extra\":true}",
-           "{\"steamControl\":{}}",
-           "{\"steamControl\":{\"initialCompensationC\":10,\"extra\":1}}",
+           "{\"steamReadyTimeoutMs\":{}}",
+           "{\"steamReadyTimeoutMs\":420000,\"extra\":1}",
        }) {
-    expect_error(harness.request(HttpMethod::kPatch, "/api/v3/settings",
+    expect_error(harness.request(HttpMethod::kPatch, "/api/v4/settings",
                                  kTestAuthorization, body),
                  400, "malformed_request");
   }
 }
 
+void write_capture(const std::filesystem::path& directory,
+                   const char* filename, const HttpResponse& response,
+                   int expected_status = 200) {
+  assert(response.status == expected_status);
+  std::ofstream output(directory / filename, std::ios::binary);
+  assert(output.is_open());
+  output << response.body;
+  assert(output.good());
+}
+
+void write_contract_captures(const std::filesystem::path& directory) {
+  std::filesystem::create_directories(directory);
+
+  ApiHarness baseline;
+  write_capture(directory, "health-v4.json",
+                baseline.request(HttpMethod::kGet, "/healthz"));
+  write_capture(directory, "state-brew-v4.json",
+                baseline.request(HttpMethod::kGet, "/api/v4/state",
+                                 kTestAuthorization));
+  write_capture(
+      directory, "settings-v4.json",
+      baseline.request(HttpMethod::kPatch, "/api/v4/settings",
+                       kTestAuthorization,
+                       "{\"brewTargetC\":94,\"steamTargetC\":121,"
+                       "\"steamReadyTimeoutMs\":420000}"));
+  write_capture(
+      directory, "heater-disabled-v4.json",
+      baseline.request(HttpMethod::kPut, "/api/v4/heater-permission",
+                       kTestAuthorization, "{\"enabled\":false}"));
+
+  ApiHarness extraction;
+  write_capture(
+      directory, "extraction-running-v4.json",
+      extraction.request(HttpMethod::kPost, "/api/v4/extractions",
+                         kTestAuthorization,
+                         "{\"idempotencyKey\":\"capture-extraction-1\","
+                         "\"selection\":{\"kind\":\"manual\"}}",
+                         1200));
+  write_capture(
+      directory, "extraction-stopped-v4.json",
+      extraction.request(HttpMethod::kDelete,
+                         "/api/v4/extractions/current",
+                         kTestAuthorization, "", 1250));
+
+  ApiHarness boiler_calibration;
+  write_capture(
+      directory, "boiler-calibration-active-v4.json",
+      boiler_calibration.request(
+          HttpMethod::kPost,
+          "/api/v4/temperature-calibrations/boiler/current",
+          kTestAuthorization, "", 2000));
+
+  ApiHarness steam_calibration;
+  write_capture(
+      directory, "steam-calibration-active-v4.json",
+      steam_calibration.request(
+          HttpMethod::kPost,
+          "/api/v4/temperature-calibrations/steam/current",
+          kTestAuthorization, "", 2000));
+
+  ApiHarness faulted;
+  faulted.controller.update(
+      TemperatureReadings{ok(87.5F), ok(136.0F)}, PumpCommand::kOff,
+      2000);
+  write_capture(directory, "state-steam-over-temperature-v4.json",
+                faulted.request(HttpMethod::kGet, "/api/v4/state",
+                                kTestAuthorization, "", 2001));
+
+  write_capture(directory, "unauthorized-v4.json",
+                baseline.request(HttpMethod::kGet, "/api/v4/state"), 401);
+}
+
 }  // namespace
 
-int main() {
-  test_v3_route_and_authentication_boundary();
+int main(int argc, char** argv) {
+  test_v4_route_and_authentication_boundary();
   test_combined_settings_are_atomic_and_acknowledged_as_state();
   test_mutations_return_complete_state_and_stream_is_transport_owned();
   test_extraction_start_and_stop_apply_output_before_acknowledgement();
   test_scale_calibration_acknowledges_live_weight();
   test_settings_reject_unknown_and_fragmented_legacy_shapes();
+  if (argc == 2) {
+    write_contract_captures(argv[1]);
+  }
   return 0;
 }

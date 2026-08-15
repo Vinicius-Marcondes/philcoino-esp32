@@ -21,10 +21,10 @@ describe("extraction console screen", () => {
   test("plots only the live shot and shows a simple ready state while idle", () => {
     expect(screen).toContain("<WeightedTraceChart");
     expect(screen).toContain('variant="console"');
-    expect(screen).toContain("key={displayedTrace.extractionId}");
+    expect(screen).toContain('key={displayedTrace?.extractionId ?? "awaiting-stream"}');
     expect(screen).not.toContain("<TemperatureHistoryChart");
-    expect(screen).toContain('translate("extractionConsole.readyTitle")');
-    expect(screen).toContain('translate("extractionConsole.readyDetail")');
+    expect(screen).toContain('translate("extractionConsole.idle")');
+    expect(screen).toContain('translate("extractionConsole.openDetail")');
   });
 
   test("derives every readout through the tested console model", () => {

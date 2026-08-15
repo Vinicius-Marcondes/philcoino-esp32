@@ -1,12 +1,35 @@
 # Side notes
 
+## PRD-021 ESP32-S3 dual-temperature migration
+
+Current source targets only ESP32-S3-WROOM-1 N16R8 and API v4. Boiler uses
+MAX6675 SCK4/SO5/CS7; Steam uses shared SCK4/SO8/CS9. Brew selects Boiler and
+Steam selects Steam with independent validation/calibration and no fallback or
+blending. Steam heat-soak compensation/decay is removed; only the ready timeout
+is migrated. RobotDyn remains ZC6/DIM10 at 60 Hz/LINEAR with 0% startup and the
+single 90% command cap. HX711 moves to GPIO11/12 and heater command to GPIO21.
+
+Software verification does not validate the exact 44-pin carrier, ungrounded
+probes, simultaneous sensor isolation, native USB boot/recovery, GPIO boot
+levels, zero-cross/TRIAC timing, SSR interruption, or pressure/thermal behavior.
+Before control-capable flashing, confirm every selected GPIO is exposed and
+both probes are electrically ungrounded. With loads disconnected, the pending
+human checks are dual-probe stability/isolation, CS/SCK/SO waveforms, boot/reset
+pulses, USB recovery, ZC detection, dimmer 0% cessation, and 90% timing.
+
+Every C3, single-sensor, pump-SSR, heater-SSR, and RobotDyn acceptance below is
+historical and does not validate the S3 map or near-valve Steam placement.
+
 This file tracks important unresolved topics that should remain visible without blocking software and protocol planning.
 
 ## Independent heater cutoff
 
-Status: OWNER-REPORTED INSTRUMENTED ACCEPTANCE 2026-07-16 — DESIGN RISK RETAINED
+Status: PRIOR OWNER-REPORTED ACCEPTANCE SUPERSEDED — DESIGN RISK RETAINED
 
-The current heater design relies on the ESP32-C3 and a single FOTEK SSR-40 DA to interrupt power to the 800 W, 127 VAC boiler heater. This is not fail-safe because an SSR can fail with its output shorted; software cannot turn off a shorted output.
+The current S3 design commands one FOTEK SSR-40 DA from GPIO21 to interrupt
+power to the 800 W, 127 VAC boiler heater. This is not fail-safe because an SSR
+can fail shorted; software cannot turn off a shorted output. The 2026-07-16
+acceptance used the superseded C3/GPIO20 configuration.
 
 The plan is to retain the espresso machine's original over-temperature
 thermostat. The owner now identifies the retained component from a marketplace
@@ -69,7 +92,10 @@ Offset-dependent targets whose implied raw value exceeds `135°C` remain
 rejected without clamping. TCAL-009 retains the separately authorized physical
 acceptance.
 
-## PRD-018 dynamic Steam heat-soak compensation
+## Historical PRD-018 dynamic Steam heat-soak compensation
+
+Superseded by PRD-021. The current dual-sensor runtime has no Steam heat-soak
+compensation or decay.
 
 Status: SOFTWARE IMPLEMENTED — VERIFICATION/PHYSICAL ACCEPTANCE PENDING
 
@@ -214,15 +240,16 @@ equipment and accepted the installed configuration. The raw unit identifiers,
 terminal/rating record, activation measurements, and thermal/derating captures
 were not committed; acceptance is limited to the owner-tested setup.
 
-Firmware now uses a 1500 ms cache-safe GPTimer lease whenever it commands the
+Firmware retains a 1500 ms cache-safe GPTimer lease whenever it commands the
 SSR input high. Healthy control iterations renew the lease without toggling the
-input; a missed deadline commands GPIO20 low and latches an internal fault until
+input; a missed deadline commands GPIO21 low and latches an internal fault until
 reboot. This bounds a software-stalled high command but does not mitigate an SSR
 whose AC output has failed shorted, so the owner-accepted independent cutoff
 remains required for the tested configuration and every future revision.
 
 On 2026-07-04, the project owner approved an active-high direct connection from
-GPIO20 to the SSR control input. No external pull-down resistor is available or
+GPIO20 to the SSR control input. That is a historical C3 record; current source
+assigns GPIO21 and requires new boot/reset validation. No external pull-down resistor is available or
 planned. Firmware will command GPIO20 low as early as its driver can initialize,
 but cannot guarantee that the SSR input remains off while GPIO20 is uncontrolled
 during reset, boot ROM execution, or loss of ESP32 power. The owner accepted

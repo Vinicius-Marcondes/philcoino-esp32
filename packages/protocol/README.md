@@ -1,53 +1,38 @@
-# @philcoino/protocol
+# Philcoino protocol
 
-The shared HTTP contract for the Philcoino mobile app, device simulator, and
-ESP-IDF firmware. API v1 remains the compatible temperature-control surface;
-API v2 extraction/profile shapes are implemented by mobile and the simulator
-and staged for later firmware integration.
+`openapi.yaml` is the authoritative HTTPS API v4 contract shared by the mobile
+app and deterministic simulator and independently implemented by firmware C++.
+API v1-v3 compatibility routes are intentionally absent.
 
-- `openapi.yaml` is the language-neutral source of truth. It uses JSON syntax,
-  which is valid YAML 1.2, so validation does not require a YAML parser.
-- `src/` exports strict Zod schemas and inferred TypeScript types for all request
-  and response payloads.
-- `fixtures/valid/` contains representative wire payloads.
-- `fixtures/invalid/` contains payloads that must be rejected.
+## API v4 highlights
 
-Run from the repository root:
+- SRP pairing with v4 binding domains and pinned HTTPS.
+- Complete `MachineStateV4` acknowledgements for state and mutations.
+- Nullable `boilerTemperatureC` and `steamTemperatureC`.
+- `temperatureCalibrations.boiler` and `.steam` with sensor-qualified routes.
+- Sensor-attributed temperature fault details.
+- Direct `steamReadyTimeoutMs`; no Steam compensation/decay fields.
+- Extraction telemetry page format 2 with both nullable temperatures.
+- Strict objects: unknown request or response properties are rejected.
 
-```sh
+Changing the protocol requires coordinated updates to OpenAPI, Zod/types,
+fixtures, simulator, mobile, independent C++ codecs/routes/captures, and docs.
+
+## Verify
+
+```bash
+bun run validate:openapi
 bun run test:protocol
 bun run typecheck:protocol
-bun run validate:openapi
 ```
 
-All authenticated operations use `Authorization: Bearer <token>`. The public
-operations are `GET /healthz` and `GET /api/v1/device`.
+Firmware capture validation is separate:
 
-API v1 authenticated operations are state read, temperature-target update, mode
-selection, volatile heater permission, and cooled over-temperature dismissal.
-API v2 additionally defines combined machine/extraction/compensation/cooldown
-state, four-slot profile read/replace, idempotent extraction Start/Stop,
-idempotent cooldown Start/Stop, and the additive PRD-017
-temperature-calibration transaction. Calibration status, Start, whole-degree
-candidate update, Save, and Cancel use firmware-owned session identity and
-report raw/effective temperature plus offset-adjusted safe target bounds. The
-contract fixes the candidate range at `90–120°C`, the signed offset range at
-`-20–10°C`, and both the effective Steam limit and independent raw ceiling at
-`135°C`. The strict Steam target range is `110–135°C`, inclusive. Exact
-`135°C` readings are permitted; either effective Steam or raw temperature
-strictly above `135°C` faults.
+```bash
+/tmp/philcoino-host-tests/firmware_api_test /tmp/philcoino-contract-v4
+bun run ./firmware/espresso-machine/host-tests/validate_contract.ts \
+  /tmp/philcoino-contract-v4
+```
 
-Cooldown, compensation, heater, pump, and calibration fields describe firmware
-acknowledgements and command policy only; they are not evidence of physical
-flow, steam, current, cooling, SSR state, or de-energization. Runtime layer
-support is introduced by the supervised PRD tasks after each contract change.
-Objects are strict: consumers must reject unknown fields rather than silently
-accept protocol drift.
-
-Change `openapi.yaml` first, then align schemas, fixtures, simulator, mobile,
-firmware parsing/serialization, contract captures, tests, and public docs. The
-firmware validates independently in C++; this package must not become a runtime
-dependency of embedded code.
-
-See [Architecture](../../docs/ARCHITECTURE.md) and the human-readable
-[API v1 outline](../../docs/protocol/api-v1-outline.md).
+See [API v4](../../docs/protocol/api-v4.md) and
+[Architecture](../../docs/ARCHITECTURE.md).

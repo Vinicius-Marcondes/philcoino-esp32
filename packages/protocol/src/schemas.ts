@@ -5,12 +5,6 @@ export const BREW_TARGET_MAX_C = 95;
 export const STEAM_TARGET_MIN_C = 110;
 export const STEAM_TARGET_MAX_C = 135;
 export const STEAM_TIMEOUT_MS = 300_000;
-export const STEAM_COMPENSATION_INITIAL_MIN_C = 0;
-export const STEAM_COMPENSATION_INITIAL_MAX_C = 20;
-export const STEAM_COMPENSATION_INITIAL_DEFAULT_C = 12;
-export const STEAM_COMPENSATION_DECAY_MIN_MS = 60_000;
-export const STEAM_COMPENSATION_DECAY_MAX_MS = 30 * 60_000;
-export const STEAM_COMPENSATION_DECAY_DEFAULT_MS = 12 * 60_000;
 export const STEAM_READY_TIMEOUT_MIN_MS = 60_000;
 export const STEAM_READY_TIMEOUT_MAX_MS = 15 * 60_000;
 export const STEAM_READY_TIMEOUT_DEFAULT_MS = STEAM_TIMEOUT_MS;
@@ -51,6 +45,7 @@ export const PROFILE_SLOT_IDS = [
 ] as const;
 
 export const ModeSchema = z.enum(["brew", "steam"]);
+export const TemperatureSensorSchema = z.enum(["boiler", "steam"]);
 export const MachineStatusSchema = z.enum(["heating", "ready", "fault"]);
 export const FaultCodeSchema = z.enum([
   "sensor_failure",
@@ -83,71 +78,29 @@ export const DeviceResponseSchema = z.strictObject({
     .regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/),
   name: z.string().min(1).max(64),
   model: z.string().min(1).max(64),
-  apiVersion: z.literal("3"),
+  apiVersion: z.literal("4"),
   firmwareVersion: z.string().min(1).max(32),
 });
 
 export const FaultSchema = z.strictObject({
   code: FaultCodeSchema,
   message: z.string().min(1).max(160),
+  sensor: TemperatureSensorSchema.nullable(),
 });
 
-export const SteamCompensationInitialSchema = z
-  .number()
-  .int()
-  .min(STEAM_COMPENSATION_INITIAL_MIN_C)
-  .max(STEAM_COMPENSATION_INITIAL_MAX_C);
-export const SteamCompensationDecaySchema = z
-  .number()
-  .int()
-  .min(STEAM_COMPENSATION_DECAY_MIN_MS)
-  .max(STEAM_COMPENSATION_DECAY_MAX_MS)
-  .multipleOf(STEAM_SETTING_TIME_STEP_MS);
 export const SteamReadyTimeoutSchema = z
   .number()
   .int()
   .min(STEAM_READY_TIMEOUT_MIN_MS)
   .max(STEAM_READY_TIMEOUT_MAX_MS)
   .multipleOf(STEAM_SETTING_TIME_STEP_MS);
-export const SteamControlSettingsSchema = z.strictObject({
-  initialCompensationC: SteamCompensationInitialSchema,
-  decayDurationMs: SteamCompensationDecaySchema,
-  readyTimeoutMs: SteamReadyTimeoutSchema,
-});
-export const SteamControlSettingsRequestSchema = z.union([
-  z.strictObject({
-    initialCompensationC: SteamCompensationInitialSchema,
-    decayDurationMs: SteamCompensationDecaySchema.optional(),
-    readyTimeoutMs: SteamReadyTimeoutSchema.optional(),
-  }),
-  z.strictObject({
-    initialCompensationC: SteamCompensationInitialSchema.optional(),
-    decayDurationMs: SteamCompensationDecaySchema,
-    readyTimeoutMs: SteamReadyTimeoutSchema.optional(),
-  }),
-  z.strictObject({
-    initialCompensationC: SteamCompensationInitialSchema.optional(),
-    decayDurationMs: SteamCompensationDecaySchema.optional(),
-    readyTimeoutMs: SteamReadyTimeoutSchema,
-  }),
-]);
-export const SteamControlStateSchema = z.strictObject({
-  settings: SteamControlSettingsSchema,
-  compensationActive: z.boolean(),
-  appliedCompensationC: z
-    .number()
-    .finite()
-    .min(STEAM_COMPENSATION_INITIAL_MIN_C)
-    .max(STEAM_COMPENSATION_INITIAL_MAX_C),
-  controlTemperatureC: z.number().finite().min(-40).max(180).nullable(),
-  heatSoakElapsedMs: z.number().int().nonnegative().safe().nullable(),
-});
-
 const machineStateShape = {
   activeMode: ModeSchema,
   boilerTemperatureC: z.number().finite().min(-60).max(180).nullable(),
+  steamTemperatureC: z.number().finite().min(-60).max(180).nullable(),
   brewTargetC: BrewTargetSchema,
   steamTargetC: SteamTargetSchema,
+  steamReadyTimeoutMs: SteamReadyTimeoutSchema,
   heaterEnabled: z.boolean(),
   heaterActive: z.boolean(),
   steamTimeoutRemainingMs: z
@@ -156,7 +109,6 @@ const machineStateShape = {
     .nonnegative()
     .max(STEAM_READY_TIMEOUT_MAX_MS)
     .nullable(),
-  steamControl: SteamControlStateSchema,
   uptimeMs: z.number().int().nonnegative(),
 };
 
@@ -212,22 +164,19 @@ export const TemperatureCalibrationOffsetSchema = z
   .max(TEMPERATURE_CALIBRATION_OFFSET_MAX_C);
 export const TemperatureCalibrationSafeTargetBoundsSchema = z
   .strictObject({
-    brewMinimumC: z.literal(BREW_TARGET_MIN_C),
-    brewMaximumC: BrewTargetSchema,
-    steamMinimumC: z.literal(STEAM_TARGET_MIN_C),
-    steamMaximumC: SteamTargetSchema,
+    minimumC: z.number().int(),
+    maximumC: z.number().int(),
   })
   .refine(
-    (bounds) =>
-      bounds.brewMaximumC >= bounds.brewMinimumC &&
-      bounds.steamMaximumC >= bounds.steamMinimumC,
+    (bounds) => bounds.maximumC >= bounds.minimumC,
     { message: "Safe target maxima must not be below their minima." },
   );
 
 const temperatureCalibrationStateShape = {
+  sensor: TemperatureSensorSchema,
   savedOffsetC: TemperatureCalibrationOffsetSchema,
-  boilerTemperatureRawC: z.number().finite().min(-40).max(160).nullable(),
-  boilerTemperatureC: z.number().finite().min(-60).max(170).nullable(),
+  temperatureRawC: z.number().finite().min(-40).max(160).nullable(),
+  temperatureC: z.number().finite().min(-60).max(170).nullable(),
   heaterActive: z.boolean(),
   ready: z.boolean(),
   safeTargetBounds: TemperatureCalibrationSafeTargetBoundsSchema,
@@ -278,6 +227,27 @@ export const TemperatureCalibrationStateSchema = z.discriminatedUnion(
     CalibratedTemperatureCalibrationStateSchema,
   ],
 );
+export const TemperatureCalibrationsSchema = z
+  .strictObject({
+    boiler: TemperatureCalibrationStateSchema,
+    steam: TemperatureCalibrationStateSchema,
+  })
+  .superRefine((calibrations, context) => {
+    if (calibrations.boiler.sensor !== "boiler") {
+      context.addIssue({
+        code: "custom",
+        path: ["boiler", "sensor"],
+        message: "The Boiler calibration must identify the Boiler sensor.",
+      });
+    }
+    if (calibrations.steam.sensor !== "steam") {
+      context.addIssue({
+        code: "custom",
+        path: ["steam", "sensor"],
+        message: "The Steam calibration must identify the Steam sensor.",
+      });
+    }
+  });
 export const UpdateTemperatureCalibrationCandidateRequestSchema =
   z.strictObject({
     calibrationId: TemperatureCalibrationSessionIdSchema,
@@ -781,6 +751,7 @@ export const ExtractionTelemetrySampleSchema = z.strictObject({
   extractionElapsedMs: ExtractionElapsedMsSchema,
   phase: ExtractionTelemetryPhaseSchema,
   boilerTemperatureC: z.number().finite().min(-60).max(180).nullable(),
+  steamTemperatureC: z.number().finite().min(-60).max(180).nullable(),
   activeTargetC: BrewTargetSchema,
   heaterActive: z.boolean(),
   pumpCommand: PumpCommandSchema,
@@ -789,7 +760,7 @@ export const ExtractionTelemetrySampleSchema = z.strictObject({
 });
 export const ExtractionTelemetryPageSchema = z
   .strictObject({
-    version: z.literal(1),
+    version: z.literal(2),
     deviceId: DeviceResponseSchema.shape.deviceId,
     extractionId: ExtractionIdSchema,
     bootId: ExtractionTelemetryCursorSchema.shape.bootId,
@@ -992,7 +963,7 @@ export const PairingCompleteResponseSchema = z.strictObject({
 });
 
 export const PairingDeviceBindingSchema = z.strictObject({
-  domain: z.literal("philcoino:v3:device-binding"),
+  domain: z.literal("philcoino:v4:device-binding"),
   sessionId: PairingSessionIdSchema,
   clientNonce: Base64Url256Schema,
   deviceId: DeviceResponseSchema.shape.deviceId,
@@ -1000,7 +971,7 @@ export const PairingDeviceBindingSchema = z.strictObject({
 });
 
 export const PairingClientBindingSchema = z.strictObject({
-  domain: z.literal("philcoino:v3:client-binding"),
+  domain: z.literal("philcoino:v4:client-binding"),
   sessionId: PairingSessionIdSchema,
   clientId: PairingClientIdSchema,
   clientNonce: Base64Url256Schema,
@@ -1012,7 +983,7 @@ export const SettingsRequestSchema = z
   .strictObject({
     brewTargetC: BrewTargetSchema.optional(),
     steamTargetC: SteamTargetSchema.optional(),
-    steamControl: SteamControlSettingsRequestSchema.optional(),
+    steamReadyTimeoutMs: SteamReadyTimeoutSchema.optional(),
   })
   .refine((settings) => Object.values(settings).some((value) => value !== undefined), {
     message: "At least one setting is required.",
@@ -1020,16 +991,16 @@ export const SettingsRequestSchema = z
 
 const RevisionSchema = z.number().int().nonnegative().safe();
 
-export const MachineStateV3Schema = z
+export const MachineStateV4Schema = z
   .strictObject({
-    apiVersion: z.literal("3"),
+    apiVersion: z.literal("4"),
     device: DeviceResponseSchema,
     bootId: BootIdSchema,
     revision: RevisionSchema,
     capturedAtUptimeMs: z.number().int().nonnegative().safe(),
     machine: MachineStateSchema,
     scale: ScaleStateSchema,
-    temperatureCalibration: TemperatureCalibrationStateSchema,
+    temperatureCalibrations: TemperatureCalibrationsSchema,
     extraction: ExtractionStateSchema,
     compensation: CompensationStateSchema,
     cooldown: CooldownStateSchema,
@@ -1116,19 +1087,13 @@ export const ApiErrorResponseSchema = z.strictObject({
   }),
 });
 export type Mode = z.infer<typeof ModeSchema>;
+export type TemperatureSensor = z.infer<typeof TemperatureSensorSchema>;
 export type MachineStatus = z.infer<typeof MachineStatusSchema>;
 export type FaultCode = z.infer<typeof FaultCodeSchema>;
 export type HealthResponse = z.infer<typeof HealthResponseSchema>;
 export type DeviceResponse = z.infer<typeof DeviceResponseSchema>;
 export type Fault = z.infer<typeof FaultSchema>;
 export type MachineState = z.infer<typeof MachineStateSchema>;
-export type SteamControlSettings = z.infer<
-  typeof SteamControlSettingsSchema
->;
-export type SteamControlSettingsRequest = z.infer<
-  typeof SteamControlSettingsRequestSchema
->;
-export type SteamControlState = z.infer<typeof SteamControlStateSchema>;
 export type TemperatureSettingsRequest = z.infer<
   typeof TemperatureSettingsRequestSchema
 >;
@@ -1158,6 +1123,9 @@ export type CalibratedTemperatureCalibrationState = z.infer<
 >;
 export type TemperatureCalibrationState = z.infer<
   typeof TemperatureCalibrationStateSchema
+>;
+export type TemperatureCalibrations = z.infer<
+  typeof TemperatureCalibrationsSchema
 >;
 export type UpdateTemperatureCalibrationCandidateRequest = z.infer<
   typeof UpdateTemperatureCalibrationCandidateRequestSchema
@@ -1226,7 +1194,7 @@ export type CooldownOutcome = z.infer<typeof CooldownOutcomeSchema>;
 export type IdleCooldownState = z.infer<typeof IdleCooldownStateSchema>;
 export type ActiveCooldownState = z.infer<typeof ActiveCooldownStateSchema>;
 export type CooldownState = z.infer<typeof CooldownStateSchema>;
-export type MachineStateV3 = z.infer<typeof MachineStateV3Schema>;
+export type MachineStateV4 = z.infer<typeof MachineStateV4Schema>;
 export type PairingSessionStartRequest = z.infer<typeof PairingSessionStartRequestSchema>;
 export type PairingSessionStartResponse = z.infer<typeof PairingSessionStartResponseSchema>;
 export type PairingSessionProofRequest = z.infer<typeof PairingSessionProofRequestSchema>;

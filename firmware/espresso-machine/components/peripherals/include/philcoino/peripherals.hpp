@@ -22,6 +22,7 @@ enum class ThermocoupleStatus {
   kNotReady,
   kOpenCircuit,
   kInvalidFrame,
+  kImplausibleDrop,
   kTransportError,
 };
 
@@ -29,6 +30,13 @@ struct ThermocoupleReading {
   ThermocoupleStatus status{ThermocoupleStatus::kNotReady};
   float temperature_c{0.0F};
   std::uint16_t raw_frame{0};
+};
+
+enum class TemperatureSensor { kBoiler, kSteam };
+
+struct TemperatureReadings {
+  ThermocoupleReading boiler{};
+  ThermocoupleReading steam{};
 };
 
 class Max6675Transport {
@@ -49,6 +57,8 @@ class Max6675 {
 
   Max6675Transport& transport_;
   std::uint32_t ready_at_ms_;
+  bool accepted_temperature_available_{false};
+  float last_accepted_temperature_c_{0.0F};
 };
 
 enum class Hx711Status {
@@ -118,6 +128,11 @@ struct TemperatureCalibration {
   bool calibrated{false};
 };
 
+struct TemperatureCalibrations {
+  TemperatureCalibration boiler{};
+  TemperatureCalibration steam{};
+};
+
 bool temperature_calibration_is_valid(
     const TemperatureCalibration& calibration);
 float effective_temperature_c(float raw_temperature_c,
@@ -126,14 +141,12 @@ bool target_is_reachable(std::int32_t effective_target_c,
                          const TemperatureCalibration& calibration);
 bool targets_are_reachable(const TemperatureTargets& targets,
                            const TemperatureCalibration& calibration);
+bool targets_are_reachable(const TemperatureTargets& targets,
+                           const TemperatureCalibrations& calibrations);
 
 enum class BackendLoadResult { kOk, kNotFound, kError };
 
 struct SteamControlSettings {
-  std::int32_t initial_compensation_c{
-      config::kSteamCompensationInitialDefaultC};
-  std::uint32_t decay_duration_ms{
-      config::kSteamCompensationDecayDefaultMs};
   std::uint32_t ready_timeout_ms{config::kSteamReadyTimeoutMs};
 };
 

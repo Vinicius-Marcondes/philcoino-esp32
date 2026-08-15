@@ -1,5 +1,11 @@
 # ESP32-C3 hardware wiring
 
+> [!IMPORTANT]
+> Historical/superseded record only. Current firmware no longer supports the
+> ESP32-C3. Use [ESP32-S3-WROOM-1 N16R8 wiring](esp32-s3-n16r8-wiring.md).
+> Nothing accepted on this C3 configuration validates the S3 GPIO map, dual
+> probes, native USB boot behavior, GPIO21 heater command, or Steam placement.
+
 Status: DRAFT — NOT ELECTRICALLY OR MAINS-SAFETY APPROVED
 
 ## Proposed modules and pins

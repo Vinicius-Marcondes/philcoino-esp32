@@ -133,6 +133,7 @@ function historySample(): TemperatureHistorySample {
     activeMode: "brew" as const,
     activeTargetC: 93,
     boilerTemperatureC: 92,
+    steamTemperatureC: 114,
     brewTargetC: 93,
     deviceId: "machine-1",
     faultCode: null,

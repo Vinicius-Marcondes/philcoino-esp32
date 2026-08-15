@@ -1,5 +1,9 @@
 # ESP32 API v1 outline
 
+> [!IMPORTANT]
+> Historical/superseded protocol record. Current firmware serves API v4 only;
+> see [API v4](api-v4.md).
+
 Status: IMPLEMENTED
 
 API v1 remains temperature-control-only. See

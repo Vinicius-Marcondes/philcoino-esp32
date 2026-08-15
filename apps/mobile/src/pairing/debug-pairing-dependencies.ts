@@ -93,7 +93,7 @@ export const createDebugPairingClient: PairingClientFactory = () => {
         certificateSpkiSha256: debugSelectedDevice.certificateSpkiSha256,
         clientNonce,
         deviceId: debugDeviceIdentity.deviceId,
-        domain: "philcoino:v3:device-binding",
+        domain: "philcoino:v4:device-binding",
         sessionId: SESSION_ID,
       });
     },

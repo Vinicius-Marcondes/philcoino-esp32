@@ -1,0 +1,5 @@
+{
+  "brewTargetC": 93,
+  "steamTargetC": 120,
+  "steamReadyTimeoutMs": 300000
+}

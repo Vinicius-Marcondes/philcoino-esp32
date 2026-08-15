@@ -168,10 +168,10 @@ jobs:
         if: steps.esp-idf-relevance.outputs.should_build != 'true'
         run: echo "No firmware, protocol, or ESP-IDF CI inputs changed; target build is not applicable."
 
-      - name: Build ESP32-C3 firmware
+      - name: Build ESP32-S3 firmware
         if: steps.esp-idf-relevance.outputs.should_build == 'true'
         uses: espressif/esp-idf-ci-action@v1
         with:
           esp_idf_version: v6.0.2
-          target: esp32c3
+          target: esp32s3
           path: firmware/espresso-machine

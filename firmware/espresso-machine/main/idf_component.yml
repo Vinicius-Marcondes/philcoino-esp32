@@ -6,4 +6,4 @@ dependencies:
     version: ab50d09f924e3d5ecf8590ab71386caa72a8e282
     require: private
 targets:
-  - esp32c3
+  - esp32s3

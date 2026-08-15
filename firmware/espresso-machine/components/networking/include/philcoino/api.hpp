@@ -12,7 +12,7 @@ namespace philcoino::networking {
 struct ApiRouteDescriptor;
 class PairingService;
 
-inline constexpr char kApiVersion[] = "3";
+inline constexpr char kApiVersion[] = "4";
 inline constexpr char kMdnsServiceType[] = "_philcoino";
 inline constexpr char kMdnsProtocol[] = "_tcp";
 inline constexpr std::uint16_t kHttpsPort = 443;
@@ -55,7 +55,9 @@ class FirmwareApi {
               control::TemperatureController& controller,
               peripherals::TargetStorage& target_storage,
               peripherals::TemperatureCalibrationStorage&
-                  temperature_calibration_storage,
+                  boiler_temperature_calibration_storage,
+              peripherals::TemperatureCalibrationStorage&
+                  steam_temperature_calibration_storage,
               control::ExtractionController& extraction_controller,
               control::CooldownController& cooldown_controller,
               peripherals::ScaleCalibrationStorage& scale_calibration_storage,
@@ -76,7 +78,7 @@ class FirmwareApi {
 
  private:
   HttpResponse health(std::uint64_t uptime_ms) const;
-  HttpResponse state_v3(std::uint64_t uptime_ms);
+  HttpResponse state_v4(std::uint64_t uptime_ms);
   HttpResponse acknowledged_mutation(HttpResponse response,
                                      std::uint64_t uptime_ms);
   HttpResponse update_settings(const std::string& body,
@@ -86,14 +88,19 @@ class FirmwareApi {
   HttpResponse update_heater(const std::string& body,
                              std::uint64_t uptime_ms);
   HttpResponse dismiss_over_temperature(std::uint64_t uptime_ms);
-  HttpResponse start_temperature_calibration(std::uint64_t uptime_ms);
+  HttpResponse start_temperature_calibration(
+      peripherals::TemperatureSensor sensor, std::uint64_t uptime_ms);
   HttpResponse update_temperature_calibration_candidate(
-      const std::string& body, std::uint64_t uptime_ms);
-  HttpResponse save_temperature_calibration(const std::string& body,
+      peripherals::TemperatureSensor sensor, const std::string& body,
+      std::uint64_t uptime_ms);
+  HttpResponse save_temperature_calibration(
+      peripherals::TemperatureSensor sensor, const std::string& body,
                                             std::uint64_t uptime_ms);
-  HttpResponse cancel_temperature_calibration(const std::string& body,
+  HttpResponse cancel_temperature_calibration(
+      peripherals::TemperatureSensor sensor, const std::string& body,
                                               std::uint64_t uptime_ms);
-  HttpResponse renew_temperature_calibration(const std::string& body,
+  HttpResponse renew_temperature_calibration(
+      peripherals::TemperatureSensor sensor, const std::string& body,
                                              std::uint64_t uptime_ms);
   HttpResponse start_scale_calibration(std::uint64_t uptime_ms);
   HttpResponse complete_scale_calibration(const std::string& body,
@@ -112,7 +119,9 @@ class FirmwareApi {
   control::TemperatureController& controller_;
   peripherals::TargetStorage& target_storage_;
   peripherals::TemperatureCalibrationStorage&
-      temperature_calibration_storage_;
+      boiler_temperature_calibration_storage_;
+  peripherals::TemperatureCalibrationStorage&
+      steam_temperature_calibration_storage_;
   control::ExtractionController& extraction_controller_;
   control::CooldownController& cooldown_controller_;
   peripherals::ScaleCalibrationStorage& scale_calibration_storage_;

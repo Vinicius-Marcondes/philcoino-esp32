@@ -26,17 +26,16 @@ These references inform engineering work; they do not constitute electrical, mai
 - [Zod basics](https://zod.dev/basics): runtime validation of ESP32 payloads in the mobile app and simulator.
 - [OpenAPI 3.1.1 specification](https://spec.openapis.org/oas/v3.1.1.html): language-neutral API contract source of truth.
 
-## ESP32-C3 and ESP-IDF
+## ESP32-S3 and ESP-IDF
 
-- [ESP-IDF v6.0.2 ESP32-C3 programming guide](https://docs.espressif.com/projects/esp-idf/en/v6.0.2/esp32c3/): project-pinned firmware documentation.
-- [ESP32-C3 datasheet](https://documentation.espressif.com/ESP32-C3_Datasheet_en.pdf): electrical characteristics, pins, boot strapping, and power-up behavior.
-- [ESP32-C3 technical reference manual](https://documentation.espressif.com/esp32-c3_technical_reference_manual_en.pdf): peripheral and register-level reference.
-- [ESP-IDF v6.0.2 GPIO](https://docs.espressif.com/projects/esp-idf/en/v6.0.2/esp32c3/api-reference/peripherals/gpio.html): GPIO restrictions and configuration.
-- [ESP-IDF v6.0.2 I2C](https://docs.espressif.com/projects/esp-idf/en/v6.0.2/esp32c3/api-reference/peripherals/i2c.html): SSD1306 bus implementation.
-- [ESP-IDF v6.0.2 GPIO](https://docs.espressif.com/projects/esp-idf/en/v6.0.2/esp32c3/api-reference/peripherals/gpio.html): explicit MAX6675 SCK, CS, and SO GPIO implementation.
-- [ESP-IDF v6.0.2 NVS](https://docs.espressif.com/projects/esp-idf/en/v6.0.2/esp32c3/api-reference/storage/nvs_flash.html): persisted temperature targets and configuration.
-- [ESP-IDF v6.0.2 HTTP server](https://docs.espressif.com/projects/esp-idf/en/v6.0.2/esp32c3/api-reference/protocols/esp_http_server.html): firmware HTTP API implementation.
-- [ESP-IDF v6.0.2 component manager](https://docs.espressif.com/projects/esp-idf/en/v6.0.2/esp32c3/api-guides/tools/idf-component-manager.html): managed dependency manifests and lock files.
+- [ESP-IDF v6.0.2 ESP32-S3 programming guide](https://docs.espressif.com/projects/esp-idf/en/v6.0.2/esp32s3/): project-pinned firmware documentation.
+- [ESP32-S3 datasheet](https://documentation.espressif.com/esp32-s3_datasheet_en.pdf): electrical characteristics, GPIOs, strapping, flash/PSRAM, and USB.
+- [ESP32-S3 technical reference manual](https://documentation.espressif.com/esp32-s3_technical_reference_manual_en.pdf): peripheral and register-level reference.
+- [ESP-IDF v6.0.2 GPIO](https://docs.espressif.com/projects/esp-idf/en/v6.0.2/esp32s3/api-reference/peripherals/gpio.html): GPIO restrictions and MAX6675/dimmer configuration.
+- [ESP-IDF v6.0.2 USB Serial/JTAG](https://docs.espressif.com/projects/esp-idf/en/v6.0.2/esp32s3/api-guides/usb-serial-jtag-console.html): native USB console and recovery behavior.
+- [ESP-IDF v6.0.2 NVS](https://docs.espressif.com/projects/esp-idf/en/v6.0.2/esp32s3/api-reference/storage/nvs_flash.html): persisted targets and independent sensor calibration.
+- [ESP-IDF v6.0.2 HTTPS server](https://docs.espressif.com/projects/esp-idf/en/v6.0.2/esp32s3/api-reference/protocols/esp_https_server.html): firmware HTTPS API implementation.
+- [ESP-IDF v6.0.2 component manager](https://docs.espressif.com/projects/esp-idf/en/v6.0.2/esp32s3/api-guides/tools/idf-component-manager.html): managed dependency manifests and lock files.
 - [Espressif mDNS component 1.11.3](https://components.espressif.com/components/espressif/mdns/versions/1.11.3/readme): pinned `_philcoino._tcp` discovery dependency.
 - [rbdimmerESP32 2.0.1 manifest](https://github.com/robotdyn-dimmer/rbdimmerESP32/blob/ab50d09f924e3d5ecf8590ab71386caa72a8e282/idf_component.yml): native ESP-IDF phase-angle dimmer metadata at the immutable Git dependency commit; 2.0.1 is not published in the ESP Component Registry.
 - [rbdimmerESP32 ESP-IDF guide](https://www.rbdimmer.com/docs/dimmers-universal-library-for-esp32-esp-idf-fraimwork-c-guide-and-examples): initialization, zero-cross registration, channel creation, and level-control flow.

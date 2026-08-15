@@ -1,5 +1,5 @@
 import {
-  MachineStateV3Schema,
+  MachineStateV4Schema,
   PairingCompleteResponseSchema,
   PairingSessionProofResponseSchema,
   PairingSessionStartResponseSchema,
@@ -23,11 +23,11 @@ export const createNativePairingClient: PairingClientFactory = ({
   address,
 }): PairingDeviceClient => ({
   secureRandom(byteLength) {
-    requireNativePairingV3();
+    requireNativePairingV4();
     return secureTransport.secureRandom(byteLength);
   },
   async startSession(request, options) {
-    const path = "/api/v3/pairing/sessions";
+    const path = "/api/v4/pairing/sessions";
     const response = await jsonPairingRequest(address, path, request, undefined, options?.signal);
     if (response.status !== 200) throw pairingResponseError(response, path);
     return {
@@ -39,7 +39,7 @@ export const createNativePairingClient: PairingClientFactory = ({
   },
 
   async submitProof(sessionId, request, options) {
-    const path = `/api/v3/pairing/sessions/${sessionId}/proof`;
+    const path = `/api/v4/pairing/sessions/${sessionId}/proof`;
     const response = await jsonPairingRequest(address, path, request, undefined, options?.signal);
     if (response.status !== 200) throw pairingResponseError(response, path);
     return {
@@ -51,7 +51,7 @@ export const createNativePairingClient: PairingClientFactory = ({
   },
 
   async completeSession(sessionId, request, certificatePin, options) {
-    const path = `/api/v3/pairing/sessions/${sessionId}/complete`;
+    const path = `/api/v4/pairing/sessions/${sessionId}/complete`;
     const response = await jsonPairingRequest(
       address,
       path,
@@ -66,7 +66,7 @@ export const createNativePairingClient: PairingClientFactory = ({
   },
 
   async getState(credentials, options) {
-    return MachineStateV3Schema.parse(
+    return MachineStateV4Schema.parse(
       await new DeviceApiClient({
         accessToken: credentials.accessToken,
         certificateSpkiSha256: credentials.certificatePin,
@@ -77,7 +77,7 @@ export const createNativePairingClient: PairingClientFactory = ({
   },
 
   srpStart(sessionHandle, pairingCode) {
-    requireNativePairingV3();
+    requireNativePairingV4();
     return secureTransport.srpStart(sessionHandle, pairingCode);
   },
   srpProcessChallenge(sessionHandle, salt, serverPublicKey) {
@@ -97,7 +97,7 @@ export const createNativePairingClient: PairingClientFactory = ({
   },
 });
 
-function requireNativePairingV3(): void {
+function requireNativePairingV4(): void {
   if (
     secureTransport.pairingProtocolVersion === 4 &&
     typeof secureTransport.secureRandom === "function" &&

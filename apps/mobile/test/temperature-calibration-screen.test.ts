@@ -13,9 +13,10 @@ describe("temperature calibration presentation", () => {
   test("derives raw, effective preview, offset, stability, lease, and bounds from acknowledged state", () => {
     const snapshot: TemperatureCalibrationState = {
       status: "calibrating",
+      sensor: "steam",
       savedOffsetC: 0,
-      boilerTemperatureRawC: 108.2,
-      boilerTemperatureC: 108.2,
+      temperatureRawC: 108.2,
+      temperatureC: 108.2,
       heaterActive: true,
       ready: true,
       safeTargetBounds: safeBounds(0),
@@ -35,7 +36,7 @@ describe("temperature calibration presentation", () => {
       effectivePreviewC: 100.2,
       leaseSeconds: 15,
       offsetPreviewC: -8,
-      previewSteamMaximumC: 127,
+      previewMaximumC: 127,
       rawTemperatureC: 108.2,
       savedOffsetC: 0,
     });
@@ -86,7 +87,7 @@ describe("temperature calibration component wiring", () => {
     expect(controls).toContain("onOpenTemperatureCalibration");
     expect(dashboard).toContain("<TemperatureCalibrationScreen");
     expect(dashboard).toContain(
-      "setTemperatureCalibrationOpen(true)",
+      "setTemperatureCalibrationSensor",
     );
     expect(dashboard).not.toContain(
       'type DashboardPage = "temperature-calibration"',
@@ -151,9 +152,10 @@ function activeAt(candidateRawTargetC: number): TemperatureCalibrationState {
   const offsetPreviewC = 100 - candidateRawTargetC;
   return {
     status: "calibrating",
+    sensor: "steam",
     savedOffsetC: 0,
-    boilerTemperatureRawC: candidateRawTargetC,
-    boilerTemperatureC: candidateRawTargetC,
+    temperatureRawC: candidateRawTargetC,
+    temperatureC: candidateRawTargetC,
     heaterActive: false,
     ready: false,
     safeTargetBounds: safeBounds(0),
@@ -168,9 +170,7 @@ function activeAt(candidateRawTargetC: number): TemperatureCalibrationState {
 
 function safeBounds(offsetC: number) {
   return {
-    brewMinimumC: 85 as const,
-    brewMaximumC: Math.min(95, 135 + offsetC),
-    steamMinimumC: 110 as const,
-    steamMaximumC: Math.min(135, 135 + offsetC),
+    minimumC: 110 as const,
+    maximumC: Math.min(135, 135 + offsetC),
   };
 }

@@ -20,19 +20,12 @@ std::string serialize_health(std::uint64_t uptime_ms);
 std::string serialize_device(const DeviceIdentity& identity);
 std::string serialize_state(const control::ControlSnapshot& snapshot,
                             std::uint64_t uptime_ms);
-std::string serialize_steam_control(
-    const control::SteamControlSnapshot& snapshot);
 bool parse_temperatures(const std::string& body,
                         peripherals::TemperatureTargets current,
                         peripherals::TemperatureTargets& updated,
                         bool& constraint_violation);
 bool parse_mode(const std::string& body, control::ControlMode& mode);
 bool parse_heater_enabled(const std::string& body, bool& enabled);
-bool parse_steam_control_settings(
-    const std::string& body,
-    peripherals::SteamControlSettings current,
-    peripherals::SteamControlSettings& updated,
-    bool& constraint_violation);
 bool parse_settings(
     const std::string& body,
     peripherals::TemperatureTargets current_targets,

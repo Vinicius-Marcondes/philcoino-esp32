@@ -18,7 +18,7 @@ inline constexpr std::uint64_t kPairingSessionLifetimeMs = 90'000;
 inline constexpr std::size_t kSrpPublicKeyBytes = 384;
 inline constexpr std::size_t kSrpProofBytes = 64;
 inline constexpr std::size_t kPairingNonceBytes = 12;
-inline constexpr char kPairingSrpUsername[] = "philcoino-v3";
+inline constexpr char kPairingSrpUsername[] = "philcoino-v4";
 
 using Secret256 = std::array<std::uint8_t, kPairingSecretBytes>;
 using PairingNonce = std::array<std::uint8_t, kPairingNonceBytes>;

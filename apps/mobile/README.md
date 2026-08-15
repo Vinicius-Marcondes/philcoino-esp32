@@ -1,95 +1,59 @@
 # Philcoino mobile app
 
-Expo 54 / React Native client for discovering, pairing with, monitoring, and submitting acknowledged changes to one local Philcoino machine.
+Expo 54 / React Native client for discovering, pairing with, monitoring, and
+submitting acknowledged requests to one API v4 Philcoino machine. Firmware—not
+the phone—owns sensors, targets, persistence, control, outputs, timeouts, and
+faults.
 
-The app is a client, not the temperature-control authority. Firmware owns sensors, targets, persistence, readiness, timeouts, heater output, and faults.
+This generation must be rebuilt and freshly paired. API v3 is unsupported, the
+ESP32-S3 has a new identity, and API v4 uses new SRP binding domains.
 
-Machine also opens a focused Temperature Calibration modal. Its dedicated
-session reads and mutates only the strict API v2 calibration resource, presents
-requested candidates only after acknowledgement, cancels on lifecycle exit,
-and never commands the pump or steam valve. The user opens the wand manually,
-adjusts the raw target in whole degrees, reviews the derived global offset, and
-explicitly confirms Save.
+## Runtime behavior
 
-## Runtime flow
+The app restores one strict SecureStore device record, revalidates identity,
+then uses pinned HTTPS and completion-driven acknowledged state. It never
+publishes a requested mutation as live state before a valid response.
 
-```text
-PairingScreen
-  -> restore cached SecureStore record
-  -> inspect cached address or rediscover stable device ID
-  -> authenticate bearer token
-  -> DashboardScreen
-       -> one completion-driven state poll per second
-       -> serialized mutations with polling paused
-       -> live state updates only from valid acknowledgements
-```
+Dashboard always labels Boiler and Steam temperatures and emphasizes the sensor
+controlling the active mode. History and extraction charts draw independent
+lines and preserve nullable gaps. Machine provides separate Boiler and Steam
+calibration actions through one parameterized screen; only one firmware session
+can run. Steam settings contain only the 1–15 minute ready timeout.
 
-Key code boundaries:
+Temperature history uses SQLite schema version 8 with nullable Boiler and Steam
+columns. Migrated rows preserve the old boiler value and store Steam as `NULL`;
+obsolete Steam compensation metadata is discarded. Saved shot traces likewise
+add nullable Steam temperature without rewriting older records. Both status and
+shot CSV exports include the two sensor values.
 
-- `app`: Expo Router entry and layout;
-- `components`: pairing, dashboard, controls, and presentation;
-- `src/discovery`: mDNS abstraction and strict TXT/address parsing;
-- `src/pairing`: inspection, authentication, persistence, and address recovery;
-- `src/networking`: strict API client, cancellation/timeouts, and error mapping;
-- `src/storage`: strict one-device record and Expo SecureStore adapter;
-  strict app-local display preferences are stored separately and never cleared
-  when a machine is forgotten;
-- `src/profiles`: seeded app-wide four-slot profile set stored only on the phone;
-- `src/dashboard`: polling, acknowledged mutations, and pure view models;
-- `src/history`: indefinite local status/shot persistence, migration, and CSV export;
-- `src/telemetry`: persistent extraction-stream replay and shared plot geometry;
-- `test`: Bun tests for the above boundaries.
+## Code boundaries
 
-## Run
+- `src/networking`: API v4 parsing, pinned transport, timeouts, cancellation.
+- `src/discovery` and `src/pairing`: strict v4 mDNS identity and SRP pairing.
+- `src/dashboard`: serialized polling/mutation sessions and presentation data.
+- `src/history`: SQLite v8 migration, dual-temperature rows, CSV export.
+- `src/telemetry`: extraction telemetry v2 replay and chart geometry.
+- `components`: dual readings, charts, extraction console, and calibration UI.
 
-From the repository root after `bun install`:
+## Run and verify
 
 ```bash
 bun run start
-```
-
-Use `bun run ios`, `bun run android`, or `bun run web` for a target. Native mDNS requires an iOS/Android development build and local-network permissions; web/unsupported platforms use manual address entry.
-
-## Debug-device mode
-
-Exercise discovery, token entry, and the dashboard without mDNS, SecureStore, or
-HTTP:
-
-```bash
-EXPO_PUBLIC_PHILCOINO_DEBUG_DEVICE=1 bun run start
-```
-
-The simulated scan finds one `Philcoino debug` machine. Select it and enter
-`debug-token` to continue to the in-memory dashboard. A wrong token shows the
-normal authentication error, forgetting the machine returns to scanning, and a
-reload starts the flow from the scan screen again. Use the device simulator for
-API integration work.
-
-Debug mode also supplies the PRD-002 API v2 dashboard through the same client
-boundary using deterministic in-memory acknowledgements rather than HTTP. The
-five-tab navigation separates Dashboard, Profiles, Machine, Scale, and Shots.
-Dashboard graphs today's locally stored state; Machine exports or clears all
-status rows; Scale owns diagnostics/calibration/defaults; Shots is the sole
-history list/detail/export/clear surface. The full-screen extraction console is
-Start/Stop plus live 250 ms telemetry and shows a simple ready state when idle.
-
-Outside debug mode the same pages use API v2 combined polling and acknowledged
-Start/Stop mutations. Profiles persist only in mobile SecureStore, and each
-profile Start includes the exact selected snapshot; no machine profile read,
-synchronization, import, or export exists.
-
-## Simulator integration
-
-Run `bun run simulator` at the repository root, manually enter a reachable simulator address, and use `philcoino-dev-token`. A physical phone cannot reach a computer through the phone's own `localhost`; use the computer's LAN address.
-
-## Verify
-
-```bash
+bun run ios
+bun run android
 bun run typecheck
 bun run --cwd apps/mobile test
 bun run lint
 ```
 
-Also exercise the affected platform for UI, discovery, permissions, native configuration, or lifecycle changes.
+Native mDNS/pairing requires a rebuilt iOS/Android development app and local
+network permissions. Debug-device mode remains available for presentation-only
+work:
 
-See the root [development guide](../../docs/DEVELOPMENT.md), [architecture](../../docs/ARCHITECTURE.md), and [safety status](../../docs/en/SAFETY.md).
+```bash
+EXPO_PUBLIC_PHILCOINO_DEBUG_DEVICE=1 bun run start
+```
+
+See [Development](../../docs/DEVELOPMENT.md),
+[Architecture](../../docs/ARCHITECTURE.md), and
+[Safety](../../docs/en/SAFETY.md).

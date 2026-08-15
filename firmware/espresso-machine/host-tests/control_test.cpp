@@ -236,15 +236,18 @@ ThermocoupleReading open_boiler() {
   return value;
 }
 
+TemperatureReadings readings(float boiler_c, float steam_c) {
+  return {reading(boiler_c), reading(steam_c)};
+}
+
 struct ControllerHarness {
   explicit ControllerHarness(
       TemperatureTargets targets = {},
       TemperatureCalibration calibration = {},
       SteamControlSettings steam_settings = {
-          0,
-          philcoino::config::kSteamCompensationDecayDefaultMs,
           philcoino::config::kSteamReadyTimeoutMs})
-      : controller(targets, calibration, steam_settings, ssr) {
+      : controller(targets, {calibration, calibration}, steam_settings, ssr,
+                   {reading(25.0F), reading(25.0F)}) {
     assert(ssr.initialize());
   }
 
@@ -1183,6 +1186,81 @@ void test_boiler_sensor_fault_latches_off() {
   assert(!snapshot.heater_enabled);
 }
 
+void test_dual_sensor_mode_selection_failure_isolation_and_no_fallback() {
+  ControllerHarness harness({93, 115});
+
+  auto snapshot = harness.controller.update(
+      {reading(93.0F), open_boiler()}, PumpCommand::kOff, 0);
+  assert(!snapshot.fault_active);
+  assert(snapshot.steam_temperature.status == ThermocoupleStatus::kOpenCircuit);
+  assert(!harness.controller.set_mode(ControlMode::kSteam, 100));
+  assert(harness.controller.mode() == ControlMode::kBrew);
+  assert(!snapshot.heater_enabled);
+
+  snapshot = harness.controller.update(readings(93.0F, 110.0F),
+                                       PumpCommand::kOff, 500);
+  assert(harness.controller.set_mode(ControlMode::kSteam, 600));
+  assert(!harness.output.level);
+
+  snapshot = harness.controller.update(
+      {open_boiler(), reading(110.0F)}, PumpCommand::kOff, 1000);
+  assert(!snapshot.fault_active);
+  assert(snapshot.mode == ControlMode::kSteam);
+
+  for (std::uint32_t sample = 0;
+       sample < philcoino::config::kSensorFailureConsecutiveSamples;
+       ++sample) {
+    snapshot = harness.controller.update(
+        {reading(93.0F), open_boiler()}, PumpCommand::kOff,
+        1500U + sample * 500U);
+    assert(!snapshot.heater_enabled);
+  }
+  assert(snapshot.fault_active);
+  assert(snapshot.fault.code == FaultCode::kSensorFailure);
+  assert(snapshot.fault.sensor_available);
+  assert(snapshot.fault.sensor == TemperatureSensor::kSteam);
+}
+
+void test_raw_over_temperature_from_either_sensor_is_attributed() {
+  ControllerHarness boiler({93, 115});
+  auto snapshot = boiler.controller.update(readings(135.25F, 25.0F),
+                                           PumpCommand::kOff, 0);
+  assert(snapshot.fault.code == FaultCode::kOverTemperature);
+  assert(snapshot.fault.sensor == TemperatureSensor::kBoiler);
+
+  ControllerHarness steam({93, 115});
+  snapshot = steam.controller.update(readings(25.0F, 135.25F),
+                                     PumpCommand::kOff, 0);
+  assert(snapshot.fault.code == FaultCode::kOverTemperature);
+  assert(snapshot.fault.sensor == TemperatureSensor::kSteam);
+}
+
+void test_dual_calibration_isolation() {
+  ControllerHarness harness({93, 115});
+  harness.controller.update(readings(90.0F, 100.0F), PumpCommand::kOff, 0);
+  assert(harness.controller.start_temperature_calibration(
+             TemperatureSensor::kSteam, "steam-calibration-01", 100) ==
+         TemperatureCalibrationResult::kOk);
+  assert(harness.controller.start_temperature_calibration(
+             TemperatureSensor::kBoiler, "boiler-calibration-01", 101) ==
+         TemperatureCalibrationResult::kActive);
+  assert(harness.controller.update_temperature_calibration_candidate(
+             "steam-calibration-01", 108, 200) ==
+         TemperatureCalibrationResult::kOk);
+  TemperatureCalibration candidate{};
+  assert(harness.controller.prepare_temperature_calibration_save(
+             "steam-calibration-01", candidate, 300) ==
+         TemperatureCalibrationResult::kOk);
+  assert(candidate.offset_c == -8);
+  assert(harness.controller.adopt_persisted_temperature_calibration(
+             "steam-calibration-01", candidate, 400) ==
+         TemperatureCalibrationResult::kOk);
+  assert(harness.controller.temperature_calibration(
+             TemperatureSensor::kSteam).offset_c == -8);
+  assert(harness.controller.temperature_calibration(
+             TemperatureSensor::kBoiler).offset_c == 0);
+}
+
 void test_steam_raw_sensor_failures_precede_offset_and_over_temperature() {
   for (const auto reading_value : {
            ThermocoupleReading{ThermocoupleStatus::kOpenCircuit, 125.0F, 0},
@@ -2020,79 +2098,39 @@ void test_cooldown_eligibility_failures_reset_and_output_fail_off() {
   assert(!reset.temperature.controller.heater_enabled_permission());
 }
 
-void test_dynamic_steam_compensation_decay_episode_and_timeout_updates() {
-  ControllerHarness harness(
-      {93, 115}, {},
-      {12, 12U * 60U * 1000U, 15U * 60U * 1000U});
-  assert(harness.controller.set_mode(ControlMode::kSteam, 0));
-
-  auto state = harness.controller.update(reading(103.0F), 0);
-  assert(state.mode == ControlMode::kSteam);
-  assert(state.steam_control.compensation_active);
-  assert(state.steam_control.applied_compensation_c == 12.0F);
-  assert(state.steam_control.control_temperature_c == 115.0F);
-  assert(state.boiler_temperature.temperature_c == 103.0F);
-
-  harness.controller.update(reading(103.0F), 2999);
-  state = harness.controller.update(reading(103.0F), 3000);
-  assert(state.status == ControlStatus::kReady);
-  assert(state.steam_timeout.active);
-  assert(state.steam_timeout.remaining_ms == 15U * 60U * 1000U);
-
-  state = harness.controller.update(reading(109.0F), 6U * 60U * 1000U);
-  assert(state.steam_control.applied_compensation_c > 5.99F);
-  assert(state.steam_control.applied_compensation_c < 6.01F);
-  assert(state.steam_control.control_temperature_c > 114.99F);
-  assert(state.steam_control.control_temperature_c < 115.01F);
-
-  assert(harness.controller.set_mode(ControlMode::kBrew,
-                                     6U * 60U * 1000U + 1U));
-  state = harness.controller.update(reading(97.0F),
-                                    6U * 60U * 1000U + 2U);
-  assert(state.steam_control.heat_soak_active);
-  assert(!state.steam_control.control_temperature_available);
-
-  assert(harness.controller.set_mode(ControlMode::kSteam,
-                                     7U * 60U * 1000U));
-  state = harness.controller.update(reading(110.0F),
-                                    7U * 60U * 1000U);
-  assert(state.steam_control.heat_soak_elapsed_ms ==
-         7U * 60U * 1000U);
-  assert(state.steam_control.applied_compensation_c > 4.99F);
-  assert(state.steam_control.applied_compensation_c < 5.01F);
-
-  assert(harness.controller.set_mode(ControlMode::kBrew,
-                                     7U * 60U * 1000U + 1U));
-  state = harness.controller.update(reading(0.0F),
-                                    7U * 60U * 1000U + 2U);
-  assert(!state.steam_control.heat_soak_active);
-  assert(harness.controller.set_mode(ControlMode::kSteam,
-                                     7U * 60U * 1000U + 3U));
-  state = harness.controller.update(reading(103.0F),
-                                    7U * 60U * 1000U + 3U);
-  assert(state.steam_control.heat_soak_elapsed_ms == 0U);
-
-  ControllerHarness timeout(
-      {93, 115}, {}, {12, 12U * 60U * 1000U, 2U * 60U * 1000U});
+void test_steam_uses_steam_sensor_directly_and_timeout_updates() {
+  ControllerHarness timeout({93, 115}, {}, {2U * 60U * 1000U});
+  timeout.controller.update(
+      TemperatureReadings{reading(93.0F), reading(115.0F)},
+      PumpCommand::kOff, 0);
   assert(timeout.controller.set_mode(ControlMode::kSteam, 0));
-  timeout.controller.update(reading(103.0F), 0);
-  timeout.controller.update(reading(103.0F), 2999);
-  state = timeout.controller.update(reading(103.0F), 3000);
+  auto state = timeout.controller.update(
+      TemperatureReadings{reading(20.0F), reading(115.0F)},
+      PumpCommand::kOff, 0);
+  assert(state.mode == ControlMode::kSteam);
+  assert(state.boiler_temperature.temperature_c == 20.0F);
+  assert(state.steam_temperature.temperature_c == 115.0F);
+  timeout.controller.update(
+      TemperatureReadings{reading(20.0F), reading(115.0F)},
+      PumpCommand::kOff, 2999);
+  state = timeout.controller.update(
+      TemperatureReadings{reading(20.0F), reading(115.0F)},
+      PumpCommand::kOff, 3000);
   assert(state.status == ControlStatus::kReady);
   assert(state.steam_timeout.remaining_ms == 120000U);
 
-  const SteamControlSettings shortened{
-      15, 10U * 60U * 1000U, 60U * 1000U};
+  const SteamControlSettings shortened{60U * 1000U};
   assert(timeout.controller.prepare_steam_control_settings_update(shortened,
                                                                   33000));
   assert(!timeout.output.level);
   assert(timeout.controller.adopt_persisted_steam_control_settings(shortened,
                                                                    33000));
   state = timeout.controller.snapshot(33000);
-  assert(state.steam_control.heat_soak_elapsed_ms == 33000U);
   assert(state.steam_timeout.remaining_ms == 30000U);
   assert(state.status == ControlStatus::kReady);
-  state = timeout.controller.update(reading(101.0F), 63000);
+  state = timeout.controller.update(
+      TemperatureReadings{reading(20.0F), reading(115.0F)},
+      PumpCommand::kOff, 63000);
   assert(state.mode == ControlMode::kBrew);
   assert(!state.steam_timeout.active);
 }
@@ -2133,6 +2171,9 @@ int main() {
   test_extraction_phase_changes_preserve_wrap_safe_heating_deadline();
   test_extraction_phase_changes_preserve_steam_deadline();
   test_boiler_sensor_fault_latches_off();
+  test_dual_sensor_mode_selection_failure_isolation_and_no_fallback();
+  test_raw_over_temperature_from_either_sensor_is_attributed();
+  test_dual_calibration_isolation();
   test_steam_raw_sensor_failures_precede_offset_and_over_temperature();
   test_effective_and_raw_steam_limits_fail_off_independently();
   test_over_temperature_can_be_dismissed_after_cooldown();
@@ -2157,6 +2198,6 @@ int main() {
   test_cooldown_replay_conflict_target_snapshot_and_threshold();
   test_cooldown_cutoff_stop_delayed_update_and_wraparound();
   test_cooldown_eligibility_failures_reset_and_output_fail_off();
-  test_dynamic_steam_compensation_decay_episode_and_timeout_updates();
+  test_steam_uses_steam_sensor_directly_and_timeout_updates();
   return 0;
 }

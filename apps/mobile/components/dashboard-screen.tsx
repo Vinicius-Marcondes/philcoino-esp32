@@ -3,6 +3,7 @@ import type {
   ExtractionSelection,
   MachineState,
   ProfileSlotId,
+  TemperatureSensor,
   WeightControl,
 } from "@philcoino/protocol";
 import {
@@ -60,8 +61,8 @@ import { SteamControlSettingsScreen } from "@/components/steam-control-settings-
 import { WeightControlEditor } from "@/components/weight-mode-card";
 import { formatWeightReadout } from "@/src/telemetry/telemetry-readouts";
 import {
-  boilerTargetC,
-  boilerTemperatureC,
+  activeTargetC,
+  activeTemperatureC,
   connectionCopy,
   faultDetail,
   faultLabel,
@@ -230,8 +231,8 @@ export function DashboardScreen({
   const [dashboardPage, setDashboardPage] =
     useState<DashboardPage>("dashboard");
   const [consoleOpen, setConsoleOpen] = useState(false);
-  const [temperatureCalibrationOpen, setTemperatureCalibrationOpen] =
-    useState(false);
+  const [temperatureCalibrationSensor, setTemperatureCalibrationSensor] =
+    useState<TemperatureSensor | null>(null);
   const [steamControlSettingsOpen, setSteamControlSettingsOpen] =
     useState(false);
   const scale = useScale({
@@ -530,8 +531,9 @@ export function DashboardScreen({
       <TemperatureCalibrationScreen
         client={client}
         deviceName={deviceName}
-        onClose={() => setTemperatureCalibrationOpen(false)}
-        visible={temperatureCalibrationOpen}
+        onClose={() => setTemperatureCalibrationSensor(null)}
+        sensor={temperatureCalibrationSensor ?? "boiler"}
+        visible={temperatureCalibrationSensor !== null}
       />
       <SteamControlSettingsScreen
         client={client}
@@ -744,19 +746,21 @@ export function DashboardScreen({
                     <View style={styles.dashboardLandscapeDataRow}>
                       <View style={styles.dashboardLandscapeTemperature}>
                         <TemperatureCard
+                          active={snapshot.activeMode === "brew"}
                           compact
                           compensation={compensation}
-                          mode={snapshot.activeMode}
-                          sensorTemperatureC={
-                            snapshot.activeMode === "steam"
-                              ? snapshot.boilerTemperatureC
-                              : null
-                          }
-                          targetC={boilerTargetC(snapshot)}
-                          temperatureC={
-                            snapshot.steamControl.controlTemperatureC ??
-                            boilerTemperatureC(snapshot)
-                          }
+                          label="Boiler"
+                          targetC={snapshot.brewTargetC}
+                          temperatureC={snapshot.boilerTemperatureC}
+                          width="100%"
+                        />
+                        <TemperatureCard
+                          active={snapshot.activeMode === "steam"}
+                          compact
+                          compensation={null}
+                          label="Steam"
+                          targetC={snapshot.steamTargetC}
+                          temperatureC={snapshot.steamTemperatureC}
                           width="100%"
                         />
                       </View>
@@ -793,19 +797,21 @@ export function DashboardScreen({
                         />
                         <View style={styles.metricGrid}>
                           <TemperatureCard
+                            active={snapshot.activeMode === "brew"}
                             compact={landscape}
                             compensation={compensation}
-                            mode={snapshot.activeMode}
-                            sensorTemperatureC={
-                              snapshot.activeMode === "steam"
-                                ? snapshot.boilerTemperatureC
-                                : null
-                            }
-                            targetC={boilerTargetC(snapshot)}
-                            temperatureC={
-                              snapshot.steamControl.controlTemperatureC ??
-                              boilerTemperatureC(snapshot)
-                            }
+                            label="Boiler"
+                            targetC={snapshot.brewTargetC}
+                            temperatureC={snapshot.boilerTemperatureC}
+                            width="100%"
+                          />
+                          <TemperatureCard
+                            active={snapshot.activeMode === "steam"}
+                            compact={landscape}
+                            compensation={null}
+                            label="Steam"
+                            targetC={snapshot.steamTargetC}
+                            temperatureC={snapshot.steamTemperatureC}
                             width="100%"
                           />
                         </View>
@@ -949,9 +955,7 @@ export function DashboardScreen({
                       faultMutation={faultMutation}
                       heaterMutation={heaterMutation}
                       modeMutation={modeMutation}
-                      onOpenTemperatureCalibration={() =>
-                        setTemperatureCalibrationOpen(true)
-                      }
+                      onOpenTemperatureCalibration={setTemperatureCalibrationSensor}
                       onOpenSteamControlSettings={() =>
                         setSteamControlSettingsOpen(true)
                       }
@@ -1644,8 +1648,10 @@ function MachineStatus({
   const canDismissOverTemperature =
     snapshot.status === "fault" &&
     snapshot.fault.code === "over_temperature" &&
-    boilerTemperatureC(snapshot) !== null &&
-    boilerTemperatureC(snapshot)! <= boilerTargetC(snapshot);
+    snapshot.boilerTemperatureC !== null &&
+    snapshot.steamTemperatureC !== null &&
+    activeTemperatureC(snapshot) !== null &&
+    activeTemperatureC(snapshot)! <= activeTargetC(snapshot);
   const dismissPending = faultMutation.status === "pending";
   const confirmDismissOverTemperature = () => {
     Alert.alert(
@@ -1722,13 +1728,13 @@ function MachineStatus({
             <>
               <Text selectable style={styles.faultRecoveryText}>
                 {canDismissOverTemperature
-                  ? translate("dashboard.boilerBackAtTarget")
+                  ? translate("dashboard.activeSensorBackAtTarget")
                   : translate("dashboard.dismissalLocked", {
                       current:
-                        boilerTemperatureC(snapshot) === null
+                        activeTemperatureC(snapshot) === null
                           ? "—"
-                          : formatTemperature(boilerTemperatureC(snapshot)!),
-                      target: formatTarget(boilerTargetC(snapshot)),
+                          : formatTemperature(activeTemperatureC(snapshot)!),
+                      target: formatTarget(activeTargetC(snapshot)),
                     })}
               </Text>
               <Pressable
@@ -1790,18 +1796,18 @@ function HeaterStatusPill({ heaterActive }: { heaterActive: boolean }) {
 }
 
 function TemperatureCard({
+  active,
   compact,
   compensation,
-  mode,
-  sensorTemperatureC,
+  label,
   targetC,
   temperatureC,
   width,
 }: {
+  active: boolean;
   compact: boolean;
   compensation: CompensationState | null;
-  mode: MachineState["activeMode"];
-  sensorTemperatureC: number | null;
+  label: string;
   targetC: number;
   temperatureC: number | null;
   width: "100%" | "48.5%";
@@ -1811,15 +1817,13 @@ function TemperatureCard({
       style={[
         styles.temperatureCard,
         { width },
-        styles.activeCard,
+        active && styles.activeCard,
         compact && styles.temperatureCardCompact,
       ]}>
       <View style={styles.temperatureHeading}>
-        <Text selectable style={styles.temperatureLabel}>{translate("dashboard.boiler")}</Text>
+        <Text selectable style={styles.temperatureLabel}>{label}</Text>
         <View style={styles.temperaturePills}>
-          <Text selectable style={styles.activePill}>
-            {modeLabel(mode).toUpperCase()}
-          </Text>
+          {active ? <Text selectable style={styles.activePill}>ACTIVE</Text> : null}
           {compensation === null ? null : (
             <CompensationIndicator compensation={compensation} />
           )}
@@ -1836,13 +1840,6 @@ function TemperatureCard({
       <Text selectable style={styles.temperatureTarget}>
         {translate("dashboard.target")} {formatTarget(targetC)}
       </Text>
-      {sensorTemperatureC === null ? null : (
-        <Text selectable style={styles.temperatureTarget}>
-          {translate("steamControl.sensorReading", {
-            value: formatTemperature(sensorTemperatureC),
-          })}
-        </Text>
-      )}
     </View>
   );
 }

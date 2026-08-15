@@ -16,7 +16,7 @@ Dashboard still loads and graphs only the current local day.
 Columns are:
 
 ```text
-recorded_at_utc,device_id,machine_uptime_ms,boiler_temperature_c,brew_target_c,steam_target_c,active_mode,active_target_c,steam_control_temperature_c,steam_applied_compensation_c,steam_compensation_active,steam_heat_soak_elapsed_ms,heater_enabled,heater_active,pump_command,machine_status,fault_code
+recorded_at_utc,device_id,machine_uptime_ms,boiler_temperature_c,steam_temperature_c,brew_target_c,steam_target_c,active_mode,active_target_c,heater_enabled,heater_active,pump_command,machine_status,fault_code
 ```
 
 Background, locked, offline, and closed periods produce no rows and remain
@@ -46,8 +46,12 @@ clocks, and gap status. Missing weight or flow remains an empty cell; the app
 does not synthesize unavailable samples.
 
 ```text
-elapsed_ms,extraction_elapsed_ms,firmware_uptime_ms,control_mode,selection,profile_name,pre_infusion_seconds,soak_seconds,main_extraction_seconds,temperature_c,target_c,baseline_weight_g,weight_g,target_weight_g,compensation_g,cutoff_weight_g,terminal_weight_g,terminal_settled,weight_completion_reason,weight_fallback_occurred,derived_flow_g_per_s,phase,heater_command,pump_command,scale_availability,gap_status
+elapsed_ms,extraction_elapsed_ms,firmware_uptime_ms,control_mode,selection,profile_name,pre_infusion_seconds,soak_seconds,main_extraction_seconds,boiler_temperature_c,steam_temperature_c,target_c,baseline_weight_g,weight_g,target_weight_g,compensation_g,cutoff_weight_g,terminal_weight_g,terminal_settled,weight_completion_reason,weight_fallback_occurred,derived_flow_g_per_s,phase,heater_command,pump_command,scale_availability,gap_status
 ```
+
+Both temperature columns are nullable. Rows migrated from the single-sensor
+database preserve the Boiler value and leave Steam empty; no value is inferred
+or copied between sensors.
 
 All files use UTF-8, RFC 4180-style CRLF rows, decimal points independent of UI
 locale, and spreadsheet-safe escaping for text fields.

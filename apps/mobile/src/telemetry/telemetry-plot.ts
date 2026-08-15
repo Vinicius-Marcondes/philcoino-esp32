@@ -41,6 +41,7 @@ export interface WeightedTracePlot extends TelemetryPlotFrame {
   temperatureMaximum: number;
   temperatureMinimum: number;
   temperaturePaths: string[];
+  steamTemperaturePaths: string[];
   temperatureY: (value: number) => number;
   weightBand: TelemetryBand;
   weightMaximum: number;
@@ -54,6 +55,7 @@ export interface TemperatureHistoryPlot extends TelemetryPlotFrame {
   targetPaths: string[];
   temperatureBand: TelemetryBand;
   temperaturePaths: string[];
+  steamTemperaturePaths: string[];
   temperatureTicks: number[];
   temperatureY: (value: number) => number;
   pumpRects: ActivityRect[];
@@ -97,6 +99,10 @@ export function extractionTelemetryPlot({
       temperatureLowest = Math.min(temperatureLowest, sample.boilerTemperatureC);
       temperatureHighest = Math.max(temperatureHighest, sample.boilerTemperatureC);
     }
+    if (sample.steamTemperatureC !== null) {
+      temperatureLowest = Math.min(temperatureLowest, sample.steamTemperatureC);
+      temperatureHighest = Math.max(temperatureHighest, sample.steamTemperatureC);
+    }
     if (sample.netWeightDecigrams !== null) {
       weightHighest = Math.max(weightHighest, sample.netWeightDecigrams / 10);
     }
@@ -129,6 +135,10 @@ export function extractionTelemetryPlot({
   const temperatureSegments = availableSeriesSegments(
     continuous,
     (sample) => sample.boilerTemperatureC !== null,
+  );
+  const steamTemperatureSegments = availableSeriesSegments(
+    continuous,
+    (sample) => sample.steamTemperatureC !== null,
   );
   const weightSegments = availableSeriesSegments(
     continuous,
@@ -193,6 +203,13 @@ export function extractionTelemetryPlot({
         segment,
         (sample) => x(sample.elapsedMs),
         (sample) => temperatureY(sample.boilerTemperatureC!),
+      )),
+    steamTemperaturePaths: steamTemperatureSegments
+      .filter((segment) => segment.length >= 2)
+      .map((segment) => linePath(
+        segment,
+        (sample) => x(sample.elapsedMs),
+        (sample) => temperatureY(sample.steamTemperatureC!),
       )),
     temperatureY,
     weightBand,
@@ -276,11 +293,24 @@ export function temperatureHistoryPlot({
       ),
     ),
     temperatureBand,
-    temperaturePaths: continuous.map((segment) =>
+    temperaturePaths: availableSeriesSegments(
+      continuous,
+      (sample) => sample.boilerTemperatureC !== null,
+    ).map((segment) =>
       linePath(
         segment,
         (sample) => x(sample.recordedAtMs),
-        (sample) => temperatureY(sample.boilerTemperatureC),
+        (sample) => temperatureY(sample.boilerTemperatureC!),
+      ),
+    ),
+    steamTemperaturePaths: availableSeriesSegments(
+      continuous,
+      (sample) => sample.steamTemperatureC !== null,
+    ).map((segment) =>
+      linePath(
+        segment,
+        (sample) => x(sample.recordedAtMs),
+        (sample) => temperatureY(sample.steamTemperatureC!),
       ),
     ),
     temperatureTicks: scale.ticks,

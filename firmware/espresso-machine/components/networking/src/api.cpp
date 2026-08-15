@@ -32,7 +32,6 @@ using codec::serialize_extraction;
 using codec::serialize_health;
 using codec::serialize_scale;
 using codec::serialize_state;
-using codec::serialize_steam_control;
 using codec::serialize_temperature_calibration;
 
 class ScopedApiLock {
@@ -127,6 +126,15 @@ HttpResponse temperature_calibration_error(
                         "Temperature calibration failed.");
 }
 
+peripherals::TemperatureSensor calibration_sensor_from_path(
+    const std::string& path) {
+  constexpr char kPrefix[] = "/api/v4/temperature-calibrations/";
+  const auto start = sizeof(kPrefix) - 1U;
+  return path.compare(start, 5U, "steam") == 0
+             ? peripherals::TemperatureSensor::kSteam
+             : peripherals::TemperatureSensor::kBoiler;
+}
+
 }  // namespace
 
 DiscoveryTxt discovery_txt(const DeviceIdentity& identity) {
@@ -141,7 +149,9 @@ FirmwareApi::FirmwareApi(DeviceIdentity identity, PairingService& pairing,
                          control::TemperatureController& controller,
                          peripherals::TargetStorage& target_storage,
                          peripherals::TemperatureCalibrationStorage&
-                             temperature_calibration_storage,
+                             boiler_temperature_calibration_storage,
+                         peripherals::TemperatureCalibrationStorage&
+                             steam_temperature_calibration_storage,
                          control::ExtractionController& extraction_controller,
                          control::CooldownController& cooldown_controller,
                          peripherals::ScaleCalibrationStorage&
@@ -155,7 +165,10 @@ FirmwareApi::FirmwareApi(DeviceIdentity identity, PairingService& pairing,
       pairing_(pairing),
       controller_(controller),
       target_storage_(target_storage),
-      temperature_calibration_storage_(temperature_calibration_storage),
+      boiler_temperature_calibration_storage_(
+          boiler_temperature_calibration_storage),
+      steam_temperature_calibration_storage_(
+          steam_temperature_calibration_storage),
       extraction_controller_(extraction_controller),
       cooldown_controller_(cooldown_controller),
       scale_calibration_storage_(scale_calibration_storage),
@@ -203,7 +216,7 @@ HttpResponse FirmwareApi::handle_resolved(const ApiRouteDescriptor& route,
     case ApiRouteId::kPairingSessionStart:
       return pairing_.start_session(body, uptime_ms);
     case ApiRouteId::kPairingSessionAction: {
-      constexpr char kPrefix[] = "/api/v3/pairing/sessions/";
+      constexpr char kPrefix[] = "/api/v4/pairing/sessions/";
       const auto session_start = sizeof(kPrefix) - 1U;
       const auto separator = path.find('/', session_start);
       const std::string session_id =
@@ -213,24 +226,30 @@ HttpResponse FirmwareApi::handle_resolved(const ApiRouteDescriptor& route,
                  ? pairing_.verify_proof(session_id, body, uptime_ms)
                  : pairing_.complete_session(session_id, body, uptime_ms);
     }
-    case ApiRouteId::kState: return state_v3(uptime_ms);
+    case ApiRouteId::kState: return state_v4(uptime_ms);
     case ApiRouteId::kSettings:
       return acknowledged_mutation(update_settings(body, uptime_ms), uptime_ms);
     case ApiRouteId::kTemperatureCalibrationStart:
-      return acknowledged_mutation(start_temperature_calibration(uptime_ms),
+      return acknowledged_mutation(start_temperature_calibration(
+                                       calibration_sensor_from_path(path),
+                                       uptime_ms),
                                    uptime_ms);
     case ApiRouteId::kTemperatureCalibrationCandidate:
       return acknowledged_mutation(
-          update_temperature_calibration_candidate(body, uptime_ms), uptime_ms);
+          update_temperature_calibration_candidate(
+              calibration_sensor_from_path(path), body, uptime_ms), uptime_ms);
     case ApiRouteId::kTemperatureCalibrationSave:
       return acknowledged_mutation(
-          save_temperature_calibration(body, uptime_ms), uptime_ms);
+          save_temperature_calibration(calibration_sensor_from_path(path),
+                                       body, uptime_ms), uptime_ms);
     case ApiRouteId::kTemperatureCalibrationCancel:
       return acknowledged_mutation(
-          cancel_temperature_calibration(body, uptime_ms), uptime_ms);
+          cancel_temperature_calibration(calibration_sensor_from_path(path),
+                                         body, uptime_ms), uptime_ms);
     case ApiRouteId::kTemperatureCalibrationRenew:
       return acknowledged_mutation(
-          renew_temperature_calibration(body, uptime_ms), uptime_ms);
+          renew_temperature_calibration(calibration_sensor_from_path(path),
+                                        body, uptime_ms), uptime_ms);
     case ApiRouteId::kScaleCalibrationStart:
       return acknowledged_mutation(start_scale_calibration(uptime_ms),
                                    uptime_ms);
@@ -277,7 +296,7 @@ HttpResponse FirmwareApi::health(std::uint64_t uptime_ms) const {
 HttpResponse FirmwareApi::acknowledged_mutation(
     HttpResponse response, std::uint64_t uptime_ms) {
   if (response.status != 200) return response;
-  return state_v3(uptime_ms);
+  return state_v4(uptime_ms);
 }
 
 HttpResponse FirmwareApi::update_settings(const std::string& body,
@@ -355,10 +374,7 @@ HttpResponse FirmwareApi::update_settings(const std::string& body,
        updated_targets.steam_c != current_targets.steam_c);
   const bool steam_changed =
       has_steam &&
-      (updated_steam.initial_compensation_c !=
-           current_steam.initial_compensation_c ||
-       updated_steam.decay_duration_ms != current_steam.decay_duration_ms ||
-       updated_steam.ready_timeout_ms != current_steam.ready_timeout_ms);
+      updated_steam.ready_timeout_ms != current_steam.ready_timeout_ms;
 
   if (targets_changed && !target_storage_.save(updated_targets)) {
     ScopedApiLock lock(synchronization_, ApiDomain::kTemperature);
@@ -402,8 +418,8 @@ HttpResponse FirmwareApi::update_settings(const std::string& body,
   return json_response(200, "{}");
 }
 
-  HttpResponse FirmwareApi::start_temperature_calibration(
-    std::uint64_t uptime_ms) {
+HttpResponse FirmwareApi::start_temperature_calibration(
+    peripherals::TemperatureSensor sensor, std::uint64_t uptime_ms) {
   control::TemperatureCalibrationSnapshot snapshot{};
   control::TemperatureCalibrationResult result{
       control::TemperatureCalibrationResult::kOk};
@@ -438,10 +454,10 @@ HttpResponse FirmwareApi::update_settings(const std::string& body,
             << static_cast<std::uint32_t>(uptime_ms) << '-'
             << std::setw(8) << ++temperature_calibration_sequence_;
     result = controller_.start_temperature_calibration(
-        session.str(), static_cast<std::uint32_t>(uptime_ms));
+        sensor, session.str(), static_cast<std::uint32_t>(uptime_ms));
     if (result == control::TemperatureCalibrationResult::kOk) {
       snapshot = controller_.temperature_calibration_snapshot(
-          static_cast<std::uint32_t>(uptime_ms));
+          sensor, static_cast<std::uint32_t>(uptime_ms));
     }
   }
   return result == control::TemperatureCalibrationResult::kOk
@@ -451,7 +467,8 @@ HttpResponse FirmwareApi::update_settings(const std::string& body,
 }
 
 HttpResponse FirmwareApi::update_temperature_calibration_candidate(
-    const std::string& body, std::uint64_t uptime_ms) {
+    peripherals::TemperatureSensor sensor, const std::string& body,
+    std::uint64_t uptime_ms) {
   std::string calibration_id;
   std::int32_t candidate_raw_target_c = 0;
   if (!parse_temperature_calibration_candidate(
@@ -468,12 +485,18 @@ HttpResponse FirmwareApi::update_temperature_calibration_candidate(
       return error_response(500, "internal_error",
                             "Temperature control synchronization failed.");
     }
+    if (controller_.temperature_calibration_snapshot(
+            sensor, static_cast<std::uint32_t>(uptime_ms)).status !=
+        control::TemperatureCalibrationStatus::kCalibrating) {
+      return temperature_calibration_error(
+          control::TemperatureCalibrationResult::kSessionMismatch);
+    }
     result = controller_.update_temperature_calibration_candidate(
         calibration_id, candidate_raw_target_c,
         static_cast<std::uint32_t>(uptime_ms));
     if (result == control::TemperatureCalibrationResult::kOk) {
       snapshot = controller_.temperature_calibration_snapshot(
-          static_cast<std::uint32_t>(uptime_ms));
+          sensor, static_cast<std::uint32_t>(uptime_ms));
     }
   }
   return result == control::TemperatureCalibrationResult::kOk
@@ -483,7 +506,8 @@ HttpResponse FirmwareApi::update_temperature_calibration_candidate(
 }
 
 HttpResponse FirmwareApi::save_temperature_calibration(
-    const std::string& body, std::uint64_t uptime_ms) {
+    peripherals::TemperatureSensor sensor, const std::string& body,
+    std::uint64_t uptime_ms) {
   std::string calibration_id;
   if (!parse_temperature_calibration_session(body, calibration_id)) {
     return error_response(400, "malformed_request", kMalformedMessage);
@@ -498,6 +522,12 @@ HttpResponse FirmwareApi::save_temperature_calibration(
       return error_response(500, "internal_error",
                             "Temperature control synchronization failed.");
     }
+    if (controller_.temperature_calibration_snapshot(
+            sensor, static_cast<std::uint32_t>(uptime_ms)).status !=
+        control::TemperatureCalibrationStatus::kCalibrating) {
+      return temperature_calibration_error(
+          control::TemperatureCalibrationResult::kSessionMismatch);
+    }
     result = controller_.prepare_temperature_calibration_save(
         calibration_id, candidate,
         static_cast<std::uint32_t>(uptime_ms));
@@ -506,7 +536,11 @@ HttpResponse FirmwareApi::save_temperature_calibration(
     return temperature_calibration_error(result);
   }
 
-  if (!temperature_calibration_storage_.save(candidate)) {
+  auto& calibration_storage =
+      sensor == peripherals::TemperatureSensor::kBoiler
+          ? boiler_temperature_calibration_storage_
+          : steam_temperature_calibration_storage_;
+  if (!calibration_storage.save(candidate)) {
     bool rolled_back = false;
     {
       ScopedApiLock lock(synchronization_, ApiDomain::kTemperature);
@@ -539,7 +573,7 @@ HttpResponse FirmwareApi::save_temperature_calibration(
         static_cast<std::uint32_t>(uptime_ms));
     if (result == control::TemperatureCalibrationResult::kOk) {
       snapshot = controller_.temperature_calibration_snapshot(
-          static_cast<std::uint32_t>(uptime_ms));
+          sensor, static_cast<std::uint32_t>(uptime_ms));
     }
   }
   return result == control::TemperatureCalibrationResult::kOk
@@ -549,7 +583,8 @@ HttpResponse FirmwareApi::save_temperature_calibration(
 }
 
 HttpResponse FirmwareApi::cancel_temperature_calibration(
-    const std::string& body, std::uint64_t uptime_ms) {
+    peripherals::TemperatureSensor sensor, const std::string& body,
+    std::uint64_t uptime_ms) {
   std::string calibration_id;
   if (!parse_temperature_calibration_session(body, calibration_id)) {
     return error_response(400, "malformed_request", kMalformedMessage);
@@ -563,11 +598,17 @@ HttpResponse FirmwareApi::cancel_temperature_calibration(
       return error_response(500, "internal_error",
                             "Temperature control synchronization failed.");
     }
+    if (controller_.temperature_calibration_snapshot(
+            sensor, static_cast<std::uint32_t>(uptime_ms)).status !=
+        control::TemperatureCalibrationStatus::kCalibrating) {
+      return temperature_calibration_error(
+          control::TemperatureCalibrationResult::kSessionMismatch);
+    }
     result = controller_.cancel_temperature_calibration(
         calibration_id, static_cast<std::uint32_t>(uptime_ms));
     if (result == control::TemperatureCalibrationResult::kOk) {
       snapshot = controller_.temperature_calibration_snapshot(
-          static_cast<std::uint32_t>(uptime_ms));
+          sensor, static_cast<std::uint32_t>(uptime_ms));
     }
   }
   return result == control::TemperatureCalibrationResult::kOk
@@ -577,7 +618,8 @@ HttpResponse FirmwareApi::cancel_temperature_calibration(
 }
 
 HttpResponse FirmwareApi::renew_temperature_calibration(
-    const std::string& body, std::uint64_t uptime_ms) {
+    peripherals::TemperatureSensor sensor, const std::string& body,
+    std::uint64_t uptime_ms) {
   std::string calibration_id;
   if (!parse_temperature_calibration_session(body, calibration_id)) {
     return error_response(400, "malformed_request", kMalformedMessage);
@@ -589,6 +631,12 @@ HttpResponse FirmwareApi::renew_temperature_calibration(
     if (!lock.locked()) {
       return error_response(500, "internal_error",
                             "Temperature control synchronization failed.");
+    }
+    if (controller_.temperature_calibration_snapshot(
+            sensor, static_cast<std::uint32_t>(uptime_ms)).status !=
+        control::TemperatureCalibrationStatus::kCalibrating) {
+      return temperature_calibration_error(
+          control::TemperatureCalibrationResult::kSessionMismatch);
     }
     result = controller_.renew_temperature_calibration(
         calibration_id, static_cast<std::uint32_t>(uptime_ms));
@@ -711,13 +759,14 @@ HttpResponse FirmwareApi::dismiss_over_temperature(std::uint64_t uptime_ms) {
   return json_response(200, serialize_state(snapshot, uptime_ms));
 }
 
-HttpResponse FirmwareApi::state_v3(std::uint64_t uptime_ms) {
+HttpResponse FirmwareApi::state_v4(std::uint64_t uptime_ms) {
   control::ControlSnapshot machine{};
   control::ExtractionSnapshot extraction{};
   control::CooldownSnapshot cooldown{};
   control::ScaleSnapshot scale_snapshot{};
   control::WeightExtractionSnapshot weight{};
-  control::TemperatureCalibrationSnapshot temperature_calibration{};
+  control::TemperatureCalibrationSnapshot boiler_calibration{};
+  control::TemperatureCalibrationSnapshot steam_calibration{};
   bool compensation_active = false;
   std::uint64_t revision = 0;
   {
@@ -730,8 +779,10 @@ HttpResponse FirmwareApi::state_v3(std::uint64_t uptime_ms) {
     extraction = extraction_controller_.snapshot(now_ms);
     cooldown = cooldown_controller_.snapshot(now_ms);
     machine = controller_.snapshot(now_ms);
-    temperature_calibration =
-        controller_.temperature_calibration_snapshot(now_ms);
+    boiler_calibration = controller_.temperature_calibration_snapshot(
+        peripherals::TemperatureSensor::kBoiler, now_ms);
+    steam_calibration = controller_.temperature_calibration_snapshot(
+        peripherals::TemperatureSensor::kSteam, now_ms);
     if (scale_controller_ != nullptr) {
       scale_snapshot = scale_controller_->snapshot(now_ms);
       weight = extraction_controller_.weight_snapshot(scale_snapshot, now_ms);
@@ -745,8 +796,10 @@ HttpResponse FirmwareApi::state_v3(std::uint64_t uptime_ms) {
   const auto serialized_device = serialize_device(identity_);
   const auto serialized_machine = serialize_state(machine, uptime_ms);
   const auto serialized_scale = serialize_scale(scale_snapshot, weight);
-  const auto serialized_temperature_calibration =
-      serialize_temperature_calibration(temperature_calibration);
+  const auto serialized_boiler_calibration =
+      serialize_temperature_calibration(boiler_calibration);
+  const auto serialized_steam_calibration =
+      serialize_temperature_calibration(steam_calibration);
   const auto serialized_extraction = serialize_extraction(extraction);
   const auto compensation =
       serialize_compensation(compensation_active, extraction);
@@ -754,10 +807,11 @@ HttpResponse FirmwareApi::state_v3(std::uint64_t uptime_ms) {
   std::string response;
   response.reserve(192U + serialized_device.size() + serialized_machine.size() +
                    serialized_scale.size() +
-                   serialized_temperature_calibration.size() +
+                   serialized_boiler_calibration.size() +
+                   serialized_steam_calibration.size() +
                    serialized_extraction.size() + compensation.size() +
                    serialized_cooldown.size());
-  response.append("{\"apiVersion\":\"3\",\"device\":");
+  response.append("{\"apiVersion\":\"4\",\"device\":");
   response.append(serialized_device);
   response.append(",\"bootId\":\"");
   response.append(boot_id_);
@@ -769,8 +823,11 @@ HttpResponse FirmwareApi::state_v3(std::uint64_t uptime_ms) {
   response.append(serialized_machine);
   response.append(",\"scale\":");
   response.append(serialized_scale);
-  response.append(",\"temperatureCalibration\":");
-  response.append(serialized_temperature_calibration);
+  response.append(",\"temperatureCalibrations\":{\"boiler\":");
+  response.append(serialized_boiler_calibration);
+  response.append(",\"steam\":");
+  response.append(serialized_steam_calibration);
+  response.push_back('}');
   response.append(",\"extraction\":");
   response.append(serialized_extraction);
   response.append(",\"compensation\":");

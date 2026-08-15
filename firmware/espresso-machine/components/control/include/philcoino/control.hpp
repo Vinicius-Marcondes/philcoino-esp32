@@ -22,6 +22,8 @@ enum class FaultCode {
 struct FaultSnapshot {
   FaultCode code{FaultCode::kInternalError};
   const char* message{"Temperature control entered a safe fault state."};
+  bool sensor_available{false};
+  peripherals::TemperatureSensor sensor{peripherals::TemperatureSensor::kBoiler};
 };
 
 struct SteamTimeoutSnapshot {
@@ -31,21 +33,16 @@ struct SteamTimeoutSnapshot {
 
 struct SteamControlSnapshot {
   peripherals::SteamControlSettings settings{};
-  bool compensation_active{false};
-  float applied_compensation_c{0.0F};
-  bool control_temperature_available{false};
-  float control_temperature_c{0.0F};
-  bool heat_soak_active{false};
-  std::uint32_t heat_soak_elapsed_ms{0};
 };
 
 struct ControlSnapshot {
   ControlStatus status{ControlStatus::kHeating};
   ControlMode mode{ControlMode::kBrew};
   peripherals::TemperatureTargets targets{};
-  // Valid readings contain the effective control temperature after the one
-  // persisted global calibration offset is applied.
+  // Valid readings contain each sensor's independently calibrated effective
+  // temperature. Brew controls from boiler; Steam controls from steam.
   peripherals::ThermocoupleReading boiler_temperature{};
+  peripherals::ThermocoupleReading steam_temperature{};
   bool heater_enabled_permission{true};
   bool heater_enabled{false};
   bool fault_active{false};
@@ -61,15 +58,14 @@ enum class TemperatureCalibrationStatus {
 };
 
 struct TemperatureSafeTargetBounds {
-  std::int32_t brew_minimum_c{0};
-  std::int32_t brew_maximum_c{0};
-  std::int32_t steam_minimum_c{0};
-  std::int32_t steam_maximum_c{0};
+  std::int32_t minimum_c{0};
+  std::int32_t maximum_c{0};
 };
 
 struct TemperatureCalibrationSnapshot {
   TemperatureCalibrationStatus status{
       TemperatureCalibrationStatus::kUncalibrated};
+  peripherals::TemperatureSensor sensor{peripherals::TemperatureSensor::kBoiler};
   std::int32_t saved_offset_c{0};
   bool temperature_available{false};
   float raw_temperature_c{0.0F};
@@ -114,9 +110,10 @@ class TemperatureController {
       peripherals::FailOffSsr& heater);
   TemperatureController(
       peripherals::TemperatureTargets targets,
-      peripherals::TemperatureCalibration calibration,
+      peripherals::TemperatureCalibrations calibrations,
       peripherals::SteamControlSettings steam_control_settings,
-      peripherals::FailOffSsr& heater);
+      peripherals::FailOffSsr& heater,
+      peripherals::TemperatureReadings initial_readings = {});
 
   ControlMode mode() const;
   ControlStatus status() const;
@@ -125,7 +122,12 @@ class TemperatureController {
   FaultCode fault_code() const;
   bool heater_enabled_permission() const;
   bool heater_enabled() const;
-  const peripherals::TemperatureCalibration& temperature_calibration() const;
+  const peripherals::TemperatureCalibration& temperature_calibration(
+      peripherals::TemperatureSensor sensor) const;
+  const peripherals::TemperatureCalibration& temperature_calibration() const {
+    return temperature_calibration(peripherals::TemperatureSensor::kBoiler);
+  }
+  const peripherals::TemperatureCalibrations& temperature_calibrations() const;
   const peripherals::SteamControlSettings& steam_control_settings() const;
   SteamControlSnapshot steam_control_snapshot(std::uint32_t now_ms) const;
   bool prepare_steam_control_settings_update(
@@ -151,7 +153,13 @@ class TemperatureController {
       const peripherals::TemperatureTargets& targets) const;
   bool temperature_calibration_active() const;
   TemperatureCalibrationResult start_temperature_calibration(
+      peripherals::TemperatureSensor sensor,
       const std::string& calibration_id, std::uint32_t now_ms);
+  TemperatureCalibrationResult start_temperature_calibration(
+      const std::string& calibration_id, std::uint32_t now_ms) {
+    return start_temperature_calibration(
+        peripherals::TemperatureSensor::kBoiler, calibration_id, now_ms);
+  }
   TemperatureCalibrationResult renew_temperature_calibration(
       const std::string& calibration_id, std::uint32_t now_ms);
   TemperatureCalibrationResult update_temperature_calibration_candidate(
@@ -171,7 +179,12 @@ class TemperatureController {
       const std::string& calibration_id, std::uint32_t now_ms);
   void abort_temperature_calibration(std::uint32_t now_ms);
   TemperatureCalibrationSnapshot temperature_calibration_snapshot(
-      std::uint32_t now_ms);
+      peripherals::TemperatureSensor sensor, std::uint32_t now_ms);
+  TemperatureCalibrationSnapshot temperature_calibration_snapshot(
+      std::uint32_t now_ms) {
+    return temperature_calibration_snapshot(
+        peripherals::TemperatureSensor::kBoiler, now_ms);
+  }
   bool extraction_compensation_active() const;
   bool cooldown_inhibited() const;
   bool target_update_in_progress() const;
@@ -196,6 +209,9 @@ class TemperatureController {
   ControlSnapshot update(const peripherals::ThermocoupleReading& reading,
                          peripherals::PumpCommand pump_command,
                          std::uint32_t now_ms);
+  ControlSnapshot update(const peripherals::TemperatureReadings& readings,
+                         peripherals::PumpCommand pump_command,
+                         std::uint32_t now_ms);
   ControlSnapshot snapshot(std::uint32_t now_ms) const;
   void latch_fault(FaultCode code);
 
@@ -203,12 +219,20 @@ class TemperatureController {
   std::int32_t active_target() const;
   std::int32_t heater_duty_target() const;
   float active_temperature() const;
-  float applied_steam_compensation(std::uint32_t now_ms) const;
   std::int32_t control_target() const;
   float control_temperature() const;
   bool active_temperature_in_ready_band() const;
   bool active_temperature_demands_heat() const;
   bool boiler_reading_ok() const;
+  bool steam_reading_ok() const;
+  bool sensor_reading_ok(peripherals::TemperatureSensor sensor) const;
+  const peripherals::ThermocoupleReading& reading_for(
+      peripherals::TemperatureSensor sensor) const;
+  const peripherals::TemperatureCalibration& calibration_for(
+      peripherals::TemperatureSensor sensor) const;
+  peripherals::TemperatureCalibration& calibration_for(
+      peripherals::TemperatureSensor sensor);
+  peripherals::TemperatureSensor active_sensor() const;
   bool active_temperature_back_at_target() const;
   float active_heat_ramp_band() const;
   float active_recovery_trigger_drop() const;
@@ -228,10 +252,11 @@ class TemperatureController {
 
   peripherals::FailOffSsr& heater_;
   peripherals::TemperatureTargets targets_{};
-  peripherals::TemperatureCalibration temperature_calibration_{};
+  peripherals::TemperatureCalibrations temperature_calibrations_{};
   peripherals::SteamControlSettings steam_control_settings_{};
   peripherals::SteamControlSettings pending_steam_control_settings_{};
   peripherals::ThermocoupleReading raw_boiler_temperature_{};
+  peripherals::ThermocoupleReading raw_steam_temperature_{};
   ControlMode mode_{ControlMode::kBrew};
   ControlStatus status_{ControlStatus::kHeating};
   FaultCode fault_code_{FaultCode::kInternalError};
@@ -246,12 +271,17 @@ class TemperatureController {
   bool temperature_calibration_save_in_progress_{false};
   std::string temperature_calibration_id_{};
   std::string expired_temperature_calibration_id_{};
+  peripherals::TemperatureSensor temperature_calibration_sensor_{
+      peripherals::TemperatureSensor::kBoiler};
   std::int32_t temperature_calibration_candidate_raw_c_{
       config::kTemperatureCalibrationReferenceC};
   peripherals::TemperatureCalibration
       pending_temperature_calibration_{};
   std::uint32_t temperature_calibration_last_activity_ms_{0};
   bool fault_latched_{false};
+  bool fault_sensor_available_{false};
+  peripherals::TemperatureSensor fault_sensor_{
+      peripherals::TemperatureSensor::kBoiler};
   bool ready_band_active_{false};
   std::uint32_t ready_band_since_ms_{0};
   bool warmup_deadline_active_{false};
@@ -264,12 +294,10 @@ class TemperatureController {
   bool recovery_heat_active_{false};
   bool steam_timeout_active_{false};
   std::uint32_t steam_timeout_started_ms_{0};
-  bool steam_heat_soak_active_{false};
-  std::uint32_t steam_heat_soak_started_ms_{0};
-  float current_steam_compensation_c_{0.0F};
   bool post_brew_recovery_active_{false};
   std::uint32_t last_pump_running_ms_{0};
-  std::uint32_t sensor_failure_streak_{0};
+  std::uint32_t boiler_sensor_failure_streak_{0};
+  std::uint32_t steam_sensor_failure_streak_{0};
 };
 
 enum class ExtractionStatus { kIdle, kRunning };

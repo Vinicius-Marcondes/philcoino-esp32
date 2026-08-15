@@ -3,7 +3,7 @@
   "jsonSchemaDialect": "https://json-schema.org/draft/2020-12/schema",
   "info": {
     "title": "Philcoino ESP32 API",
-    "version": "3.0.0",
+    "version": "4.0.0",
     "description": "Breaking, HTTPS-only local API. All authenticated mutations return a complete acknowledged state snapshot."
   },
   "servers": [
@@ -27,7 +27,7 @@
         }
       }
     },
-    "/api/v3/pairing/sessions": {
+    "/api/v4/pairing/sessions": {
       "post": {
         "operationId": "startPairingSession",
         "security": [],
@@ -39,7 +39,7 @@
         }
       }
     },
-    "/api/v3/pairing/sessions/{sessionId}/proof": {
+    "/api/v4/pairing/sessions/{sessionId}/proof": {
       "post": {
         "operationId": "verifyPairingProof",
         "security": [],
@@ -53,7 +53,7 @@
         }
       }
     },
-    "/api/v3/pairing/sessions/{sessionId}/complete": {
+    "/api/v4/pairing/sessions/{sessionId}/complete": {
       "post": {
         "operationId": "completePairingSession",
         "security": [],
@@ -68,7 +68,7 @@
         }
       }
     },
-    "/api/v3/state": {
+    "/api/v4/state": {
       "get": {
         "operationId": "getState",
         "security": [{ "bearerAuth": [] }],
@@ -78,7 +78,7 @@
         }
       }
     },
-    "/api/v3/settings": {
+    "/api/v4/settings": {
       "patch": {
         "operationId": "updateSettings",
         "security": [{ "bearerAuth": [] }],
@@ -92,7 +92,7 @@
         }
       }
     },
-    "/api/v3/mode": {
+    "/api/v4/mode": {
       "put": {
         "operationId": "setMode",
         "security": [{ "bearerAuth": [] }],
@@ -105,7 +105,7 @@
         }
       }
     },
-    "/api/v3/heater-permission": {
+    "/api/v4/heater-permission": {
       "put": {
         "operationId": "setHeaterPermission",
         "security": [{ "bearerAuth": [] }],
@@ -117,7 +117,7 @@
         }
       }
     },
-    "/api/v3/faults/over-temperature/dismiss": {
+    "/api/v4/faults/over-temperature/dismiss": {
       "post": {
         "operationId": "dismissOverTemperatureFault",
         "security": [{ "bearerAuth": [] }],
@@ -128,7 +128,8 @@
         }
       }
     },
-    "/api/v3/temperature-calibrations/current": {
+    "/api/v4/temperature-calibrations/{sensor}/current": {
+      "parameters": [{ "name": "sensor", "in": "path", "required": true, "schema": { "enum": ["boiler", "steam"] } }],
       "post": {
         "operationId": "startTemperatureCalibration",
         "security": [{ "bearerAuth": [] }],
@@ -171,7 +172,8 @@
         }
       }
     },
-    "/api/v3/temperature-calibrations/current/lease": {
+    "/api/v4/temperature-calibrations/{sensor}/current/lease": {
+      "parameters": [{ "name": "sensor", "in": "path", "required": true, "schema": { "enum": ["boiler", "steam"] } }],
       "post": {
         "operationId": "renewTemperatureCalibrationLease",
         "security": [{ "bearerAuth": [] }],
@@ -184,7 +186,7 @@
         }
       }
     },
-    "/api/v3/scale-calibrations/current": {
+    "/api/v4/scale-calibrations/current": {
       "post": {
         "operationId": "startScaleCalibration",
         "security": [{ "bearerAuth": [] }],
@@ -215,7 +217,7 @@
         }
       }
     },
-    "/api/v3/scale/warnings/acknowledge": {
+    "/api/v4/scale/warnings/acknowledge": {
       "post": {
         "operationId": "acknowledgeScaleWarning",
         "security": [{ "bearerAuth": [] }],
@@ -225,7 +227,7 @@
         }
       }
     },
-    "/api/v3/extractions": {
+    "/api/v4/extractions": {
       "post": {
         "operationId": "startExtraction",
         "security": [{ "bearerAuth": [] }],
@@ -238,7 +240,7 @@
         }
       }
     },
-    "/api/v3/extractions/current": {
+    "/api/v4/extractions/current": {
       "delete": {
         "operationId": "stopExtraction",
         "security": [{ "bearerAuth": [] }],
@@ -249,7 +251,7 @@
         }
       }
     },
-    "/api/v3/extractions/current/stream": {
+    "/api/v4/extractions/current/stream": {
       "get": {
         "operationId": "streamCurrentExtraction",
         "security": [{ "bearerAuth": [] }],
@@ -276,7 +278,7 @@
         }
       }
     },
-    "/api/v3/cooldowns": {
+    "/api/v4/cooldowns": {
       "post": {
         "operationId": "startCooldown",
         "security": [{ "bearerAuth": [] }],
@@ -289,7 +291,7 @@
         }
       }
     },
-    "/api/v3/cooldowns/current": {
+    "/api/v4/cooldowns/current": {
       "delete": {
         "operationId": "stopCooldown",
         "security": [{ "bearerAuth": [] }],
@@ -300,7 +302,7 @@
         }
       }
     },
-    "/api/v3/firmware-updates": {
+    "/api/v4/firmware-updates": {
       "post": {
         "operationId": "uploadFirmwareUpdate",
         "security": [{ "bearerAuth": [] }],
@@ -361,7 +363,7 @@
           "deviceId": { "$ref": "#/components/schemas/Identifier" },
           "name": { "type": "string", "minLength": 1, "maxLength": 64 },
           "model": { "type": "string", "minLength": 1, "maxLength": 64 },
-          "apiVersion": { "const": "3" },
+          "apiVersion": { "const": "4" },
           "firmwareVersion": { "type": "string", "minLength": 1, "maxLength": 32 }
         }
       },
@@ -429,14 +431,7 @@
         "properties": {
           "brewTargetC": { "type": "integer", "minimum": 85, "maximum": 95 },
           "steamTargetC": { "type": "integer", "minimum": 110, "maximum": 135 },
-          "steamControl": {
-            "type": "object", "additionalProperties": false, "minProperties": 1,
-            "properties": {
-              "initialCompensationC": { "type": "integer", "minimum": 0, "maximum": 20 },
-              "decayDurationMs": { "type": "integer", "minimum": 60000, "maximum": 1800000, "multipleOf": 60000 },
-              "readyTimeoutMs": { "type": "integer", "minimum": 60000, "maximum": 900000, "multipleOf": 60000 }
-            }
-          }
+          "steamReadyTimeoutMs": { "type": "integer", "minimum": 60000, "maximum": 900000, "multipleOf": 60000 }
         }
       },
       "ModeRequest": {
@@ -517,44 +512,33 @@
         }
       },
       "Fault": {
-        "type": "object", "additionalProperties": false, "required": ["code", "message"],
+        "type": "object", "additionalProperties": false, "required": ["code", "message", "sensor"],
         "properties": {
           "code": { "enum": ["sensor_failure", "over_temperature", "heating_timeout", "internal_error"] },
-          "message": { "type": "string", "minLength": 1, "maxLength": 160 }
+          "message": { "type": "string", "minLength": 1, "maxLength": 160 },
+          "sensor": { "type": ["string", "null"], "enum": ["boiler", "steam", null] }
         }
       },
       "BootId": { "type": "string", "minLength": 32, "maxLength": 32, "pattern": "^[0-9a-f]{32}$" },
-      "SteamControlState": {
-        "type": "object", "additionalProperties": false,
-        "required": ["settings", "compensationActive", "appliedCompensationC", "controlTemperatureC", "heatSoakElapsedMs"],
-        "properties": {
-          "settings": {
-            "type": "object", "additionalProperties": false,
-            "required": ["initialCompensationC", "decayDurationMs", "readyTimeoutMs"],
-            "properties": {
-              "initialCompensationC": { "type": "integer", "minimum": 0, "maximum": 20 },
-              "decayDurationMs": { "type": "integer", "minimum": 60000, "maximum": 1800000, "multipleOf": 60000 },
-              "readyTimeoutMs": { "type": "integer", "minimum": 60000, "maximum": 900000, "multipleOf": 60000 }
-            }
-          },
-          "compensationActive": { "type": "boolean" },
-          "appliedCompensationC": { "type": "number", "minimum": 0, "maximum": 20 },
-          "controlTemperatureC": { "type": ["number", "null"], "minimum": -40, "maximum": 180 },
-          "heatSoakElapsedMs": { "type": ["integer", "null"], "minimum": 0, "maximum": 9007199254740991 }
-        }
-      },
       "State": {
         "type": "object", "additionalProperties": false,
-        "required": ["apiVersion", "device", "bootId", "revision", "capturedAtUptimeMs", "machine", "scale", "temperatureCalibration", "extraction", "compensation", "cooldown"],
+        "required": ["apiVersion", "device", "bootId", "revision", "capturedAtUptimeMs", "machine", "scale", "temperatureCalibrations", "extraction", "compensation", "cooldown"],
         "properties": {
-          "apiVersion": { "const": "3" },
+          "apiVersion": { "const": "4" },
           "device": { "$ref": "#/components/schemas/DeviceIdentity" },
           "bootId": { "$ref": "#/components/schemas/BootId" },
           "revision": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
           "capturedAtUptimeMs": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
           "machine": { "$ref": "#/components/schemas/Machine" },
           "scale": { "$ref": "#/components/schemas/Scale" },
-          "temperatureCalibration": { "$ref": "#/components/schemas/TemperatureCalibration" },
+          "temperatureCalibrations": {
+            "type": "object", "additionalProperties": false,
+            "required": ["boiler", "steam"],
+            "properties": {
+              "boiler": { "$ref": "#/components/schemas/TemperatureCalibration" },
+              "steam": { "$ref": "#/components/schemas/TemperatureCalibration" }
+            }
+          },
           "extraction": { "$ref": "#/components/schemas/ExtractionState" },
           "compensation": { "$ref": "#/components/schemas/CompensationState" },
           "cooldown": { "$ref": "#/components/schemas/CooldownState" }
@@ -562,17 +546,18 @@
       },
       "Machine": {
         "type": "object", "additionalProperties": false,
-        "required": ["status", "activeMode", "boilerTemperatureC", "brewTargetC", "steamTargetC", "heaterEnabled", "heaterActive", "steamTimeoutRemainingMs", "steamControl", "uptimeMs", "fault"],
+        "required": ["status", "activeMode", "boilerTemperatureC", "steamTemperatureC", "brewTargetC", "steamTargetC", "steamReadyTimeoutMs", "heaterEnabled", "heaterActive", "steamTimeoutRemainingMs", "uptimeMs", "fault"],
         "properties": {
           "status": { "enum": ["heating", "ready", "fault"] },
           "activeMode": { "enum": ["brew", "steam"] },
           "boilerTemperatureC": { "type": ["number", "null"], "minimum": -60, "maximum": 180 },
+          "steamTemperatureC": { "type": ["number", "null"], "minimum": -60, "maximum": 180 },
           "brewTargetC": { "type": "integer", "minimum": 85, "maximum": 95 },
           "steamTargetC": { "type": "integer", "minimum": 110, "maximum": 135 },
+          "steamReadyTimeoutMs": { "type": "integer", "minimum": 60000, "maximum": 900000, "multipleOf": 60000 },
           "heaterEnabled": { "type": "boolean" },
           "heaterActive": { "type": "boolean" },
           "steamTimeoutRemainingMs": { "type": ["integer", "null"], "minimum": 0, "maximum": 900000 },
-          "steamControl": { "$ref": "#/components/schemas/SteamControlState" },
           "uptimeMs": { "type": "integer", "minimum": 0 },
           "fault": { "oneOf": [{ "type": "null" }, { "$ref": "#/components/schemas/Fault" }] }
         }
@@ -628,45 +613,46 @@
       },
       "TemperatureSafeBounds": {
         "type": "object", "additionalProperties": false,
-        "required": ["brewMinimumC", "brewMaximumC", "steamMinimumC", "steamMaximumC"],
+        "required": ["minimumC", "maximumC"],
         "properties": {
-          "brewMinimumC": { "const": 85 },
-          "brewMaximumC": { "type": "integer", "minimum": 85, "maximum": 95 },
-          "steamMinimumC": { "const": 110 },
-          "steamMaximumC": { "type": "integer", "minimum": 110, "maximum": 135 }
+          "minimumC": { "type": "integer", "minimum": 85, "maximum": 135 },
+          "maximumC": { "type": "integer", "minimum": 85, "maximum": 135 }
         }
       },
       "TemperatureCalibration": {
         "oneOf": [
           {
             "type": "object", "additionalProperties": false,
-            "required": ["status", "savedOffsetC", "boilerTemperatureRawC", "boilerTemperatureC", "heaterActive", "ready", "safeTargetBounds"],
+            "required": ["status", "sensor", "savedOffsetC", "temperatureRawC", "temperatureC", "heaterActive", "ready", "safeTargetBounds"],
             "properties": {
               "status": { "const": "uncalibrated" }, "savedOffsetC": { "const": 0 },
-              "boilerTemperatureRawC": { "type": ["number", "null"], "minimum": -40, "maximum": 160 },
-              "boilerTemperatureC": { "type": ["number", "null"], "minimum": -60, "maximum": 170 },
+              "sensor": { "enum": ["boiler", "steam"] },
+              "temperatureRawC": { "type": ["number", "null"], "minimum": -40, "maximum": 160 },
+              "temperatureC": { "type": ["number", "null"], "minimum": -60, "maximum": 170 },
               "heaterActive": { "type": "boolean" }, "ready": { "type": "boolean" },
               "safeTargetBounds": { "$ref": "#/components/schemas/TemperatureSafeBounds" }
             }
           },
           {
             "type": "object", "additionalProperties": false,
-            "required": ["status", "savedOffsetC", "boilerTemperatureRawC", "boilerTemperatureC", "heaterActive", "ready", "safeTargetBounds"],
+            "required": ["status", "sensor", "savedOffsetC", "temperatureRawC", "temperatureC", "heaterActive", "ready", "safeTargetBounds"],
             "properties": {
               "status": { "const": "calibrated" }, "savedOffsetC": { "type": "integer", "minimum": -20, "maximum": 10 },
-              "boilerTemperatureRawC": { "type": ["number", "null"], "minimum": -40, "maximum": 160 },
-              "boilerTemperatureC": { "type": ["number", "null"], "minimum": -60, "maximum": 170 },
+              "sensor": { "enum": ["boiler", "steam"] },
+              "temperatureRawC": { "type": ["number", "null"], "minimum": -40, "maximum": 160 },
+              "temperatureC": { "type": ["number", "null"], "minimum": -60, "maximum": 170 },
               "heaterActive": { "type": "boolean" }, "ready": { "type": "boolean" },
               "safeTargetBounds": { "$ref": "#/components/schemas/TemperatureSafeBounds" }
             }
           },
           {
             "type": "object", "additionalProperties": false,
-            "required": ["status", "savedOffsetC", "boilerTemperatureRawC", "boilerTemperatureC", "heaterActive", "ready", "safeTargetBounds", "calibrationId", "candidateRawTargetC", "offsetPreviewC", "advisoryStableMs", "sessionLeaseRemainingMs", "previewSafeTargetBounds"],
+            "required": ["status", "sensor", "savedOffsetC", "temperatureRawC", "temperatureC", "heaterActive", "ready", "safeTargetBounds", "calibrationId", "candidateRawTargetC", "offsetPreviewC", "advisoryStableMs", "sessionLeaseRemainingMs", "previewSafeTargetBounds"],
             "properties": {
               "status": { "const": "calibrating" }, "savedOffsetC": { "type": "integer", "minimum": -20, "maximum": 10 },
-              "boilerTemperatureRawC": { "type": ["number", "null"], "minimum": -40, "maximum": 160 },
-              "boilerTemperatureC": { "type": ["number", "null"], "minimum": -60, "maximum": 170 },
+              "sensor": { "enum": ["boiler", "steam"] },
+              "temperatureRawC": { "type": ["number", "null"], "minimum": -40, "maximum": 160 },
+              "temperatureC": { "type": ["number", "null"], "minimum": -60, "maximum": 170 },
               "heaterActive": { "type": "boolean" }, "ready": { "type": "boolean" },
               "safeTargetBounds": { "$ref": "#/components/schemas/TemperatureSafeBounds" },
               "calibrationId": { "$ref": "#/components/schemas/OpaqueId" },
@@ -749,7 +735,7 @@
       },
       "TelemetrySample": {
         "type": "object", "additionalProperties": false,
-        "required": ["sequence", "uptimeMs", "elapsedMs", "extractionElapsedMs", "phase", "boilerTemperatureC", "activeTargetC", "heaterActive", "pumpCommand", "scaleAvailability", "netWeightDecigrams"],
+        "required": ["sequence", "uptimeMs", "elapsedMs", "extractionElapsedMs", "phase", "boilerTemperatureC", "steamTemperatureC", "activeTargetC", "heaterActive", "pumpCommand", "scaleAvailability", "netWeightDecigrams"],
         "properties": {
           "sequence": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
           "uptimeMs": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
@@ -757,6 +743,7 @@
           "extractionElapsedMs": { "type": "integer", "minimum": 0, "maximum": 60000 },
           "phase": { "enum": ["manual", "pre-infusion", "soak", "main-extraction", "settling"] },
           "boilerTemperatureC": { "type": ["number", "null"], "minimum": -60, "maximum": 180 },
+          "steamTemperatureC": { "type": ["number", "null"], "minimum": -60, "maximum": 180 },
           "activeTargetC": { "type": "integer", "minimum": 85, "maximum": 95 },
           "heaterActive": { "type": "boolean" }, "pumpCommand": { "enum": ["running", "off"] },
           "scaleAvailability": { "enum": ["unavailable", "unstable", "ready"] },
@@ -767,7 +754,7 @@
         "type": "object", "additionalProperties": false,
         "required": ["version", "deviceId", "extractionId", "bootId", "capturedAtUptimeMs", "selection", "controlMode", "weightControl", "baselineWeightDecigrams", "status", "outcome", "terminalWeight", "oldestSequence", "latestSequence", "nextCursor", "hasMore", "continuity", "samples"],
         "properties": {
-          "version": { "const": 1 }, "deviceId": { "$ref": "#/components/schemas/Identifier" },
+          "version": { "const": 2 }, "deviceId": { "$ref": "#/components/schemas/Identifier" },
           "extractionId": { "$ref": "#/components/schemas/OpaqueId" }, "bootId": { "$ref": "#/components/schemas/BootId" },
           "capturedAtUptimeMs": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
           "selection": { "$ref": "#/components/schemas/ExtractionSelection" }, "controlMode": { "enum": ["manual", "timed", "weight"] },

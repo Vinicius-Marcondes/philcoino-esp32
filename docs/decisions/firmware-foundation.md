@@ -1,14 +1,13 @@
 # Firmware foundation decisions
 
-Status: HISTORICAL FOUNDATION — CURRENT TEMPERATURE POLICY SUPERSEDED BY PRD-017
+Status: HISTORICAL FOUNDATION — PLATFORM/POLICY SUPERSEDED BY PRD-021
 
 These decisions establish PHIL-004. They do not approve energized heater tests or
 implement peripheral and control behavior.
 
-PRD-017 supersedes the historical Steam over-temperature value below for
-current runtime behavior. Current source uses a `110–135°C` inclusive Steam
-target range, permits effective-Steam and raw readings through `135°C`, faults
-strictly above either cap, and applies one persisted global calibration offset.
+PRD-021 supersedes the C3 target, identity, GPIO map, single-sensor calibration,
+and Steam correction described below. Current source targets ESP32-S3 N16R8,
+uses separate Boiler/Steam MAX6675 inputs and calibration, and serves API v4.
 
 ## Platform and dependencies
 

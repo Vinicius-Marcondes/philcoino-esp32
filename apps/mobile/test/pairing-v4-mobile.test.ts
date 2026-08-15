@@ -19,7 +19,7 @@ import {
 } from "../src/pairing/debug-pairing-dependencies";
 import { SelectedDeviceRepository } from "../src/storage/selected-device-repository";
 
-describe("mobile v3 SRP pairing", () => {
+describe("mobile v4 SRP pairing", () => {
   it("pairs once and stores only the remembered reconnect credential", async () => {
     const store = memoryStore();
     const repository = new SelectedDeviceRepository(store);

@@ -65,10 +65,13 @@ bool calibration_id_is_valid(const std::string& value) {
 void serialize_safe_target_bounds(
     std::ostringstream& output,
     const control::TemperatureSafeTargetBounds& bounds) {
-  output << "{\"brewMinimumC\":" << bounds.brew_minimum_c
-         << ",\"brewMaximumC\":" << bounds.brew_maximum_c
-         << ",\"steamMinimumC\":" << bounds.steam_minimum_c
-         << ",\"steamMaximumC\":" << bounds.steam_maximum_c << '}';
+  output << "{\"minimumC\":" << bounds.minimum_c
+         << ",\"maximumC\":" << bounds.maximum_c << '}';
+}
+
+const char* sensor_name(peripherals::TemperatureSensor sensor) {
+  return sensor == peripherals::TemperatureSensor::kBoiler ? "boiler"
+                                                            : "steam";
 }
 
 }  // namespace
@@ -107,6 +110,14 @@ std::string serialize_state(const control::ControlSnapshot& snapshot,
   } else {
     output << "null";
   }
+  output << ",\"steamTemperatureC\":";
+  if (snapshot.steam_temperature.status ==
+          peripherals::ThermocoupleStatus::kOk &&
+      std::isfinite(snapshot.steam_temperature.temperature_c)) {
+    output << snapshot.steam_temperature.temperature_c;
+  } else {
+    output << "null";
+  }
   output << ",\"brewTargetC\":" << snapshot.targets.brew_c
          << ",\"steamTargetC\":" << snapshot.targets.steam_c
          << ",\"heaterEnabled\":"
@@ -116,7 +127,14 @@ std::string serialize_state(const control::ControlSnapshot& snapshot,
          << ",\"fault\":";
   if (snapshot.fault_active) {
     output << "{\"code\":\"" << control::fault_code_name(snapshot.fault.code)
-           << "\",\"message\":\"" << snapshot.fault.message << "\"}";
+           << "\",\"message\":\"" << snapshot.fault.message
+           << "\",\"sensor\":";
+    if (snapshot.fault.sensor_available) {
+      output << '"' << sensor_name(snapshot.fault.sensor) << '"';
+    } else {
+      output << "null";
+    }
+    output << '}';
   } else {
     output << "null";
   }
@@ -126,38 +144,9 @@ std::string serialize_state(const control::ControlSnapshot& snapshot,
   } else {
     output << "null";
   }
-  output << ",\"steamControl\":"
-         << serialize_steam_control(snapshot.steam_control);
+  output << ",\"steamReadyTimeoutMs\":"
+         << snapshot.steam_control.settings.ready_timeout_ms;
   output << ",\"uptimeMs\":" << uptime_ms << '}';
-  return output.str();
-}
-
-std::string serialize_steam_control(
-    const control::SteamControlSnapshot& snapshot) {
-  std::ostringstream output;
-  output.imbue(std::locale::classic());
-  output << std::setprecision(6)
-         << "{\"settings\":{\"initialCompensationC\":"
-         << snapshot.settings.initial_compensation_c
-         << ",\"decayDurationMs\":" << snapshot.settings.decay_duration_ms
-         << ",\"readyTimeoutMs\":" << snapshot.settings.ready_timeout_ms
-         << "},\"compensationActive\":"
-         << (snapshot.compensation_active ? "true" : "false")
-         << ",\"appliedCompensationC\":"
-         << snapshot.applied_compensation_c
-         << ",\"controlTemperatureC\":";
-  if (snapshot.control_temperature_available) {
-    output << snapshot.control_temperature_c;
-  } else {
-    output << "null";
-  }
-  output << ",\"heatSoakElapsedMs\":";
-  if (snapshot.heat_soak_active) {
-    output << snapshot.heat_soak_elapsed_ms;
-  } else {
-    output << "null";
-  }
-  output << '}';
   return output.str();
 }
 
@@ -241,65 +230,6 @@ bool parse_heater_enabled(const std::string& body, bool& enabled) {
   return true;
 }
 
-bool parse_steam_control_settings(
-    const std::string& body,
-    peripherals::SteamControlSettings current,
-    peripherals::SteamControlSettings& updated,
-    bool& constraint_violation) {
-  std::vector<JsonField> fields;
-  JsonObjectParser parser(body);
-  if (!parser.parse(fields) || fields.empty()) {
-    return false;
-  }
-  auto candidate = current;
-  bool invalid = false;
-  for (const auto& field : fields) {
-    if (field.value.type != JsonValue::Type::kNumber ||
-        std::floor(field.value.number) != field.value.number) {
-      return false;
-    }
-    if (field.key == "initialCompensationC") {
-      if (field.value.number <
-              config::kSteamCompensationInitialMinimumC ||
-          field.value.number >
-              config::kSteamCompensationInitialMaximumC) {
-        invalid = true;
-      } else {
-        candidate.initial_compensation_c =
-            static_cast<std::int32_t>(field.value.number);
-      }
-    } else if (field.key == "decayDurationMs") {
-      if (field.value.number <
-              config::kSteamCompensationDecayMinimumMs ||
-          field.value.number >
-              config::kSteamCompensationDecayMaximumMs) {
-        invalid = true;
-      } else {
-        candidate.decay_duration_ms =
-            static_cast<std::uint32_t>(field.value.number);
-      }
-    } else if (field.key == "readyTimeoutMs") {
-      if (field.value.number < config::kSteamReadyTimeoutMinimumMs ||
-          field.value.number > config::kSteamReadyTimeoutMaximumMs) {
-        invalid = true;
-      } else {
-        candidate.ready_timeout_ms =
-            static_cast<std::uint32_t>(field.value.number);
-      }
-    } else {
-      return false;
-    }
-  }
-  if (!peripherals::steam_control_settings_are_valid(candidate)) {
-    invalid = true;
-  }
-  constraint_violation = invalid;
-  if (!invalid) {
-    updated = candidate;
-  }
-  return true;
-}
-
 bool parse_settings(
     const std::string& body,
     peripherals::TemperatureTargets current_targets,
@@ -321,15 +251,23 @@ bool parse_settings(
   bool first_temperature = true;
   has_temperature_settings = false;
   has_steam_settings = false;
-  std::string steam_body;
+  constraint_violation = false;
+  auto parsed_steam = current_steam;
   for (const auto& field : fields) {
-    if (field.key == "steamControl") {
-      if (field.value.type != JsonValue::Type::kOther ||
-          field.value.string.empty() || has_steam_settings) {
+    if (field.key == "steamReadyTimeoutMs") {
+      if (field.value.type != JsonValue::Type::kNumber ||
+          std::floor(field.value.number) != field.value.number ||
+          has_steam_settings) {
         return false;
       }
       has_steam_settings = true;
-      steam_body = field.value.string;
+      if (field.value.number < config::kSteamReadyTimeoutMinimumMs ||
+          field.value.number > config::kSteamReadyTimeoutMaximumMs) {
+        constraint_violation = true;
+      } else {
+        parsed_steam.ready_timeout_ms =
+            static_cast<std::uint32_t>(field.value.number);
+      }
       continue;
     }
     if (field.key != "brewTargetC" && field.key != "steamTargetC") {
@@ -348,19 +286,14 @@ bool parse_settings(
 
   bool invalid = false;
   auto parsed_targets = current_targets;
-  auto parsed_steam = current_steam;
   if (has_temperature_settings &&
       !parse_temperatures(temperatures.str(), current_targets,
                           parsed_targets, invalid)) {
     return false;
   }
-  bool steam_invalid = false;
-  if (has_steam_settings &&
-      !parse_steam_control_settings(steam_body, current_steam,
-                                    parsed_steam, steam_invalid)) {
-    return false;
-  }
-  constraint_violation = invalid || steam_invalid;
+  constraint_violation = constraint_violation || invalid ||
+                         !peripherals::steam_control_settings_are_valid(
+                             parsed_steam);
   if (!constraint_violation) {
     updated_targets = parsed_targets;
     updated_steam = parsed_steam;
@@ -449,14 +382,15 @@ std::string serialize_temperature_calibration(
   output.imbue(std::locale::classic());
   output << std::setprecision(6) << "{\"status\":\""
          << temperature_calibration_status_name(snapshot.status)
+         << "\",\"sensor\":\"" << sensor_name(snapshot.sensor)
          << "\",\"savedOffsetC\":" << snapshot.saved_offset_c
-         << ",\"boilerTemperatureRawC\":";
+         << ",\"temperatureRawC\":";
   if (snapshot.temperature_available) {
     output << json_temperature(snapshot.raw_temperature_c);
   } else {
     output << "null";
   }
-  output << ",\"boilerTemperatureC\":";
+  output << ",\"temperatureC\":";
   if (snapshot.temperature_available) {
     output << json_temperature(snapshot.effective_temperature_c);
   } else {

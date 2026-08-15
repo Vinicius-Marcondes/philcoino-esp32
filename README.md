@@ -2,185 +2,94 @@
 
 [English](docs/en/README.md)
 
-Philcoino é um protótipo local-first para monitoramento, controle de temperatura e comando de extração de uma máquina de espresso. O repositório reúne um aplicativo mobile em Expo, um contrato OpenAPI, um simulador determinístico do dispositivo e firmware para ESP32-C3.
+Philcoino é um protótipo local-first para monitoramento, controle de temperatura
+e extração de uma máquina de espresso. O repositório reúne app Expo 54,
+contrato OpenAPI, simulador determinístico e firmware ESP-IDF 6.0.2 para
+ESP32-S3-WROOM-1 N16R8.
 
-O celular descobre e autentica uma máquina, exibe o estado em tempo real e envia alterações de target, mode e permissão do heater. O ESP32 continua sendo a autoridade sobre leituras dos sensores, targets persistidos, readiness, saída do heater, timeouts e faults.
+O firmware é a autoridade de sensores, targets, persistência, readiness,
+timeouts, heater, pump e faults. O celular nunca participa do safety loop.
 
 > [!CAUTION]
-> Este projeto não está aprovado para produção ou uso sem supervisão. Em
-> 2026-07-16, o owner aceitou uma configuração testada após checks funcionais e
-> dos controles de energia com equipamento técnico; isso não é certificação nem
-> autorização geral para outra configuração energizada. Para desenvolvimento,
-> use o simulador ou hardware em baixa tensão, leia
-> [Segurança e status do projeto](docs/SAFETY.md) e preserve os findings abertos.
+> O projeto não está aprovado para produção, uso sem supervisão ou testes
+> energizados. A migração S3/dual-MAX6675 invalida a aplicação direta de toda
+> aceitação física anterior em C3, sensor único, pump SSR ou RobotDyn. Leia
+> [Segurança](docs/SAFETY.md) e o [wiring S3](docs/hardware/esp32-s3-n16r8-wiring.md).
 
-## O que está implementado
+## Geração atual
 
-- Descoberta local no iOS/Android por mDNS `_philcoino._tcp`, com endereço manual como fallback.
-- Inspeção pública da identidade do dispositivo seguida de autenticação por bearer token.
-- Armazenamento seguro de um dispositivo selecionado, token e último endereço válido.
-- Restauração pelo endereço salvo e redescoberta por stable ID após mudanças de endereço.
-- Validação estrita das APIs v1/v2 em runtime e estados explícitos para offline, unauthorized, not found, timeout e protocol error.
-- Polling do dashboard a cada segundo, orientado à conclusão, enquanto a tela e o app estão ativos.
-- Cada estado validado de primeiro plano é salvo localmente em SQLite sem
-  backfill; o Dashboard mostra somente o dia local atual, enquanto dias
-  anteriores permanecem disponíveis para exportação até uma limpeza manual.
-- Targets de brew/steam, active mode, permissão do heater e dismissal de over-temperature confirmados pelo firmware.
-- Calibração guiada em Machine com target raw de `90–120°C`, operação manual
-  da steam wand, Save explícito e um offset global persistido aplicado uma vez
-  em Brew e Steam.
-- Compensação dinâmica de equilíbrio térmico em Steam, configurada e
-  persistida pelo firmware, com estimativa e leitura lateral exibidas
-  separadamente e contexto completo no CSV.
-- Controle pelo ESP32-C3, persistência dos targets em NVS, amostragem MAX6675, rede HTTP/mDNS e policy boundaries testáveis no host.
-- Selector compile-time default-off que mantém a curva Brew legacy como
-  autoridade e permite comparar um PI bounded em shadow; builds PI ativos
-  continuam pendentes de target build e A/B físico supervisionado.
-- Simulador determinístico Bun/Hono para desenvolvimento mobile e do contrato.
-- Manual + quatro profiles app-wide armazenados somente no celular. Cada Start
-  envia um snapshot completo e imutável para execução autônoma do firmware.
-- Uma quinta aba `Extrações` reúne todas as extrações Manual, temporizadas e por
-  peso, inclusive interrompidas, falhas e incompletas, com traço e exportação.
+- ESP32-S3 N16R8, firmware `0.5.0`, flash 16 MB QIO/80 MHz, PSRAM desabilitada.
+- API HTTPS v4 somente; API v3 não é servida.
+- Novo identity/binding domain: o app precisa ser reconstruído e pareado novamente.
+- MAX6675 Boiler em SCK4/SO5/CS7 e Steam em SCK4/SO8/CS9.
+- Brew controla pelo Boiler; Steam controla pelo Steam; sem fallback ou blending.
+- Calibrações independentes e uma única session global.
+- Steam controla diretamente por `steamTargetC`; apenas ready timeout é configurável.
+- RobotDyn em ZC6/DIM10, 60 Hz, LINEAR, 0% inicial e cap único de 90%.
+- HX711 em DT11/SCK12 e heater SSR em GPIO21.
+- CPU1 executa aquisição/controle/workflow/scale; CPU0 executa networking/OTA.
 
-O produto ainda é um protótipo. A aceitação da PRD-001 e a validação física estão incompletas; consulte o [tracker](docs/TRACKER.md) e os [findings conhecidos](CODEBASE_REVIEW_REPORT.md).
+Percentuais do dimmer são comandos abstratos, não medição de tensão, potência,
+pressão ou fluxo. Não existe controle fechado de pressão.
 
-## Visão geral do sistema
-
-```text
-Expo mobile app
-  discovery -> identity check -> bearer authentication -> SecureStore
-      |                                                   |
-      +-------------- local HTTP API v1 + v2 ------------+
-                              |
-                    ESP32 firmware (authority)
-             sensors -> control -> SSR command -> faults
-                              |
-                  NVS targets/calibration
-
-OpenAPI 3.1.1 contract
-  -> strict Zod schemas (mobile + simulator)
-  -> independent strict C++ validation (firmware)
-
-Device simulator
-  -> contract/UI development only; not a firmware safety model
-```
-
-Para entender ownership e fluxos de falha em detalhes, leia [Architecture](docs/ARCHITECTURE.md).
-
-## Estrutura do repositório
+## Repositório
 
 | Caminho | Responsabilidade |
 | --- | --- |
-| [`apps/mobile`](apps/mobile) | Cliente Expo 54 / React Native, discovery, pairing, persistência segura, polling de estado, streaming de extração, controles e UI |
-| [`packages/protocol`](packages/protocol) | Contrato OpenAPI autoritativo, schemas Zod estritos, fixtures e contract tests |
-| [`tools/device-simulator`](tools/device-simulator) | Simulador determinístico da API em Bun/Hono e controles de desenvolvimento |
-| [`tools/thermal-modeling`](tools/thermal-modeling) | Análise offline de CSV, modelos térmicos, simulação, tuning e export versionado para revisão manual |
-| [`firmware/espresso-machine`](firmware/espresso-machine) | Firmware independente em ESP-IDF 6.0.2 e host tests nativos |
-| [`docs`](docs) | Architecture, desenvolvimento, segurança, PRD, hardware, decisões e referências |
+| [`apps/mobile`](apps/mobile) | App Expo 54, discovery/pairing v4, dashboard dual, history SQLite v8 e CSV |
+| [`packages/protocol`](packages/protocol) | OpenAPI v4, schemas Zod estritos, fixtures e testes |
+| [`tools/device-simulator`](tools/device-simulator) | Simulador determinístico API/UI; não é evidence física |
+| [`firmware/espresso-machine`](firmware/espresso-machine) | Firmware S3, adapters ESP-IDF e host tests C++ |
+| [`docs`](docs) | Architecture, development, safety, hardware, PRDs e tracker |
 
-O workspace Bun inclui `apps/*`, `packages/*` e `tools/*`. O firmware tem seu próprio toolchain CMake/ESP-IDF e, intencionalmente, não faz parte do workspace Bun.
+## Desenvolvimento sem hardware
 
-## Início rápido sem hardware
-
-Pré-requisitos:
-
-- Bun compatível com o lockfile versionado;
-- Node.js 20.19 ou mais recente para Expo SDK 54;
-- dependências do workspace instaladas (`bun install`) antes de executar os comandos.
-
-Nenhuma dependência adicional é necessária além do manifest do repositório. A partir da raiz:
+Use apenas dependências já declaradas; nenhuma instalação nova deve ser feita
+sem aprovação.
 
 ```bash
-bun install
 EXPO_PUBLIC_PHILCOINO_DEBUG_DEVICE=1 bun run start
-```
-
-O debug-device mode renderiza o dashboard sem discovery, autenticação, requests de rede ou ESP32. Ele é útil para trabalhar na UI, mas as temperaturas e o uptime permanecem estáticos.
-
-Para desenvolver a API e integrações, execute o simulador determinístico:
-
-```bash
 bun run simulator
 ```
 
-Por padrão, ele escuta em `http://localhost:3000` e usa o bearer token de desenvolvimento `philcoino-dev-token`. No aplicativo, informe manualmente o endereço do simulador. A descoberta na rede local exige um development build nativo para iOS/Android; web e plataformas sem suporte usam endereço manual.
+Validação coordenada:
 
-Consulte [Development](docs/DEVELOPMENT.md) para workflows das plataformas, controles do simulador, configuração do firmware e a matriz completa de verificação.
+```bash
+bun run validate:openapi
+bun run test:protocol
+bun run typecheck:protocol
+bun run test:simulator
+bun run typecheck:simulator
+bun run typecheck
+bun run --cwd apps/mobile test
+```
 
-## Contrato da API
+Os host tests, sanitizers, contract captures e target build estão documentados
+em [Development](docs/DEVELOPMENT.md). Eles não autorizam flashing nem mains.
 
-[`packages/protocol/openapi.yaml`](packages/protocol/openapi.yaml) é a source of truth do protocolo. Os endpoints públicos são:
+## API v4
 
-- `GET /healthz`
-- `GET /api/v1/device`
+[`packages/protocol/openapi.yaml`](packages/protocol/openapi.yaml) é a source of
+truth. A API usa SRP para pairing, HTTPS com certificate pinning e complete
+acknowledged state. Calibração é sensor-qualified:
 
-Endpoints autenticados exigem `Authorization: Bearer <token>`:
+```text
+/api/v4/temperature-calibrations/{boiler|steam}/current
+```
 
-- `GET /api/v1/state`
-- `PATCH /api/v1/settings/temperatures`
-- `PUT /api/v1/mode`
-- `PUT /api/v1/heater`
-- `POST /api/v1/faults/over-temperature/dismiss`
-
-A API v2 adiciona, sem remover v1:
-
-- `GET /api/v2/state`
-- `POST /api/v2/extractions/start`
-- `POST /api/v2/extractions/stop`
-- `GET /api/v2/extractions/stream`
-- `POST /api/v2/cooldowns/start`
-- `POST /api/v2/cooldowns/stop`
-- `GET /api/v2/scale`
-- `GET /api/v2/scale/trace` (compatibilidade; não usado pelo runtime mobile atual)
-- `POST /api/v2/scale/calibration/start`
-- `POST /api/v2/scale/calibration/complete`
-- `POST /api/v2/scale/calibration/cancel`
-- `POST /api/v2/scale/warnings/acknowledge`
-- `GET /api/v2/temperature-calibration`
-- `POST /api/v2/temperature-calibration/start`
-- `PUT /api/v2/temperature-calibration/candidate`
-- `POST /api/v2/temperature-calibration/save`
-- `POST /api/v2/temperature-calibration/cancel`
-- `GET /api/v2/settings/steam-control`
-- `PATCH /api/v2/settings/steam-control`
-
-Valores históricos e atuais `running`/`off` indicam somente comandos do
-firmware, não corrente, fluxo,
-posição do switch em série ou desenergização física confirmada.
-
-O simulador também disponibiliza controles `_simulator/*`, que ficam deliberadamente fora da API v1 e nunca devem ser implementados como endpoints do firmware de produção.
-
-O range Steam atual é `110–135°C`, inclusivo. `135°C` é o cap permitido para
-target e leitura; qualquer temperatura Steam effective ou raw acima de
-`135°C` causa latch de `over_temperature` e comando do heater off.
-A estimativa transitória de Steam não altera essa leitura nem esses caps.
-
-## Regras centrais de design
-
-- O firmware, não o celular, é responsável pelo loop de tempo real e segurança.
-- Alterações solicitadas não aparecem como estado real até chegar um acknowledgement válido do firmware.
-- O polling pausa durante uma mutation para impedir que um snapshot antigo sobrescreva o acknowledgement.
-- Durante uma extração reconhecida, o mobile usa SSE autenticado a 250 ms para
-  telemetria e mantém o poll combinado de estado a um segundo; não há fallback
-  de polling de alta frequência.
-- Todo payload de discovery, storage, request, response e error é validado na sua boundary.
-- Snapshots de fault informam o comando do heater como inativo; a certeza sobre a saída física ainda depende do hardware e dos findings de segurança não resolvidos.
-- O simulador ajuda nos testes de contrato/UI e não comprova que o timing ou o controle do heater no firmware sejam seguros.
+`MachineStateV4` contém `boilerTemperatureC`, `steamTemperatureC`,
+`temperatureCalibrations.boiler`, `.steam`, e faults térmicos com sensor de
+origem. Extraction telemetry usa page format 2 e carrega ambas temperaturas.
 
 ## Documentação
 
-- [Índice da documentação](docs/README.md)
 - [Architecture](docs/ARCHITECTURE.md)
-- [Development e verificação](docs/DEVELOPMENT.md)
-- [Segurança e status do projeto](docs/SAFETY.md)
-- [Como contribuir](CONTRIBUTING.md)
-- [Descrição da API v1](docs/protocol/api-v1-outline.md)
-- [Descrição da API v2](docs/protocol/api-v2-outline.md)
-- [Ligação do hardware](docs/hardware/esp32-c3-wiring.md)
-- [Ajuste do controle de temperatura](docs/hardware/temperature-control-tuning.md)
-- [Tracker da PRD ativa](docs/TRACKER.md)
-- [Findings da revisão do codebase](CODEBASE_REVIEW_REPORT.md)
+- [Development](docs/DEVELOPMENT.md)
+- [Segurança](docs/SAFETY.md)
+- [Wiring ESP32-S3 N16R8](docs/hardware/esp32-s3-n16r8-wiring.md)
+- [Tracker](docs/TRACKER.md)
+- [Codebase review](CODEBASE_REVIEW_REPORT.md)
 
-## Como contribuir
-
-Comece por [CONTRIBUTING.md](CONTRIBUTING.md). Mudanças na API, controle do firmware, comportamento do hardware, autenticação ou dados persistidos exigem revisão end-to-end de todas as boundaries afetadas. Nunca inclua secrets locais, projetos nativos gerados, diretórios de dependências, build output do firmware ou `sdkconfig` em uma contribuição.
+Contribuições devem preservar firmware authority, fail-off outputs, validação
+estrita, alterações acknowledged e os limites de safety documentados em
+[CONTRIBUTING.md](CONTRIBUTING.md).

@@ -1,13 +1,7 @@
 import {
-  STEAM_COMPENSATION_DECAY_MAX_MS,
-  STEAM_COMPENSATION_DECAY_MIN_MS,
-  STEAM_COMPENSATION_INITIAL_MAX_C,
-  STEAM_COMPENSATION_INITIAL_MIN_C,
   STEAM_READY_TIMEOUT_MAX_MS,
   STEAM_READY_TIMEOUT_MIN_MS,
-  type SteamControlSettings,
-  type SteamControlSettingsRequest,
-  type MachineStateV3,
+  type MachineStateV4,
 } from "@philcoino/protocol";
 import { useEffect, useState } from "react";
 import {
@@ -26,11 +20,11 @@ import { translate } from "@/src/localization/i18n";
 export interface SteamControlSettingsClient {
   getState(options?: {
     signal?: AbortSignal;
-  }): Promise<MachineStateV3>;
-  updateSteamControlSettings(
-    request: SteamControlSettingsRequest,
+  }): Promise<MachineStateV4>;
+  updateSteamReadyTimeout(
+    readyTimeoutMs: number,
     options?: { signal?: AbortSignal },
-  ): Promise<MachineStateV3>;
+  ): Promise<MachineStateV4>;
 }
 
 interface SteamControlSettingsScreenProps {
@@ -47,8 +41,8 @@ export function SteamControlSettingsScreen({
   visible,
 }: SteamControlSettingsScreenProps) {
   const insets = useSafeAreaInsets();
-  const [saved, setSaved] = useState<SteamControlSettings | null>(null);
-  const [draft, setDraft] = useState<SteamControlSettings | null>(null);
+  const [saved, setSaved] = useState<number | null>(null);
+  const [draft, setDraft] = useState<number | null>(null);
   const [status, setStatus] =
     useState<"idle" | "loading" | "saving" | "error">("idle");
 
@@ -64,8 +58,8 @@ export function SteamControlSettingsScreen({
     void client
       .getState({ signal: controller.signal })
       .then((state) => {
-        setSaved(state.machine.steamControl.settings);
-        setDraft(state.machine.steamControl.settings);
+        setSaved(state.machine.steamReadyTimeoutMs);
+        setDraft(state.machine.steamReadyTimeoutMs);
         setStatus("idle");
       })
       .catch(() => {
@@ -79,9 +73,7 @@ export function SteamControlSettingsScreen({
   const changed =
     draft !== null &&
     saved !== null &&
-    (draft.initialCompensationC !== saved.initialCompensationC ||
-      draft.decayDurationMs !== saved.decayDurationMs ||
-      draft.readyTimeoutMs !== saved.readyTimeoutMs);
+    draft !== saved;
   const pending = status === "loading" || status === "saving";
 
   const save = () => {
@@ -90,10 +82,10 @@ export function SteamControlSettingsScreen({
     }
     setStatus("saving");
     void client
-      .updateSteamControlSettings(draft)
+      .updateSteamReadyTimeout(draft)
       .then((state) => {
-        setSaved(state.machine.steamControl.settings);
-        setDraft(state.machine.steamControl.settings);
+        setSaved(state.machine.steamReadyTimeoutMs);
+        setDraft(state.machine.steamReadyTimeoutMs);
         setStatus("idle");
       })
       .catch(() => setStatus("error"));
@@ -158,36 +150,14 @@ export function SteamControlSettingsScreen({
           <View style={styles.card}>
             <SettingStepper
               disabled={pending}
-              label={translate("steamControl.initial")}
-              maximum={STEAM_COMPENSATION_INITIAL_MAX_C}
-              minimum={STEAM_COMPENSATION_INITIAL_MIN_C}
-              onChange={(initialCompensationC) =>
-                setDraft({ ...draft, initialCompensationC })
-              }
-              suffix="°C"
-              value={draft.initialCompensationC}
-            />
-            <SettingStepper
-              disabled={pending}
-              label={translate("steamControl.decay")}
-              maximum={STEAM_COMPENSATION_DECAY_MAX_MS / 60_000}
-              minimum={STEAM_COMPENSATION_DECAY_MIN_MS / 60_000}
-              onChange={(minutes) =>
-                setDraft({ ...draft, decayDurationMs: minutes * 60_000 })
-              }
-              suffix={translate("steamControl.minutesShort")}
-              value={draft.decayDurationMs / 60_000}
-            />
-            <SettingStepper
-              disabled={pending}
               label={translate("steamControl.timeout")}
               maximum={STEAM_READY_TIMEOUT_MAX_MS / 60_000}
               minimum={STEAM_READY_TIMEOUT_MIN_MS / 60_000}
               onChange={(minutes) =>
-                setDraft({ ...draft, readyTimeoutMs: minutes * 60_000 })
+                setDraft(minutes * 60_000)
               }
               suffix={translate("steamControl.minutesShort")}
-              value={draft.readyTimeoutMs / 60_000}
+              value={draft / 60_000}
             />
             <Text selectable style={styles.help}>
               {translate("steamControl.timingDetail")}

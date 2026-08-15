@@ -39,8 +39,8 @@ Não resolva silenciosamente um conflito de safety, hardware, security ou escopo
 
 - [`ARCHITECTURE.md`](ARCHITECTURE.md): architecture atual de mobile, protocolo, simulador e firmware.
 - [`architecture/repository-layout.md`](architecture/repository-layout.md): boundaries duráveis do repositório e orientações de organização.
-- [`protocol/api-v1-outline.md`](protocol/api-v1-outline.md): justificativas e exemplos da API para leitura humana; o OpenAPI continua autoritativo.
-- [`protocol/api-v2-outline.md`](protocol/api-v2-outline.md): workflows e replay de extração reconhecidos pelo firmware; v1 permanece compatível.
+- [`protocol/api-v4.md`](protocol/api-v4.md): boundary HTTPS atual, dual-sensor, calibration routes e telemetry v2.
+- [`protocol/api-v1-outline.md`](protocol/api-v1-outline.md) e [`api-v2-outline.md`](protocol/api-v2-outline.md): registros históricos, não servidos.
 - [`protocol/local-history-csv.md`](protocol/local-history-csv.md): retenção local e colunas dos exports de estado, resumo e traço de extração.
 - [`decisions/firmware-foundation.md`](decisions/firmware-foundation.md): decisões aprovadas de firmware, toolchain e foundation.
 
@@ -55,7 +55,8 @@ A PRD e os arquivos de task são registros históricos/de aprovação. Se a impl
 ## Hardware e segurança
 
 - [`SAFETY.md`](SAFETY.md): status público de segurança e regras de contribuição.
-- [`hardware/esp32-c3-wiring.md`](hardware/esp32-c3-wiring.md): GPIOs, ligações dos módulos e checks elétricos não resolvidos.
+- [`hardware/esp32-s3-n16r8-wiring.md`](hardware/esp32-s3-n16r8-wiring.md): mapa GPIO atual, dual MAX6675 e checks físicos pendentes.
+- [`hardware/esp32-c3-wiring.md`](hardware/esp32-c3-wiring.md): registro histórico superseded.
 - [`hardware/temperature-control-tuning.md`](hardware/temperature-control-tuning.md): curva legacy, selector PI Brew default-off e gates de tuning/A-B.
 - [`../tools/thermal-modeling/README.md`](../tools/thermal-modeling/README.md): workflow desktop offline para validar CSV, treinar, simular e gerar candidatos revisáveis.
 - [`side-notes.md`](side-notes.md): checks adiados de iPhone físico, hardware, relay, cutoff e rede elétrica.

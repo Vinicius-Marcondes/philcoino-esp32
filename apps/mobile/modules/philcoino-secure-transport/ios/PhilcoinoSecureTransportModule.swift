@@ -48,7 +48,7 @@ public final class PhilcoinoSecureTransportModule: Module {
         throw TransportError.srpSessionUnavailable
       }
       let client = Client<SHA512>(
-        username: "philcoino-v3",
+        username: "philcoino-v4",
         password: pairingCode,
         group: .N3072
       )
@@ -329,7 +329,7 @@ public final class PhilcoinoSecureTransportModule: Module {
 
   fileprivate static func makeSession(delegate: PinningDelegate) -> URLSession {
     let configuration = URLSessionConfiguration.ephemeral
-    // The ESP32-C3 HTTPS server has a deliberately small socket budget. One
+    // The ESP32-S3 HTTPS server has a deliberately bounded socket budget. One
     // persistent control connection avoids repeated TLS handshakes and keeps
     // the separate SSE connection from causing socket churn.
     configuration.httpMaximumConnectionsPerHost = 1
@@ -420,8 +420,8 @@ public final class PhilcoinoSecureTransportModule: Module {
   }
 
   private static func isUnpinnedPairingPath(_ path: String) -> Bool {
-    if path == "/api/v3/pairing/sessions" { return true }
-    let pattern = "^/api/v3/pairing/sessions/[0-9a-f]{32}/proof$"
+    if path == "/api/v4/pairing/sessions" { return true }
+    let pattern = "^/api/v4/pairing/sessions/[0-9a-f]{32}/proof$"
     return path.range(of: pattern, options: .regularExpression) != nil
   }
 }

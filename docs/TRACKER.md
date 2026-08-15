@@ -1,42 +1,44 @@
-# PRD-020 Tracker
+# PRD-021 Tracker
 
-PRD Status: Implemented — Native and connected Human acceptance pending
-Current Task: [SIMP-006](prds/PRD-020/tasks/SIMP-006.md) — Verify and document the simplified system
+PRD Status: Software Implemented — Disconnected Human Acceptance Pending
+Current Task: [S3TEMP-007](prds/PRD-021/tasks/S3TEMP-007.md) — Verify and document the S3 dual-sensor system
 
-Implementation Boundary: Remove machine-history backfill and firmware profile
-persistence while preserving one-Hertz state polling, firmware-owned extraction,
-short stream replay, and local-only durable histories.
+Implementation Boundary: Replace the ESP32-C3/single-sensor generation with one
+ESP32-S3 N16R8 generation whose firmware independently owns Boiler and Steam
+temperature validation, calibration, control, and fail-off behavior.
 
 ## Summary
 
-Profiles become mobile-only inline Start data, foreground state samples remain
-local until clear, and every extraction is presented through one Shots surface.
+The S3 migration adds a near-valve Steam MAX6675, coordinated API v4, and
+two-temperature mobile/simulator/history support without fallback, predictive
+control, pressure regulation, or energized acceptance.
 
-PRD: `docs/prds/PRD-020/PRD-020.md`
+PRD: `docs/prds/PRD-021/PRD-021.md`
 
 ## Compatibility and Safety Boundary
 
-- API generation 2 is a coordinated mobile/firmware cutover with no legacy shim.
-- Firmware latches and executes inline profiles; connectivity and telemetry never
-  own timing, cutoff, faults, heater, or pump safety.
-- The extraction replay ring remains observational and bounded. Connected and
-  software evidence do not establish energized physical safety.
-- PRD-019 remains Implemented with connected/Human acceptance pending; its
-  outstanding extraction-stream evidence is carried into SIMP-006, not marked complete.
+- API v4 is a coordinated firmware/mobile cutover with no v3 compatibility shim.
+- Brew uses the Boiler sensor and Steam uses the Steam sensor; firmware never
+  blends or automatically falls back between them.
+- Either raw sensor retains independent 135°C protection; an invalid active
+  sensor commands heater OFF immediately.
+- Software and simulator verification do not validate the new board, probe
+  isolation, mains wiring, thermal response, or physical output state.
 
 ## Git
 
-- Branch: `codex/PRD-020-system-simplification`
-- Base: `main`
-- Merge target: `main`
+- Branch: `codex/esp32-s3-n16r8-migration`
+- Base: `codex/robotdyn-pump-dimmer` at `5930b48`
+- Merge target: `main` after the RobotDyn baseline is integrated
 
 ## Execution State
 
 | Task | Review | Status | Evidence | Decision Log | Commit | Blocked Reason | Requested Decision |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| [SIMP-001](prds/PRD-020/tasks/SIMP-001.md) | Agent | Done | [Software verification](prds/PRD-020/evidence/SOFTWARE-VERIFICATION.md) | Coordinated API generation 2 cutover | Pending | None | None |
-| [SIMP-002](prds/PRD-020/tasks/SIMP-002.md) | Agent | Done | [Software verification](prds/PRD-020/evidence/SOFTWARE-VERIFICATION.md) | No persisted simulator profiles/history | Pending | None | None |
-| [SIMP-003](prds/PRD-020/tasks/SIMP-003.md) | Agent | Done | [Software verification](prds/PRD-020/evidence/SOFTWARE-VERIFICATION.md) | Inline profile remains firmware-latched | Pending | None | None |
-| [SIMP-004](prds/PRD-020/tasks/SIMP-004.md) | Agent | Done | [Software verification](prds/PRD-020/evidence/SOFTWARE-VERIFICATION.md) | Status retained until explicit clear | Pending | None | None |
-| [SIMP-005](prds/PRD-020/tasks/SIMP-005.md) | Agent | Done | [Software verification](prds/PRD-020/evidence/SOFTWARE-VERIFICATION.md) | One durable Shots surface | Pending | None | None |
-| [SIMP-006](prds/PRD-020/tasks/SIMP-006.md) | Human | Implemented — Review pending | [Software verification](prds/PRD-020/evidence/SOFTWARE-VERIFICATION.md) | Physical acceptance remains separate | Pending | Native lifecycle/visual and connected-target evidence | Review five-tab UI, lifecycle, export/clear, latency/timing, heap/stack, SSE, and REST Stop |
+| [S3TEMP-001](prds/PRD-021/tasks/S3TEMP-001.md) | Agent | Done | Protocol test/typecheck/OpenAPI validation | Coordinated API v4 cutover | Pending | None | None |
+| [S3TEMP-002](prds/PRD-021/tasks/S3TEMP-002.md) | Agent | Done | Config/peripheral tests + clean S3 target build | Fixed S3 map/shared MAX6675 bus | Pending | None | None |
+| [S3TEMP-003](prds/PRD-021/tasks/S3TEMP-003.md) | Agent | Done | Normal + ASan/UBSan control/storage/race tests | Fixed sensor ownership; no fallback | Pending | None | None |
+| [S3TEMP-004](prds/PRD-021/tasks/S3TEMP-004.md) | Agent | Done | 9/9 host tests + 10 strict v4 captures + 6 OTA tests + S3 build | CPU1 control/CPU0 network affinity | Pending | None | None |
+| [S3TEMP-005](prds/PRD-021/tasks/S3TEMP-005.md) | Agent | Done | 15 simulator tests + typecheck | Deterministic dual model only | Pending | None | None |
+| [S3TEMP-006](prds/PRD-021/tasks/S3TEMP-006.md) | Agent | Done | 138 mobile tests + typecheck + lint | SQLite v8/null legacy Steam | Pending | None | None |
+| [S3TEMP-007](prds/PRD-021/tasks/S3TEMP-007.md) | Human | Awaiting Review | Docs aligned; automated matrix passed | No flashing or energized evidence | Pending | None | Confirm disconnected board/probe/USB/waveform/dimmer checks |

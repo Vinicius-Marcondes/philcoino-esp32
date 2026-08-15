@@ -14,16 +14,17 @@ import {
   SettingsRequestSchema,
   StartCooldownRequestSchema,
   StartExtractionRequestSchema,
-  SteamControlSettingsRequestSchema,
   TemperatureCalibrationSessionIdSchema,
   TemperatureCalibrationSessionRequestSchema,
   TemperatureSettingsRequestSchema,
   UpdateTemperatureCalibrationCandidateRequestSchema,
+  TemperatureSensorSchema,
   type ApiErrorCode,
   type ApiErrorResponse,
   type ExtractionTelemetryCursor,
   type ExtractionTelemetryPage,
   type TemperatureSettingsRequest,
+  type TemperatureSensor,
 } from "@philcoino/protocol";
 import { Hono, type Context, type Next } from "hono";
 
@@ -158,7 +159,7 @@ export function createSimulator(
     await next();
   };
   app.get("/healthz", (c) => c.json(machine.getHealth()));
-  app.post("/api/v3/pairing/sessions", async (c) => {
+  app.post("/api/v4/pairing/sessions", async (c) => {
     const now = machine.getHealth().uptimeMs;
     for (const [id, session] of sessions) {
       if (now >= session.expiresAtUptimeMs) sessions.delete(id);
@@ -216,7 +217,7 @@ export function createSimulator(
     });
   });
 
-  app.post("/api/v3/pairing/sessions/:sessionId/proof", async (c) => {
+  app.post("/api/v4/pairing/sessions/:sessionId/proof", async (c) => {
     const sessionId = c.req.param("sessionId");
     const session = sessions.get(sessionId);
     if (session === undefined) {
@@ -278,7 +279,7 @@ export function createSimulator(
       certificateSpkiSha256: certificatePin,
       clientNonce: session.clientNonce,
       deviceId: machine.getDevice().deviceId,
-      domain: "philcoino:v3:device-binding",
+      domain: "philcoino:v4:device-binding",
       sessionId,
     });
     let encryptedBinding = await session.srp.encrypt(deviceNonce, binding);
@@ -299,7 +300,7 @@ export function createSimulator(
     });
   });
 
-  app.post("/api/v3/pairing/sessions/:sessionId/complete", async (c) => {
+  app.post("/api/v4/pairing/sessions/:sessionId/complete", async (c) => {
     const sessionId = c.req.param("sessionId");
     const session = sessions.get(sessionId);
     if (session === undefined) {
@@ -399,19 +400,19 @@ export function createSimulator(
     });
   });
 
-  app.use("/api/v3/state", requireBearer);
-  app.use("/api/v3/settings", requireBearer);
-  app.use("/api/v3/mode", requireBearer);
-  app.use("/api/v3/heater-permission", requireBearer);
-  app.use("/api/v3/faults/over-temperature/dismiss", requireBearer);
-  app.use("/api/v3/scale-calibrations/*", requireBearer);
-  app.use("/api/v3/scale/*", requireBearer);
-  app.use("/api/v3/extractions/*", requireBearer);
-  app.use("/api/v3/cooldowns/*", requireBearer);
-  app.use("/api/v3/temperature-calibrations/*", requireBearer);
-  app.use("/api/v3/firmware-updates", requireBearer);
+  app.use("/api/v4/state", requireBearer);
+  app.use("/api/v4/settings", requireBearer);
+  app.use("/api/v4/mode", requireBearer);
+  app.use("/api/v4/heater-permission", requireBearer);
+  app.use("/api/v4/faults/over-temperature/dismiss", requireBearer);
+  app.use("/api/v4/scale-calibrations/*", requireBearer);
+  app.use("/api/v4/scale/*", requireBearer);
+  app.use("/api/v4/extractions/*", requireBearer);
+  app.use("/api/v4/cooldowns/*", requireBearer);
+  app.use("/api/v4/temperature-calibrations/*", requireBearer);
+  app.use("/api/v4/firmware-updates", requireBearer);
 
-  app.post("/api/v3/firmware-updates", async (c) => {
+  app.post("/api/v4/firmware-updates", async (c) => {
     if (c.req.header("Content-Type") !== "application/octet-stream") {
       return contractApiError(
         c,
@@ -446,11 +447,12 @@ export function createSimulator(
         "The firmware image does not fit the inactive OTA slot.",
       );
     }
-    const state = machine.getStateV3();
+    const state = machine.getStateV4();
     if (
       state.extraction.status !== "idle" ||
       state.cooldown.status !== "idle" ||
-      state.temperatureCalibration.status === "calibrating" ||
+      state.temperatureCalibrations.boiler.status === "calibrating" ||
+      state.temperatureCalibrations.steam.status === "calibrating" ||
       state.scale.calibrationStatus === "calibrating"
     ) {
       return contractApiError(
@@ -476,7 +478,7 @@ export function createSimulator(
     }), 202);
   });
 
-  app.get("/api/v3/state", (c) => {
+  app.get("/api/v4/state", (c) => {
     if ([...new URL(c.req.url).searchParams.keys()].length > 0) {
       return contractApiError(
         c,
@@ -485,10 +487,10 @@ export function createSimulator(
         "The state query is malformed.",
       );
     }
-    return c.json(machine.getStateV3());
+    return c.json(machine.getStateV4());
   });
 
-  app.patch("/api/v3/settings", async (c) => {
+  app.patch("/api/v4/settings", async (c) => {
     const body = await readJson(c);
     if (!body.ok) {
       return contractApiError(c, 400, "malformed_request", MALFORMED_REQUEST_MESSAGE);
@@ -529,7 +531,7 @@ export function createSimulator(
       );
     }
 
-    if (parsed.data.steamControl !== undefined) {
+    if (parsed.data.steamReadyTimeoutMs !== undefined) {
       if (machine.getState().status === "fault") {
         return contractApiError(
           c,
@@ -538,7 +540,7 @@ export function createSimulator(
           "Steam-control settings cannot change while a machine fault is latched.",
         );
       }
-      if (machine.updateSteamControlSettings(parsed.data.steamControl) === null) {
+      if (!machine.updateSteamReadyTimeout(parsed.data.steamReadyTimeoutMs)) {
         return contractApiError(
           c,
           500,
@@ -550,10 +552,10 @@ export function createSimulator(
     if (temperatureUpdate !== null) {
       machine.updateTemperatureSettings(temperatureUpdate);
     }
-    return c.json(machine.getStateV3());
+    return c.json(machine.getStateV4());
   });
 
-  app.put("/api/v3/mode", async (c) => {
+  app.put("/api/v4/mode", async (c) => {
     const body = await readJson(c);
     if (!body.ok) {
       return contractApiError(c, 400, "malformed_request", MALFORMED_REQUEST_MESSAGE);
@@ -589,11 +591,14 @@ export function createSimulator(
       );
     }
 
-    machine.setMode(parsed.data.mode);
-    return c.json(machine.getStateV3());
+    if (machine.setMode(parsed.data.mode) === null) {
+      return contractApiError(c, 409, "sensor_unavailable",
+        "The target mode requires a current valid sensor sample.");
+    }
+    return c.json(machine.getStateV4());
   });
 
-  app.put("/api/v3/heater-permission", async (c) => {
+  app.put("/api/v4/heater-permission", async (c) => {
     const body = await readJson(c);
     if (!body.ok) {
       return contractApiError(c, 400, "malformed_request", MALFORMED_REQUEST_MESSAGE);
@@ -613,10 +618,10 @@ export function createSimulator(
     }
 
     machine.setHeaterEnabled(parsed.data.enabled);
-    return c.json(machine.getStateV3());
+    return c.json(machine.getStateV4());
   });
 
-  app.post("/api/v3/faults/over-temperature/dismiss", (c) => {
+  app.post("/api/v4/faults/over-temperature/dismiss", (c) => {
     if (!machine.dismissOverTemperature()) {
       return contractApiError(
         c,
@@ -625,17 +630,21 @@ export function createSimulator(
         "Over-temperature can only be dismissed after the active temperature returns to target.",
       );
     }
-    return c.json(machine.getStateV3());
+    return c.json(machine.getStateV4());
   });
 
-  app.post("/api/v3/temperature-calibrations/current", (c) => {
-    const result = machine.startTemperatureCalibration();
+  app.post("/api/v4/temperature-calibrations/:sensor/current", (c) => {
+    const sensor = temperatureCalibrationSensor(c);
+    if (sensor === null) return contractApiError(c, 400, "malformed_request", "Unknown temperature sensor.");
+    const result = machine.startTemperatureCalibration(sensor);
     return result.ok
-      ? c.json(machine.getStateV3())
+      ? c.json(machine.getStateV4())
       : temperatureCalibrationError(c, result.reason);
   });
 
-  app.patch("/api/v3/temperature-calibrations/current", async (c) => {
+  app.patch("/api/v4/temperature-calibrations/:sensor/current", async (c) => {
+    const sensor = temperatureCalibrationSensor(c);
+    if (sensor === null) return contractApiError(c, 400, "malformed_request", "Unknown temperature sensor.");
     const body = await readJson(c);
     const parsed = body.ok
       ? UpdateTemperatureCalibrationCandidateRequestSchema.safeParse(
@@ -651,11 +660,12 @@ export function createSimulator(
       );
     }
     const result = machine.updateTemperatureCalibrationCandidate(
+      sensor,
       parsed.data.calibrationId,
       parsed.data.candidateRawTargetC,
     );
     return result.ok
-      ? c.json(machine.getStateV3())
+      ? c.json(machine.getStateV4())
       : temperatureCalibrationError(c, result.reason);
   });
 
@@ -665,43 +675,50 @@ export function createSimulator(
       ? TemperatureCalibrationSessionRequestSchema.safeParse(body.value)
       : null;
   };
-  app.put("/api/v3/temperature-calibrations/current", async (c) => {
+  app.put("/api/v4/temperature-calibrations/:sensor/current", async (c) => {
+    const sensor = temperatureCalibrationSensor(c);
+    if (sensor === null) return contractApiError(c, 400, "malformed_request", "Unknown temperature sensor.");
     const parsed = await readCalibrationSession(c);
     if (parsed === null || !parsed.success) {
       return contractApiError(c, 400, "malformed_request",
         "The calibration session request is malformed.");
     }
-    const result = machine.saveTemperatureCalibration(parsed.data.calibrationId);
+    const result = machine.saveTemperatureCalibration(sensor, parsed.data.calibrationId);
     return result.ok
-      ? c.json(machine.getStateV3())
+      ? c.json(machine.getStateV4())
       : temperatureCalibrationError(c, result.reason);
   });
-  app.delete("/api/v3/temperature-calibrations/current", async (c) => {
+  app.delete("/api/v4/temperature-calibrations/:sensor/current", async (c) => {
+    const sensor = temperatureCalibrationSensor(c);
+    if (sensor === null) return contractApiError(c, 400, "malformed_request", "Unknown temperature sensor.");
     const parsed = await readCalibrationSession(c);
     if (parsed === null || !parsed.success) {
       return contractApiError(c, 400, "malformed_request",
         "The calibration session request is malformed.");
     }
     const result = machine.cancelTemperatureCalibration(
+      sensor,
       parsed.data.calibrationId,
     );
     return result.ok
-      ? c.json(machine.getStateV3())
+      ? c.json(machine.getStateV4())
       : temperatureCalibrationError(c, result.reason);
   });
-  app.post("/api/v3/temperature-calibrations/current/lease", async (c) => {
+  app.post("/api/v4/temperature-calibrations/:sensor/current/lease", async (c) => {
+    const sensor = temperatureCalibrationSensor(c);
+    if (sensor === null) return contractApiError(c, 400, "malformed_request", "Unknown temperature sensor.");
     const parsed = await readCalibrationSession(c);
     if (parsed === null || !parsed.success) {
       return contractApiError(c, 400, "malformed_request",
         "The calibration session request is malformed.");
     }
-    const result = machine.getTemperatureCalibration(parsed.data.calibrationId);
+    const result = machine.getTemperatureCalibration(sensor, parsed.data.calibrationId);
     return result.ok
-      ? c.json(machine.getStateV3())
+      ? c.json(machine.getStateV4())
       : temperatureCalibrationError(c, result.reason);
   });
 
-  app.post("/api/v3/scale-calibrations/current", (c) => {
+  app.post("/api/v4/scale-calibrations/current", (c) => {
     if (machine.abortTemperatureCalibrationForConflict()) {
       return contractApiError(
         c,
@@ -712,7 +729,7 @@ export function createSimulator(
     }
     const result = machine.startScaleCalibration();
     if (result === "ok") {
-      return c.json(machine.getStateV3());
+      return c.json(machine.getStateV4());
     }
     return contractApiError(
       c,
@@ -730,7 +747,7 @@ export function createSimulator(
     );
   });
 
-  app.put("/api/v3/scale-calibrations/current", async (c) => {
+  app.put("/api/v4/scale-calibrations/current", async (c) => {
     const body = await readJson(c);
     if (!body.ok) {
       return contractApiError(
@@ -753,7 +770,7 @@ export function createSimulator(
       parsed.data.referenceWeightDecigrams,
     );
     if (result === "ok") {
-      return c.json(machine.getStateV3());
+      return c.json(machine.getStateV4());
     }
     if (result === "persistence") {
       return contractApiError(
@@ -779,17 +796,17 @@ export function createSimulator(
     );
   });
 
-  app.delete("/api/v3/scale-calibrations/current", (c) => {
+  app.delete("/api/v4/scale-calibrations/current", (c) => {
     machine.cancelScaleCalibration();
-    return c.json(machine.getStateV3());
+    return c.json(machine.getStateV4());
   });
 
-  app.post("/api/v3/scale/warnings/acknowledge", (c) => {
+  app.post("/api/v4/scale/warnings/acknowledge", (c) => {
     machine.acknowledgeScaleWarning();
-    return c.json(machine.getStateV3());
+    return c.json(machine.getStateV4());
   });
 
-  app.post("/api/v3/extractions", async (c) => {
+  app.post("/api/v4/extractions", async (c) => {
     const body = await readJson(c);
     if (!body.ok) {
       return contractApiError(
@@ -877,15 +894,15 @@ export function createSimulator(
         "The simulator could not start the validated extraction.",
       );
     }
-    return c.json(machine.getStateV3());
+    return c.json(machine.getStateV4());
   });
 
-  app.delete("/api/v3/extractions/current", (c) => {
+  app.delete("/api/v4/extractions/current", (c) => {
     machine.stopExtraction();
-    return c.json(machine.getStateV3());
+    return c.json(machine.getStateV4());
   });
 
-  app.get("/api/v3/extractions/current/stream", (c) => {
+  app.get("/api/v4/extractions/current/stream", (c) => {
     const cursor = extractionTelemetryCursor(c.req.url);
     if (!cursor.ok) {
       return contractApiError(
@@ -1024,7 +1041,7 @@ export function createSimulator(
     });
   });
 
-  app.post("/api/v3/cooldowns", async (c) => {
+  app.post("/api/v4/cooldowns", async (c) => {
     const body = await readJson(c);
     if (!body.ok) {
       return contractApiError(
@@ -1054,7 +1071,7 @@ export function createSimulator(
 
     const result = machine.startCooldown(parsed.data.idempotencyKey);
     if (result.ok) {
-      return c.json(machine.getStateV3());
+      return c.json(machine.getStateV4());
     }
     if (result.reason === "extraction-active") {
       return contractApiError(
@@ -1104,10 +1121,10 @@ export function createSimulator(
     );
   });
 
-  app.delete("/api/v3/cooldowns/current", (c) => {
+  app.delete("/api/v4/cooldowns/current", (c) => {
     const result = machine.stopCooldown();
     return result.ok
-      ? c.json(machine.getStateV3())
+      ? c.json(machine.getStateV4())
       : contractApiError(
           c,
           500,
@@ -1140,7 +1157,12 @@ export function createSimulator(
     if (!body.ok || !isTemperatureControlRequest(body.value)) {
       return contractApiError(c, 400, "malformed_request", MALFORMED_REQUEST_MESSAGE);
     }
-    machine.setTemperature(body.value.boilerTemperatureC);
+    if (body.value.boilerTemperatureC !== undefined) {
+      machine.setTemperature(body.value.boilerTemperatureC);
+    }
+    if (body.value.steamTemperatureC !== undefined) {
+      machine.setSteamTemperature(body.value.steamTemperatureC);
+    }
     return c.json(machine.getState());
   });
 
@@ -1149,20 +1171,25 @@ export function createSimulator(
     if (!body.ok || !isRawTemperatureControlRequest(body.value)) {
       return contractApiError(c, 400, "malformed_request", MALFORMED_REQUEST_MESSAGE);
     }
-    machine.setTemperature(body.value.boilerTemperatureRawC);
+    if (body.value.boilerTemperatureRawC !== undefined) {
+      machine.setTemperature(body.value.boilerTemperatureRawC);
+    }
+    if (body.value.steamTemperatureRawC !== undefined) {
+      machine.setSteamTemperature(body.value.steamTemperatureRawC);
+    }
     return c.json(machine.getRawTemperature());
   });
 
   app.put("/_simulator/fault", async (c) => {
     const body = await readJson(c);
-    if (!body.ok || !isExactObject(body.value, ["code"])) {
+    if (!body.ok || !isFaultRequest(body.value)) {
       return contractApiError(c, 400, "malformed_request", MALFORMED_REQUEST_MESSAGE);
     }
     const code = FaultCodeSchema.safeParse(body.value.code);
     if (!code.success) {
       return contractApiError(c, 400, "malformed_request", MALFORMED_REQUEST_MESSAGE);
     }
-    machine.injectFault(code.data);
+    machine.injectFault(code.data, body.value.sensor ?? null);
     return c.json(machine.getState());
   });
 
@@ -1176,9 +1203,22 @@ export function createSimulator(
     return c.json({ status: "armed" });
   });
 
-  app.post("/_simulator/corrupt-temperature-calibration", (c) => {
-    machine.corruptTemperatureCalibrationStorage();
-    return c.json({ status: "corrupted" });
+  app.post("/_simulator/corrupt-temperature-calibration", async (c) => {
+    const body = await readJson(c);
+    if (!body.ok || !isSensorRequest(body.value)) {
+      return contractApiError(c, 400, "malformed_request", MALFORMED_REQUEST_MESSAGE);
+    }
+    machine.corruptTemperatureCalibrationStorage(body.value.sensor);
+    return c.json({ sensor: body.value.sensor, status: "corrupted" });
+  });
+
+  app.put("/_simulator/sensor-availability", async (c) => {
+    const body = await readJson(c);
+    if (!body.ok || !isSensorAvailabilityRequest(body.value)) {
+      return contractApiError(c, 400, "malformed_request", MALFORMED_REQUEST_MESSAGE);
+    }
+    machine.setSensorAvailable(body.value.sensor, body.value.available);
+    return c.json(machine.getState());
   });
 
   app.post("/_simulator/corrupt-steam-control", (c) => {
@@ -1282,6 +1322,11 @@ function temperatureCalibrationQuery(
   return parsed.success
     ? { ok: true, value: parsed.data }
     : { ok: false };
+}
+
+function temperatureCalibrationSensor(c: Context): TemperatureSensor | null {
+  const parsed = TemperatureSensorSchema.safeParse(c.req.param("sensor"));
+  return parsed.success ? parsed.data : null;
 }
 
 function temperatureCalibrationError(
@@ -1441,25 +1486,49 @@ function isAdvanceRequest(value: unknown): value is { milliseconds: number } {
 }
 
 function isTemperatureControlRequest(value: unknown): value is {
-  boilerTemperatureC: number;
+  boilerTemperatureC?: number;
+  steamTemperatureC?: number;
 } {
-  return (
-    isExactObject(value, ["boilerTemperatureC"]) &&
-    typeof value.boilerTemperatureC === "number" &&
-    Number.isFinite(value.boilerTemperatureC)
-  );
+  if (!isRecord(value)) return false;
+  const keys = Object.keys(value);
+  if (keys.length === 0 || keys.some((key) => key !== "boilerTemperatureC" && key !== "steamTemperatureC")) return false;
+  return keys.every((key) => typeof value[key] === "number" && Number.isFinite(value[key]));
 }
 
 function isRawTemperatureControlRequest(value: unknown): value is {
-  boilerTemperatureRawC: number;
+  boilerTemperatureRawC?: number;
+  steamTemperatureRawC?: number;
 } {
-  return (
-    isExactObject(value, ["boilerTemperatureRawC"]) &&
-    typeof value.boilerTemperatureRawC === "number" &&
-    Number.isFinite(value.boilerTemperatureRawC) &&
-    value.boilerTemperatureRawC >= -40 &&
-    value.boilerTemperatureRawC <= 160
-  );
+  if (!isRecord(value)) return false;
+  const keys = Object.keys(value);
+  if (keys.length === 0 || keys.some((key) => key !== "boilerTemperatureRawC" && key !== "steamTemperatureRawC")) return false;
+  return keys.every((key) =>
+    typeof value[key] === "number" && Number.isFinite(value[key]) &&
+    (value[key] as number) >= -40 && (value[key] as number) <= 160);
+}
+
+function isSensorRequest(value: unknown): value is { sensor: TemperatureSensor } {
+  return isExactObject(value, ["sensor"]) && TemperatureSensorSchema.safeParse(value.sensor).success;
+}
+
+function isSensorAvailabilityRequest(value: unknown): value is {
+  sensor: TemperatureSensor;
+  available: boolean;
+} {
+  return isExactObject(value, ["sensor", "available"]) &&
+    TemperatureSensorSchema.safeParse(value.sensor).success &&
+    typeof value.available === "boolean";
+}
+
+function isFaultRequest(value: unknown): value is {
+  code: unknown;
+  sensor?: TemperatureSensor;
+} {
+  if (!isRecord(value)) return false;
+  const keys = Object.keys(value);
+  if (keys.length < 1 || keys.length > 2 || !keys.includes("code") ||
+      keys.some((key) => key !== "code" && key !== "sensor")) return false;
+  return value.sensor === undefined || TemperatureSensorSchema.safeParse(value.sensor).success;
 }
 
 function isOutputFailureRequest(

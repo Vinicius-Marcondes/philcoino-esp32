@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test";
 import type { MachineState } from "@philcoino/protocol";
 
 import {
+  activeTargetC,
+  activeTemperatureC,
   boilerTargetC,
   boilerTemperatureC,
   connectionCopy,
@@ -21,23 +23,14 @@ const steamState: Extract<MachineState, { status: "ready" }> = {
   activeMode: "steam",
   brewTargetC: 93,
   boilerTemperatureC: 120,
+  steamTemperatureC: 120,
   fault: null,
   heaterEnabled: true,
   heaterActive: false,
   status: "ready",
   steamTargetC: 120,
+  steamReadyTimeoutMs: 300_000,
   steamTimeoutRemainingMs: 299_001,
-  steamControl: {
-    settings: {
-      initialCompensationC: 12,
-      decayDurationMs: 720_000,
-      readyTimeoutMs: 300_000,
-    },
-    compensationActive: false,
-    appliedCompensationC: 0,
-    controlTemperatureC: 120,
-    heatSoakElapsedMs: 720_000,
-  },
   uptimeMs: 3_661_000,
 };
 
@@ -65,14 +58,14 @@ describe("dashboard view model", () => {
     expect(
       connectionCopy({
         protocol: {
-          endpoint: "/api/v3/state",
+          endpoint: "/api/v4/state",
           issuePaths: ["extraction.pumpCommand"],
           status: 200,
         },
         status: "protocol-error",
       }).detail,
     ).toBe(
-      "The machine replied with data that does not match the current Philcoino API contract. Endpoint: /api/v3/state. HTTP status: 200. Invalid fields: extraction.pumpCommand.",
+      "The machine replied with data that does not match the current Philcoino API contract. Endpoint: /api/v4/state. HTTP status: 200. Invalid fields: extraction.pumpCommand.",
     );
   });
 
@@ -110,6 +103,9 @@ describe("dashboard view model", () => {
     expect(boilerTemperatureC(steamState)).toBe(120);
     expect(boilerTargetC({ ...steamState, activeMode: "brew" })).toBe(93);
     expect(boilerTargetC(steamState)).toBe(120);
+    expect(activeTemperatureC(steamState)).toBe(120);
+    expect(activeTemperatureC({ ...steamState, steamTemperatureC: null })).toBeNull();
+    expect(activeTargetC(steamState)).toBe(120);
   });
 
   test("explains whether the steam countdown is active", () => {

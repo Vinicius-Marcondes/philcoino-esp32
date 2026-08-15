@@ -59,7 +59,7 @@ describe("Mac firmware OTA client", () => {
       rebooting: true,
       status: "accepted",
     });
-    expect(simulator.machine.getStateV3().machine.heaterEnabled).toBe(false);
+    expect(simulator.machine.getStateV4().machine.heaterEnabled).toBe(false);
     expect(progress).toEqual([image.length]);
   });
 

@@ -1,6 +1,6 @@
 import type {
   ExtractionState,
-  MachineStateV3,
+  MachineStateV4,
   ProfileSlotId,
   ScaleState,
   WeightControl,
@@ -28,13 +28,13 @@ import {
 } from "@/src/telemetry/extraction-stream-session";
 
 interface ScaleClient {
-  acknowledgeScaleWarning(options?: { signal?: AbortSignal }): Promise<MachineStateV3>;
-  cancelScaleCalibration(options?: { signal?: AbortSignal }): Promise<MachineStateV3>;
+  acknowledgeScaleWarning(options?: { signal?: AbortSignal }): Promise<MachineStateV4>;
+  cancelScaleCalibration(options?: { signal?: AbortSignal }): Promise<MachineStateV4>;
   completeScaleCalibration(
     request: { referenceWeightDecigrams: number },
     options?: { signal?: AbortSignal },
-  ): Promise<MachineStateV3>;
-  startScaleCalibration(options?: { signal?: AbortSignal }): Promise<MachineStateV3>;
+  ): Promise<MachineStateV4>;
+  startScaleCalibration(options?: { signal?: AbortSignal }): Promise<MachineStateV4>;
 }
 
 export type ScaleMutation =
@@ -227,7 +227,7 @@ export function useScale({
   }, [extraction?.extractionId, extraction?.status, streamClient, streamStatus]);
 
   const run = useCallback(
-    async (kind: Exclude<ScaleMutation, null>, operation: () => Promise<MachineStateV3>) => {
+    async (kind: Exclude<ScaleMutation, null>, operation: () => Promise<MachineStateV4>) => {
       if (mutation !== null) return;
       setMutation(kind);
       setError(null);

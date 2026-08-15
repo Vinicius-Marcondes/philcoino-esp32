@@ -69,29 +69,29 @@ objectAt(document.info, "info");
 const paths = objectAt(document.paths, "paths");
 const expectedOperations = {
   "/healthz": ["get"],
-  "/api/v3/pairing/sessions": ["post"],
-  "/api/v3/pairing/sessions/{sessionId}/proof": ["post"],
-  "/api/v3/pairing/sessions/{sessionId}/complete": ["post"],
-  "/api/v3/state": ["get"],
-  "/api/v3/settings": ["patch"],
-  "/api/v3/mode": ["put"],
-  "/api/v3/heater-permission": ["put"],
-  "/api/v3/faults/over-temperature/dismiss": ["post"],
-  "/api/v3/temperature-calibrations/current": [
+  "/api/v4/pairing/sessions": ["post"],
+  "/api/v4/pairing/sessions/{sessionId}/proof": ["post"],
+  "/api/v4/pairing/sessions/{sessionId}/complete": ["post"],
+  "/api/v4/state": ["get"],
+  "/api/v4/settings": ["patch"],
+  "/api/v4/mode": ["put"],
+  "/api/v4/heater-permission": ["put"],
+  "/api/v4/faults/over-temperature/dismiss": ["post"],
+  "/api/v4/temperature-calibrations/{sensor}/current": [
     "post",
     "patch",
     "put",
     "delete",
   ],
-  "/api/v3/temperature-calibrations/current/lease": ["post"],
-  "/api/v3/scale-calibrations/current": ["post", "put", "delete"],
-  "/api/v3/scale/warnings/acknowledge": ["post"],
-  "/api/v3/extractions": ["post"],
-  "/api/v3/extractions/current": ["delete"],
-  "/api/v3/extractions/current/stream": ["get"],
-  "/api/v3/cooldowns": ["post"],
-  "/api/v3/cooldowns/current": ["delete"],
-  "/api/v3/firmware-updates": ["post"],
+  "/api/v4/temperature-calibrations/{sensor}/current/lease": ["post"],
+  "/api/v4/scale-calibrations/current": ["post", "put", "delete"],
+  "/api/v4/scale/warnings/acknowledge": ["post"],
+  "/api/v4/extractions": ["post"],
+  "/api/v4/extractions/current": ["delete"],
+  "/api/v4/extractions/current/stream": ["get"],
+  "/api/v4/cooldowns": ["post"],
+  "/api/v4/cooldowns/current": ["delete"],
+  "/api/v4/firmware-updates": ["post"],
 } as const;
 
 if (
@@ -107,7 +107,7 @@ for (const [path, methods] of Object.entries(expectedOperations)) {
     .filter((key) => ["get", "post", "put", "patch", "delete"].includes(key))
     .sort();
   if (declaredMethods.join("\n") !== [...methods].sort().join("\n")) {
-    throw new Error(`${path} declares methods outside the v3 contract.`);
+    throw new Error(`${path} declares methods outside the v4 contract.`);
   }
 
   for (const method of methods) {
@@ -120,7 +120,7 @@ for (const [path, methods] of Object.entries(expectedOperations)) {
       `${method.toUpperCase()} ${path} responses`,
     );
 
-    const successStatus = path === "/api/v3/firmware-updates" ? "202" : "200";
+    const successStatus = path === "/api/v4/firmware-updates" ? "202" : "200";
     if (!(successStatus in responses)) {
       throw new Error(
         `${method.toUpperCase()} ${path} must document a ${successStatus} response.`,
@@ -129,8 +129,8 @@ for (const [path, methods] of Object.entries(expectedOperations)) {
 
     const returnsState =
       !isPublicPath(path) &&
-      path !== "/api/v3/extractions/current/stream" &&
-      path !== "/api/v3/firmware-updates";
+      path !== "/api/v4/extractions/current/stream" &&
+      path !== "/api/v4/firmware-updates";
     if (returnsState) {
       const success = objectAt(
         responses["200"],
@@ -138,7 +138,7 @@ for (const [path, methods] of Object.entries(expectedOperations)) {
       );
       if (success.$ref !== "#/components/responses/State") {
         throw new Error(
-          `${method.toUpperCase()} ${path} must return the complete v3 state.`,
+          `${method.toUpperCase()} ${path} must return the complete v4 state.`,
         );
       }
     }
@@ -192,11 +192,11 @@ const documentedErrorCodes = Array.isArray(errorCode.enum)
 if (
   documentedErrorCodes.join("\n") !== ApiErrorCodeSchema.options.join("\n")
 ) {
-  throw new Error("OpenAPI and Zod must declare the same v3 error codes.");
+  throw new Error("OpenAPI and Zod must declare the same v4 error codes.");
 }
 
 const streamOperation = objectAt(
-  objectAt(paths["/api/v3/extractions/current/stream"], "stream path").get,
+  objectAt(paths["/api/v4/extractions/current/stream"], "stream path").get,
   "stream operation",
 );
 const streamResponses = objectAt(streamOperation.responses, "stream responses");
@@ -218,8 +218,8 @@ console.log("OpenAPI 3.1.1 syntax, paths, security, and local references are val
 function isPublicPath(path: string): boolean {
   return (
     path === "/healthz" ||
-    path === "/api/v3/pairing/sessions" ||
-    path === "/api/v3/pairing/sessions/{sessionId}/proof" ||
-    path === "/api/v3/pairing/sessions/{sessionId}/complete"
+    path === "/api/v4/pairing/sessions" ||
+    path === "/api/v4/pairing/sessions/{sessionId}/proof" ||
+    path === "/api/v4/pairing/sessions/{sessionId}/complete"
   );
 }

@@ -4,7 +4,8 @@
 > preserved as research context and is not implemented by current firmware.
 > Prediction runtime, wire payloads, and mobile consumers were removed. Any
 > future integration requires a separately approved PRD and must not bypass the
-> current Brew PI selector or existing safety boundaries.
+> current Brew PI selector, dual-sensor mode mapping, or existing safety
+> boundaries. The ESP32-C3 target below is also superseded by ESP32-S3 N16R8.
 ## Firmware Specification
 
 **Document status:** Prototype specification  

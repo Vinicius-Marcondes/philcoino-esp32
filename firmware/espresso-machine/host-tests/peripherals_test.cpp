@@ -413,9 +413,40 @@ void test_thermocouple() {
   const auto invalid = sensor.read(660);
   assert(invalid.status == ThermocoupleStatus::kInvalidFrame);
 
+  transport.next_frame = 0x0000;
+  const auto all_zero = sensor.read(880);
+  assert(all_zero.status == ThermocoupleStatus::kInvalidFrame);
+
   transport.succeeds = false;
-  const auto transport_error = sensor.read(880);
+  const auto transport_error = sensor.read(1100);
   assert(transport_error.status == ThermocoupleStatus::kTransportError);
+
+  transport.succeeds = true;
+  transport.next_frame = static_cast<std::uint16_t>(333U << 3U);
+  const auto exact_drop = sensor.read(1320);
+  assert(exact_drop.status == ThermocoupleStatus::kOk);
+  assert(exact_drop.temperature_c == 83.25F);
+
+  transport.next_frame = static_cast<std::uint16_t>(292U << 3U);
+  const auto excessive_drop = sensor.read(1540);
+  assert(excessive_drop.status == ThermocoupleStatus::kImplausibleDrop);
+
+  transport.next_frame = static_cast<std::uint16_t>(256U << 3U);
+  const auto rejected_baseline_not_advanced = sensor.read(1760);
+  assert(rejected_baseline_not_advanced.status ==
+         ThermocoupleStatus::kImplausibleDrop);
+
+  transport.next_frame = static_cast<std::uint16_t>(340U << 3U);
+  const auto recovered = sensor.read(1980);
+  assert(recovered.status == ThermocoupleStatus::kOk);
+
+  FakeMax6675Transport independent_transport;
+  independent_transport.next_frame = static_cast<std::uint16_t>(480U << 3U);
+  Max6675 independent_sensor(independent_transport, 0);
+  assert(independent_sensor.read(220).temperature_c == 120.0F);
+  independent_transport.next_frame = static_cast<std::uint16_t>(439U << 3U);
+  assert(independent_sensor.read(440).status ==
+         ThermocoupleStatus::kImplausibleDrop);
 
   FakeMax6675Transport rollover_transport;
   rollover_transport.next_frame = static_cast<std::uint16_t>(400U << 3U);
@@ -561,10 +592,14 @@ void test_temperature_calibration_storage_and_conversion() {
   state.fail_save = true;
   assert(!storage.save({-8, true}));
 
-  assert(targets_are_reachable({95, 120}, {-8, true}));
-  assert(targets_are_reachable({95, 120}, {10, true}));
-  assert(targets_are_reachable({95, 115}, {-20, true}));
-  assert(!targets_are_reachable({95, 116}, {-20, true}));
+  assert(targets_are_reachable({95, 120}, TemperatureCalibration{-8, true}));
+  assert(targets_are_reachable({95, 120}, TemperatureCalibration{10, true}));
+  assert(targets_are_reachable({95, 115}, TemperatureCalibration{-20, true}));
+  assert(!targets_are_reachable({95, 116}, TemperatureCalibration{-20, true}));
+  assert(targets_are_reachable(
+      {95, 120}, TemperatureCalibrations{{-8, true}, {10, true}}));
+  assert(!targets_are_reachable(
+      {95, 120}, TemperatureCalibrations{{0, true}, {-20, true}}));
   assert(target_is_reachable(115, {-20, true}));
   assert(!target_is_reachable(116, {-20, true}));
   assert(target_is_reachable(135, {0, false}));
@@ -580,26 +615,19 @@ void test_steam_control_settings_storage_defaults_validation_and_failures() {
          SteamControlSettingsLoadResult::kInitializedDefaults);
   assert(missing.present);
   assert(missing.save_count == 1);
-  assert(settings.initial_compensation_c ==
-         philcoino::config::kSteamCompensationInitialDefaultC);
-  assert(settings.decay_duration_ms ==
-         philcoino::config::kSteamCompensationDecayDefaultMs);
   assert(settings.ready_timeout_ms ==
          philcoino::config::kSteamReadyTimeoutMs);
 
-  const SteamControlSettings tuned{15, 10U * 60U * 1000U,
-                                   7U * 60U * 1000U};
+  const SteamControlSettings tuned{7U * 60U * 1000U};
   assert(missing_storage.save(tuned));
   SteamControlSettings loaded{};
   assert(missing_storage.load(loaded) ==
          SteamControlSettingsLoadResult::kOk);
-  assert(loaded.initial_compensation_c == 15);
-  assert(loaded.decay_duration_ms == 600000U);
   assert(loaded.ready_timeout_ms == 420000U);
 
   SteamControlMemoryState corrupt{};
   corrupt.present = true;
-  corrupt.settings = {21, 60000U, 60000U};
+  corrupt.settings = {30000U};
   SteamControlMemoryBackend corrupt_backend(corrupt);
   SteamControlSettingsStorage corrupt_storage(corrupt_backend);
   assert(corrupt_storage.load(loaded) ==

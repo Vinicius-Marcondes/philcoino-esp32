@@ -55,27 +55,30 @@ const char* thermocouple_status_name(
     case ThermocoupleStatus::kNotReady: return "not_ready";
     case ThermocoupleStatus::kOpenCircuit: return "open_circuit";
     case ThermocoupleStatus::kInvalidFrame: return "invalid_frame";
+    case ThermocoupleStatus::kImplausibleDrop: return "implausible_drop";
     case ThermocoupleStatus::kTransportError: return "transport_error";
   }
   return "unknown";
 }
 
 void log_thermocouple_failure(
-    const char* phase,
+    const char* sensor_name, const char* phase,
     const philcoino::peripherals::ThermocoupleReading& reading,
+    std::int32_t chip_select_gpio, std::int32_t data_gpio,
     unsigned attempt = 0U) {
   ESP_LOGE(kLogTag,
-           "MAX6675 %s failure status=%s raw=0x%04X attempt=%u "
+           "MAX6675 %s %s failure status=%s raw=0x%04X attempt=%u "
            "CS=GPIO%" PRId32 " SCK=GPIO%" PRId32 " SO=GPIO%" PRId32,
-           phase, thermocouple_status_name(reading.status),
+           sensor_name, phase, thermocouple_status_name(reading.status),
            static_cast<unsigned>(reading.raw_frame), attempt,
-           philcoino::config::kBoilerThermocoupleChipSelectGpio,
+           chip_select_gpio,
            philcoino::config::kBoilerThermocoupleClockGpio,
-           philcoino::config::kBoilerThermocoupleDataGpio);
+           data_gpio);
 }
 
 philcoino::peripherals::ThermocoupleReading read_startup_temperature(
-    philcoino::peripherals::Max6675& thermocouple) {
+    const char* sensor_name, philcoino::peripherals::Max6675& thermocouple,
+    std::int32_t chip_select_gpio, std::int32_t data_gpio) {
   constexpr unsigned kMaximumStartupAttempts = 3U;
   philcoino::peripherals::ThermocoupleReading reading{};
   for (unsigned attempt = 1U; attempt <= kMaximumStartupAttempts; ++attempt) {
@@ -85,13 +88,14 @@ philcoino::peripherals::ThermocoupleReading read_startup_temperature(
     if (reading.status ==
         philcoino::peripherals::ThermocoupleStatus::kOk) {
       ESP_LOGI(kLogTag,
-               "MAX6675 startup sample ready temperature=%.2fC raw=0x%04X "
+               "MAX6675 %s startup sample ready temperature=%.2fC raw=0x%04X "
                "attempt=%u",
-               static_cast<double>(reading.temperature_c),
+               sensor_name, static_cast<double>(reading.temperature_c),
                static_cast<unsigned>(reading.raw_frame), attempt);
       return reading;
     }
-    log_thermocouple_failure("startup", reading, attempt);
+    log_thermocouple_failure(sensor_name, "startup", reading,
+                             chip_select_gpio, data_gpio, attempt);
   }
   return reading;
 }
@@ -475,21 +479,34 @@ extern "C" void app_main() {
   }
 
   static EspNvsTemperatureCalibrationBackend
-      temperature_calibration_backend;
-  if (!temperature_calibration_backend.initialize()) {
+      boiler_temperature_calibration_backend(TemperatureSensor::kBoiler);
+  static EspNvsTemperatureCalibrationBackend
+      steam_temperature_calibration_backend(TemperatureSensor::kSteam);
+  if (!boiler_temperature_calibration_backend.initialize() ||
+      !steam_temperature_calibration_backend.initialize()) {
     ESP_LOGE(kLogTag,
              "NVS temperature calibration storage initialization failed");
     ssr.force_off();
     return;
   }
-  static TemperatureCalibrationStorage temperature_calibration_storage(
-      temperature_calibration_backend);
-  TemperatureCalibration temperature_calibration{};
-  const auto temperature_calibration_result =
-      temperature_calibration_storage.load(temperature_calibration);
-  if (temperature_calibration_result ==
+  static TemperatureCalibrationStorage boiler_temperature_calibration_storage(
+      boiler_temperature_calibration_backend);
+  static TemperatureCalibrationStorage steam_temperature_calibration_storage(
+      steam_temperature_calibration_backend);
+  TemperatureCalibrations temperature_calibrations{};
+  const auto boiler_temperature_calibration_result =
+      boiler_temperature_calibration_storage.load(
+          temperature_calibrations.boiler);
+  const auto steam_temperature_calibration_result =
+      steam_temperature_calibration_storage.load(
+          temperature_calibrations.steam);
+  if (boiler_temperature_calibration_result ==
           TemperatureCalibrationLoadResult::kCorrupt ||
-      temperature_calibration_result ==
+      boiler_temperature_calibration_result ==
+          TemperatureCalibrationLoadResult::kError ||
+      steam_temperature_calibration_result ==
+          TemperatureCalibrationLoadResult::kCorrupt ||
+      steam_temperature_calibration_result ==
           TemperatureCalibrationLoadResult::kError) {
     ESP_LOGE(kLogTag,
              "Persisted temperature calibration is unavailable or invalid");
@@ -518,29 +535,6 @@ extern "C" void app_main() {
     ssr.force_off();
     return;
   }
-
-  static philcoino::control::TemperatureController controller(
-      targets, temperature_calibration, steam_control_settings, ssr);
-  static philcoino::control::ExtractionController extraction_controller(
-      pump);
-  static philcoino::control::CooldownController cooldown_controller(controller,
-                                                                    pump);
-  if (!cooldown_controller.reset(uptime_ms())) {
-    ESP_LOGE(kLogTag, "Cooldown reset fail-off initialization failed");
-    pump.force_off();
-    ssr.force_off();
-    return;
-  }
-  const auto workflow_mutex = xSemaphoreCreateMutex();
-  if (workflow_mutex == nullptr) {
-    ESP_LOGE(kLogTag, "Controller synchronization initialization failed");
-    pump.force_off();
-    ssr.force_off();
-    return;
-  }
-  static std::atomic<bool> fail_safe_requested{false};
-  static FreeRtosApiSynchronization synchronization(
-      workflow_mutex, pump, ssr, fail_safe_requested);
 
   static EspNvsScaleCalibrationBackend scale_calibration_backend;
   const bool scale_storage_ready = scale_calibration_backend.initialize();
@@ -571,16 +565,68 @@ extern "C" void app_main() {
   static Hx711EventDrivenAcquisition hx711_acquisition(
       hx711, hx711_ready_waiter);
 
-  static EspMax6675Transport max6675_transport;
-  if (!max6675_transport.initialize()) {
+  static EspMax6675Bus max6675_bus;
+  if (!max6675_bus.initialize()) {
     ESP_LOGE(kLogTag, "MAX6675 bus initialization failed");
+    pump.force_off();
     ssr.force_off();
     return;
   }
-  static Max6675 thermocouple(max6675_transport, uptime_ms());
+  ESP_LOGI(kLogTag,
+           "MAX6675 shared bus initialized: SCK=GPIO%" PRId32
+           " boiler(CS=GPIO%" PRId32 " SO=GPIO%" PRId32
+           ") steam(CS=GPIO%" PRId32 " SO=GPIO%" PRId32 ")",
+           philcoino::config::kBoilerThermocoupleClockGpio,
+           philcoino::config::kBoilerThermocoupleChipSelectGpio,
+           philcoino::config::kBoilerThermocoupleDataGpio,
+           philcoino::config::kSteamThermocoupleChipSelectGpio,
+           philcoino::config::kSteamThermocoupleDataGpio);
+  static EspMax6675Transport boiler_max6675_transport(
+      max6675_bus, "boiler",
+      philcoino::config::kBoilerThermocoupleChipSelectGpio,
+      philcoino::config::kBoilerThermocoupleDataGpio);
+  static EspMax6675Transport steam_max6675_transport(
+      max6675_bus, "steam",
+      philcoino::config::kSteamThermocoupleChipSelectGpio,
+      philcoino::config::kSteamThermocoupleDataGpio);
+  static Max6675 boiler_thermocouple(boiler_max6675_transport, uptime_ms());
+  static Max6675 steam_thermocouple(steam_max6675_transport, uptime_ms());
 
-  const auto startup_temperature = read_startup_temperature(thermocouple);
-  auto snapshot = controller.update(startup_temperature, uptime_ms());
+  const TemperatureReadings startup_temperatures{
+      read_startup_temperature(
+          "boiler", boiler_thermocouple,
+          philcoino::config::kBoilerThermocoupleChipSelectGpio,
+          philcoino::config::kBoilerThermocoupleDataGpio),
+      read_startup_temperature(
+          "steam", steam_thermocouple,
+          philcoino::config::kSteamThermocoupleChipSelectGpio,
+          philcoino::config::kSteamThermocoupleDataGpio),
+  };
+
+  static philcoino::control::TemperatureController controller(
+      targets, temperature_calibrations, steam_control_settings, ssr,
+      startup_temperatures);
+  static philcoino::control::ExtractionController extraction_controller(pump);
+  static philcoino::control::CooldownController cooldown_controller(controller,
+                                                                    pump);
+  if (!cooldown_controller.reset(uptime_ms())) {
+    ESP_LOGE(kLogTag, "Cooldown reset fail-off initialization failed");
+    pump.force_off();
+    ssr.force_off();
+    return;
+  }
+  const auto workflow_mutex = xSemaphoreCreateMutex();
+  if (workflow_mutex == nullptr) {
+    ESP_LOGE(kLogTag, "Controller synchronization initialization failed");
+    pump.force_off();
+    ssr.force_off();
+    return;
+  }
+  static std::atomic<bool> fail_safe_requested{false};
+  static FreeRtosApiSynchronization synchronization(
+      workflow_mutex, pump, ssr, fail_safe_requested);
+  auto snapshot = controller.update(startup_temperatures, pump.command(),
+                                    uptime_ms());
 
   std::array<char, 33> boot_id{};
   std::snprintf(boot_id.data(), boot_id.size(),
@@ -596,9 +642,9 @@ extern "C" void app_main() {
       &controller, &extraction_controller, &cooldown_controller,
       &pump, &ssr, &fail_safe_requested, &synchronization, &scale_controller,
       &extraction_telemetry};
-  if (xTaskCreate(workflow_control_task, "philcoino-workflow", 4096,
-                  &workflow_context, configMAX_PRIORITIES - 2,
-                  nullptr) != pdPASS) {
+  if (xTaskCreatePinnedToCore(workflow_control_task, "philcoino-workflow", 4096,
+                              &workflow_context, configMAX_PRIORITIES - 2,
+                              nullptr, 1) != pdPASS) {
     ESP_LOGE(kLogTag, "Workflow controller task creation failed");
     pump.force_off();
     ssr.force_off();
@@ -609,9 +655,9 @@ extern "C" void app_main() {
       &hx711_acquisition, &hx711_ready_waiter, &scale_controller,
       &synchronization};
   if (hx711_initialized &&
-      xTaskCreate(scale_sample_task, "philcoino-scale", 3072,
-                  &scale_context, configMAX_PRIORITIES - 3,
-                  nullptr) != pdPASS) {
+      xTaskCreatePinnedToCore(scale_sample_task, "philcoino-scale", 3072,
+                              &scale_context, configMAX_PRIORITIES - 3,
+                              nullptr, 1) != pdPASS) {
     ESP_LOGW(kLogTag,
              "Scale sampling task creation failed; weighted extraction remains blocked");
   }
@@ -646,7 +692,8 @@ extern "C" void app_main() {
   const bool secure_network_ready = network_requested && pairing_ready;
   static philcoino::networking::FirmwareApi api(
       identity, pairing, controller, target_storage,
-      temperature_calibration_storage, extraction_controller,
+      boiler_temperature_calibration_storage,
+      steam_temperature_calibration_storage, extraction_controller,
       cooldown_controller, scale_calibration_storage,
       synchronization, &scale_controller,
       &steam_control_settings_storage, boot_id.data());
@@ -666,9 +713,10 @@ extern "C" void app_main() {
   bool network_task_started = false;
   if (secure_network_ready) {
     network_task_started =
-        xTaskCreate(network_start_task, "philcoino-network", 6144,
-                    const_cast<NetworkStartContext*>(&network_context), 5,
-                    nullptr) == pdPASS;
+        xTaskCreatePinnedToCore(
+            network_start_task, "philcoino-network", 6144,
+            const_cast<NetworkStartContext*>(&network_context), 5,
+            nullptr, 0) == pdPASS;
     if (!network_task_started) {
       ESP_LOGE(kLogTag,
                "Network startup task creation failed; temperature control remains active");
@@ -705,9 +753,21 @@ extern "C" void app_main() {
       temperature_last_wake += static_cast<TickType_t>(
           lateness_ticks / temperature_period_ticks) * temperature_period_ticks;
     }
-    const auto reading = thermocouple.read(uptime_ms());
-    if (reading.status != ThermocoupleStatus::kOk) {
-      log_thermocouple_failure("runtime", reading);
+    const TemperatureReadings readings{
+        boiler_thermocouple.read(uptime_ms()),
+        steam_thermocouple.read(uptime_ms()),
+    };
+    if (readings.boiler.status != ThermocoupleStatus::kOk) {
+      log_thermocouple_failure(
+          "boiler", "runtime", readings.boiler,
+          philcoino::config::kBoilerThermocoupleChipSelectGpio,
+          philcoino::config::kBoilerThermocoupleDataGpio);
+    }
+    if (readings.steam.status != ThermocoupleStatus::kOk) {
+      log_thermocouple_failure(
+          "steam", "runtime", readings.steam,
+          philcoino::config::kSteamThermocoupleChipSelectGpio,
+          philcoino::config::kSteamThermocoupleDataGpio);
     }
     if (!synchronization.lock(philcoino::networking::ApiDomain::kTemperature)) {
       pump.force_off();
@@ -728,15 +788,22 @@ extern "C" void app_main() {
             uptime_ms());
       }
     }
-    snapshot = controller.update(reading, pump.command(), uptime_ms());
+    snapshot = controller.update(readings, pump.command(), uptime_ms());
     synchronization.unlock(philcoino::networking::ApiDomain::kTemperature);
 #ifdef CONFIG_PHILCOINO_RAW_TEMPERATURE_LOGGING
-    if (reading.status == ThermocoupleStatus::kOk &&
-        std::isfinite(reading.temperature_c)) {
+    if (readings.boiler.status == ThermocoupleStatus::kOk &&
+        std::isfinite(readings.boiler.temperature_c)) {
       ESP_LOGI(kLogTag,
-               "MAX6675 runtime sample raw_temperature_c=%.2f raw_frame=0x%04X",
-               static_cast<double>(reading.temperature_c),
-               static_cast<unsigned>(reading.raw_frame));
+               "MAX6675 boiler runtime sample raw_temperature_c=%.2f raw_frame=0x%04X",
+               static_cast<double>(readings.boiler.temperature_c),
+               static_cast<unsigned>(readings.boiler.raw_frame));
+    }
+    if (readings.steam.status == ThermocoupleStatus::kOk &&
+        std::isfinite(readings.steam.temperature_c)) {
+      ESP_LOGI(kLogTag,
+               "MAX6675 steam runtime sample raw_temperature_c=%.2f raw_frame=0x%04X",
+               static_cast<double>(readings.steam.temperature_c),
+               static_cast<unsigned>(readings.steam.raw_frame));
     }
 #endif
   }

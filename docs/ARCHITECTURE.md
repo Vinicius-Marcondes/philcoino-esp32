@@ -1,570 +1,138 @@
 # Architecture
 
-This document describes the system implemented in the current source tree. It separates runtime authority from presentation, simulation from firmware, and software behavior from unresolved physical safety.
+This document describes the current generation: ESP32-S3 N16R8 firmware 0.5.0,
+two MAX6675 channels, HTTPS API v4, extraction telemetry format 2, and a
+rebuilt/freshly paired Expo 54 client.
 
 ## System boundary
 
-Philcoino has five cooperating codebases:
-
-1. an Expo/React Native app for discovery, pairing, monitoring, and user-requested changes;
-2. a language-neutral OpenAPI 3.1.1 contract with strict TypeScript schemas;
-3. a deterministic Bun/Hono device simulator for contract and UI development;
-4. an offline Python thermal-modeling tool for CSV analysis, leakage-safe fitting, counterfactual simulation, and manually reviewed model export;
-5. independent ESP-IDF C++ firmware that owns machine state and heater/pump command boundaries.
-
-All communication is local-network HTTP. There is no cloud service, account system, remote internet API, Wi-Fi provisioning flow, or multi-device store. Firmware implements the API v2 extraction, compensation, and cooldown policies while retaining every temperature-only API v1 route.
-
 ```text
-user
-  |
-Expo screen -> pairing/dashboard services -> DeviceApiClient
-  |                                      |
-SecureStore                       HTTP API v1 + v2
-                                         |
-                           +-------------+-------------+
-                           |                           |
-                    device simulator            ESP32 firmware
-                    (development)                (authority)
-                                                     |
-                                      MAX6675 -> control -> heater SSR
-                                                     |
-                         pump controller -> 0-90% clamp -> rbdimmerESP32
-                                             -> GPIO6 ZC / GPIO10 DIM
+Expo mobile -- pinned HTTPS API v4 --+-- simulator (UI/contract evidence)
+                                      +-- ESP32-S3 firmware (machine authority)
+                                            |
+              Boiler MAX6675 -- dual control -- Steam MAX6675
+              SCK4 SO5 CS7                    SCK4 SO8 CS9
+                                            |
+                         heater SSR GPIO21 / pump ZC6-DIM10
 ```
 
-## Authority and dependency direction
-
-The OpenAPI document defines the wire shape, but it does not own machine behavior. Firmware validates requests independently and is authoritative for:
-
-- sensor validity and active temperature;
-- persisted brew and steam targets;
-- boot mode, readiness, steam timeout, and heating timeout;
-- heater permission and SSR command timing;
-- fault detection, latching, and dismissal eligibility.
-
-The app owns local presentation and connectivity state. It may validate inputs for immediate feedback, but it does not calculate safe output, continue control after disconnect, or publish a requested mutation before acknowledgement.
-
-The simulator implements the contract and selected product semantics with a manually advanced temperature model. It does not reproduce the firmware's ten-second duty curve, hardware I/O, task scheduling, mutex blocking, automatic sensor faults, or physical SSR behavior.
-
-## API contract
-
-`packages/protocol/openapi.yaml` is the language-neutral source of truth. It defines seven API v1/public operations plus the additive API v2 workflow, history, scale, and extraction-stream operations, bearer security, strict object shapes, limits, fault/error codes, and examples. The file uses JSON syntax, which is valid YAML 1.2.
-
-API v2 defines authenticated combined machine/extraction/compensation/cooldown
-state, four-slot profile read/replace, idempotent extraction and cooldown
-Start/Stop shapes, authenticated extraction telemetry SSE, and a firmware-owned
-temperature-calibration transaction.
-Mobile, simulator, and firmware use these routes; API v1 remains compatible and
-temperature-control-only. Contract, simulator, and host-test agreement does not
-establish physical pump, heater, steam, cooling, or calibration accuracy.
-
-`packages/protocol/src/schemas.ts` mirrors the contract as strict Zod schemas. Mobile and simulator imports come from `@philcoino/protocol`; firmware deliberately does not. Firmware independently implements the contract through the bounded generic JSON boundary in `api_json.cpp`, typed machine and workflow codecs in `api_machine_codec.cpp` and `api_workflow_codec.cpp`, shared response/error helpers in `api_codec.cpp`, and firmware contract captures validated against the strict schemas.
-
-Boundary rules:
-
-- public: `GET /healthz` and `GET /api/v1/device`;
-- authenticated: state and all mutations;
-- unknown request/response fields are rejected;
-- targets are whole numbers: brew 85–95°C, steam 110–135°C;
-- temperature calibration uses a raw whole-degree candidate from 90–120°C and
-  one signed persisted offset from -20–10°C;
-- fault state requires a fault object and `heaterActive: false`;
-- `_simulator/*` is never part of API v1 or API v2.
-
-## Mobile runtime
-
-### Composition
-
-`app/_layout.tsx` configures the root Expo Router stack and theme. `app/index.tsx` renders `PairingScreen`, which owns the transition from unpaired discovery to an authenticated `DashboardScreen`.
-
-The app has two device modes:
-
-- real mode uses discovery, `DeviceApiClient`, SecureStore, and the ESP32/simulator HTTP API;
-- debug mode (`EXPO_PUBLIC_PHILCOINO_DEBUG_DEVICE=1`) bypasses discovery, storage, authentication, and networking with an in-memory client.
-
-Debug mode uses the same API-v2 dashboard, extraction, compensation, and
-cooldown paths through an in-memory client. The presentation is divided into
-Dashboard, Profiles, and Machine pages with bottom navigation; active workflow
-state remains reachable through a persistent navigation bar.
-
-The native app supports portrait and both landscape directions. Portrait keeps
-bottom navigation, while landscape uses a safe-area-aware three-dot gesture
-rail and wider Pairing, Dashboard, Profiles, and Machine layouts. The rail
-accepts taps, while vertically dominant swipes across the landscape screen
-change pages. Taller content keeps scrolling until it reaches the matching
-boundary, and horizontal graph gestures remain independent. Page content uses
-a short direction-aware Reanimated fade-and-slide transition while the rail
-stays fixed. Screen-orientation events keep the rail close to the plain edge and
-retain the leading safe-area inset when the notch is beside it. Window-size
-changes affect presentation only: polling and mutation sessions remain owned by
-the mounted dashboard lifecycle. An app-level display preference can keep paired
-foreground screens awake; it defaults off and releases when the app backgrounds
-or the paired screen unmounts.
-
-The production landscape Dashboard uses a three-column top row with
-equal-height machine status, cooldown, and extraction cards. Its second row
-gives boiler temperature one third of the width and the paged graph the
-remaining two thirds. The compact quick-profile chooser overlays the lower
-content instead of changing the control-row height; Manual spans its first row
-and the four profile slots form a 2-by-2 grid beneath it. Compact landscape
-omits the pump-command line and keeps a contextual Profiles or Machine action
-beneath the selector while Start or Stop fills the adjacent column, avoiding
-state-dependent card height changes. Portrait retains the full pump status and
-blocker detail. Landscape Profiles gives the local editor the left half of the
-workspace, then stacks the 2-by-2 profile chooser above sync in the right half.
-Its compact duration steppers group minus, value, and plus in one rounded
-control.
-
-### Discovery and pairing flow
-
-```text
-startup
-  -> load strict SecureStore record
-  -> inspect cached address /api/v1/device
-  -> verify stable deviceId
-  -> authenticate /api/v1/state
-  -> connected
-       or
-     mDNS scan for saved deviceId
-       -> inspect rediscovered address again
-       -> authenticate with saved token
-       -> persist new address only after success
-```
-
-Native discovery uses `react-native-zeroconf` behind `DeviceDiscovery`. iOS/Android resolve `_philcoino._tcp`; the generic implementation reports that manual entry is required. Resolved TXT data is parsed with `DeviceResponseSchema`; ports and candidate IPv4/host/IPv6 origins are normalized before use.
-
-Manual entry and mDNS both converge on `inspectDevice`. Pairing then re-inspects the candidate identity before transmitting the token, calls authenticated state, and saves only after success. Restore treats authentication failures as meaningful instead of hiding them behind rediscovery.
-
-The current identity check is a stable public ID, not cryptographic device authentication. This is a known security limitation documented in `SAFETY.md` and the codebase review.
-
-### Transport and errors
-
-`DeviceApiClient` receives a fetch implementation, normalizes one local HTTP origin, validates timeout/token configuration, and validates every request and response through protocol schemas. The Expo adapter supplies `expo/fetch`; tests supply deterministic fakes.
-
-Each request combines a caller signal with a local timeout. The first abort cause is retained so cancellation is not misreported as timeout. Errors become `ApiClientError` kinds:
-
-- `cancelled`, `timeout`, or `offline` for transport lifecycle;
-- `not-found` for HTTP 404;
-- `unauthorized` only for a consistent 401 contract error;
-- `protocol` for non-JSON, wrong schemas, or inconsistent errors;
-- `http` for a valid device rejection;
-- `invalid-request` for locally invalid mutation input.
-
-Connection mapping deliberately collapses some transport errors to `offline`, preserves not-found/unauthorized/protocol states, and ignores cancellation.
-
-### Polling and mutations
-
-`useMachineDashboard` creates one polling session and one mutation session while
-the route is focused. React Native `AppState` starts them only while the app is
-active, pauses/aborts active work in the background without clearing the last
-acknowledged snapshot, and resumes polling immediately on return. Retained data
-is labeled refreshing and all mutations stay paused until a newly validated
-combined snapshot arrives. Route blur/unmount still fully stops both sessions.
-
-`DashboardPollingSession` performs completion-driven API v2 combined-state
-polling: the next one-second timer is scheduled only after the current request
-settles, so requests never overlap. One validated response publishes its nested
-v1 machine snapshot and acknowledged extraction, compensation, and cooldown
-state together. Generation
-counters and `AbortController` prevent stopped/paused work from publishing.
-Failures clear both live snapshots before changing connection state.
-
-Scale diagnostics use a separate completion-driven one-second session with at
-most one request in flight. Once an acknowledged extraction is running, the app
-suppresses that REST session and starts one authenticated
-`GET /api/v2/extractions/stream` request even when the extraction console is
-closed. The one-second combined-state poll remains active for authoritative
-workflow, fault, and connection state.
-
-`ExtractionStreamSession` incrementally parses `text/event-stream` bytes from
-Expo 54 `expo/fetch`. It commits every strict page to SQLite before advancing
-the durable extraction/boot/sequence cursor, aborts on backgrounding, and
-reconnects on foregrounding or transient failure after 250 ms, 500 ms, one
-second, and then two-second retries. A 404 marks streaming unsupported for that
-device session and shows an update-required state; there is no high-frequency
-polling fallback. Stream failures mark extraction telemetry stale/unavailable
-without disabling Start or REST Stop. The phone derives beverage mass flow from
-raw net weight with the existing causal one-second regression and resets across
-every identity, sequence, availability, or null-weight discontinuity.
-
-`DashboardMutationSession` serializes temperature, mode, heater, fault,
-extraction Start/Stop, and cooldown Start/Stop mutations. It:
-
-1. marks the selected mutation pending;
-2. pauses and cancels polling;
-3. sends one request;
-4. updates state only from the validated response;
-5. maps rejection separately from disconnection;
-6. resumes polling after the current generation settles.
-
-This prevents an older poll from overwriting an acknowledgement and prevents a timed-out request from appearing successful. Target edits remain local drafts until explicit confirmation.
-
-The focused Machine-page Temperature Calibration modal uses a separate
-`TemperatureCalibrationSession`. It serializes status, Start, candidate, Save,
-and Cancel, polls only while the modal and app are active, and presents only
-validated firmware acknowledgements. Backgrounding, navigation, disconnection,
-terminal expiry, or a conflicting failure discards the unsaved candidate or
-relies on the firmware's bounded inactivity lease. The UI never commands the
-pump or valve, never detects steam, and requires the user to operate the wand
-and explicitly confirm Save.
-
-The app-wide four-slot profile set is stored independently from the selected
-device record through a strict SecureStore-backed repository and seeded only on
-first use. Local writes are serialized under monotonic revisions and publish
-only after storage succeeds. Firmware has no profile repository, default set,
-import/export, or synchronization state. Profile Start sends the exact selected
-profile snapshot inline; weighted Start adds the selected weight control.
-Firmware validates and latches both values in RAM before acknowledging Start.
-A same-key retry must match the complete profile and weight data, so editing a
-local slot cannot alter an acknowledged shot. An unacknowledged transport retry
-reuses its client-generated key; a definitive rejection clears it.
-
-Each validated foreground poll also appends a device-scoped temperature-history
-row to mobile SQLite. Rows include phone UTC capture time plus acknowledged
-firmware uptime, temperature, targets, mode, heater permission/command, pump
-command, status, and fault context. Polling uses only queryless
-`GET /api/v2/state`; there is no prediction capability probe or fallback.
-The repository retains every row until explicit clear or machine removal, but
-Dashboard loads only the current local calendar day. Background, locked,
-offline, and closed periods plus firmware uptime resets remain explicit graph
-gaps; the app neither polls in the background nor requests backfill. Dashboard
-presents consecutive thirty-second Live
-pages in the same telemetry surface used for weighted extraction traces. In
-temperature-history mode, the upper band renders only acknowledged boiler and
-target samples, the current scale state supplies the weight metric, and the
-lower band explicitly marks weight history and derived flow unavailable. An
-extraction trace populates that unchanged surface with nullable retained weight
-and app-derived beverage flow, so extraction state changes do not replace or
-restyle the graph. Machine exports all retained rows in database batches and
-offers confirmed clear-all. This observational data never participates in
-firmware control and contains neither bearer tokens nor network addresses.
-
-Extraction telemetry uses a separate RAM-only 320-sample ring. The workflow
-task attempts an observational capture every 250 ms for Manual, timed-profile,
-and weighted-profile extractions and for ten seconds after pump stop. Its
-atomic guard is zero-wait: contention skips the capture while sequence gaps
-remain explicit. Manual and timed starts latch the first usable calibrated
-scale value as a best-effort baseline; weighted starts reuse the
-firmware-authoritative net weight. Missing scale or baseline produces nullable
-weight and never blocks ordinary Start. A network task copies at most sixteen
-samples under the ring guard, then serializes and sends SSE outside the workflow
-mutex.
-
-Mobile creates a shot row as soon as polling observes an acknowledged or
-reconciled extraction identity. It stores the executed profile snapshot,
-control mode, optional weight settings, timestamps, terminal measurements, and
-trace completeness. The stream is re-armed for running and retained terminal
-states after foregrounding or restart. If terminal replay is unavailable or
-overwritten, the row remains explicitly incomplete. Summaries and traces are
-keyed by device, firmware boot, and extraction identity, so a reboot-reset
-counter cannot overwrite an older shot. No age-based pruning occurs. The fifth
-`Shots` tab is the sole list/detail/export/clear surface; Scale retains only
-diagnostics, calibration, and per-profile weight defaults.
-
-Live graph pages use stable clock-aligned thirty-second windows. The newest
-page follows incoming samples only while the user remains at the latest offset;
-an older inspected window keeps its timestamp identity when live or recovered
-samples are inserted. Each visible page uses five adaptive Y-axis ticks derived
-from its boiler and target values, with padding and a minimum display range.
-All-row batched CSV export remains available from Machine. SQLite migration
-preserves locally useful acknowledged state while removing backfill cursors,
-provenance, recovery state, and firmware-history-only diagnostics. Uptime and
-timestamp discontinuities split graph segments rather than drawing or
-interpolating unavailable intervals.
-
-## Simulator runtime
-
-`createSimulator` wires a `SimulatorMachine` to Hono. Bearer middleware protects
-the five API v1 mutations/state operations and all API v2 state, extraction,
-and cooldown operations. Parsing uses protocol schemas and emits
-version-appropriate strict errors.
-
-The deterministic model captures the 250 ms extraction telemetry ring,
-including all three control
-modes, best-effort baselines, a ten-second settling tail, cursor replay/reset,
-and strict SSE framing. Simulator time remains manually advanced; advancing it
-publishes deterministic stream events without real-time sleeps.
-
-The model holds persisted targets and signed temperature calibration separately
-from volatile mode, raw temperature,
-heater permission, faults, workflows/idempotency, readiness, timeouts, and
-uptime. Time never advances in the background.
-`POST /_simulator/advance` steps temperature, extraction, and cooldown state in
-bounded increments, which makes phases, threshold completion, the 45-second
-cutoff, five-second stabilization, readiness, and timeout boundaries
-deterministic. Inline profiles are RAM-only shot inputs; power-cycle preserves
-targets and calibration while reset restores their defaults and clears
-calibration.
-
-The simulator stores one raw boiler temperature and derives
-`boilerTemperatureC = rawTemperatureC + temperatureOffsetC` exactly once for
-both modes. Its calibration transaction controls the raw candidate from
-90–120°C, persists `100 - candidate`, reports offset-adjusted target bounds,
-and permits each independent effective-Steam and raw reading through `135°C`.
-Either reading strictly above that cap latches the simulated fault.
-These logical values do not model separate boiler-base/upper-boiler
-temperatures or provide physical calibration evidence.
-
-Simulator-only routes can set readings, inject faults or the next profile-save
-failure, advance time, power-cycle, or reset. They are test controls, not
-production capabilities. The model's simple move-toward-target and extraction
-timeline behavior are intentionally unsuitable for firmware/GPIO safety
-validation.
-
-## Firmware runtime
-
-### Layering
-
-- `firmware_config` contains identity, GPIOs, ranges, timeouts, duty-curve constants, and diagnostic flags.
-- `peripherals` defines pure interfaces/policies for MAX6675, HX711,
-  target/profile/calibration storage, the independent heater SSR, and the
-  fail-off pump-power owner. `esp_peripherals.cpp` supplies GPIO/NVS adapters
-  and the native `rbdimmerESP32` phase-angle adapter; higher layers never own
-  zero-cross or TRIAC timing.
-- `control` contains the pure temperature, scale, extraction, and cooldown state machines.
-- `networking` separates bounded generic JSON syntax, typed machine/workflow codecs, immutable response serialization, authoritative route/access metadata, `FirmwareApi` controller/storage orchestration, and ESP-IDF Wi-Fi/HTTP/mDNS transport adapters.
-- `main/app_main.cpp` owns startup order, shared objects, mutex wiring, the sampling loop, and network task creation.
-
-The default-off `PHILCOINO_PERFORMANCE_DIAGNOSTICS` build option adds no public
-API. When explicitly enabled for supervised target measurement, fixed-size
-atomic counters/histograms observe loop timing, workflow-mutex exposure, scale
-outcomes, API latency/request heap, task stack high-water, reset cause,
-internal-heap state, and task-side heater-lease trips. Hot paths do not log or
-persist measurements; a dedicated low-priority task emits a bounded serial
-summary once per minute, and neither application ISR is modified.
-
-### Startup and fail-off ordering
-
-Firmware first preloads DIM GPIO10 low, then constructs `FailOffPump` over the
-`rbdimmerESP32` adapter. The adapter registers zero-cross GPIO6 as phase 0 at
-fixed 60 Hz, creates the GPIO10 channel with initial level 0 and
-`RBDIMMER_CURVE_LINEAR`, and explicitly reapplies 0 before returning. Only then
-does firmware initialize the independent heater `FailOffSsr` with its existing
-safety lease. Pump-dimmer initialization failure logs the library error, retries
-the low/OFF command, cleans up partial library state, and aborts immediately;
-later critical startup failures retain/attempt pump-off and heater-off.
-
-`FailOffPump` accepts signed abstract drive requests, rejects negative values by
-commanding 0, clamps every high request to the single 90% maximum, and records
-only successfully acknowledged effective commands. Existing ON calls map to
-90%; OFF always maps to 0%. The public API continues to derive `running` from a
-positive command and `off` from 0, without exposing pressure/flow claims.
-
-`ExtractionController` owns Manual cutoff, immutable active profile snapshots,
-pre-infusion/soak/main deadlines, replay/conflict behavior, and Stop.
-For weighted profile starts it also owns automatic tare, integer-decigram
-cutoff, scale-failure fallback to the immutable profile deadline, warning
-gating, and the retained terminal scale record. `ScaleController` owns rolling
-filter/stability state and the atomically persisted two-point calibration.
-`CooldownController` owns the snapshotted Brew threshold, ordered heater-inhibit
-then pump command, 45-second cutoff, five-second stabilization, replay, Stop,
-terminal outcome, and reset behavior. One high-priority 10 ms workflow task
-advances the mutually exclusive policies with wrap-safe monotonic time and
-hands the acknowledged extraction phase to temperature control.
-
-The temperature owner retains a fixed 500 ms FreeRTOS wake deadline using the
-ESP-IDF 6 `xTaskDelayUntil` API. Deadline-relative lateness is recorded in the
-bounded default-off diagnostics without hot-path logging. If work overruns more
-than one period, elapsed deadline slots are skipped on the same fixed grid so
-the MAX6675 is not immediately reread during scheduler catch-up. Task priority
-and the independent 1,500 ms heater lease remain unchanged.
-PRD-016 replaces passive prediction with a bounded Brew PI candidate while
-retaining the same owner and schedule.
-
-Temperature, extraction, and cooldown share one non-recursive 50 ms workflow
-mutex; the legacy API domain labels intentionally alias that boundary, so there
-is no cross-domain lock order. Sensor reads, target NVS, Wi-Fi reads,
-JSON serialization, and HTTP response transmission stay
-outside it. A missed acquisition immediately attempts both command outputs off
-and posts an atomic fail-safe request; the next owner latches an internal fault,
-ends extraction, and aborts active cooldown. The GPTimer safety lease separately
-bounds a firmware-commanded heater-high pulse if normal controller renewal
-stalls. None of these command paths confirm physical de-energization.
-
-Extraction streaming never performs JSON serialization or socket transmission
-inside that mutex. Workflow code copies only the bounded observation and
-notifies the asynchronous stream task. One authenticated subscriber is allowed;
-a busy subscriber receives `409 stream_busy`, an unavailable/future cursor
-receives `409 stream_unavailable`, and a slow or failed client is disconnected
-instead of growing an unbounded queue. Two seconds without a sample emits an
-SSE comment heartbeat.
-
-Targets, calibration, and Steam settings retain their existing independent NVS
-ownership. Firmware never reads, writes, defaults, or cleans up legacy profile
-NVS data; it is unreachable. The first sensor sample happens before networking
-starts. Wi-Fi/API startup runs in a separate FreeRTOS task so a network failure
-does not intentionally stop temperature control.
-
-HX711 reads run in a separate low-priority sampling task and publish through the
-same bounded workflow synchronization boundary. After one immediate read, a
-falling edge on HX711 DOUT wakes that task; the IRAM GPIO ISR only posts a
-coalescing task notification, while GPIO clocking, filtering, logging, and
-publication remain in task context. A 750 ms notify timeout preserves bounded
-unavailable detection for a missing or disconnected scale. The waiter reuses
-the process-wide GPIO ISR service already installed by the pump dimmer. Every
-completed/error sample also introduces a 10 ms task delay, preventing a
-stuck-low DOUT input from spinning continuously and starving the ESP32-C3 idle
-watchdog. `NotReady` reads do
-not enter the workflow mutex or publish to `ScaleController`; accepted samples
-refresh the cached median, spread, stability, and calibrated weight once, and
-consumer snapshots apply only O(1) age/availability gating. This does not block
-temperature control or ordinary Manual/timed extraction.
-Scale calibration has its own NVS blob; completion prepares an immutable tokenized
-candidate under the workflow mutex, saves it after unlocking, then reacquires
-the mutex to adopt that exact candidate. Save failure retains the previous
-calibration for retry. A save that cannot be acknowledged remains pending and
-blocks weighted Start until the same transaction is recovered; Cancel cannot
-clear that pending adoption. Invalid/missing scale calibration disables weighted
-Start without preventing machine startup.
-
-Temperature calibration uses a separate versioned NVS record. A missing record
-is valid uncalibrated state with a `0°C` offset; corrupt or unreadable storage
-latches an internal fault and keeps the heater command off. Save prepares the
-candidate under the workflow mutex, persists it outside the mutex, then adopts
-the exact persisted candidate under the mutex. A persistence failure retains
-the previous offset and targets.
-
-The API and control loops share controller snapshots behind the bounded workflow
-domain. Target updates first validate and command heater off under the boundary,
-perform synchronous NVS outside it, then reacquire it to acknowledge the
-persisted targets. Remaining timing, watchdog, target-runtime, and physical-output risks
-stay tracked as unresolved findings.
-
-### Sensor and control state
-
-`Max6675` enforces conversion timing and rejects open, invalid, or
-transport-failed frames from the permanent boiler-base thermocouple. The
-controller also rejects non-finite values before conversion. One controller-owned
-path then defines the effective temperature in both modes by adding the one
-persisted signed global offset exactly once. A missing record contributes
-`0°C`; no mode-specific correction remains. Raw validation and the independent
-raw ceiling occur before offset correction, and no API, mobile, simulator, or
-persistence caller adds another correction.
-
-`TemperatureController` boots in brew mode with volatile heater permission enabled. A valid update:
-
-1. validates the raw boiler reading status and finite numeric value;
-2. derives effective temperature once from the validated raw reading and saved
-   offset;
-3. applies the active-mode effective over-temperature limit, the independent
-   raw ceiling, and the Steam return timeout;
-4. requires ±1°C stability for three seconds before `ready`;
-5. tracks active-temperature heating demand toward a ten-minute timeout;
-6. calculates both the legacy nonlinear requested duty and a fixed-gain PI
-   candidate from a bounded EMA-filtered Brew error;
-7. selects exactly one Brew requested-duty authority at compile time and routes
-   it through the existing ten-second SSR window and minimum-pulse policy;
-8. records strict controller configuration, PI/legacy requested duty,
-   contribution/state/saturation, and acknowledged command context;
-9. returns the same active effective value to ordinary API consumers.
-
-`CONFIG_PHILCOINO_BREW_PI_CONTROL` defaults off. In that build the legacy curve
-remains authoritative and the PI result is shadow-only; arbitrary shadow output
-cannot change commands, readiness, faults, timeouts, extraction, cooldown, or
-persistence. When explicitly enabled, PI owns requested duty only in Brew.
-Steam always retains the legacy curve and uses the same global effective
-temperature as Brew. The PI uses
-the fixed 500 ms interval, Kp `0.08`, Ki `0.01`, EMA alpha `0.25`, bounded
-integral state, and conditional anti-windup. Invalid readings/timing, mode or
-target changes, phase changes, inhibition, permission, faults, safety-lease
-trips, and output failures reset/freeze or dominate PI as appropriate.
-Changing authority or constants requires a new build and does not become
-accepted control without pinned-target and supervised physical A/B evidence.
-
-Mode and target changes reset readiness, demand tracking, recovery state, and
-the heater window. Targets are saved before becoming controller state. On the
-first Steam entry of a heat-soak episode, firmware records a volatile monotonic
-origin and calculates:
-
-```text
-appliedCompensationC =
-  initialCompensationC × max(0, 1 - elapsedMs / decayDurationMs)
-steamControlTemperatureC =
-  boilerTemperatureC + appliedCompensationC
-```
-
-The estimate owns Steam demand, duty, recovery, readiness, status and the
-post-ready timeout start. `boilerTemperatureC` remains the globally calibrated
-sensor value, and raw/effective over-temperature checks run without the
-transient term. Leaving Steam preserves the origin until the effective sensor
-reading reaches the Brew target or below; reboot clears it. Persisted setting
-changes force heater command off before NVS, preserve active heat-soak and
-ready-timeout origins, and recalculate the timeout against its original
-ready timestamp.
-
-During Brew extraction, the controller derives a private heater-duty target.
-Pre-infusion uses a fixed `0°C` bias, Manual and profile main extraction use
-`min(brewTargetC + 2°C, brewOverTemperatureC - 1°C)`, and soak/idle use no
-compensation. Only duty demand/pulse calculations see this value; persisted and
-displayed targets, readiness, recovery ownership, safety deadlines,
-over-temperature limits, and profile data retain the base target. API v2 exposes
-only whether this fixed policy is active and its eligible phase.
-
-Cooldown Start requires a valid Brew-effective raw sample above the current Brew
-target, no fault, and idle extraction/cooldown. Firmware snapshots the target,
-switches to Brew, establishes a separate heater inhibit and heater-off command,
-then requests the pump-running command. The first validated sample at/below the
-snapshot, 45 seconds, or Stop requests pump off and begins exactly five seconds
-of heater-inhibited stabilization. User heater permission is never changed;
-reset/power loss never resumes the RAM-only workflow.
-
-Consequently, one valid raw sample plus one saved offset produces the same
-effective `boilerTemperatureC` in Brew and Steam. For example, raw boiling
-observed at `108°C` saves `-8°C`, so that raw point is controlled and published
-as effective `100°C` in either mode. This is a user-observed rebasing result,
-not proof of boiling-point accuracy or upper-boiler temperature.
-
-Sensor, over-temperature, heating-timeout, and internal faults latch and command the SSR off. Only over-temperature can be dismissed without a power cycle, and only when the boiler reading is valid, the temperature is back at the active target, and the active mode limit is clear.
-
-### Networking
-
-The ESP-IDF server connects as a Wi-Fi station, limits TX power when possible, registers reconnect handlers, serves port 80, and advertises identity through mDNS TXT records. One immutable route table in `api_routes.cpp` owns method/path/access metadata for HTTP registration, pre-body access checks, and `FirmwareApi` dispatch. `FirmwareApi` retains constant-time length-aware bearer comparison and explicit controller/storage orchestration; pure codec modules parse and serialize without locks, persistence, controller mutation, output access, or network I/O.
-
-The ESP-IDF adapter owns the 512-byte authorization-header limit, 1,024-byte request-body limit, two-second absolute body deadline, bounded timeout count, response/challenge transmission, and asynchronous SSE request lifecycle. Protected requests, including the stream, are authenticated before cursor processing. HTTP remains available if mDNS advertisement fails, so direct/manual address access remains usable.
-
-## Persistence and reset semantics
-
-| State | Owner | Survives app restart | Survives device power cycle |
-| --- | --- | --- | --- |
-| Selected device ID/address/token | Mobile SecureStore | Yes | Not applicable |
-| Brew/steam targets | Firmware NVS | Yes | Yes |
-| Temperature calibration offset/status | Firmware NVS | Yes | Yes; missing record is uncalibrated `0°C`, corrupt/unreadable storage faults |
-| Steam compensation/decay/ready-timeout settings | Firmware NVS | Yes | Yes; missing record persists `12°C`/`12 min`/`5 min` defaults, invalid storage fails off |
-| Active Steam heat-soak origin | Firmware RAM | Reflected while powered | No |
-| Mobile extraction profiles | Mobile SecureStore | Yes | Not applicable |
-| Keep-screen-awake preference | Mobile local key-value storage | Yes | App-level; independent of the selected machine |
-| Scale calibration | Firmware NVS | Not applicable | Yes |
-| Per-profile weight defaults | Mobile SecureStore | Yes | Not applicable |
-| Extraction summaries/traces (Manual, timed, weighted; until explicit clear) | Mobile SQLite | Yes | Not applicable |
-| Active/last extraction telemetry ring and weighted fallback warning | Firmware RAM | Reflected while connected | No |
-| Pump dimmer command (GPIO6 ZC/GPIO10 DIM) | Firmware RAM/dimmer | Reflected only as `running`/`off` | No; boots at 0%/`off` |
-| Extraction/cooldown identity, phase, deadlines, outcome | Firmware RAM | Reflected while connected | No; both boot idle and cooldown history is cleared |
-| Extraction duty compensation | Derived firmware policy | Reflected while eligible | No persisted setting; recomputed from acknowledged phase |
-| Active mode | Firmware RAM | Yes while powered | No; boots brew |
-| Heater permission | Firmware RAM | Yes while powered | No; boots enabled |
-| Fault latch | Firmware RAM | Yes while powered | No; over-temperature may also be dismissed after cooldown |
-| Foreground Dashboard status samples | Mobile SQLite | Yes, until explicit clear or machine removal; only today is graphed | Not applicable |
-| Dashboard mutation feedback | Mobile component state | No | Not applicable |
-| Simulator targets | Simulator process model | During simulated power-cycle | Reset endpoint restores defaults |
-
-## Safety and security boundary
-
-Software can command an output inactive; it cannot prove that an SSR, TRIAC,
-GPIO, wiring path, pump, or heater is physically de-energized. The pump's
-0–90% value is an actuator command, not measured voltage, power, pressure, or
-flow. Independent thermal/pressure protection, correct mains wiring, component
-sizing/heat sinking, enclosure, grounding, and supervised validation remain
-outside software acceptance.
-
-API v1/v2 use plaintext local HTTP with a bearer token and public mDNS identity. The current threat model does not provide transport confidentiality, cryptographic device identity, strong-token enforcement, or authentication throttling. Treat the network as trusted only for development and follow [Safety](en/SAFETY.md).
-
-## Verification boundaries
-
-- Protocol tests detect OpenAPI/Zod/example drift.
-- Simulator tests validate API/UI semantics under a simple deterministic model.
-- Mobile tests validate strict parsing, restore, polling, mutation, and presentation helpers.
-- Firmware host tests validate pure C++ configuration, peripherals, control, and API behavior.
-- ESP-IDF builds validate target integration when the pinned toolchain is available.
-- Only supervised physical tests can validate actual sensors, GPIO levels, relay behavior, thermal response, and independent cutoff.
-
-No single green layer substitutes for the layers beneath it.
+There is no cloud service, account system, Wi-Fi provisioning flow, or
+multi-device store. Firmware owns sensor validity, calibration, persisted
+targets/settings, mode switching, readiness, timeouts, faults, heater/pump
+commands, extraction, cooldown, telemetry, and OTA safety gating. The phone
+submits requests and displays only validated acknowledgements.
+
+## API v4 boundary
+
+- `packages/protocol/openapi.yaml` is the language-neutral source of truth.
+- Strict Zod schemas are shared by mobile/simulator; unknown fields are rejected.
+- Firmware independently parses/serializes C++ and emits strict response captures.
+- API v1-v3 routes are absent. Pairing domains, discovery, fixtures, and types are v4.
+- SRP pairing plus pinned HTTPS uses the new S3 identity and requires a rebuilt app and fresh pairing.
+- `MachineStateV4` has nullable Boiler/Steam values, per-sensor calibration, direct Steam timeout, and sensor-attributed thermal faults.
+- Calibration routes are `/api/v4/temperature-calibrations/{boiler|steam}/current`; one session exists globally.
+- Extraction telemetry is page format 2 and includes both nullable temperatures.
+- Simulator-only `/_simulator` routes never exist in firmware.
+
+## Firmware layering and startup
+
+- `firmware_config` owns identity, fixed pins, affinity, safety limits, and the one pump cap.
+- `peripherals` owns MAX6675/HX711 policy, separate NVS records, fail-off output wrappers, and ESP adapters.
+- `control` owns dual-sensor selection, heater policy, faults, scale, extraction, and cooldown.
+- `networking` owns codecs, SRP/HTTPS/mDNS, telemetry, OTA, and API orchestration.
+- `main/app_main.cpp` owns fail-off initialization order and task creation.
+
+Startup preloads outputs inactive, initializes the shared MAX6675 bus with both
+CS high/SCK low, initializes RobotDyn at phase 0/60 Hz/LINEAR/0%, reapplies
+pump 0%, and obtains initial sensor observations before networking. Bus/GPIO
+failure retries heater/pump OFF and aborts. No startup path resumes a workflow.
+
+`FailOffPump` maps running to the one 90% cap and OFF to 0%, clamps higher
+internal requests, retries OFF after a failed positive write, preserves unknown
+output after a failed OFF, and inhibits later positive commands after emergency
+shutdown. Percent is a command, not delivered voltage, power, pressure, flow,
+or closed-loop regulation. Upstream suppresses TRIAC firing below 3%.
+
+Temperature acquisition, heater control, workflow, and scale run on CPU1.
+Wi-Fi/TCP-IP/HTTPS/mDNS/pairing/telemetry/OTA run on CPU0. Sensor clocking, NVS,
+JSON serialization, and socket transmission stay outside the bounded control
+critical section.
+
+## Dual-temperature control
+
+The channels share only SCK GPIO4 and one critical-section lock. Reads are
+sequential every 500 ms. Boiler owns SO5/CS7; Steam owns SO8/CS9. Each channel
+independently rejects open-circuit, reserved-bit, transport, non-finite, frame
+`0x0000`, and downward jumps greater than 10°C. Exactly 10°C is accepted and a
+rejected sample never replaces that sensor's baseline.
+
+- Brew uses calibrated Boiler only.
+- Steam uses calibrated Steam only.
+- There is no fallback or blending.
+
+One invalid active sample commands heater OFF; three consecutive active
+failures latch `sensor_failure`. Invalid inactive input becomes unavailable and
+blocks its mode without interrupting the healthy active mode. Switching requires
+a current valid destination sample, commands heater OFF, and resets readiness,
+duty-window, timeout, and recovery state.
+
+Raw temperature above 135°C from either probe immediately latches a fault with
+its source sensor. Brew retains the 98°C active effective limit; Steam faults
+strictly above 135°C. Fault/output rules dominate targets and readiness.
+
+Each sensor owns a separate calibration record and raw 90-120°C guided workflow.
+The selected raw sensor temporarily controls calibration heating while the other
+continues validation and over-temperature protection. Boiler offset constrains
+Brew reachability; Steam offset constrains Steam reachability. Steam heat-soak
+compensation/decay is removed. Legacy Steam storage keeps only its 1-15 minute
+ready timeout.
+
+## Extraction, cooldown, scale, and OTA
+
+Manual, immutable profiles, weighted cutoff/fallback, Stop, and reset behavior
+remain firmware-owned. The 250 ms replay includes both nullable temperatures
+and real gaps. Cooldown preserves its heater-inhibit/OFF ordering, Brew
+threshold, cutoff, stabilization, and no-resume behavior. HX711 uses DT11/SCK12
+with bounded availability/delays. OTA remains fail-off and CPU0 networking-owned.
+
+## Mobile and simulator
+
+Mobile always labels Boiler and Steam, emphasizes the active sensor, draws
+independent nullable chart segments, and exposes two sensor-qualified calibration
+actions through one screen. Steam settings contain only ready timeout.
+
+Temperature history uses SQLite v8. Old rows retain Boiler and set Steam NULL;
+obsolete compensation metadata is dropped. Shot traces add nullable Steam
+without rewriting older rows. Both CSV families export both values.
+
+The simulator mirrors independent raw readings, offsets, availability, fault
+injection, persistence, active-sensor selection, and global calibration
+exclusivity. Its manually advanced thermal model is development evidence only.
+
+## Persistence
+
+| State | Owner | Power-cycle behavior |
+| --- | --- | --- |
+| Brew/Steam targets | firmware NVS | retained |
+| Boiler/Steam calibration | separate firmware NVS | retained; corruption faults off |
+| Steam ready timeout | firmware NVS | retained; legacy fields discarded |
+| Mode/readiness/faults/workflows/commands | firmware RAM | reset; boots Brew/workflows OFF |
+| Pairing clients/certificate | firmware NVS v4 namespace | retained; v3 credentials not reused |
+| Mobile selected device/token | SecureStore | S3/v4 requires fresh pairing |
+| Mobile temperature history | SQLite v8 | legacy Steam remains NULL |
+| Mobile shots/traces | SQLite | legacy Steam remains NULL |
+
+## Verification and physical boundary
+
+Protocol, simulator, mobile, C++/sanitizer tests, captures, and an ESP-IDF S3
+build are software evidence. They do not prove probe isolation, GPIO boot
+levels, USB recovery, zero-cross timing, TRIAC cessation, SSR interruption,
+pressure, thermal response, grounding, enclosure, or mains safety.
+
+Before control-capable flashing, confirm the exact 44-pin board exposes every
+selected GPIO and both probes are electrically ungrounded. With heater/pump
+loads disconnected, verify simultaneous stability/isolation, CS/SCK/SO
+waveforms, boot/reset pulse absence, native USB recovery, ZC detection, 0%
+cessation, and 90% timing. Dual-probe interference blocks Steam control. Prior
+C3, one-sensor, pump-SSR, heater-SSR, and RobotDyn acceptance does not validate
+this generation.

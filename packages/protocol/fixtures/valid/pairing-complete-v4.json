@@ -3,7 +3,7 @@
     "deviceId": "philcoino-test",
     "name": "Philcoino test",
     "model": "espresso-machine",
-    "apiVersion": "3",
+    "apiVersion": "4",
     "firmwareVersion": "3.0.0"
   },
   "clientId": "11111111111111111111111111111111",

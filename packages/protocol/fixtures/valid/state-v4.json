@@ -1,10 +1,10 @@
 {
-  "apiVersion": "3",
+  "apiVersion": "4",
   "device": {
     "deviceId": "philcoino-test",
     "name": "Philcoino test",
     "model": "espresso-machine",
-    "apiVersion": "3",
+    "apiVersion": "4",
     "firmwareVersion": "3.0.0"
   },
   "bootId": "00000000000000000000000000000001",
@@ -14,23 +14,14 @@
     "status": "heating",
     "activeMode": "brew",
     "boilerTemperatureC": null,
+    "steamTemperatureC": null,
     "brewTargetC": 93,
     "steamTargetC": 120,
+    "steamReadyTimeoutMs": 300000,
     "heaterEnabled": true,
     "heaterActive": false,
     "fault": null,
     "steamTimeoutRemainingMs": null,
-    "steamControl": {
-      "settings": {
-        "initialCompensationC": 12,
-        "decayDurationMs": 720000,
-        "readyTimeoutMs": 300000
-      },
-      "compensationActive": false,
-      "appliedCompensationC": 0,
-      "controlTemperatureC": null,
-      "heatSoakElapsedMs": null
-    },
     "uptimeMs": 12000
   },
   "scale": {
@@ -43,18 +34,26 @@
     "terminalExtraction": null,
     "warning": null
   },
-  "temperatureCalibration": {
-    "status": "uncalibrated",
-    "savedOffsetC": 0,
-    "boilerTemperatureRawC": null,
-    "boilerTemperatureC": null,
-    "heaterActive": false,
-    "ready": false,
-    "safeTargetBounds": {
-      "brewMinimumC": 85,
-      "brewMaximumC": 95,
-      "steamMinimumC": 110,
-      "steamMaximumC": 135
+  "temperatureCalibrations": {
+    "boiler": {
+      "status": "uncalibrated",
+      "sensor": "boiler",
+      "savedOffsetC": 0,
+      "temperatureRawC": null,
+      "temperatureC": null,
+      "heaterActive": false,
+      "ready": false,
+      "safeTargetBounds": { "minimumC": 85, "maximumC": 95 }
+    },
+    "steam": {
+      "status": "uncalibrated",
+      "sensor": "steam",
+      "savedOffsetC": 0,
+      "temperatureRawC": null,
+      "temperatureC": null,
+      "heaterActive": false,
+      "ready": false,
+      "safeTargetBounds": { "minimumC": 110, "maximumC": 135 }
     }
   },
   "extraction": {

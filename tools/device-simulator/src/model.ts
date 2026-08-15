@@ -15,14 +15,12 @@ import {
   ExtractionStateSchema,
   HealthResponseSchema,
   MachineStateSchema,
-  MachineStateV3Schema,
+  MachineStateV4Schema,
   RunningExtractionStateSchema,
   ScaleStateSchema,
   STEAM_TARGET_MAX_C,
   STEAM_TARGET_MIN_C,
   STEAM_OVER_TEMPERATURE_C,
-  STEAM_COMPENSATION_DECAY_DEFAULT_MS,
-  STEAM_COMPENSATION_INITIAL_DEFAULT_C,
   STEAM_READY_TIMEOUT_DEFAULT_MS,
   RAW_BOILER_OVER_TEMPERATURE_C,
   TEMPERATURE_CALIBRATION_CANDIDATE_MAX_C,
@@ -39,7 +37,7 @@ import {
   type FaultCode,
   type HealthResponse,
   type MachineState,
-  type MachineStateV3,
+  type MachineStateV4,
   type Mode,
   type TemperatureSettingsRequest,
   type TemperatureCalibrationSafeTargetBounds,
@@ -53,9 +51,7 @@ import {
   type ExtractionTelemetrySample,
   type RunningExtractionState,
   type ScaleState,
-  type SteamControlSettings,
-  type SteamControlSettingsRequest,
-  type SteamControlState,
+  type TemperatureSensor,
   type TerminalExtractionState,
   type WeightControl,
 } from "@philcoino/protocol";
@@ -200,6 +196,7 @@ interface CooldownRecord {
 }
 
 interface ActiveTemperatureCalibration {
+  sensor: TemperatureSensor;
   calibrationId: string;
   candidateRawTargetC: number;
   lastActivityUptimeMs: number;
@@ -236,21 +233,34 @@ export class SimulatorMachine {
 
   private activeMode: Mode = "brew";
   private boilerTemperatureRawC = AMBIENT_TEMPERATURE_C;
+  private steamTemperatureRawC = AMBIENT_TEMPERATURE_C;
   private brewTargetC: number;
   private steamTargetC: number;
-  private savedTemperatureOffsetC = 0;
-  private steamControlSettings: SteamControlSettings = {
-    initialCompensationC: STEAM_COMPENSATION_INITIAL_DEFAULT_C,
-    decayDurationMs: STEAM_COMPENSATION_DECAY_DEFAULT_MS,
-    readyTimeoutMs: STEAM_READY_TIMEOUT_DEFAULT_MS,
+  private savedTemperatureOffsets: Record<TemperatureSensor, number> = {
+    boiler: 0,
+    steam: 0,
   };
+  private steamReadyTimeoutMs = STEAM_READY_TIMEOUT_DEFAULT_MS;
   private steamControlRecordPresent = true;
   private steamControlStorageCorrupt = false;
   private failNextSteamControlSave = false;
-  private steamHeatSoakStartedAtMs: number | null = null;
   private steamReadyAtMs: number | null = null;
-  private temperatureCalibrationRecordPresent = false;
-  private temperatureCalibrationStorageCorrupt = false;
+  private temperatureCalibrationRecordPresent: Record<TemperatureSensor, boolean> = {
+    boiler: false,
+    steam: false,
+  };
+  private temperatureCalibrationStorageCorrupt: Record<TemperatureSensor, boolean> = {
+    boiler: false,
+    steam: false,
+  };
+  private sensorAvailable: Record<TemperatureSensor, boolean> = {
+    boiler: true,
+    steam: true,
+  };
+  private sensorFailureCounts: Record<TemperatureSensor, number> = {
+    boiler: 0,
+    steam: 0,
+  };
   private activeTemperatureCalibration: ActiveTemperatureCalibration | null =
     null;
   private expiredTemperatureCalibrationId: string | null = null;
@@ -303,7 +313,7 @@ export class SimulatorMachine {
       deviceId: "philcoino-simulator",
       name: "Philcoino simulator",
       model: "philcoino-simulator",
-      apiVersion: "3",
+      apiVersion: "4",
       firmwareVersion: "simulator-0.3.0",
       ...options.device,
     });
@@ -327,58 +337,40 @@ export class SimulatorMachine {
     return MachineStateSchema.parse({
       status,
       activeMode: this.activeMode,
-      boilerTemperatureC: roundTemperature(this.effectiveTemperature()),
+      boilerTemperatureC: this.temperatureAvailable("boiler")
+        ? roundTemperature(this.effectiveTemperature("boiler"))
+        : null,
+      steamTemperatureC: this.temperatureAvailable("steam")
+        ? roundTemperature(this.effectiveTemperature("steam"))
+        : null,
       brewTargetC: this.brewTargetC,
       steamTargetC: this.steamTargetC,
+      steamReadyTimeoutMs: this.steamReadyTimeoutMs,
       heaterEnabled: this.heaterEnabled,
       heaterActive: this.isHeaterActive(),
       fault: this.fault,
       steamTimeoutRemainingMs: this.steamTimeoutRemainingMs,
-      steamControl: this.getSteamControlState(),
       uptimeMs: this.uptimeMs,
     });
   }
 
-  getSteamControlState(): SteamControlState {
-    const inSteam = this.activeMode === "steam";
-    const elapsedMs = this.steamHeatSoakElapsedMs();
-    const appliedCompensationC = inSteam
-      ? this.appliedSteamCompensationC()
-      : 0;
-    return {
-      settings: { ...this.steamControlSettings },
-      compensationActive: inSteam && appliedCompensationC > 0,
-      appliedCompensationC: roundTemperature(appliedCompensationC),
-      controlTemperatureC:
-        inSteam && this.fault === null
-          ? roundTemperature(this.steamControlTemperature())
-          : null,
-      heatSoakElapsedMs: elapsedMs,
-    };
-  }
-
-  updateSteamControlSettings(
-    request: SteamControlSettingsRequest,
-  ): SteamControlState | null {
+  updateSteamReadyTimeout(readyTimeoutMs: number): boolean {
     if (this.fault !== null || !this.attemptOutputCommand("heater-off")) {
       if (this.fault === null) {
         this.injectFault("internal_error");
       }
-      return null;
+      return false;
     }
     if (this.failNextSteamControlSave) {
       this.failNextSteamControlSave = false;
       this.injectFault("internal_error");
-      return null;
+      return false;
     }
-    this.steamControlSettings = {
-      ...this.steamControlSettings,
-      ...request,
-    };
+    this.steamReadyTimeoutMs = readyTimeoutMs;
     this.steamControlRecordPresent = true;
     this.steamControlStorageCorrupt = false;
     this.refreshSteamTimeout();
-    return this.getSteamControlState();
+    return true;
   }
 
   injectNextSteamControlSaveFailure(): void {
@@ -389,18 +381,21 @@ export class SimulatorMachine {
     this.steamControlStorageCorrupt = true;
   }
 
-  getStateV3(): MachineStateV3 {
+  getStateV4(): MachineStateV4 {
     this.expireTemperatureCalibration();
     this.revision += 1;
-    return MachineStateV3Schema.parse({
-      apiVersion: "3",
+    return MachineStateV4Schema.parse({
+      apiVersion: "4",
       device: this.device,
       bootId: this.bootId,
       revision: this.revision,
       capturedAtUptimeMs: this.uptimeMs,
       machine: this.getState(),
       scale: this.getScaleState(),
-      temperatureCalibration: this.temperatureCalibrationState(),
+      temperatureCalibrations: {
+        boiler: this.temperatureCalibrationState("boiler"),
+        steam: this.temperatureCalibrationState("steam"),
+      },
       extraction: this.getExtractionState(),
       compensation: this.getCompensationState(),
       cooldown: this.getCooldownState(),
@@ -408,6 +403,7 @@ export class SimulatorMachine {
   }
 
   getTemperatureCalibration(
+    sensor: TemperatureSensor,
     calibrationId?: string,
   ): TemperatureCalibrationOperationResult {
     if (this.expireTemperatureCalibration()) {
@@ -415,6 +411,7 @@ export class SimulatorMachine {
     }
     if (this.activeTemperatureCalibration !== null) {
       if (
+        sensor !== this.activeTemperatureCalibration.sensor ||
         calibrationId === undefined ||
         calibrationId !==
           this.activeTemperatureCalibration.calibrationId
@@ -432,28 +429,25 @@ export class SimulatorMachine {
             : "inactive",
       };
     }
-    return { ok: true, state: this.temperatureCalibrationState() };
+    return { ok: true, state: this.temperatureCalibrationState(sensor) };
   }
 
-  startTemperatureCalibration(): TemperatureCalibrationOperationResult {
+  startTemperatureCalibration(sensor: TemperatureSensor): TemperatureCalibrationOperationResult {
     this.expireTemperatureCalibration();
     if (this.activeTemperatureCalibration !== null) {
       return { ok: false, reason: "active" };
     }
-    if (this.fault !== null) {
+    if (this.fault !== null || !this.temperatureAvailable(sensor)) {
       return {
         ok: false,
         reason:
-          this.fault.code === "sensor_failure"
+          this.fault?.code === "sensor_failure" || !this.temperatureAvailable(sensor)
             ? "sensor-unavailable"
             : "machine-faulted",
       };
     }
     if (!this.heaterEnabled) {
       return { ok: false, reason: "heater-disabled" };
-    }
-    if (this.activeMode === "steam") {
-      return { ok: false, reason: "steam-mode" };
     }
     if (this.activeExtraction !== null) {
       return { ok: false, reason: "extraction-active" };
@@ -466,7 +460,7 @@ export class SimulatorMachine {
     }
     const candidate =
       TEMPERATURE_CALIBRATION_REFERENCE_C -
-      this.savedTemperatureOffsetC;
+      this.savedTemperatureOffsets[sensor];
     if (
       candidate < TEMPERATURE_CALIBRATION_CANDIDATE_MIN_C ||
       candidate > TEMPERATURE_CALIBRATION_CANDIDATE_MAX_C
@@ -476,6 +470,7 @@ export class SimulatorMachine {
     }
     this.temperatureCalibrationCounter += 1;
     this.activeTemperatureCalibration = {
+      sensor,
       calibrationId: `temp-cal-sim-${this.temperatureCalibrationCounter
         .toString(16)
         .padStart(8, "0")}`,
@@ -484,17 +479,18 @@ export class SimulatorMachine {
       advisoryStableMs: 0,
     };
     this.expiredTemperatureCalibrationId = null;
-    this.activeMode = "brew";
+    this.activeMode = sensor === "boiler" ? "brew" : "steam";
     this.readyElapsedMs = 0;
     this.steamTimeoutRemainingMs = null;
-    return { ok: true, state: this.temperatureCalibrationState() };
+    return { ok: true, state: this.temperatureCalibrationState(sensor) };
   }
 
   updateTemperatureCalibrationCandidate(
+    sensor: TemperatureSensor,
     calibrationId: string,
     candidateRawTargetC: number,
   ): TemperatureCalibrationOperationResult {
-    const session = this.renewTemperatureCalibration(calibrationId);
+    const session = this.renewTemperatureCalibration(sensor, calibrationId);
     if (!session.ok) {
       return session;
     }
@@ -513,43 +509,45 @@ export class SimulatorMachine {
       this.activeTemperatureCalibration!.advisoryStableMs = 0;
       this.readyElapsedMs = 0;
     }
-    return { ok: true, state: this.temperatureCalibrationState() };
+    return { ok: true, state: this.temperatureCalibrationState(sensor) };
   }
 
   saveTemperatureCalibration(
+    sensor: TemperatureSensor,
     calibrationId: string,
   ): TemperatureCalibrationOperationResult {
-    const session = this.renewTemperatureCalibration(calibrationId);
+    const session = this.renewTemperatureCalibration(sensor, calibrationId);
     if (!session.ok) {
       return session;
     }
     const candidateOffset =
       TEMPERATURE_CALIBRATION_REFERENCE_C -
       this.activeTemperatureCalibration!.candidateRawTargetC;
-    if (!this.targetsAreReachable(candidateOffset)) {
+    if (!this.targetIsReachable(sensor, candidateOffset)) {
       return { ok: false, reason: "unsafe-target" };
     }
     if (this.failNextTemperatureCalibrationSave) {
       this.failNextTemperatureCalibrationSave = false;
       return { ok: false, reason: "persistence" };
     }
-    this.savedTemperatureOffsetC = candidateOffset;
-    this.temperatureCalibrationRecordPresent = true;
+    this.savedTemperatureOffsets[sensor] = candidateOffset;
+    this.temperatureCalibrationRecordPresent[sensor] = true;
     this.activeTemperatureCalibration = null;
-    this.activeMode = "brew";
+    this.activeMode = sensor === "boiler" ? "brew" : "steam";
     this.readyElapsedMs = 0;
-    return { ok: true, state: this.temperatureCalibrationState() };
+    return { ok: true, state: this.temperatureCalibrationState(sensor) };
   }
 
   cancelTemperatureCalibration(
+    sensor: TemperatureSensor,
     calibrationId: string,
   ): TemperatureCalibrationOperationResult {
-    const session = this.renewTemperatureCalibration(calibrationId);
+    const session = this.renewTemperatureCalibration(sensor, calibrationId);
     if (!session.ok) {
       return session;
     }
     this.restoreOrdinaryBrewControl();
-    return { ok: true, state: this.temperatureCalibrationState() };
+    return { ok: true, state: this.temperatureCalibrationState(sensor) };
   }
 
   abortTemperatureCalibrationForConflict(): boolean {
@@ -564,19 +562,23 @@ export class SimulatorMachine {
     this.failNextTemperatureCalibrationSave = true;
   }
 
-  corruptTemperatureCalibrationStorage(): void {
-    this.temperatureCalibrationStorageCorrupt = true;
+  corruptTemperatureCalibrationStorage(sensor: TemperatureSensor): void {
+    this.temperatureCalibrationStorageCorrupt[sensor] = true;
   }
 
   getRawTemperature(): {
     boilerTemperatureRawC: number;
     boilerTemperatureC: number;
+    steamTemperatureRawC: number;
+    steamTemperatureC: number;
   } {
     return {
       boilerTemperatureRawC: roundTemperature(
         this.boilerTemperatureRawC,
       ),
-      boilerTemperatureC: roundTemperature(this.effectiveTemperature()),
+      boilerTemperatureC: roundTemperature(this.effectiveTemperature("boiler")),
+      steamTemperatureRawC: roundTemperature(this.steamTemperatureRawC),
+      steamTemperatureC: roundTemperature(this.effectiveTemperature("steam")),
     };
   }
 
@@ -699,7 +701,7 @@ export class SimulatorMachine {
     return {
       ok: true,
       page: ExtractionTelemetryPageSchema.parse({
-        version: 1,
+        version: 2,
         deviceId: this.device.deviceId,
         extractionId: trace.extractionId,
         bootId: this.bootId,
@@ -1086,7 +1088,7 @@ export class SimulatorMachine {
     if (!Number.isFinite(this.boilerTemperatureRawC)) {
       return { ok: false, reason: "sensor-unavailable" };
     }
-    if (this.effectiveTemperature() <= this.brewTargetC) {
+    if (this.effectiveTemperature("boiler") <= this.brewTargetC) {
       return { ok: false, reason: "cooldown-not-required" };
     }
 
@@ -1157,22 +1159,24 @@ export class SimulatorMachine {
   }
 
   temperatureTargetsAreSafe(request: TemperatureSettingsRequest): boolean {
-    return this.targetsAreReachable(
-      this.savedTemperatureOffsetC,
-      request.brewTargetC ?? this.brewTargetC,
-      request.steamTargetC ?? this.steamTargetC,
+    return (
+      (request.brewTargetC ?? this.brewTargetC) -
+          this.savedTemperatureOffsets.boiler <= RAW_BOILER_OVER_TEMPERATURE_C &&
+      (request.steamTargetC ?? this.steamTargetC) -
+          this.savedTemperatureOffsets.steam <= RAW_BOILER_OVER_TEMPERATURE_C
     );
   }
 
-  setMode(mode: Mode): Mode {
+  setMode(mode: Mode): Mode | null {
     if (mode === this.activeMode) {
       return this.activeMode;
     }
+    const sensor = mode === "brew" ? "boiler" : "steam";
+    if (!this.temperatureAvailable(sensor) || !this.attemptOutputCommand("heater-off")) {
+      return null;
+    }
 
     this.activeMode = mode;
-    if (mode === "steam" && this.steamHeatSoakStartedAtMs === null) {
-      this.steamHeatSoakStartedAtMs = this.uptimeMs;
-    }
     this.readyElapsedMs = 0;
     this.steamTimeoutRemainingMs = null;
     this.steamReadyAtMs = null;
@@ -1191,7 +1195,7 @@ export class SimulatorMachine {
 
     if (
       this.cooldown?.status === "pumping" &&
-      this.effectiveTemperature() <= this.cooldown.brewTargetC
+      this.effectiveTemperature("boiler") <= this.cooldown.brewTargetC
     ) {
       this.enterCooldownStabilization("target-reached");
     }
@@ -1202,12 +1206,37 @@ export class SimulatorMachine {
     }
   }
 
-  injectFault(code: FaultCode): void {
+  setSteamTemperature(steamTemperatureRawC: number): void {
+    this.steamTemperatureRawC = steamTemperatureRawC;
+    this.evaluateTemperatureSafety();
+    if (!this.isActiveTemperatureReady()) {
+      this.readyElapsedMs = 0;
+    }
+  }
+
+  setSensorAvailable(sensor: TemperatureSensor, available: boolean): void {
+    this.sensorAvailable[sensor] = available;
+    this.sensorFailureCounts[sensor] = available
+      ? 0
+      : this.sensorFailureCounts[sensor] + 1;
+    if (!available && this.activeSensor() === sensor &&
+        this.sensorFailureCounts[sensor] >= 3) {
+      this.injectFault("sensor_failure", sensor);
+    }
+  }
+
+  injectFault(code: FaultCode, sensor: TemperatureSensor | null = null): void {
     if (this.fault) {
       return;
     }
 
-    this.fault = { code, message: FAULT_MESSAGES[code] };
+    this.fault = {
+      code,
+      message: FAULT_MESSAGES[code],
+      sensor: code === "internal_error" || code === "heating_timeout"
+        ? null
+        : (sensor ?? this.activeSensor()),
+    };
     this.readyElapsedMs = 0;
     this.restoreOrdinaryBrewControl();
     if (
@@ -1262,18 +1291,16 @@ export class SimulatorMachine {
     this.failNextSteamControlSave = false;
     this.failNextOutputCommands.clear();
     this.resetVolatileState();
-    if (this.temperatureCalibrationStorageCorrupt) {
-      this.savedTemperatureOffsetC = 0;
-      this.temperatureCalibrationRecordPresent = false;
-      this.injectFault("internal_error");
+    for (const sensor of ["boiler", "steam"] as const) {
+      if (this.temperatureCalibrationStorageCorrupt[sensor]) {
+        this.savedTemperatureOffsets[sensor] = 0;
+        this.temperatureCalibrationRecordPresent[sensor] = false;
+        this.injectFault("internal_error");
+      }
     }
     if (this.steamControlStorageCorrupt || !this.steamControlRecordPresent) {
       if (!this.steamControlRecordPresent && !this.steamControlStorageCorrupt) {
-        this.steamControlSettings = {
-          initialCompensationC: STEAM_COMPENSATION_INITIAL_DEFAULT_C,
-          decayDurationMs: STEAM_COMPENSATION_DECAY_DEFAULT_MS,
-          readyTimeoutMs: STEAM_READY_TIMEOUT_DEFAULT_MS,
-        };
+        this.steamReadyTimeoutMs = STEAM_READY_TIMEOUT_DEFAULT_MS;
         this.steamControlRecordPresent = true;
       } else {
         this.injectFault("internal_error");
@@ -1285,15 +1312,11 @@ export class SimulatorMachine {
     this.brewTargetC = this.initialBrewTargetC;
     this.steamTargetC = this.initialSteamTargetC;
     this.scaleCalibrated = false;
-    this.savedTemperatureOffsetC = 0;
-    this.temperatureCalibrationRecordPresent = false;
-    this.temperatureCalibrationStorageCorrupt = false;
+    this.savedTemperatureOffsets = { boiler: 0, steam: 0 };
+    this.temperatureCalibrationRecordPresent = { boiler: false, steam: false };
+    this.temperatureCalibrationStorageCorrupt = { boiler: false, steam: false };
     this.failNextTemperatureCalibrationSave = false;
-    this.steamControlSettings = {
-      initialCompensationC: STEAM_COMPENSATION_INITIAL_DEFAULT_C,
-      decayDurationMs: STEAM_COMPENSATION_DECAY_DEFAULT_MS,
-      readyTimeoutMs: STEAM_READY_TIMEOUT_DEFAULT_MS,
-    };
+    this.steamReadyTimeoutMs = STEAM_READY_TIMEOUT_DEFAULT_MS;
     this.steamControlRecordPresent = true;
     this.steamControlStorageCorrupt = false;
     this.failNextSteamControlSave = false;
@@ -1312,6 +1335,11 @@ export class SimulatorMachine {
           ? COOLING_RATE_C_PER_SECOND
           : COOLDOWN_RATE_C_PER_SECOND) * seconds,
       );
+      this.steamTemperatureRawC = moveToward(
+        this.steamTemperatureRawC,
+        AMBIENT_TEMPERATURE_C,
+        COOLING_RATE_C_PER_SECOND * seconds,
+      );
     } else if (this.heaterEnabled) {
       this.advanceTemperature(seconds);
     } else {
@@ -1325,14 +1353,6 @@ export class SimulatorMachine {
     this.advanceScaleSettling(milliseconds);
     this.captureExtractionTelemetryIfDue();
     this.advanceCooldown(milliseconds);
-    if (
-      this.activeMode !== "steam" &&
-      this.steamHeatSoakStartedAtMs !== null &&
-      this.effectiveTemperature() <= this.brewTargetC
-    ) {
-      this.steamHeatSoakStartedAtMs = null;
-    }
-
     if (
       !this.fault &&
       this.activeTemperatureCalibration === null &&
@@ -1542,7 +1562,12 @@ export class SimulatorMachine {
       ),
       extractionElapsedMs,
       phase,
-      boilerTemperatureC: roundTemperature(this.effectiveTemperature()),
+      boilerTemperatureC: this.temperatureAvailable("boiler")
+        ? roundTemperature(this.effectiveTemperature("boiler"))
+        : null,
+      steamTemperatureC: this.temperatureAvailable("steam")
+        ? roundTemperature(this.effectiveTemperature("steam"))
+        : null,
       activeTargetC: this.brewTargetC,
       heaterActive: this.isHeaterActive(),
       pumpCommand: running ? extraction.pumpCommand : "off",
@@ -1592,7 +1617,7 @@ export class SimulatorMachine {
         cooldown.pumpElapsedMs + milliseconds,
       );
       const outcome =
-        this.effectiveTemperature() <= cooldown.brewTargetC
+        this.effectiveTemperature("boiler") <= cooldown.brewTargetC
           ? "target-reached"
           : cooldown.pumpElapsedMs >= COOLDOWN_PUMP_LIMIT_MS
             ? "cutoff"
@@ -1616,18 +1641,37 @@ export class SimulatorMachine {
 
   private advanceTemperature(seconds: number): void {
     const target = this.rawControlTarget();
-    this.boilerTemperatureRawC = moveToward(
-      this.boilerTemperatureRawC,
+    const activeSensor = this.activeSensor();
+    const current = this.rawTemperature(activeSensor);
+    this.setRawTemperature(
+      activeSensor,
+      moveToward(
+      current,
       target,
-      (this.boilerTemperatureRawC < target
+      (current < target
         ? HEATING_RATE_C_PER_SECOND
         : COOLING_RATE_C_PER_SECOND) * seconds,
+      ),
+    );
+    const inactiveSensor = activeSensor === "boiler" ? "steam" : "boiler";
+    this.setRawTemperature(
+      inactiveSensor,
+      moveToward(
+        this.rawTemperature(inactiveSensor),
+        AMBIENT_TEMPERATURE_C,
+        COOLING_RATE_C_PER_SECOND * seconds,
+      ),
     );
   }
 
   private coolTemperature(seconds: number): void {
     this.boilerTemperatureRawC = moveToward(
       this.boilerTemperatureRawC,
+      AMBIENT_TEMPERATURE_C,
+      COOLING_RATE_C_PER_SECOND * seconds,
+    );
+    this.steamTemperatureRawC = moveToward(
+      this.steamTemperatureRawC,
       AMBIENT_TEMPERATURE_C,
       COOLING_RATE_C_PER_SECOND * seconds,
     );
@@ -1645,13 +1689,14 @@ export class SimulatorMachine {
       return false;
     }
 
-    return this.boilerTemperatureRawC < this.rawControlTarget();
+    return this.temperatureAvailable(this.activeSensor()) &&
+      this.rawTemperature(this.activeSensor()) < this.rawControlTarget();
   }
 
   private activeTemperatureBackAtTarget(): boolean {
     return (
-      this.effectiveTemperature() <= this.activeTarget() &&
-      this.boilerTemperatureRawC <= RAW_BOILER_OVER_TEMPERATURE_C
+      this.effectiveTemperature(this.activeSensor()) <= this.activeTarget() &&
+      this.rawTemperature(this.activeSensor()) <= RAW_BOILER_OVER_TEMPERATURE_C
     );
   }
 
@@ -1667,41 +1712,16 @@ export class SimulatorMachine {
   }
 
   private rawControlTarget(): number {
+    const sensor = this.activeTemperatureCalibration?.sensor ?? this.activeSensor();
     return (
       this.activeTemperatureCalibration?.candidateRawTargetC ??
       this.controlTarget() -
-        this.savedTemperatureOffsetC -
-        (this.activeMode === "steam"
-          ? this.appliedSteamCompensationC()
-          : 0)
+        this.savedTemperatureOffsets[sensor]
     );
   }
 
   private activeControlTemperature(): number {
-    return this.activeMode === "steam"
-      ? this.steamControlTemperature()
-      : this.effectiveTemperature();
-  }
-
-  private steamControlTemperature(): number {
-    return this.effectiveTemperature() + this.appliedSteamCompensationC();
-  }
-
-  private steamHeatSoakElapsedMs(): number | null {
-    return this.steamHeatSoakStartedAtMs === null
-      ? null
-      : Math.max(0, this.uptimeMs - this.steamHeatSoakStartedAtMs);
-  }
-
-  private appliedSteamCompensationC(): number {
-    const elapsedMs = this.steamHeatSoakElapsedMs();
-    if (elapsedMs === null || elapsedMs >= this.steamControlSettings.decayDurationMs) {
-      return 0;
-    }
-    return (
-      this.steamControlSettings.initialCompensationC *
-      (1 - elapsedMs / this.steamControlSettings.decayDurationMs)
-    );
+    return this.effectiveTemperature(this.activeTemperatureCalibration?.sensor ?? this.activeSensor());
   }
 
   private refreshSteamTimeout(): void {
@@ -1710,7 +1730,7 @@ export class SimulatorMachine {
       return;
     }
     const elapsedMs = Math.max(0, this.uptimeMs - this.steamReadyAtMs);
-    const remainingMs = this.steamControlSettings.readyTimeoutMs - elapsedMs;
+    const remainingMs = this.steamReadyTimeoutMs - elapsedMs;
     if (remainingMs <= 0) {
       this.activeMode = "brew";
       this.readyElapsedMs = 0;
@@ -1722,75 +1742,83 @@ export class SimulatorMachine {
   }
 
   private activeModeOverTemperature(): boolean {
-    const usesSteamCap =
-      this.activeTemperatureCalibration !== null ||
-      this.isCooldownActive() ||
-      this.activeMode === "steam";
+    const sensor = this.activeTemperatureCalibration?.sensor ?? this.activeSensor();
+    const usesSteamCap = sensor === "steam" ||
+      this.activeTemperatureCalibration !== null || this.isCooldownActive();
     const effectiveOverTemperature = usesSteamCap
-      ? this.effectiveTemperature() > STEAM_OVER_TEMPERATURE_C
-      : this.effectiveTemperature() >= BREW_OVER_TEMPERATURE_C;
+      ? this.effectiveTemperature(sensor) > STEAM_OVER_TEMPERATURE_C
+      : this.effectiveTemperature(sensor) >= BREW_OVER_TEMPERATURE_C;
     return (
       this.boilerTemperatureRawC > RAW_BOILER_OVER_TEMPERATURE_C ||
+      this.steamTemperatureRawC > RAW_BOILER_OVER_TEMPERATURE_C ||
       effectiveOverTemperature
     );
   }
 
-  private effectiveTemperature(): number {
-    return this.boilerTemperatureRawC + this.savedTemperatureOffsetC;
+  private activeSensor(): TemperatureSensor {
+    return this.activeMode === "brew" ? "boiler" : "steam";
+  }
+
+  private rawTemperature(sensor: TemperatureSensor): number {
+    return sensor === "boiler" ? this.boilerTemperatureRawC : this.steamTemperatureRawC;
+  }
+
+  private setRawTemperature(sensor: TemperatureSensor, value: number): void {
+    if (sensor === "boiler") this.boilerTemperatureRawC = value;
+    else this.steamTemperatureRawC = value;
+  }
+
+  private effectiveTemperature(sensor: TemperatureSensor): number {
+    return this.rawTemperature(sensor) + this.savedTemperatureOffsets[sensor];
+  }
+
+  private temperatureAvailable(sensor: TemperatureSensor): boolean {
+    return this.sensorAvailable[sensor] && Number.isFinite(this.rawTemperature(sensor));
   }
 
   private safeTargetBounds(
+    sensor: TemperatureSensor,
     offsetC: number,
   ): TemperatureCalibrationSafeTargetBounds {
     const maximumEffectiveTargetC =
       RAW_BOILER_OVER_TEMPERATURE_C + offsetC;
-    return {
-      brewMinimumC: BREW_TARGET_MIN_C,
-      brewMaximumC: Math.min(
-        BREW_TARGET_MAX_C,
-        maximumEffectiveTargetC,
-      ),
-      steamMinimumC: STEAM_TARGET_MIN_C,
-      steamMaximumC: Math.min(
-        STEAM_TARGET_MAX_C,
-        maximumEffectiveTargetC,
-      ),
-    };
+    return sensor === "boiler"
+      ? { minimumC: BREW_TARGET_MIN_C, maximumC: Math.min(BREW_TARGET_MAX_C, maximumEffectiveTargetC) }
+      : { minimumC: STEAM_TARGET_MIN_C, maximumC: Math.min(STEAM_TARGET_MAX_C, maximumEffectiveTargetC) };
   }
 
-  private targetsAreReachable(
+  private targetIsReachable(
+    sensor: TemperatureSensor,
     offsetC: number,
-    brewTargetC = this.brewTargetC,
-    steamTargetC = this.steamTargetC,
   ): boolean {
-    return (
-      brewTargetC - offsetC <= RAW_BOILER_OVER_TEMPERATURE_C &&
-      steamTargetC - offsetC <= RAW_BOILER_OVER_TEMPERATURE_C
-    );
+    const target = sensor === "boiler" ? this.brewTargetC : this.steamTargetC;
+    return target - offsetC <= RAW_BOILER_OVER_TEMPERATURE_C;
   }
 
-  private temperatureCalibrationState(): TemperatureCalibrationState {
-    const temperatureAvailable =
-      this.fault?.code !== "sensor_failure";
+  private temperatureCalibrationState(sensor: TemperatureSensor): TemperatureCalibrationState {
+    const temperatureAvailable = this.temperatureAvailable(sensor);
     const common = {
-      savedOffsetC: this.savedTemperatureOffsetC,
-      boilerTemperatureRawC: temperatureAvailable
-        ? roundTemperature(this.boilerTemperatureRawC)
+      sensor,
+      savedOffsetC: this.savedTemperatureOffsets[sensor],
+      temperatureRawC: temperatureAvailable
+        ? roundTemperature(this.rawTemperature(sensor))
         : null,
-      boilerTemperatureC: temperatureAvailable
-        ? roundTemperature(this.effectiveTemperature())
+      temperatureC: temperatureAvailable
+        ? roundTemperature(this.effectiveTemperature(sensor))
         : null,
-      heaterActive: this.isHeaterActive(),
+      heaterActive: this.isHeaterActive() &&
+        (this.activeTemperatureCalibration?.sensor ?? this.activeSensor()) === sensor,
       ready:
-        this.activeTemperatureCalibration !== null &&
+        this.activeTemperatureCalibration?.sensor === sensor &&
         this.activeTemperatureCalibration.advisoryStableMs >=
           READY_HOLD_MS,
       safeTargetBounds: this.safeTargetBounds(
-        this.savedTemperatureOffsetC,
+        sensor,
+        this.savedTemperatureOffsets[sensor],
       ),
     };
     const active = this.activeTemperatureCalibration;
-    if (active !== null) {
+    if (active !== null && active.sensor === sensor) {
       const offsetPreviewC =
         TEMPERATURE_CALIBRATION_REFERENCE_C -
         active.candidateRawTargetC;
@@ -1806,11 +1834,11 @@ export class SimulatorMachine {
           TEMPERATURE_CALIBRATION_SESSION_LEASE_MS -
             (this.uptimeMs - active.lastActivityUptimeMs),
         ),
-        previewSafeTargetBounds: this.safeTargetBounds(offsetPreviewC),
+        previewSafeTargetBounds: this.safeTargetBounds(sensor, offsetPreviewC),
       });
     }
     return TemperatureCalibrationStateSchema.parse({
-      status: this.temperatureCalibrationRecordPresent
+      status: this.temperatureCalibrationRecordPresent[sensor]
         ? "calibrated"
         : "uncalibrated",
       ...common,
@@ -1818,6 +1846,7 @@ export class SimulatorMachine {
   }
 
   private renewTemperatureCalibration(
+    sensor: TemperatureSensor,
     calibrationId: string,
   ): TemperatureCalibrationOperationResult {
     const expired = this.expireTemperatureCalibration();
@@ -1831,11 +1860,11 @@ export class SimulatorMachine {
             : "inactive",
       };
     }
-    if (calibrationId !== active.calibrationId) {
+    if (sensor !== active.sensor || calibrationId !== active.calibrationId) {
       return { ok: false, reason: "session-mismatch" };
     }
     active.lastActivityUptimeMs = this.uptimeMs;
-    return { ok: true, state: this.temperatureCalibrationState() };
+    return { ok: true, state: this.temperatureCalibrationState(sensor) };
   }
 
   private expireTemperatureCalibration(): boolean {
@@ -1865,14 +1894,19 @@ export class SimulatorMachine {
     return (
       active !== null &&
       Math.abs(
-        this.boilerTemperatureRawC - active.candidateRawTargetC,
+        this.rawTemperature(active.sensor) - active.candidateRawTargetC,
       ) <= READY_BAND_C
     );
   }
 
   private evaluateTemperatureSafety(): void {
     if (this.fault === null && this.activeModeOverTemperature()) {
-      this.injectFault("over_temperature");
+      const sensor = this.boilerTemperatureRawC > RAW_BOILER_OVER_TEMPERATURE_C
+        ? "boiler"
+        : this.steamTemperatureRawC > RAW_BOILER_OVER_TEMPERATURE_C
+          ? "steam"
+          : (this.activeTemperatureCalibration?.sensor ?? this.activeSensor());
+      this.injectFault("over_temperature", sensor);
     }
   }
 
@@ -1882,11 +1916,13 @@ export class SimulatorMachine {
     this.revision = 0;
     this.activeMode = "brew";
     this.boilerTemperatureRawC = AMBIENT_TEMPERATURE_C;
+    this.steamTemperatureRawC = AMBIENT_TEMPERATURE_C;
+    this.sensorAvailable = { boiler: true, steam: true };
+    this.sensorFailureCounts = { boiler: 0, steam: 0 };
     this.heaterEnabled = true;
     this.fault = null;
     this.readyElapsedMs = 0;
     this.steamTimeoutRemainingMs = null;
-    this.steamHeatSoakStartedAtMs = null;
     this.steamReadyAtMs = null;
     this.uptimeMs = 0;
     this.activeExtraction = null;
@@ -1940,6 +1976,7 @@ export class SimulatorMachine {
     this.fault = {
       code: "internal_error",
       message: "A simulated cooldown output command failed.",
+      sensor: null,
     };
     this.readyElapsedMs = 0;
     this.failCooldown();

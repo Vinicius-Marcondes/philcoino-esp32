@@ -15,6 +15,7 @@ ControlSnapshot machine() {
   ControlSnapshot value{};
   value.targets.brew_c = 93;
   value.boiler_temperature = {ThermocoupleStatus::kOk, 92.75F};
+  value.steam_temperature = {ThermocoupleStatus::kOk, 114.5F};
   value.heater_enabled = true;
   return value;
 }
@@ -58,6 +59,8 @@ void test_all_modes_and_cursor_replay() {
   assert(json.find("\"controlMode\":\"manual\"") != std::string::npos);
   assert(json.find("\"heaterActive\":true") != std::string::npos);
   assert(json.find("\"netWeightDecigrams\":25") != std::string::npos);
+  assert(json.find("\"version\":2") != std::string::npos);
+  assert(json.find("\"steamTemperatureC\":114.5") != std::string::npos);
 
   ExtractionTelemetryCursor cursor{};
   assert(parse_extraction_telemetry_cursor(
@@ -143,6 +146,8 @@ void test_unavailable_acquisition_stays_null() {
   auto unavailable_machine = machine();
   unavailable_machine.boiler_temperature = {
       ThermocoupleStatus::kOpenCircuit, 0.0F};
+  unavailable_machine.steam_temperature = {
+      ThermocoupleStatus::kOpenCircuit, 0.0F};
   auto unavailable_scale = scale();
   unavailable_scale.gross_weight_available = false;
   unavailable_scale.availability = ScaleAvailability::kUnavailable;
@@ -155,6 +160,7 @@ void test_unavailable_acquisition_stays_null() {
   assert(buffer.page({}, 0U, page));
   const auto json = serialize_extraction_telemetry_page("device-1", page);
   assert(json.find("\"boilerTemperatureC\":null") != std::string::npos);
+  assert(json.find("\"steamTemperatureC\":null") != std::string::npos);
   assert(json.find("\"netWeightDecigrams\":null") != std::string::npos);
 }
 

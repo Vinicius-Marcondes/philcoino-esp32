@@ -3,7 +3,7 @@ const N = BigInt(
 );
 const G = 5n;
 const GROUP_BYTES = 384;
-const USERNAME = "philcoino-v3";
+const USERNAME = "philcoino-v4";
 const encoder = new TextEncoder();
 const decoder = new TextDecoder("utf-8", { fatal: true });
 

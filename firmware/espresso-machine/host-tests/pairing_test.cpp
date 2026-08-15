@@ -134,7 +134,7 @@ std::string encrypted_binding(const std::string& session_id,
                               const DeviceIdentity& identity,
                               const Secret256& pin) {
   const std::string plaintext =
-      std::string("{\"domain\":\"philcoino:v3:client-binding\",\"sessionId\":\"") +
+      std::string("{\"domain\":\"philcoino:v4:client-binding\",\"sessionId\":\"") +
       session_id + "\",\"clientId\":\"" + client_id_value +
       "\",\"clientNonce\":\"" + base64url_encode(client_nonce) +
       "\",\"deviceId\":\"" + identity.device_id +
@@ -157,6 +157,8 @@ Transcript pair(PairingService& service, const DeviceIdentity& identity,
   client_nonce.fill(static_cast<std::uint8_t>(0x40U + index));
   const auto started = service.start_session(start_body(client_nonce), now_ms);
   assert(started.status == 200);
+  assert(started.body.find("\"apiVersion\":\"4\"") !=
+         std::string::npos);
   const auto session_id = field(started.body, "sessionId");
   SrpProof client_proof{};
   client_proof.fill(0xA5U);
@@ -166,7 +168,16 @@ Transcript pair(PairingService& service, const DeviceIdentity& identity,
           base64url_encode(client_proof.data(), client_proof.size()) + "\"}",
       now_ms + 1U);
   assert(proved.status == 200);
-  assert(!field(proved.body, "encryptedDeviceBinding").empty());
+  const auto encrypted_device_binding =
+      field(proved.body, "encryptedDeviceBinding");
+  assert(!encrypted_device_binding.empty());
+  std::vector<std::uint8_t> encoded_binding;
+  assert(base64url_decode(encrypted_device_binding, encoded_binding, 1024U));
+  assert(encoded_binding.size() > 16U);
+  const std::string device_binding(encoded_binding.begin(),
+                                   encoded_binding.end() - 16);
+  assert(device_binding.find("\"domain\":\"philcoino:v4:device-binding\"") !=
+         std::string::npos);
   const auto id = client_id(index);
   const auto completed = service.complete_session(
       session_id,
@@ -176,6 +187,8 @@ Transcript pair(PairingService& service, const DeviceIdentity& identity,
           "\"}",
       now_ms + 2U);
   assert(completed.status == 200);
+  assert(completed.body.find("\"apiVersion\":\"4\"") !=
+         std::string::npos);
   return {completed, field(completed.body, "accessToken")};
 }
 
@@ -186,7 +199,7 @@ void test_pairing_rotation_replay_and_code_change() {
   Secret256 pin{};
   pin.fill(0x5AU);
   const DeviceIdentity identity{
-      "philcoino-test", "PhilcoINO", "ESP32-C3", "0.4.1"};
+      "philcoino-test", "PhilcoINO", "ESP32-S3-WROOM-1-N16R8", "0.5.0"};
   PairingService service(identity, "12345678", pin, crypto, storage, factory);
   assert(service.initialize());
 
@@ -221,7 +234,7 @@ void test_bounded_sessions_wrong_proof_and_expiry() {
   MockSrpFactory factory;
   Secret256 pin{};
   PairingService service(
-      {"philcoino-test", "PhilcoINO", "ESP32-C3", "0.4.1"}, "01234567",
+      {"philcoino-test", "PhilcoINO", "ESP32-S3-WROOM-1-N16R8", "0.5.0"}, "01234567",
       pin, crypto, storage, factory);
   assert(service.initialize());
   Secret256 nonce{};
@@ -257,7 +270,7 @@ void test_wrong_stage_is_consumed() {
   MockSrpFactory factory;
   Secret256 pin{};
   PairingService service(
-      {"philcoino-test", "PhilcoINO", "ESP32-C3", "0.4.1"}, "12345678",
+      {"philcoino-test", "PhilcoINO", "ESP32-S3-WROOM-1-N16R8", "0.5.0"}, "12345678",
       pin, crypto, storage, factory);
   assert(service.initialize());
   Secret256 nonce{};

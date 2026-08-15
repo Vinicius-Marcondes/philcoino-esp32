@@ -20,8 +20,8 @@ using json::Value;
 
 constexpr char kAlphabet[] =
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
-constexpr char kDeviceBindingDomain[] = "philcoino:v3:device-binding";
-constexpr char kClientBindingDomain[] = "philcoino:v3:client-binding";
+constexpr char kDeviceBindingDomain[] = "philcoino:v4:device-binding";
+constexpr char kClientBindingDomain[] = "philcoino:v4:client-binding";
 
 bool constant_time_equal(const Secret256& left, const Secret256& right) {
   volatile std::uint8_t difference = 0;
@@ -86,7 +86,7 @@ std::string serialize_identity(const DeviceIdentity& identity) {
   output << "{\"deviceId\":" << json_quote(identity.device_id)
          << ",\"name\":" << json_quote(identity.name)
          << ",\"model\":" << json_quote(identity.model)
-         << ",\"apiVersion\":\"3\",\"firmwareVersion\":"
+         << ",\"apiVersion\":\"4\",\"firmwareVersion\":"
          << json_quote(identity.firmware_version) << "}";
   return output.str();
 }

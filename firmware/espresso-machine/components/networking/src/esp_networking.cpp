@@ -46,6 +46,7 @@ constexpr std::uint32_t kMaximumWifiRetryDelayMs = 30'000;
 constexpr std::uint32_t kMaximumMdnsRetryDelayMs = 30'000;
 constexpr std::uint32_t kDhcpAcquisitionTimeoutMs = 30'000;
 constexpr std::uint32_t kAssociationPollIntervalMs = 250;
+constexpr BaseType_t kNetworkCore = 0;
 
 std::uint64_t uptime_ms() {
   return static_cast<std::uint64_t>(esp_timer_get_time() / 1000);
@@ -280,8 +281,8 @@ void EspNetworkServer::schedule_wifi_reconnect() {
           expected, true, std::memory_order_acq_rel)) {
     return;
   }
-  if (xTaskCreate(wifi_reconnect_task, "philcoino-wifi", 3072, this, 4,
-                  nullptr) != pdPASS) {
+  if (xTaskCreatePinnedToCore(wifi_reconnect_task, "philcoino-wifi", 3072,
+                              this, 4, nullptr, kNetworkCore) != pdPASS) {
     wifi_reconnect_running_.store(false, std::memory_order_release);
     wifi_status_.store(WifiStatus::kFailed, std::memory_order_relaxed);
     xEventGroupSetBits(static_cast<EventGroupHandle_t>(event_group_),
@@ -373,8 +374,8 @@ void EspNetworkServer::start_mdns_retry() {
           expected, true, std::memory_order_acq_rel)) {
     return;
   }
-  if (xTaskCreate(mdns_retry_task, "philcoino-mdns", 3072, this, 3, nullptr) !=
-      pdPASS) {
+  if (xTaskCreatePinnedToCore(mdns_retry_task, "philcoino-mdns", 3072, this, 3,
+                              nullptr, kNetworkCore) != pdPASS) {
     mdns_retry_running_.store(false, std::memory_order_release);
     ESP_LOGE(kLogTag, "Could not start bounded mDNS recovery task");
   }
@@ -404,6 +405,7 @@ bool EspNetworkServer::start_http() {
   }
   httpd_ssl_config_t configuration = HTTPD_SSL_CONFIG_DEFAULT();
   configuration.httpd.stack_size = 8192;
+  configuration.httpd.core_id = kNetworkCore;
   configuration.httpd.max_uri_handlers =
       static_cast<std::uint16_t>(kApiRoutes.size() + 1U);
   configuration.httpd.uri_match_fn = httpd_uri_match_wildcard;
@@ -432,7 +434,7 @@ bool EspNetworkServer::start_http() {
             ->handle_extraction_stream(request));
   };
   httpd_uri_t stream_uri{};
-  stream_uri.uri = "/api/v3/extractions/current/stream";
+  stream_uri.uri = "/api/v4/extractions/current/stream";
   stream_uri.method = HTTP_GET;
   stream_uri.handler = stream_handler;
   stream_uri.user_ctx = this;
@@ -448,7 +450,7 @@ bool EspNetworkServer::start_http() {
             ->handle_firmware_update(request));
   };
   httpd_uri_t firmware_update_uri{};
-  firmware_update_uri.uri = "/api/v3/firmware-updates";
+  firmware_update_uri.uri = "/api/v4/firmware-updates";
   firmware_update_uri.method = HTTP_POST;
   firmware_update_uri.handler = firmware_update_handler;
   firmware_update_uri.user_ctx = this;
@@ -484,7 +486,7 @@ bool EspNetworkServer::start_http() {
 
 int EspNetworkServer::handle_firmware_update(void* opaque_request) {
   auto* request = static_cast<httpd_req_t*>(opaque_request);
-  constexpr char kPath[] = "/api/v3/firmware-updates";
+  constexpr char kPath[] = "/api/v4/firmware-updates";
   std::array<char, kMaximumAuthorizationLength + 1U> authorization{};
   const std::size_t authorization_length =
       httpd_req_get_hdr_value_len(request, "Authorization");
@@ -679,8 +681,9 @@ int EspNetworkServer::handle_firmware_update(void* opaque_request) {
       std::to_string(written) + "}";
   const auto response_result = send_http_response(
       request, {202, body, false}, kPath);
-  if (xTaskCreate(firmware_reboot_task, "philcoino-ota-reboot", 2048,
-                  nullptr, 5, nullptr) != pdPASS) {
+  if (xTaskCreatePinnedToCore(firmware_reboot_task, "philcoino-ota-reboot",
+                              2048, nullptr, 5, nullptr,
+                              kNetworkCore) != pdPASS) {
     ESP_LOGE(kLogTag,
              "OTA delayed reboot task could not start; rebooting from the request task");
     vTaskDelay(pdMS_TO_TICKS(500));
@@ -777,7 +780,7 @@ int EspNetworkServer::handle_extraction_stream(void* opaque_request) {
         {401,
          "{\"error\":{\"code\":\"unauthorized\",\"message\":\"A valid bearer token is required.\"}}",
          true},
-        "/api/v3/extractions/current/stream");
+        "/api/v4/extractions/current/stream");
   }
   ExtractionTelemetryCursor cursor{};
   const std::size_t query_length = httpd_req_get_url_query_len(request);
@@ -787,7 +790,7 @@ int EspNetworkServer::handle_extraction_stream(void* opaque_request) {
         {400,
          "{\"error\":{\"code\":\"malformed_request\",\"message\":\"The extraction telemetry cursor is malformed.\"}}",
          false},
-        "/api/v3/extractions/current/stream");
+        "/api/v4/extractions/current/stream");
   }
   std::array<char, 257> query{};
   if (query_length > 0U &&
@@ -801,7 +804,7 @@ int EspNetworkServer::handle_extraction_stream(void* opaque_request) {
         {400,
          "{\"error\":{\"code\":\"malformed_request\",\"message\":\"The extraction telemetry cursor is malformed.\"}}",
          false},
-        "/api/v3/extractions/current/stream");
+        "/api/v4/extractions/current/stream");
   }
   if (extraction_telemetry_ == nullptr ||
       !extraction_telemetry_->cursor_available(cursor)) {
@@ -810,7 +813,7 @@ int EspNetworkServer::handle_extraction_stream(void* opaque_request) {
         {409,
          "{\"error\":{\"code\":\"stream_unavailable\",\"message\":\"The extraction telemetry cursor is unavailable.\"}}",
          false},
-        "/api/v3/extractions/current/stream");
+        "/api/v4/extractions/current/stream");
   }
 
   bool expected = false;
@@ -821,7 +824,7 @@ int EspNetworkServer::handle_extraction_stream(void* opaque_request) {
         {409,
          "{\"error\":{\"code\":\"stream_busy\",\"message\":\"Another authenticated extraction telemetry subscriber is active.\"}}",
          false},
-        "/api/v3/extractions/current/stream");
+        "/api/v4/extractions/current/stream");
   }
 
   httpd_req_t* asynchronous_request = nullptr;
@@ -834,8 +837,8 @@ int EspNetworkServer::handle_extraction_stream(void* opaque_request) {
   extraction_stream_boot_id_ = cursor.boot_id;
   extraction_stream_extraction_id_ = cursor.extraction_id;
   extraction_stream_after_sequence_ = cursor.after_sequence;
-  if (xTaskCreate(extraction_stream_task, "philcoino-sse", 6144, this, 4,
-                  nullptr) != pdPASS) {
+  if (xTaskCreatePinnedToCore(extraction_stream_task, "philcoino-sse", 6144,
+                              this, 4, nullptr, kNetworkCore) != pdPASS) {
     httpd_req_async_handler_complete(asynchronous_request);
     extraction_stream_request_ = nullptr;
     extraction_stream_active_.store(false, std::memory_order_release);

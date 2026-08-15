@@ -5,7 +5,6 @@ import type {
   MachineStatus,
   Mode,
   PumpCommand,
-  SteamControlState,
 } from "@philcoino/protocol";
 
 export const LIVE_HISTORY_WINDOW_MS = 30 * 1_000;
@@ -17,7 +16,7 @@ const GRAPH_PADDING_C = 2;
 export interface TemperatureHistorySample {
   activeMode: Mode;
   activeTargetC: number;
-  boilerTemperatureC: number;
+  boilerTemperatureC: number | null;
   brewTargetC: number;
   deviceId: string;
   faultCode: FaultCode | null;
@@ -27,7 +26,7 @@ export interface TemperatureHistorySample {
   pumpCommand: PumpCommand | null;
   recordedAtMs: number;
   startsAfterHistoryGap: boolean;
-  steamControl?: SteamControlState | null;
+  steamTemperatureC: number | null;
   steamTargetC: number;
   uptimeMs: number;
 }
@@ -54,7 +53,7 @@ export function createTemperatureHistorySample(
   extraction: ExtractionState,
   recordedAtMs = Date.now(),
 ): TemperatureHistorySample | null {
-  if (snapshot.boilerTemperatureC === null) {
+  if (snapshot.boilerTemperatureC === null && snapshot.steamTemperatureC === null) {
     return null;
   }
   return {
@@ -73,7 +72,7 @@ export function createTemperatureHistorySample(
     pumpCommand: extraction.pumpCommand,
     recordedAtMs,
     startsAfterHistoryGap: false,
-    steamControl: snapshot.steamControl,
+    steamTemperatureC: snapshot.steamTemperatureC,
     steamTargetC: snapshot.steamTargetC,
     uptimeMs: snapshot.uptimeMs,
   };
@@ -194,8 +193,9 @@ export function temperatureHistoryGraphScale(
 
   const values = samples.flatMap((sample) => [
     sample.boilerTemperatureC,
+    sample.steamTemperatureC,
     sample.activeTargetC,
-  ]);
+  ]).filter((value): value is number => value !== null);
   const paddedMinimum = Math.min(...values) - GRAPH_PADDING_C;
   const paddedMaximum = Math.max(...values) + GRAPH_PADDING_C;
   const requiredRange = Math.max(

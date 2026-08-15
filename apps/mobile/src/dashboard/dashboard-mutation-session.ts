@@ -4,7 +4,7 @@ import type {
   ExtractionSelection,
   ExtractionState,
   MachineState,
-  MachineStateV3,
+  MachineStateV4,
   Mode,
   StartExtractionRequest,
   TemperatureSettingsRequest,
@@ -59,30 +59,30 @@ export interface DashboardMutationClient {
   startCooldown(
     request: { idempotencyKey: string },
     options?: { signal?: AbortSignal },
-  ): Promise<MachineStateV3>;
-  stopCooldown(options?: { signal?: AbortSignal }): Promise<MachineStateV3>;
+  ): Promise<MachineStateV4>;
+  stopCooldown(options?: { signal?: AbortSignal }): Promise<MachineStateV4>;
   dismissOverTemperature(
     options?: { signal?: AbortSignal },
-  ): Promise<MachineStateV3>;
+  ): Promise<MachineStateV4>;
   startExtraction(
     request: StartExtractionRequest,
     options?: { signal?: AbortSignal },
-  ): Promise<MachineStateV3>;
+  ): Promise<MachineStateV4>;
   stopExtraction(
     options?: { signal?: AbortSignal },
-  ): Promise<MachineStateV3>;
+  ): Promise<MachineStateV4>;
   setMode(
     request: { mode: Mode },
     options?: { signal?: AbortSignal },
-  ): Promise<MachineStateV3>;
+  ): Promise<MachineStateV4>;
   setHeaterEnabled(
     request: { enabled: boolean },
     options?: { signal?: AbortSignal },
-  ): Promise<MachineStateV3>;
+  ): Promise<MachineStateV4>;
   updateTemperatureSettings(
     settings: TemperatureSettingsRequest,
     options?: { signal?: AbortSignal },
-  ): Promise<MachineStateV3>;
+  ): Promise<MachineStateV4>;
 }
 
 interface DashboardPollingControl {

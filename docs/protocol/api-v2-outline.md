@@ -1,5 +1,9 @@
 # ESP32 API v2 workflow outline
 
+> [!IMPORTANT]
+> Historical/superseded protocol record. Current firmware serves API v4 only;
+> see [API v4](api-v4.md).
+
 Status: IMPLEMENTED; CALIBRATION UI HUMAN ACCEPTED 2026-07-30; PHYSICAL ACCEPTANCE PENDING
 
 The authoritative wire contract is

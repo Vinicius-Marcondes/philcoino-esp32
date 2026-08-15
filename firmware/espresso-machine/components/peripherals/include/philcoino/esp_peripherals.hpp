@@ -20,14 +20,32 @@ class EspOutputCriticalSection final : public OutputCriticalSection {
   portMUX_TYPE lock_ = portMUX_INITIALIZER_UNLOCKED;
 };
 
-class EspMax6675Transport final : public Max6675Transport {
+class EspMax6675Bus final {
  public:
   bool initialize();
-  bool read_frame(std::uint16_t& frame) override;
+  bool read_frame(const char* sensor_name,
+                  std::int32_t chip_select_gpio,
+                  std::int32_t data_gpio,
+                  std::uint16_t& frame);
 
  private:
   portMUX_TYPE bus_lock_ = portMUX_INITIALIZER_UNLOCKED;
   bool initialized_{false};
+};
+
+class EspMax6675Transport final : public Max6675Transport {
+ public:
+  EspMax6675Transport(EspMax6675Bus& bus,
+                      const char* sensor_name,
+                      std::int32_t chip_select_gpio,
+                      std::int32_t data_gpio);
+  bool read_frame(std::uint16_t& frame) override;
+
+ private:
+  EspMax6675Bus& bus_;
+  const char* sensor_name_;
+  std::int32_t chip_select_gpio_;
+  std::int32_t data_gpio_;
 };
 
 class EspHx711Transport final : public Hx711Transport {
@@ -66,12 +84,14 @@ class EspNvsTargetBackend final : public TargetBackend {
 class EspNvsTemperatureCalibrationBackend final
     : public TemperatureCalibrationBackend {
  public:
+  explicit EspNvsTemperatureCalibrationBackend(TemperatureSensor sensor);
   bool initialize();
   BackendLoadResult load(TemperatureCalibration& calibration) override;
   bool save(const TemperatureCalibration& calibration) override;
 
  private:
   std::uint32_t handle_{0};
+  TemperatureSensor sensor_;
   bool initialized_{false};
 };
 

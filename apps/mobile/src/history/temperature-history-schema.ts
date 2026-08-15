@@ -1,4 +1,4 @@
-export const TEMPERATURE_HISTORY_DATABASE_VERSION = 7;
+export const TEMPERATURE_HISTORY_DATABASE_VERSION = 8;
 
 export function createTemperatureHistoryTableSql(
   tableName = "temperature_history",
@@ -10,7 +10,8 @@ export function createTemperatureHistoryTableSql(
       device_id TEXT NOT NULL,
       recorded_at_ms INTEGER NOT NULL,
       uptime_ms INTEGER NOT NULL,
-      boiler_temperature_c REAL NOT NULL,
+      boiler_temperature_c REAL,
+      steam_temperature_c REAL,
       brew_target_c REAL NOT NULL,
       steam_target_c REAL NOT NULL,
       active_mode TEXT NOT NULL CHECK(active_mode IN ('brew', 'steam')),
@@ -22,7 +23,6 @@ export function createTemperatureHistoryTableSql(
       fault_code TEXT CHECK(fault_code IS NULL OR fault_code IN (
         'sensor_failure', 'over_temperature', 'heating_timeout', 'internal_error'
       )),
-      steam_control_json TEXT,
       starts_after_history_gap INTEGER NOT NULL DEFAULT 0
         CHECK(starts_after_history_gap IN (0, 1)),
       UNIQUE(device_id, recorded_at_ms)
@@ -30,29 +30,29 @@ export function createTemperatureHistoryTableSql(
   `;
 }
 
-export function rebuildTemperatureHistoryV7Sql(): string {
+export function rebuildTemperatureHistoryV8Sql(): string {
   return `
-    DROP TABLE IF EXISTS temperature_history_v7;
-    ${createTemperatureHistoryTableSql("temperature_history_v7")}
-    INSERT INTO temperature_history_v7 (
-      id, device_id, recorded_at_ms, uptime_ms, boiler_temperature_c,
+    DROP TABLE IF EXISTS temperature_history_v8;
+    ${createTemperatureHistoryTableSql("temperature_history_v8")}
+    INSERT INTO temperature_history_v8 (
+      id, device_id, recorded_at_ms, uptime_ms, boiler_temperature_c, steam_temperature_c,
       brew_target_c, steam_target_c, active_mode, active_target_c,
       heater_enabled, heater_active, pump_command, machine_status, fault_code,
-      steam_control_json, starts_after_history_gap
+      starts_after_history_gap
     )
     SELECT
-      id, device_id, recorded_at_ms, uptime_ms, boiler_temperature_c,
+      id, device_id, recorded_at_ms, uptime_ms, boiler_temperature_c, steam_temperature_c,
       brew_target_c, steam_target_c, active_mode, active_target_c,
       heater_enabled, heater_active, pump_command, machine_status, fault_code,
-      steam_control_json, starts_after_history_gap
+      starts_after_history_gap
     FROM temperature_history;
     DROP TABLE temperature_history;
-    ALTER TABLE temperature_history_v7 RENAME TO temperature_history;
+    ALTER TABLE temperature_history_v8 RENAME TO temperature_history;
   `;
 }
 
 function assertInternalTableName(tableName: string): void {
-  if (!/^temperature_history(?:_v7)?$/.test(tableName)) {
+  if (!/^temperature_history(?:_v8)?$/.test(tableName)) {
     throw new TypeError("Unexpected temperature-history table name.");
   }
 }

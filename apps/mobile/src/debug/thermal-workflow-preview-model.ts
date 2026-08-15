@@ -3,7 +3,7 @@ import {
   IdleExtractionStateSchema,
   type CooldownOutcome,
   type MachineState,
-  type MachineStateV3,
+  type MachineStateV4,
 } from "@philcoino/protocol";
 
 export type ThermalPreviewScenario =
@@ -26,7 +26,7 @@ export interface ThermalWorkflowPreviewState {
 }
 
 export type ThermalWorkflowSnapshot = Pick<
-  MachineStateV3,
+  MachineStateV4,
   "machine" | "extraction" | "compensation" | "cooldown"
 >;
 
@@ -183,6 +183,7 @@ export function showFailurePreview(): ThermalWorkflowPreviewState {
         fault: {
           code: "internal_error",
           message: "Cooldown aborted after an output command failure.",
+          sensor: null,
         },
         heaterActive: false,
         status: "fault",
@@ -259,23 +260,14 @@ function createMachine(overrides: Partial<MachineState> = {}): MachineState {
     status: "heating",
     activeMode,
     boilerTemperatureC: 104.3,
+    steamTemperatureC: 114.3,
     brewTargetC: 93,
     steamTargetC: 115,
+    steamReadyTimeoutMs: 300_000,
     heaterEnabled: true,
     heaterActive: false,
     fault: null,
     steamTimeoutRemainingMs: activeMode === "steam" ? 240_000 : null,
-    steamControl: {
-      settings: {
-        initialCompensationC: 12,
-        decayDurationMs: 720_000,
-        readyTimeoutMs: 300_000,
-      },
-      compensationActive: activeMode === "steam",
-      appliedCompensationC: activeMode === "steam" ? 10 : 0,
-      controlTemperatureC: activeMode === "steam" ? 114.3 : null,
-      heatSoakElapsedMs: activeMode === "steam" ? 120_000 : null,
-    },
     uptimeMs: 184_220,
     ...overrides,
   } as MachineState;

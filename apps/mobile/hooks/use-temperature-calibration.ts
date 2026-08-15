@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AppState } from "react-native";
+import type { TemperatureSensor } from "@philcoino/protocol";
 
 import {
   idleTemperatureCalibrationSessionState,
@@ -13,6 +14,7 @@ interface UseTemperatureCalibrationOptions {
   active: boolean;
   client: TemperatureCalibrationClient;
   onConnectionLost?: (connection: ConnectionState) => void;
+  sensor: TemperatureSensor;
 }
 
 export interface TemperatureCalibrationController {
@@ -27,6 +29,7 @@ export function useTemperatureCalibration({
   active,
   client,
   onConnectionLost,
+  sensor,
 }: UseTemperatureCalibrationOptions): TemperatureCalibrationController {
   const [state, setState] =
     useState<TemperatureCalibrationSessionState>(
@@ -45,6 +48,7 @@ export function useTemperatureCalibration({
       client,
       onConnectionLost,
       onStateChange: setState,
+      sensor,
     });
     sessionRef.current = session;
 
@@ -67,7 +71,7 @@ export function useTemperatureCalibration({
         sessionRef.current = null;
       }
     };
-  }, [active, client, onConnectionLost]);
+  }, [active, client, onConnectionLost, sensor]);
 
   const start = useCallback(
     () => sessionRef.current?.startCalibration() ?? Promise.resolve(),

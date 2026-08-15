@@ -1,7 +1,8 @@
 import type {
   ApiErrorCode,
-  MachineStateV3,
+  MachineStateV4,
   TemperatureCalibrationState,
+  TemperatureSensor,
 } from "@philcoino/protocol";
 
 import {
@@ -17,30 +18,35 @@ export const TEMPERATURE_CALIBRATION_POLL_INTERVAL_MS = 5_000;
 
 export interface TemperatureCalibrationClient {
   cancelTemperatureCalibration(
+    sensor: TemperatureSensor,
     request: { calibrationId: string },
     options?: { signal?: AbortSignal },
-  ): Promise<MachineStateV3>;
+  ): Promise<MachineStateV4>;
   getState(
     options?: { signal?: AbortSignal },
-  ): Promise<MachineStateV3>;
+  ): Promise<MachineStateV4>;
   renewTemperatureCalibration(
+    sensor: TemperatureSensor,
     request: { calibrationId: string },
     options?: { signal?: AbortSignal },
-  ): Promise<MachineStateV3>;
+  ): Promise<MachineStateV4>;
   saveTemperatureCalibration(
+    sensor: TemperatureSensor,
     request: { calibrationId: string },
     options?: { signal?: AbortSignal },
-  ): Promise<MachineStateV3>;
+  ): Promise<MachineStateV4>;
   startTemperatureCalibration(
+    sensor: TemperatureSensor,
     options?: { signal?: AbortSignal },
-  ): Promise<MachineStateV3>;
+  ): Promise<MachineStateV4>;
   updateTemperatureCalibrationCandidate(
+    sensor: TemperatureSensor,
     request: {
       calibrationId: string;
       candidateRawTargetC: number;
     },
     options?: { signal?: AbortSignal },
-  ): Promise<MachineStateV3>;
+  ): Promise<MachineStateV4>;
 }
 
 export type TemperatureCalibrationPendingMutation =
@@ -83,6 +89,7 @@ interface PollingScheduler {
 
 interface TemperatureCalibrationSessionOptions {
   client: TemperatureCalibrationClient;
+  sensor: TemperatureSensor;
   onConnectionLost?: (connection: ConnectionState) => void;
   onStateChange: (state: TemperatureCalibrationSessionState) => void;
   pollIntervalMs?: number;
@@ -111,6 +118,7 @@ export class TemperatureCalibrationSession {
   ) => void;
   private readonly pollIntervalMs: number;
   private readonly scheduler: PollingScheduler;
+  private readonly sensor: TemperatureSensor;
 
   private activeController: AbortController | null = null;
   private closeReason: "background" | "navigation" | "disconnect" | null =
@@ -128,6 +136,7 @@ export class TemperatureCalibrationSession {
     this.pollIntervalMs =
       options.pollIntervalMs ?? TEMPERATURE_CALIBRATION_POLL_INTERVAL_MS;
     this.scheduler = options.scheduler ?? systemScheduler;
+    this.sensor = options.sensor;
   }
 
   start(): void {
@@ -162,7 +171,7 @@ export class TemperatureCalibrationSession {
 
   startCalibration(): Promise<void> {
     return this.mutate("start", (signal) =>
-      this.client.startTemperatureCalibration({ signal }),
+      this.client.startTemperatureCalibration(this.sensor, { signal }),
     );
   }
 
@@ -170,6 +179,7 @@ export class TemperatureCalibrationSession {
     return this.mutate("candidate", (signal) => {
       const active = this.requireActiveSnapshot();
       return this.client.updateTemperatureCalibrationCandidate(
+        this.sensor,
         {
           calibrationId: active.calibrationId,
           candidateRawTargetC,
@@ -185,6 +195,7 @@ export class TemperatureCalibrationSession {
       (signal) => {
         const active = this.requireActiveSnapshot();
         return this.client.saveTemperatureCalibration(
+          this.sensor,
           { calibrationId: active.calibrationId },
           { signal },
         );
@@ -199,6 +210,7 @@ export class TemperatureCalibrationSession {
       (signal) => {
         const active = this.requireActiveSnapshot();
         return this.client.cancelTemperatureCalibration(
+          this.sensor,
           { calibrationId: active.calibrationId },
           { signal },
         );
@@ -209,7 +221,7 @@ export class TemperatureCalibrationSession {
 
   private mutate(
     mutation: TemperatureCalibrationPendingMutation,
-    request: (signal: AbortSignal) => Promise<MachineStateV3>,
+    request: (signal: AbortSignal) => Promise<MachineStateV4>,
     terminalStatus?: "cancelled" | "saved",
   ): Promise<void> {
     if (!this.running || this.closeReason !== null) {
@@ -237,7 +249,7 @@ export class TemperatureCalibrationSession {
         this.publish({
           error: null,
           pendingMutation: null,
-          snapshot: acknowledged.temperatureCalibration,
+          snapshot: acknowledged.temperatureCalibrations[this.sensor],
           status: terminalStatus ?? "ready",
         });
         if (terminalStatus !== undefined) {
@@ -277,6 +289,7 @@ export class TemperatureCalibrationSession {
         calibrationId === undefined
           ? await this.client.getState({ signal: controller.signal })
           : await this.client.renewTemperatureCalibration(
+              this.sensor,
               { calibrationId },
               { signal: controller.signal },
             );
@@ -286,7 +299,7 @@ export class TemperatureCalibrationSession {
       this.publish({
         error: null,
         pendingMutation: null,
-        snapshot: acknowledged.temperatureCalibration,
+        snapshot: acknowledged.temperatureCalibrations[this.sensor],
         status: "ready",
       });
     } catch (error) {
@@ -400,7 +413,7 @@ export class TemperatureCalibrationSession {
     }
     void this.enqueue(async () => {
       try {
-        await this.client.cancelTemperatureCalibration({ calibrationId });
+        await this.client.cancelTemperatureCalibration(this.sensor, { calibrationId });
       } catch {
         // The firmware inactivity lease is the fail-safe when Cancel cannot
         // reach the device.

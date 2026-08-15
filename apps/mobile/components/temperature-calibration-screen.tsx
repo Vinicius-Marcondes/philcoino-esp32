@@ -2,6 +2,7 @@ import {
   TEMPERATURE_CALIBRATION_CANDIDATE_MAX_C,
   TEMPERATURE_CALIBRATION_CANDIDATE_MIN_C,
 } from "@philcoino/protocol";
+import type { TemperatureSensor } from "@philcoino/protocol";
 import { useEffect, useState } from "react";
 import {
   ActivityIndicator,
@@ -29,6 +30,7 @@ interface TemperatureCalibrationScreenProps {
   client: TemperatureCalibrationClient;
   deviceName: string;
   onClose: () => void;
+  sensor: TemperatureSensor;
   visible: boolean;
 }
 
@@ -36,6 +38,7 @@ export function TemperatureCalibrationScreen({
   client,
   deviceName,
   onClose,
+  sensor,
   visible,
 }: TemperatureCalibrationScreenProps) {
   const safeAreaInsets = useSafeAreaInsets();
@@ -44,6 +47,7 @@ export function TemperatureCalibrationScreen({
   const calibration = useTemperatureCalibration({
     active: visible,
     client,
+    sensor,
   });
   const [confirmingSave, setConfirmingSave] = useState(false);
   const [closeAfterCancel, setCloseAfterCancel] = useState(false);
@@ -120,7 +124,7 @@ export function TemperatureCalibrationScreen({
             </Text>
           </Pressable>
           <Text numberOfLines={1} selectable style={styles.headerTitle}>
-            {translate("temperatureCalibration.title")} · {deviceName}
+            {translate("temperatureCalibration.title")} · {sensor === "boiler" ? "Boiler" : "Steam"} · {deviceName}
           </Text>
           <View
             accessibilityLiveRegion="polite"
@@ -402,15 +406,9 @@ export function TemperatureCalibrationScreen({
                   {translate("temperatureCalibration.safeBounds")}
                 </Text>
                 <Text selectable style={styles.bodyText}>
-                  {translate("temperatureCalibration.boundsDetail", {
-                    brewMaximum:
-                      active.previewSafeTargetBounds.brewMaximumC,
-                    brewMinimum:
-                      active.previewSafeTargetBounds.brewMinimumC,
-                    steamMaximum:
-                      active.previewSafeTargetBounds.steamMaximumC,
-                    steamMinimum:
-                      active.previewSafeTargetBounds.steamMinimumC,
+                  {translate("temperatureCalibration.sensorBoundsDetail", {
+                    maximum: active.previewSafeTargetBounds.maximumC,
+                    minimum: active.previewSafeTargetBounds.minimumC,
                   })}
                 </Text>
                 <Text selectable style={styles.secondaryText}>

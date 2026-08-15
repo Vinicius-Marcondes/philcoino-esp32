@@ -53,6 +53,16 @@ ThermocoupleReading Max6675::read(std::uint32_t now_ms) {
   std::uint16_t frame = 0;
   if (transport_.read_frame(frame)) {
     reading = decode(frame);
+    if (reading.status == ThermocoupleStatus::kOk) {
+      if (accepted_temperature_available_ &&
+          last_accepted_temperature_c_ - reading.temperature_c >
+              config::kMaximumAcceptedTemperatureDropC) {
+        reading.status = ThermocoupleStatus::kImplausibleDrop;
+      } else {
+        accepted_temperature_available_ = true;
+        last_accepted_temperature_c_ = reading.temperature_c;
+      }
+    }
   } else {
     reading.status = ThermocoupleStatus::kTransportError;
   }
@@ -63,6 +73,10 @@ ThermocoupleReading Max6675::read(std::uint32_t now_ms) {
 ThermocoupleReading Max6675::decode(std::uint16_t frame) {
   ThermocoupleReading reading{};
   reading.raw_frame = frame;
+  if (frame == 0U) {
+    reading.status = ThermocoupleStatus::kInvalidFrame;
+    return reading;
+  }
   if ((frame & 0x0004U) != 0U) {
     reading.status = ThermocoupleStatus::kOpenCircuit;
     return reading;
@@ -185,7 +199,7 @@ bool target_is_reachable(
     return false;
   }
   const auto raw_target_c = effective_target_c - calibration.offset_c;
-  return raw_target_c <= config::kRawBoilerOverTemperatureC;
+  return raw_target_c <= config::kRawTemperatureOverTemperatureC;
 }
 
 bool targets_are_reachable(
@@ -196,18 +210,17 @@ bool targets_are_reachable(
          target_is_reachable(targets.steam_c, calibration);
 }
 
+bool targets_are_reachable(
+    const TemperatureTargets& targets,
+    const TemperatureCalibrations& calibrations) {
+  return targets_are_valid(targets) &&
+         target_is_reachable(targets.brew_c, calibrations.boiler) &&
+         target_is_reachable(targets.steam_c, calibrations.steam);
+}
+
 bool steam_control_settings_are_valid(
     const SteamControlSettings& settings) {
-  return settings.initial_compensation_c >=
-             config::kSteamCompensationInitialMinimumC &&
-         settings.initial_compensation_c <=
-             config::kSteamCompensationInitialMaximumC &&
-         settings.decay_duration_ms >=
-             config::kSteamCompensationDecayMinimumMs &&
-         settings.decay_duration_ms <=
-             config::kSteamCompensationDecayMaximumMs &&
-         settings.decay_duration_ms % config::kSteamSettingTimeStepMs == 0U &&
-         settings.ready_timeout_ms >= config::kSteamReadyTimeoutMinimumMs &&
+  return settings.ready_timeout_ms >= config::kSteamReadyTimeoutMinimumMs &&
          settings.ready_timeout_ms <= config::kSteamReadyTimeoutMaximumMs &&
          settings.ready_timeout_ms % config::kSteamSettingTimeStepMs == 0U;
 }

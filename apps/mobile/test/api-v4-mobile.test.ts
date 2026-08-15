@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import type { MachineStateV3 } from "@philcoino/protocol";
+import type { MachineStateV4 } from "@philcoino/protocol";
 
 import { ApiClientError } from "../src/networking/api-client-error";
 import {
@@ -13,7 +13,7 @@ import {
   debugSelectedDevice,
 } from "../src/networking/debug-device-api-client";
 
-describe("mobile API v3 client", () => {
+describe("mobile API v4 client", () => {
   it("uses only pinned HTTPS, bearer authentication, and complete state acknowledgements", async () => {
     const initial = await createDebugDeviceApiClient().getState();
     const requests: Array<{ init: DeviceFetchRequestInit; url: string }> = [];
@@ -23,8 +23,8 @@ describe("mobile API v3 client", () => {
     };
     const client = apiClient(fetch);
     const state = await client.updateTemperatureSettings({ brewTargetC: 94 });
-    expect(state.apiVersion).toBe("3");
-    expect(requests[0].url).toBe("https://machine.local/api/v3/settings");
+    expect(state.apiVersion).toBe("4");
+    expect(requests[0].url).toBe("https://machine.local/api/v4/settings");
     expect(requests[0].init.headers.Authorization).toBe(
       `Bearer ${debugSelectedDevice.accessToken}`,
     );
@@ -41,7 +41,7 @@ describe("mobile API v3 client", () => {
 
   it("accepts duplicate revisions but rejects stale revisions within one boot", async () => {
     const initial = await createDebugDeviceApiClient().getState();
-    const states: MachineStateV3[] = [
+    const states: MachineStateV4[] = [
       { ...initial, revision: 5 },
       { ...initial, revision: 5 },
       { ...initial, revision: 4 },
@@ -54,7 +54,7 @@ describe("mobile API v3 client", () => {
 
   it("accepts a lower revision only after boot identity changes", async () => {
     const initial = await createDebugDeviceApiClient().getState();
-    const states: MachineStateV3[] = [
+    const states: MachineStateV4[] = [
       { ...initial, revision: 20 },
       {
         ...initial,

@@ -1,6 +1,6 @@
 import type {
   ExtractionTelemetryCursor,
-  MachineStateV3,
+  MachineStateV4,
   PairingSessionStartResponse,
   PairingCompleteResponse,
 } from "../src/index.ts";
@@ -11,10 +11,10 @@ const cursor: ExtractionTelemetryCursor = {
   afterSequence: 16,
 };
 
-export function acceptsV3Types(
-  state: MachineStateV3,
+export function acceptsV4Types(
+  state: MachineStateV4,
   session: PairingSessionStartResponse,
   complete: PairingCompleteResponse,
-): [MachineStateV3, ExtractionTelemetryCursor, string, string] {
+): [MachineStateV4, ExtractionTelemetryCursor, string, string] {
   return [state, cursor, session.serverPublicKey, complete.accessToken];
 }

@@ -11,13 +11,44 @@ const ApiRouteDescriptor* find_api_route(HttpMethod method,
   const std::string_view route_path(
       path.data(), query == std::string::npos ? path.size() : query);
   for (const auto& route : kApiRoutes) {
-    if (route.id == ApiRouteId::kPairingSessionAction) continue;
+    if (route.id == ApiRouteId::kPairingSessionAction ||
+        route.id == ApiRouteId::kTemperatureCalibrationStart ||
+        route.id == ApiRouteId::kTemperatureCalibrationCandidate ||
+        route.id == ApiRouteId::kTemperatureCalibrationSave ||
+        route.id == ApiRouteId::kTemperatureCalibrationCancel ||
+        route.id == ApiRouteId::kTemperatureCalibrationRenew) continue;
     if (route.method == method &&
         route_path == std::string_view(route.path)) {
       return &route;
     }
   }
-  constexpr std::string_view kPrefix = "/api/v3/pairing/sessions/";
+  constexpr std::string_view kCalibrationPrefix =
+      "/api/v4/temperature-calibrations/";
+  if (route_path.size() > kCalibrationPrefix.size() &&
+      route_path.substr(0U, kCalibrationPrefix.size()) == kCalibrationPrefix) {
+    const auto remainder = route_path.substr(kCalibrationPrefix.size());
+    const auto slash = remainder.find('/');
+    const auto sensor = remainder.substr(0U, slash);
+    const auto suffix = slash == std::string_view::npos
+                            ? std::string_view{}
+                            : remainder.substr(slash);
+    if ((sensor == "boiler" || sensor == "steam") &&
+        (suffix == "/current" || suffix == "/current/lease")) {
+      for (const auto& route : kApiRoutes) {
+        const bool lease = route.id == ApiRouteId::kTemperatureCalibrationRenew;
+        const bool calibration_route =
+            route.id == ApiRouteId::kTemperatureCalibrationStart ||
+            route.id == ApiRouteId::kTemperatureCalibrationCandidate ||
+            route.id == ApiRouteId::kTemperatureCalibrationSave ||
+            route.id == ApiRouteId::kTemperatureCalibrationCancel || lease;
+        if (calibration_route && route.method == method &&
+            lease == (suffix == "/current/lease")) {
+          return &route;
+        }
+      }
+    }
+  }
+  constexpr std::string_view kPrefix = "/api/v4/pairing/sessions/";
   if (method == HttpMethod::kPost && route_path.size() > kPrefix.size() &&
       route_path.substr(0U, kPrefix.size()) == kPrefix) {
     const auto remainder = route_path.substr(kPrefix.size());

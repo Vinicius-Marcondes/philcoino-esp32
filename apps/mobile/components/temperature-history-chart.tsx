@@ -159,7 +159,8 @@ export function TemperatureHistoryChart({
                   (selected.recordedAtMs - visibleLiveWindow.startMs) /
                   1_000
                 ).toFixed(2)}{" "}
-                s · {selected.boilerTemperatureC.toFixed(1)} °C
+                s · Boiler {formatTemperatureReadout(selected.boilerTemperatureC, " °C")}
+                {` · Steam ${formatTemperatureReadout(selected.steamTemperatureC, " °C")}`}
                 {bands === 1
                   ? ` · ${selected.activeTargetC.toFixed(1)} °C`
                   : ` · ${translate("scale.telemetryWeightTraceUnavailable")} · ${translate("scale.telemetryFlowUnavailable")}`}
@@ -194,9 +195,16 @@ export function TemperatureHistoryChart({
       metrics={[
         {
           color: TELEMETRY_COLORS.temperature,
-          label: translate("scale.telemetryTemperature"),
+          label: "Boiler",
           value: formatTemperatureReadout(
             latestVisible?.boilerTemperatureC ?? null,
+          ),
+        },
+        {
+          color: TELEMETRY_COLORS.steamTemperature,
+          label: "Steam",
+          value: formatTemperatureReadout(
+            latestVisible?.steamTemperatureC ?? null,
           ),
         },
         ...(bands === 1
@@ -540,6 +548,15 @@ const TemperatureHistoryPage = memo(function TemperatureHistoryPage({
             strokeWidth={2}
           />
         ))}
+        {plot.steamTemperaturePaths.map((path, index) => (
+          <Path
+            d={path}
+            fill="none"
+            key={`steam-temperature-${index}`}
+            stroke={TELEMETRY_COLORS.steamTemperature}
+            strokeWidth={2}
+          />
+        ))}
         {plot.weightBand === null ? null : (
           <SvgText
             fill="#8A8075"
@@ -560,13 +577,23 @@ const TemperatureHistoryPage = memo(function TemperatureHistoryPage({
             y2={plot.bottom}
           />
         ) : null}
-        {latest ? (
+        {latest?.boilerTemperatureC !== null && latest?.boilerTemperatureC !== undefined ? (
           <Circle
             cx={plot.x(latest.recordedAtMs)}
             cy={plot.temperatureY(latest.boilerTemperatureC)}
             fill={TELEMETRY_COLORS.background}
             r={4}
             stroke={TELEMETRY_COLORS.temperature}
+            strokeWidth={2}
+          />
+        ) : null}
+        {latest?.steamTemperatureC !== null && latest?.steamTemperatureC !== undefined ? (
+          <Circle
+            cx={plot.x(latest.recordedAtMs)}
+            cy={plot.temperatureY(latest.steamTemperatureC)}
+            fill={TELEMETRY_COLORS.background}
+            r={4}
+            stroke={TELEMETRY_COLORS.steamTemperature}
             strokeWidth={2}
           />
         ) : null}

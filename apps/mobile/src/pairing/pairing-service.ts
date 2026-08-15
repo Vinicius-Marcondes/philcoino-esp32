@@ -3,7 +3,7 @@ import {
   PairingCompleteResponseSchema,
   PairingDeviceBindingSchema,
   type DeviceResponse,
-  type MachineStateV3,
+  type MachineStateV4,
   type PairingSessionCompleteRequest,
   type PairingSessionProofRequest,
   type PairingSessionProofResponse,
@@ -41,7 +41,7 @@ export interface PairingDeviceClient {
   getState(
     credentials: { accessToken: string; certificatePin: string },
     options?: RequestOptions,
-  ): Promise<MachineStateV3>;
+  ): Promise<MachineStateV4>;
   srpStart(sessionHandle: string, pairingCode: string): Promise<string>;
   srpProcessChallenge(
     sessionHandle: string,
@@ -122,7 +122,7 @@ export async function inspectDevice(
   const origin = normalizeDeviceAddress(address);
   return {
     address: origin,
-    apiVersion: "3",
+    apiVersion: "4",
     deviceId: "unverified",
     firmwareVersion: "unknown",
     identitySource: "manual",
@@ -311,7 +311,7 @@ export async function authenticateAndSave(
       clientId,
       clientNonce,
       deviceId: binding.deviceId,
-      domain: "philcoino:v3:client-binding",
+      domain: "philcoino:v4:client-binding",
       sessionId: binding.sessionId,
     });
     const encryptedClientBinding = await stage(
@@ -473,7 +473,7 @@ export async function restoreSelectedDevice(
     return { selected, status: "not-found" };
   }
   const recoveredOrigin = normalizeDeviceAddress(discovered.address);
-  let state: MachineStateV3;
+  let state: MachineStateV4;
   try {
     state = await connect(recoveredOrigin);
   } catch (error) {
@@ -528,7 +528,7 @@ async function stage<T>(
 function rememberedCandidate(selected: SelectedDevice): PairingCandidate {
   return {
     address: selected.httpsOrigin,
-    apiVersion: "3",
+    apiVersion: "4",
     deviceId: selected.deviceId,
     firmwareVersion: "unknown",
     identitySource: "remembered",

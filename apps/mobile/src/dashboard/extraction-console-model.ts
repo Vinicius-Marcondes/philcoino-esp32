@@ -28,6 +28,7 @@ export interface ExtractionConsoleReadouts {
   running: boolean;
   target: string;
   temperature: string;
+  steamTemperature: string;
   weight: string;
 }
 
@@ -67,6 +68,7 @@ export function extractionConsoleReadouts({
     ? extraction.elapsedMs
     : (latest?.elapsedMs ?? extraction?.elapsedMs ?? null);
   const temperatureC = snapshot?.boilerTemperatureC ?? latest?.boilerTemperatureC ?? null;
+  const steamTemperatureC = snapshot?.steamTemperatureC ?? latest?.steamTemperatureC ?? null;
   const targetC = snapshot === null ? (latest?.activeTargetC ?? null) : snapshot.brewTargetC;
   const weightDecigrams =
     running
@@ -84,6 +86,7 @@ export function extractionConsoleReadouts({
     running,
     target: formatTemperatureReadout(targetC),
     temperature: formatTemperatureReadout(temperatureC),
+    steamTemperature: formatTemperatureReadout(steamTemperatureC),
     weight: formatWeightReadout(weightDecigrams),
   };
 }

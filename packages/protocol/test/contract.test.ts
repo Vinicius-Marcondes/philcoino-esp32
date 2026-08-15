@@ -5,7 +5,7 @@ import {
   ExtractionTelemetryPageSchema,
   FirmwareUpdateAcceptedSchema,
   GrossWeightDecigramsSchema,
-  MachineStateV3Schema,
+  MachineStateV4Schema,
   NetWeightDecigramsSchema,
   PairingClientBindingSchema,
   PairingCompleteResponseSchema,
@@ -32,12 +32,12 @@ async function fixture(
 
 function state(overrides: Record<string, unknown> = {}) {
   return {
-    apiVersion: "3",
+    apiVersion: "4",
     device: {
       deviceId: "philcoino-test",
       name: "Philcoino test",
       model: "espresso-machine",
-      apiVersion: "3",
+      apiVersion: "4",
       firmwareVersion: "3.0.0",
     },
     bootId,
@@ -47,22 +47,13 @@ function state(overrides: Record<string, unknown> = {}) {
       status: "heating",
       activeMode: "brew",
       boilerTemperatureC: null,
+      steamTemperatureC: null,
       brewTargetC: 93,
       steamTargetC: 120,
+      steamReadyTimeoutMs: 300_000,
       heaterEnabled: true,
       heaterActive: false,
       steamTimeoutRemainingMs: null,
-      steamControl: {
-        settings: {
-          initialCompensationC: 12,
-          decayDurationMs: 720_000,
-          readyTimeoutMs: 300_000,
-        },
-        compensationActive: false,
-        appliedCompensationC: 0,
-        controlTemperatureC: null,
-        heatSoakElapsedMs: null,
-      },
       uptimeMs: 12_000,
       fault: null,
     },
@@ -76,18 +67,26 @@ function state(overrides: Record<string, unknown> = {}) {
       terminalExtraction: null,
       warning: null,
     },
-    temperatureCalibration: {
-      status: "uncalibrated",
-      savedOffsetC: 0,
-      boilerTemperatureRawC: null,
-      boilerTemperatureC: null,
-      heaterActive: false,
-      ready: false,
-      safeTargetBounds: {
-        brewMinimumC: 85,
-        brewMaximumC: 95,
-        steamMinimumC: 110,
-        steamMaximumC: 135,
+    temperatureCalibrations: {
+      boiler: {
+        status: "uncalibrated",
+        sensor: "boiler",
+        savedOffsetC: 0,
+        temperatureRawC: null,
+        temperatureC: null,
+        heaterActive: false,
+        ready: false,
+        safeTargetBounds: { minimumC: 85, maximumC: 95 },
+      },
+      steam: {
+        status: "uncalibrated",
+        sensor: "steam",
+        savedOffsetC: 0,
+        temperatureRawC: null,
+        temperatureC: null,
+        heaterActive: false,
+        ready: false,
+        safeTargetBounds: { minimumC: 110, maximumC: 135 },
       },
     },
     extraction: {
@@ -114,25 +113,25 @@ function state(overrides: Record<string, unknown> = {}) {
   };
 }
 
-describe("API v3 contract", () => {
-  it("keeps the stored v3 fixtures executable and rejects their negative pairs", async () => {
-    const validState = await fixture("valid", "state-v3.json");
-    const validSettings = await fixture("valid", "settings-v3.json");
-    const validSession = await fixture("valid", "pairing-session-v3.json");
-    const validProof = await fixture("valid", "pairing-proof-v3.json");
-    const validComplete = await fixture("valid", "pairing-complete-v3.json");
-    const validError = await fixture("valid", "error-v3.json");
-    const validTelemetry = await fixture("valid", "telemetry-page-v3.json");
-    const validWeights = await fixture("valid", "weight-boundaries-v3.json") as {
+describe("API v4 contract", () => {
+  it("keeps the stored v4 fixtures executable and rejects their negative pairs", async () => {
+    const validState = await fixture("valid", "state-v4.json");
+    const validSettings = await fixture("valid", "settings-v4.json");
+    const validSession = await fixture("valid", "pairing-session-v4.json");
+    const validProof = await fixture("valid", "pairing-proof-v4.json");
+    const validComplete = await fixture("valid", "pairing-complete-v4.json");
+    const validError = await fixture("valid", "error-v4.json");
+    const validTelemetry = await fixture("valid", "telemetry-page-v4.json");
+    const validWeights = await fixture("valid", "weight-boundaries-v4.json") as {
       gross: number[];
       net: number[];
     };
     const validFirmwareUpdate = await fixture(
       "valid",
-      "firmware-update-accepted-v3.json",
+      "firmware-update-accepted-v4.json",
     );
 
-    expect(MachineStateV3Schema.safeParse(validState).success).toBe(true);
+    expect(MachineStateV4Schema.safeParse(validState).success).toBe(true);
     expect(SettingsRequestSchema.safeParse(validSettings).success).toBe(true);
     expect(PairingSessionStartResponseSchema.safeParse(validSession).success).toBe(true);
     expect(PairingSessionProofResponseSchema.safeParse(validProof).success).toBe(true);
@@ -146,21 +145,21 @@ describe("API v3 contract", () => {
       NetWeightDecigramsSchema.safeParse(value).success)).toBe(true);
 
     expect(SettingsRequestSchema.safeParse(
-      await fixture("invalid", "settings-unknown-v3.json"),
+      await fixture("invalid", "settings-unknown-v4.json"),
     ).success).toBe(false);
     expect(PairingSessionProofRequestSchema.safeParse(
-      await fixture("invalid", "pairing-malformed-proof-v3.json"),
+      await fixture("invalid", "pairing-malformed-proof-v4.json"),
     ).success).toBe(false);
     expect(ApiErrorResponseSchema.safeParse(
-      await fixture("invalid", "error-extra-field-v3.json"),
+      await fixture("invalid", "error-extra-field-v4.json"),
     ).success).toBe(false);
     expect(FirmwareUpdateAcceptedSchema.safeParse(
-      await fixture("invalid", "firmware-update-extra-field-v3.json"),
+      await fixture("invalid", "firmware-update-extra-field-v4.json"),
     ).success).toBe(false);
 
     const invalidContinuity = await fixture(
       "invalid",
-      "telemetry-continuity-v3.json",
+      "telemetry-continuity-v4.json",
     ) as { continuity: string };
     expect(ExtractionTelemetryPageSchema.safeParse({
       ...(validTelemetry as Record<string, unknown>),
@@ -169,7 +168,7 @@ describe("API v3 contract", () => {
 
     const invalidWeights = await fixture(
       "invalid",
-      "weight-boundaries-v3.json",
+      "weight-boundaries-v4.json",
     ) as { gross: number[]; net: number[] };
     expect(invalidWeights.gross.every((value) =>
       !GrossWeightDecigramsSchema.safeParse(value).success)).toBe(true);
@@ -178,11 +177,11 @@ describe("API v3 contract", () => {
   });
 
   it("accepts one coherent snapshot with unavailable readings represented by null", () => {
-    expect(MachineStateV3Schema.parse(state()).machine.boilerTemperatureC).toBeNull();
+    expect(MachineStateV4Schema.parse(state()).machine.boilerTemperatureC).toBeNull();
   });
 
   it("rejects unknown snapshot and settings fields", () => {
-    expect(MachineStateV3Schema.safeParse(state({ legacy: true })).success).toBe(false);
+    expect(MachineStateV4Schema.safeParse(state({ legacy: true })).success).toBe(false);
     expect(SettingsRequestSchema.safeParse({ brewTargetC: 93, legacy: true }).success).toBe(false);
   });
 
@@ -227,7 +226,7 @@ describe("API v3 contract", () => {
       certificateSpkiSha256: base64,
     });
     const deviceBinding = PairingDeviceBindingSchema.parse({
-      domain: "philcoino:v3:device-binding",
+      domain: "philcoino:v4:device-binding",
       sessionId: session.sessionId,
       clientNonce: startRequest.clientNonce,
       deviceId: session.device.deviceId,
@@ -235,7 +234,7 @@ describe("API v3 contract", () => {
     });
     expect(PairingClientBindingSchema.safeParse({
       ...deviceBinding,
-      domain: "philcoino:v3:client-binding",
+      domain: "philcoino:v4:client-binding",
       clientId: completeRequest.clientId,
     }).success).toBe(true);
     expect(proofRequest.clientProof).toHaveLength(86);
@@ -267,7 +266,7 @@ describe("API v3 contract", () => {
 
   it("accepts nullable acquisition data and strict SSE continuity", () => {
     const page = ExtractionTelemetryPageSchema.parse({
-      version: 1,
+      version: 2,
       deviceId: "philcoino-test",
       extractionId: "extraction-0001",
       bootId,
@@ -291,6 +290,7 @@ describe("API v3 contract", () => {
         extractionElapsedMs: 250,
         phase: "manual",
         boilerTemperatureC: null,
+        steamTemperatureC: null,
         activeTargetC: 93,
         heaterActive: false,
         pumpCommand: "running",

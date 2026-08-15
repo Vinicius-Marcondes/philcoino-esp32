@@ -25,7 +25,10 @@ The TypeScript workspaces use Bun. Expo SDK 54 requires Node.js 20.19 or newer. 
 bun install
 ```
 
-Firmware is independent and pinned to ESP-IDF 6.0.2 / ESP32-C3. Its host tests need CMake and a C++17 compiler; target builds need the pinned ESP-IDF environment. See [Development](../DEVELOPMENT.md) for exact workflows.
+Firmware is independent and pinned to ESP-IDF 6.0.2 for one
+ESP32-S3-WROOM-1 N16R8 target. Host tests need CMake/C++17; target builds use
+`esp32s3`. The current wire contract is API v4 and has no v3 server. See
+[Development](../DEVELOPMENT.md) for exact workflows.
 
 Do not commit `.env` values, bearer tokens, Wi-Fi credentials, `sdkconfig`, generated native projects, dependency folders, build output, caches, coverage, or local databases.
 

@@ -245,8 +245,13 @@ export function ExtractionConsoleScreen({
         <View style={styles.readoutRow}>
           <Readout
             color={TELEMETRY_COLORS.temperature}
-            label={translate("scale.telemetryTemperature")}
+            label="Boiler"
             value={readouts.temperature}
+          />
+          <Readout
+            color={TELEMETRY_COLORS.steamTemperature}
+            label="Steam"
+            value={readouts.steamTemperature}
           />
           <Readout
             color={TELEMETRY_COLORS.target}

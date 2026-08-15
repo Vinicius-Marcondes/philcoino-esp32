@@ -12,7 +12,7 @@ export interface TemperatureCalibrationPresentation {
   effectivePreviewC: number | null;
   leaseSeconds: number | null;
   offsetPreviewC: number | null;
-  previewSteamMaximumC: number | null;
+  previewMaximumC: number | null;
   rawTemperatureC: number | null;
   savedOffsetC: number;
 }
@@ -29,7 +29,7 @@ export function temperatureCalibrationPresentation(
       effectivePreviewC: null,
       leaseSeconds: null,
       offsetPreviewC: null,
-      previewSteamMaximumC: null,
+      previewMaximumC: null,
       rawTemperatureC: null,
       savedOffsetC: 0,
     };
@@ -40,11 +40,11 @@ export function temperatureCalibrationPresentation(
       canDecrease: false,
       canIncrease: false,
       candidateRawTargetC: null,
-      effectivePreviewC: snapshot.boilerTemperatureC,
+      effectivePreviewC: snapshot.temperatureC,
       leaseSeconds: null,
       offsetPreviewC: null,
-      previewSteamMaximumC: null,
-      rawTemperatureC: snapshot.boilerTemperatureRawC,
+      previewMaximumC: null,
+      rawTemperatureC: snapshot.temperatureRawC,
       savedOffsetC: snapshot.savedOffsetC,
     };
   }
@@ -58,16 +58,15 @@ export function temperatureCalibrationPresentation(
       TEMPERATURE_CALIBRATION_CANDIDATE_MAX_C,
     candidateRawTargetC: snapshot.candidateRawTargetC,
     effectivePreviewC:
-      snapshot.boilerTemperatureRawC === null
+      snapshot.temperatureRawC === null
         ? null
         : roundTemperature(
-            snapshot.boilerTemperatureRawC + snapshot.offsetPreviewC,
+            snapshot.temperatureRawC + snapshot.offsetPreviewC,
           ),
     leaseSeconds: Math.ceil(snapshot.sessionLeaseRemainingMs / 1_000),
     offsetPreviewC: snapshot.offsetPreviewC,
-    previewSteamMaximumC:
-      snapshot.previewSafeTargetBounds.steamMaximumC,
-    rawTemperatureC: snapshot.boilerTemperatureRawC,
+    previewMaximumC: snapshot.previewSafeTargetBounds.maximumC,
+    rawTemperatureC: snapshot.temperatureRawC,
     savedOffsetC: snapshot.savedOffsetC,
   };
 }

@@ -6,6 +6,7 @@ import {
   type MachineState,
   type Mode,
   type TemperatureSettingsRequest,
+  type TemperatureSensor,
 } from "@philcoino/protocol";
 import { useEffect, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
@@ -27,7 +28,7 @@ interface MachineControlsProps {
   modeMutation: DashboardMutationState;
   onSetMode: (mode: Mode) => void;
   onOpenSteamControlSettings: () => void;
-  onOpenTemperatureCalibration: () => void;
+  onOpenTemperatureCalibration: (sensor: TemperatureSensor) => void;
   onUpdateTemperatureSettings: (
     settings: TemperatureSettingsRequest,
   ) => void;
@@ -219,11 +220,18 @@ export function MachineControls({
         <Text selectable style={styles.helpText}>
           {translate("temperatureCalibration.entryDetail")}
         </Text>
-        <ControlButton
-          disabled={mutationPending}
-          label={translate("temperatureCalibration.open")}
-          onPress={onOpenTemperatureCalibration}
-        />
+        <View style={styles.secondarySetting}>
+          <ControlButton
+            disabled={mutationPending}
+            label={`Boiler · ${translate("temperatureCalibration.open")}`}
+            onPress={() => onOpenTemperatureCalibration("boiler")}
+          />
+          <ControlButton
+            disabled={mutationPending}
+            label={`Steam · ${translate("temperatureCalibration.open")}`}
+            onPress={() => onOpenTemperatureCalibration("steam")}
+          />
+        </View>
         <View style={styles.secondarySetting}>
           <Text selectable style={styles.eyebrow}>
             {translate("steamControl.entryEyebrow")}

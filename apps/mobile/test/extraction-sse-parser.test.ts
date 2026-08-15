@@ -7,7 +7,7 @@ import {
 } from "../src/telemetry/extraction-sse-parser";
 
 const page: ExtractionTelemetryPage = {
-  version: 1,
+  version: 2,
   deviceId: "philcoino-test",
   extractionId: "extraction-0001",
   bootId: "00000000000000000000000000000001",
@@ -35,6 +35,7 @@ const page: ExtractionTelemetryPage = {
     extractionElapsedMs: 250,
     phase: "manual",
     boilerTemperatureC: null,
+    steamTemperatureC: null,
     activeTargetC: 93,
     heaterActive: false,
     pumpCommand: "running",

@@ -86,7 +86,7 @@ export function normalizeOtaOrigin(value: string): string {
 
 export function stableUpdaterClientId(deviceId: string, macHostname = hostname()): string {
   return createHash("sha256")
-    .update(`philcoino:v3:mac-ota:${macHostname}:${deviceId}`)
+    .update(`philcoino:v4:mac-ota:${macHostname}:${deviceId}`)
     .digest("hex")
     .slice(0, 32);
 }
@@ -116,7 +116,7 @@ export async function pairForFirmwareUpdate(
     onConnectionAttempt: (attempt, maximumAttempts) =>
       reportStage("connection", `TLS attempt ${attempt}/${maximumAttempts}`),
     origin,
-    path: "/api/v3/pairing/sessions",
+    path: "/api/v4/pairing/sessions",
     responseTimeoutMs: pairingResponseTimeoutMs,
   });
   ensureStatus(startedResponse, 200, "SRP session start");
@@ -133,7 +133,7 @@ export async function pairForFirmwareUpdate(
     headers: { "Content-Type": "application/json" },
     method: "POST",
     origin,
-    path: `/api/v3/pairing/sessions/${started.sessionId}/proof`,
+    path: `/api/v4/pairing/sessions/${started.sessionId}/proof`,
     responseTimeoutMs: pairingResponseTimeoutMs,
   });
   ensureStatus(proofResponse, 200, "SRP proof");
@@ -166,7 +166,7 @@ export async function pairForFirmwareUpdate(
     clientId,
     clientNonce: deviceBinding.clientNonce,
     deviceId: deviceBinding.deviceId,
-    domain: "philcoino:v3:client-binding",
+    domain: "philcoino:v4:client-binding",
     sessionId: started.sessionId,
   });
   reportStage("token-issue", "Requesting pinned OTA credential");
@@ -181,7 +181,7 @@ export async function pairForFirmwareUpdate(
     headers: { "Content-Type": "application/json" },
     method: "POST",
     origin,
-    path: `/api/v3/pairing/sessions/${started.sessionId}/complete`,
+    path: `/api/v4/pairing/sessions/${started.sessionId}/complete`,
     responseTimeoutMs: pairingResponseTimeoutMs,
   });
   ensureStatus(completedResponse, 200, "pairing completion");
@@ -230,7 +230,7 @@ export async function uploadFirmwareImage(
     method: "POST",
     onProgress,
     origin,
-    path: "/api/v3/firmware-updates",
+    path: "/api/v4/firmware-updates",
     bodyWriteTimeoutMs: uploadBodyWriteTimeoutMs,
     responseTimeoutMs: uploadRequestTimeoutMs,
   });

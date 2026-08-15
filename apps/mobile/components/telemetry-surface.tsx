@@ -15,6 +15,7 @@ export const TELEMETRY_COLORS = {
   heater: "#F29A52",
   target: "#B37A26",
   temperature: "#7E2F3B",
+  steamTemperature: "#36658C",
   text: "#211D19",
   weight: "#282421",
 };

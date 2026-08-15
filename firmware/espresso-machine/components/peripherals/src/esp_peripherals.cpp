@@ -38,14 +38,16 @@ constexpr char kThermocoupleLogTag[] = "max6675";
 constexpr char kPumpDimmerLogTag[] = "pump_dimmer";
 constexpr char kNvsNamespace[] = "targets";
 constexpr char kTargetsKey[] = "values";
-constexpr char kTemperatureCalibrationNvsNamespace[] = "temp_cal";
+constexpr char kBoilerTemperatureCalibrationNvsNamespace[] = "temp_cal_b";
+constexpr char kSteamTemperatureCalibrationNvsNamespace[] = "temp_cal_s";
 constexpr char kTemperatureCalibrationKey[] = "offset";
 constexpr std::int32_t kTemperatureCalibrationBlobMagic = 0x5443414C;
 constexpr std::int32_t kTemperatureCalibrationBlobVersion = 1;
 constexpr char kSteamControlNvsNamespace[] = "steam_ctl";
 constexpr char kSteamControlKey[] = "settings";
 constexpr std::int32_t kSteamControlBlobMagic = 0x5354434C;
-constexpr std::int32_t kSteamControlBlobVersion = 1;
+constexpr std::int32_t kSteamControlLegacyBlobVersion = 1;
+constexpr std::int32_t kSteamControlBlobVersion = 2;
 constexpr char kScaleNvsNamespace[] = "scale";
 constexpr char kScaleCalibrationKey[] = "calibration";
 
@@ -63,12 +65,15 @@ bool initialize_nvs_flash() {
 
 }  // namespace
 
-bool EspMax6675Transport::initialize() {
+bool EspMax6675Bus::initialize() {
   const auto output_mask =
       (1ULL << config::kBoilerThermocoupleChipSelectGpio) |
+      (1ULL << config::kSteamThermocoupleChipSelectGpio) |
       (1ULL << config::kBoilerThermocoupleClockGpio);
   gpio_set_level(
       static_cast<gpio_num_t>(config::kBoilerThermocoupleChipSelectGpio), 1);
+  gpio_set_level(
+      static_cast<gpio_num_t>(config::kSteamThermocoupleChipSelectGpio), 1);
   gpio_set_level(
       static_cast<gpio_num_t>(config::kBoilerThermocoupleClockGpio), 0);
 
@@ -83,13 +88,18 @@ bool EspMax6675Transport::initialize() {
           static_cast<gpio_num_t>(config::kBoilerThermocoupleChipSelectGpio),
           1) != ESP_OK ||
       gpio_set_level(
+          static_cast<gpio_num_t>(config::kSteamThermocoupleChipSelectGpio),
+          1) != ESP_OK ||
+      gpio_set_level(
           static_cast<gpio_num_t>(config::kBoilerThermocoupleClockGpio), 0) !=
           ESP_OK) {
     return false;
   }
 
   gpio_config_t inputs{};
-  inputs.pin_bit_mask = 1ULL << config::kBoilerThermocoupleDataGpio;
+  inputs.pin_bit_mask =
+      (1ULL << config::kBoilerThermocoupleDataGpio) |
+      (1ULL << config::kSteamThermocoupleDataGpio);
   inputs.mode = GPIO_MODE_INPUT;
   inputs.pull_up_en = GPIO_PULLUP_DISABLE;
   inputs.pull_down_en = GPIO_PULLDOWN_DISABLE;
@@ -102,30 +112,36 @@ bool EspMax6675Transport::initialize() {
   return true;
 }
 
-bool EspMax6675Transport::read_frame(std::uint16_t& frame) {
+bool EspMax6675Bus::read_frame(const char* sensor_name,
+                               std::int32_t chip_select_gpio,
+                               std::int32_t data_gpio,
+                               std::uint16_t& frame) {
   if (!initialized_) {
     return false;
   }
-  constexpr auto selected_gpio = config::kBoilerThermocoupleChipSelectGpio;
-  constexpr auto selected_data_gpio = config::kBoilerThermocoupleDataGpio;
+  const auto selected_gpio = chip_select_gpio;
+  const auto selected_data_gpio = data_gpio;
   constexpr auto selected_clock_gpio = config::kBoilerThermocoupleClockGpio;
+  portENTER_CRITICAL(&bus_lock_);
   if (gpio_set_level(
           static_cast<gpio_num_t>(config::kBoilerThermocoupleChipSelectGpio),
           1) != ESP_OK ||
       gpio_set_level(
+          static_cast<gpio_num_t>(config::kSteamThermocoupleChipSelectGpio),
+          1) != ESP_OK ||
+      gpio_set_level(
           static_cast<gpio_num_t>(config::kBoilerThermocoupleClockGpio), 0) !=
           ESP_OK) {
-    ESP_LOGE(kThermocoupleLogTag, "boiler sensor idle setup failed");
+    ESP_LOGE(kThermocoupleLogTag, "%s sensor idle setup failed", sensor_name);
+    portEXIT_CRITICAL(&bus_lock_);
     return false;
   }
-
-  portENTER_CRITICAL(&bus_lock_);
   if (gpio_set_level(static_cast<gpio_num_t>(selected_gpio), 0) != ESP_OK) {
     gpio_set_level(static_cast<gpio_num_t>(selected_gpio), 1);
     portEXIT_CRITICAL(&bus_lock_);
     ESP_LOGE(kThermocoupleLogTag,
-             "boiler sensor CS setup failed on GPIO%" PRId32,
-             selected_gpio);
+             "%s sensor CS setup failed on GPIO%" PRId32,
+             sensor_name, selected_gpio);
     return false;
   }
 
@@ -136,8 +152,8 @@ bool EspMax6675Transport::read_frame(std::uint16_t& frame) {
     gpio_set_level(static_cast<gpio_num_t>(selected_gpio), 1);
     portEXIT_CRITICAL(&bus_lock_);
     ESP_LOGE(kThermocoupleLogTag,
-             "boiler sensor CS verification failed: GPIO%" PRId32 "=%d",
-             selected_gpio, selected_level);
+             "%s sensor CS verification failed: GPIO%" PRId32 "=%d",
+             sensor_name, selected_gpio, selected_level);
     return false;
   }
 
@@ -171,19 +187,33 @@ bool EspMax6675Transport::read_frame(std::uint16_t& frame) {
   portEXIT_CRITICAL(&bus_lock_);
   if (clock_high_failed || clock_low_failed) {
     ESP_LOGE(kThermocoupleLogTag,
-             "boiler sensor clock-%s failed on GPIO%" PRId32,
-             clock_high_failed ? "high" : "low", selected_clock_gpio);
+             "%s sensor clock-%s failed on GPIO%" PRId32,
+             sensor_name, clock_high_failed ? "high" : "low",
+             selected_clock_gpio);
     return false;
   }
   if (deselect_result != ESP_OK) {
     ESP_LOGE(kThermocoupleLogTag,
-             "boiler sensor deselect failed on GPIO%" PRId32 ": %s",
-             selected_gpio,
+             "%s sensor deselect failed on GPIO%" PRId32 ": %s",
+             sensor_name, selected_gpio,
              esp_err_to_name(deselect_result));
     return false;
   }
 
   return true;
+}
+
+EspMax6675Transport::EspMax6675Transport(EspMax6675Bus& bus,
+                                         const char* sensor_name,
+                                         std::int32_t chip_select_gpio,
+                                         std::int32_t data_gpio)
+    : bus_(bus),
+      sensor_name_(sensor_name),
+      chip_select_gpio_(chip_select_gpio),
+      data_gpio_(data_gpio) {}
+
+bool EspMax6675Transport::read_frame(std::uint16_t& frame) {
+  return bus_.read_frame(sensor_name_, chip_select_gpio_, data_gpio_, frame);
 }
 
 bool EspHx711Transport::initialize() {
@@ -352,12 +382,19 @@ bool EspNvsTargetBackend::save(const TemperatureTargets& targets) {
          nvs_commit(handle_) == ESP_OK;
 }
 
+EspNvsTemperatureCalibrationBackend::EspNvsTemperatureCalibrationBackend(
+    TemperatureSensor sensor)
+    : sensor_(sensor) {}
+
 bool EspNvsTemperatureCalibrationBackend::initialize() {
   if (!initialize_nvs_flash()) {
     return false;
   }
   nvs_handle_t handle = 0;
-  if (nvs_open(kTemperatureCalibrationNvsNamespace, NVS_READWRITE, &handle) !=
+  const auto* name = sensor_ == TemperatureSensor::kBoiler
+                         ? kBoilerTemperatureCalibrationNvsNamespace
+                         : kSteamTemperatureCalibrationNvsNamespace;
+  if (nvs_open(name, NVS_READWRITE, &handle) !=
       ESP_OK) {
     return false;
   }
@@ -419,34 +456,47 @@ BackendLoadResult EspNvsSteamControlSettingsBackend::load(
   if (!initialized_) {
     return BackendLoadResult::kError;
   }
-  std::array<std::int32_t, 5> stored{};
-  std::size_t stored_size = sizeof(stored);
-  const auto result =
-      nvs_get_blob(handle_, kSteamControlKey, stored.data(), &stored_size);
+  std::size_t stored_size = 0;
+  const auto result = nvs_get_blob(handle_, kSteamControlKey, nullptr,
+                                   &stored_size);
   if (result == ESP_ERR_NVS_NOT_FOUND) {
     return BackendLoadResult::kNotFound;
   }
-  if (result != ESP_OK || stored_size != sizeof(stored) ||
-      stored[0] != kSteamControlBlobMagic ||
-      stored[1] != kSteamControlBlobVersion || stored[3] < 0 ||
-      stored[4] < 0) {
+  if (result != ESP_OK) {
     return BackendLoadResult::kError;
   }
-  settings = {
-      stored[2],
-      static_cast<std::uint32_t>(stored[3]),
-      static_cast<std::uint32_t>(stored[4]),
-  };
+  std::int32_t ready_timeout = 0;
+  if (stored_size == sizeof(std::array<std::int32_t, 5>)) {
+    std::array<std::int32_t, 5> legacy{};
+    if (nvs_get_blob(handle_, kSteamControlKey, legacy.data(), &stored_size) !=
+            ESP_OK ||
+        legacy[0] != kSteamControlBlobMagic ||
+        legacy[1] != kSteamControlLegacyBlobVersion) {
+      return BackendLoadResult::kError;
+    }
+    ready_timeout = legacy[4];
+  } else if (stored_size == sizeof(std::array<std::int32_t, 3>)) {
+    std::array<std::int32_t, 3> stored{};
+    if (nvs_get_blob(handle_, kSteamControlKey, stored.data(), &stored_size) !=
+            ESP_OK ||
+        stored[0] != kSteamControlBlobMagic ||
+        stored[1] != kSteamControlBlobVersion) {
+      return BackendLoadResult::kError;
+    }
+    ready_timeout = stored[2];
+  } else {
+    return BackendLoadResult::kError;
+  }
+  if (ready_timeout < 0) return BackendLoadResult::kError;
+  settings = {static_cast<std::uint32_t>(ready_timeout)};
   return BackendLoadResult::kOk;
 }
 
 bool EspNvsSteamControlSettingsBackend::save(
     const SteamControlSettings& settings) {
-  const std::array<std::int32_t, 5> stored{
+  const std::array<std::int32_t, 3> stored{
       kSteamControlBlobMagic,
       kSteamControlBlobVersion,
-      settings.initial_compensation_c,
-      static_cast<std::int32_t>(settings.decay_duration_ms),
       static_cast<std::int32_t>(settings.ready_timeout_ms),
   };
   return initialized_ && steam_control_settings_are_valid(settings) &&

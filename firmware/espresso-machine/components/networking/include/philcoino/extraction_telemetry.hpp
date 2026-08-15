@@ -34,6 +34,7 @@ struct ExtractionTelemetrySample {
   std::uint32_t extraction_elapsed_ms{0};
   std::int32_t net_weight_decigrams{0};
   std::int16_t temperature_quarters_c{0};
+  std::int16_t steam_temperature_quarters_c{0};
   std::uint8_t active_target_c{0};
   std::uint8_t flags{0};
 };
@@ -51,6 +52,7 @@ struct ExtractionTelemetrySlot {
   std::atomic<std::uint32_t> extraction_elapsed_ms{0};
   std::atomic<std::int32_t> net_weight_decigrams{0};
   std::atomic<std::int16_t> temperature_quarters_c{0};
+  std::atomic<std::int16_t> steam_temperature_quarters_c{0};
   std::atomic<std::uint8_t> active_target_c{0};
   std::atomic<std::uint8_t> flags{0};
 };

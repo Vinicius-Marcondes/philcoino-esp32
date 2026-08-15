@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import {
   ApiErrorResponseSchema,
-  MachineStateV3Schema,
+  MachineStateV4Schema,
   PairingClientBindingSchema,
   PairingCompleteResponseSchema,
   PairingDeviceBindingSchema,
@@ -18,42 +18,42 @@ import { SrpClientSession } from "../src/srp.ts";
 
 const clientNonce = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 
-describe("deterministic v3 simulator", () => {
-  it("exposes no v1 or v2 route", async () => {
+describe("deterministic v4 simulator", () => {
+  it("exposes no legacy API route", async () => {
     const { app } = createSimulator();
-    for (const path of ["/api/v1/state", "/api/v2/state", "/api/v2/scale/trace"]) {
+    for (const path of ["/api/v1/state", "/api/v2/state", "/api/v3/state"]) {
       expect((await app.request(path)).status).toBe(404);
     }
   });
 
   it("pairs through SRP and protects state", async () => {
     const simulator = createSimulator();
-    expect((await simulator.app.request("/api/v3/state")).status).toBe(401);
+    expect((await simulator.app.request("/api/v4/state")).status).toBe(401);
     const token = await pair(simulator, 1);
-    const response = await authenticated(simulator, token, "/api/v3/state");
+    const response = await authenticated(simulator, token, "/api/v4/state");
     expect(response.status).toBe(200);
-    expect(MachineStateV3Schema.parse(await response.json()).apiVersion).toBe("3");
+    expect(MachineStateV4Schema.parse(await response.json()).apiVersion).toBe("4");
   });
 
   it("returns complete increasing state acknowledgements for mutations", async () => {
     const simulator = createSimulator();
     const token = await pair(simulator, 2);
-    const first = MachineStateV3Schema.parse(
-      await (await authenticated(simulator, token, "/api/v3/state")).json(),
+    const first = MachineStateV4Schema.parse(
+      await (await authenticated(simulator, token, "/api/v4/state")).json(),
     );
-    const updatedResponse = await authenticated(simulator, token, "/api/v3/settings", {
+    const updatedResponse = await authenticated(simulator, token, "/api/v4/settings", {
       method: "PATCH",
       body: JSON.stringify({
         brewTargetC: 94,
         steamTargetC: 121,
-        steamControl: { initialCompensationC: 10 },
+        steamReadyTimeoutMs: 600_000,
       }),
     });
-    const updated = MachineStateV3Schema.parse(await updatedResponse.json());
+    const updated = MachineStateV4Schema.parse(await updatedResponse.json());
     expect(updated.revision).toBeGreaterThan(first.revision);
     expect(updated.machine.brewTargetC).toBe(94);
     expect(updated.machine.steamTargetC).toBe(121);
-    expect(updated.machine.steamControl.settings.initialCompensationC).toBe(10);
+    expect(updated.machine.steamReadyTimeoutMs).toBe(600_000);
   });
 
   it("allows a wrong-code retry without rate limiting", async () => {
@@ -64,7 +64,7 @@ describe("deterministic v3 simulator", () => {
       decodeBase64Url(wrong.start.serverPublicKey),
     );
     const rejected = await simulator.app.request(
-      `/api/v3/pairing/sessions/${wrong.start.sessionId}/proof`,
+      `/api/v4/pairing/sessions/${wrong.start.sessionId}/proof`,
       jsonRequest({ clientProof: encodeBase64Url(proof) }),
     );
     expect(rejected.status).toBe(401);
@@ -83,7 +83,7 @@ describe("deterministic v3 simulator", () => {
     expect(ApiErrorResponseSchema.parse(await busy.json()).error.code).toBe("pairing_busy");
 
     const malformed = await simulator.app.request(
-      `/api/v3/pairing/sessions/${second.start.sessionId}/proof`,
+      `/api/v4/pairing/sessions/${second.start.sessionId}/proof`,
       jsonRequest({ clientProof: "***" }),
     );
     expect(malformed.status).toBe(400);
@@ -95,7 +95,7 @@ describe("deterministic v3 simulator", () => {
     const expiring = await beginPairing(simulator, DEFAULT_SIMULATOR_PAIRING_CODE, 40);
     simulator.machine.advance(90_000);
     const expired = await simulator.app.request(
-      `/api/v3/pairing/sessions/${expiring.start.sessionId}/proof`,
+      `/api/v4/pairing/sessions/${expiring.start.sessionId}/proof`,
       jsonRequest({ clientProof: encodeBase64Url(new Uint8Array(64)) }),
     );
     expect(expired.status).toBe(409);
@@ -105,7 +105,7 @@ describe("deterministic v3 simulator", () => {
 
     const completed = await completePairing(simulator, 41);
     const replay = await simulator.app.request(
-      `/api/v3/pairing/sessions/${completed.sessionId}/complete`,
+      `/api/v4/pairing/sessions/${completed.sessionId}/complete`,
       jsonRequest(completed.completeRequest),
     );
     expect(replay.status).toBe(409);
@@ -117,7 +117,7 @@ describe("deterministic v3 simulator", () => {
   it("rejects malformed, unknown, and wrong-stage SRP requests", async () => {
     const simulator = createSimulator();
     const malformed = await simulator.app.request(
-      "/api/v3/pairing/sessions",
+      "/api/v4/pairing/sessions",
       jsonRequest({
         clientName: "test",
         clientNonce,
@@ -127,7 +127,7 @@ describe("deterministic v3 simulator", () => {
     expect(malformed.status).toBe(400);
 
     const unknown = await simulator.app.request(
-      "/api/v3/pairing/sessions",
+      "/api/v4/pairing/sessions",
       jsonRequest({
         clientName: "test",
         clientNonce,
@@ -139,7 +139,7 @@ describe("deterministic v3 simulator", () => {
 
     const active = await beginPairing(simulator, DEFAULT_SIMULATOR_PAIRING_CODE, 50);
     const wrongStage = await simulator.app.request(
-      `/api/v3/pairing/sessions/${active.start.sessionId}/complete`,
+      `/api/v4/pairing/sessions/${active.start.sessionId}/complete`,
       jsonRequest({
         clientId: clientId(50),
         encryptedClientBinding: encodeBase64Url(new Uint8Array(32)),
@@ -182,9 +182,9 @@ describe("deterministic v3 simulator", () => {
     for (let client = 0; client < 5; client += 1) {
       tokens.push(await pair(simulator, client + 70));
     }
-    expect((await authenticated(simulator, tokens[0], "/api/v3/state")).status).toBe(401);
+    expect((await authenticated(simulator, tokens[0], "/api/v4/state")).status).toBe(401);
     for (const token of tokens.slice(1)) {
-      expect((await authenticated(simulator, token, "/api/v3/state")).status).toBe(200);
+      expect((await authenticated(simulator, token, "/api/v4/state")).status).toBe(200);
     }
   });
 
@@ -192,9 +192,9 @@ describe("deterministic v3 simulator", () => {
     const simulator = createSimulator();
     const token = await pair(simulator, 80);
     simulator.rotatePairingCode(DEFAULT_SIMULATOR_PAIRING_CODE);
-    expect((await authenticated(simulator, token, "/api/v3/state")).status).toBe(200);
+    expect((await authenticated(simulator, token, "/api/v4/state")).status).toBe(200);
     simulator.rotatePairingCode("87654321");
-    expect((await authenticated(simulator, token, "/api/v3/state")).status).toBe(401);
+    expect((await authenticated(simulator, token, "/api/v4/state")).status).toBe(401);
     expect(await pair(simulator, 81, "87654321")).toHaveLength(43);
     expect(() => simulator.rotatePairingCode("1234567x")).toThrow();
   });
@@ -202,7 +202,7 @@ describe("deterministic v3 simulator", () => {
   it("streams the retained telemetry source and refuses a second subscriber", async () => {
     const simulator = createSimulator();
     const token = await pair(simulator, 90);
-    await authenticated(simulator, token, "/api/v3/extractions", {
+    await authenticated(simulator, token, "/api/v4/extractions", {
       method: "POST",
       body: JSON.stringify({
         idempotencyKey: "manual-extraction-0001",
@@ -213,13 +213,13 @@ describe("deterministic v3 simulator", () => {
     const first = await authenticated(
       simulator,
       token,
-      "/api/v3/extractions/current/stream",
+      "/api/v4/extractions/current/stream",
     );
     expect(first.status).toBe(200);
     const second = await authenticated(
       simulator,
       token,
-      "/api/v3/extractions/current/stream",
+      "/api/v4/extractions/current/stream",
     );
     expect(second.status).toBe(409);
     expect(ApiErrorResponseSchema.parse(await second.json()).error.code).toBe("stream_busy");
@@ -251,7 +251,7 @@ async function beginPairing(
 
 function startSession(simulator: SimulatorApplication, client: SrpClientSession) {
   return simulator.app.request(
-    "/api/v3/pairing/sessions",
+    "/api/v4/pairing/sessions",
     jsonRequest({
       clientName: "Simulator test",
       clientNonce,
@@ -271,7 +271,7 @@ async function provePairing(
     decodeBase64Url(begun.start.serverPublicKey),
   );
   const response = await simulator.app.request(
-    `/api/v3/pairing/sessions/${begun.start.sessionId}/proof`,
+    `/api/v4/pairing/sessions/${begun.start.sessionId}/proof`,
     jsonRequest({ clientProof: encodeBase64Url(clientProof) }),
   );
   expect(response.status).toBe(200);
@@ -309,7 +309,7 @@ async function completePairing(
     clientId: clientId(clientNumber),
     encryptedClientBinding: encodeBase64Url(await exchange.client.encrypt(
       JSON.stringify(PairingClientBindingSchema.parse({
-        domain: "philcoino:v3:client-binding",
+        domain: "philcoino:v4:client-binding",
         sessionId: exchange.start.sessionId,
         clientId: clientId(clientNumber),
         clientNonce,
@@ -319,7 +319,7 @@ async function completePairing(
     )),
   };
   const response = await simulator.app.request(
-    `/api/v3/pairing/sessions/${exchange.start.sessionId}/complete`,
+    `/api/v4/pairing/sessions/${exchange.start.sessionId}/complete`,
     jsonRequest(completeRequest),
   );
   expect(response.status).toBe(200);

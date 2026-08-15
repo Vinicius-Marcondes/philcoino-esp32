@@ -17,6 +17,7 @@ export type TraceGapStatus = "continuous" | "gap";
 export interface StoredExtractionTraceSample {
   activeTargetC: number;
   boilerTemperatureC: number | null;
+  steamTemperatureC: number | null;
   derivedFlowGPerS: number | null;
   elapsedMs: number;
   extractionElapsedMs?: number;
@@ -181,7 +182,8 @@ export function extractionTraceToCsv(trace: StoredExtractionTrace): string {
       "pre_infusion_seconds",
       "soak_seconds",
       "main_extraction_seconds",
-      "temperature_c",
+      "boiler_temperature_c",
+      "steam_temperature_c",
       "target_c",
       "baseline_weight_g",
       "weight_g",
@@ -219,6 +221,7 @@ export function extractionTraceToCsv(trace: StoredExtractionTrace): string {
           ? trace.selection.profile.mainExtractionSeconds
           : "",
         sample.boilerTemperatureC,
+        sample.steamTemperatureC,
         sample.activeTargetC,
         nullableDecigrams(trace.baselineWeightDecigrams ?? null),
         sample.netWeightDecigrams === null

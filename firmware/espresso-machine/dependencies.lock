@@ -33,6 +33,6 @@ direct_dependencies:
 - espressif/mdns
 - idf
 - rbdimmer/rbdimmerESP32
-manifest_hash: 5cb151343351c73143ddfce10279369d0a6e479539ac9be2cfc103a8d0668ceb
-target: esp32c3
+manifest_hash: 0ade946c26a6ec56290d588d257da51cd58e8495885ca7ac49adf4669480b986
+target: esp32s3
 version: 3.0.0

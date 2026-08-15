@@ -105,7 +105,8 @@ export function WeightedTraceChart({
         selected ? (
           <Text selectable style={telemetrySurfaceStyles.inspection}>
             {formatElapsedReadout(selected.elapsedMs, 2)} ·{" "}
-            {formatTemperatureReadout(selected.boilerTemperatureC, " °C")} ·{" "}
+            Boiler {formatTemperatureReadout(selected.boilerTemperatureC, " °C")} ·{" "}
+            Steam {formatTemperatureReadout(selected.steamTemperatureC, " °C")} ·{" "}
             {selected.netWeightDecigrams === null
               ? translate("scale.telemetryWeightUnavailable")
               : formatWeightReadout(selected.netWeightDecigrams)}
@@ -123,8 +124,13 @@ export function WeightedTraceChart({
       metrics={[
         {
           color: TELEMETRY_COLORS.temperature,
-          label: translate("scale.telemetryTemperature"),
+          label: "Boiler",
           value: formatTemperatureReadout(latest?.boilerTemperatureC ?? null),
+        },
+        {
+          color: TELEMETRY_COLORS.steamTemperature,
+          label: "Steam",
+          value: formatTemperatureReadout(latest?.steamTemperatureC ?? null),
         },
         {
           color: TELEMETRY_COLORS.weight,
@@ -238,6 +244,15 @@ function WeightedTraceSvg({
           strokeWidth={2}
         />
       ))}
+      {plot.steamTemperaturePaths.map((path, index) => (
+        <Path
+          d={path}
+          fill="none"
+          key={`steam-temperature-${index}`}
+          stroke={TELEMETRY_COLORS.steamTemperature}
+          strokeWidth={2}
+        />
+      ))}
       {plot.weightPaths.map((path, index) => (
         <Path
           d={path}
@@ -279,6 +294,16 @@ function WeightedTraceSvg({
             stroke={TELEMETRY_COLORS.temperature}
             strokeWidth={2}
           />
+          ) : null}
+          {latest.steamTemperatureC !== null ? (
+            <Circle
+              cx={plot.x(latest.elapsedMs)}
+              cy={plot.temperatureY(latest.steamTemperatureC)}
+              fill={TELEMETRY_COLORS.background}
+              r={4}
+              stroke={TELEMETRY_COLORS.steamTemperature}
+              strokeWidth={2}
+            />
           ) : null}
           {latest.netWeightDecigrams !== null ? (
             <Circle

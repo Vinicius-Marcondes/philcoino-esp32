@@ -6,9 +6,9 @@
 
 namespace philcoino::config {
 
-inline constexpr char kFirmwareVersion[] = "0.4.1";
+inline constexpr char kFirmwareVersion[] = "0.5.0";
 inline constexpr char kFriendlyName[] = "PhilcoINO";
-inline constexpr char kDeviceModel[] = "ESP32-C3 Super Mini";
+inline constexpr char kDeviceModel[] = "ESP32-S3-WROOM-1 N16R8";
 inline constexpr char kDeviceIdPrefix[] = "philcoino-";
 inline constexpr bool kWifiEnabled = true;
 
@@ -26,16 +26,7 @@ inline constexpr std::int32_t kPreInfusionHeaterDutyOffsetC = 0;
 inline constexpr std::int32_t kExtractionHeaterDutyOffsetC = 2;
 inline constexpr std::int32_t kBrewOverTemperatureC = 98;
 inline constexpr std::int32_t kSteamOverTemperatureC = 135;
-inline constexpr std::int32_t kRawBoilerOverTemperatureC = 135;
-inline constexpr std::int32_t kSteamCompensationInitialMinimumC = 0;
-inline constexpr std::int32_t kSteamCompensationInitialMaximumC = 20;
-inline constexpr std::int32_t kSteamCompensationInitialDefaultC = 12;
-inline constexpr std::uint32_t kSteamCompensationDecayMinimumMs =
-    1U * 60U * 1000U;
-inline constexpr std::uint32_t kSteamCompensationDecayMaximumMs =
-    30U * 60U * 1000U;
-inline constexpr std::uint32_t kSteamCompensationDecayDefaultMs =
-    12U * 60U * 1000U;
+inline constexpr std::int32_t kRawTemperatureOverTemperatureC = 135;
 inline constexpr std::uint32_t kSteamReadyTimeoutMinimumMs =
     1U * 60U * 1000U;
 inline constexpr std::uint32_t kSteamReadyTimeoutMaximumMs =
@@ -48,6 +39,7 @@ inline constexpr std::uint32_t kReadyStabilityMs = 3U * 1000U;
 inline constexpr std::int32_t kReadyBandC = 1;
 inline constexpr std::uint32_t kTemperatureControllerIntervalMs = 500U;
 inline constexpr std::uint32_t kSensorFailureConsecutiveSamples = 3U;
+inline constexpr float kMaximumAcceptedTemperatureDropC = 10.0F;
 inline constexpr std::uint32_t kHeaterControlWindowMs = 10U * 1000U;
 inline constexpr std::uint32_t kMinimumHeaterPulseMs = 500U;
 inline constexpr std::uint32_t kHeaterSafetyLeaseMs = 1500U;
@@ -64,8 +56,12 @@ inline constexpr float kSteamRecoveryHeatRampBandC = 6.0F;
 inline constexpr std::int32_t kBoilerThermocoupleClockGpio = 4;
 inline constexpr std::int32_t kBoilerThermocoupleDataGpio = 5;
 inline constexpr std::int32_t kBoilerThermocoupleChipSelectGpio = 7;
+inline constexpr std::int32_t kSteamThermocoupleClockGpio =
+    kBoilerThermocoupleClockGpio;
+inline constexpr std::int32_t kSteamThermocoupleDataGpio = 8;
+inline constexpr std::int32_t kSteamThermocoupleChipSelectGpio = 9;
 
-inline constexpr std::int32_t kSsrGpio = 20;
+inline constexpr std::int32_t kSsrGpio = 21;
 inline constexpr bool kSsrActiveHigh = true;
 inline constexpr std::int32_t kPumpDimmerGpio = 10;
 inline constexpr std::int32_t kPumpZeroCrossGpio = 6;
@@ -74,8 +70,10 @@ inline constexpr std::uint16_t kPumpMainsFrequencyHz = 60;
 // Temporary hard limit: the pending pressure sensor is rated to approximately
 // 13 bar and closed-loop pressure regulation is not implemented yet.
 inline constexpr std::uint8_t kPumpMaximumPowerPercent = 90;
-inline constexpr std::int32_t kScaleDataGpio = 0;
-inline constexpr std::int32_t kScaleClockGpio = 1;
+inline constexpr std::int32_t kScaleDataGpio = 11;
+inline constexpr std::int32_t kScaleClockGpio = 12;
+inline constexpr std::int32_t kNativeUsbDmGpio = 19;
+inline constexpr std::int32_t kNativeUsbDpGpio = 20;
 inline constexpr std::uint32_t kScaleTaskMinimumLoopDelayMs = 10U;
 inline constexpr std::uint32_t kScaleUnavailableTimeoutMs = 750U;
 inline constexpr std::uint32_t kScaleAutomaticTareTimeoutMs = 3U * 1000U;

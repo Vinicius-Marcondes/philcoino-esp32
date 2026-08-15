@@ -191,14 +191,16 @@ class SQLiteShotHistoryRepository implements ShotHistoryRepository {
         await database.runAsync(
           `INSERT OR REPLACE INTO extraction_trace_samples (
             device_id, extraction_id, boot_id, sequence, uptime_ms, elapsed_ms,
-            extraction_elapsed_ms, phase, boiler_temperature_c, active_target_c,
+            extraction_elapsed_ms, phase, boiler_temperature_c, steam_temperature_c,
+            active_target_c,
             heater_active, net_weight_decigrams, scale_availability, pump_command,
             derived_flow_g_per_s, gap_status
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           trace.deviceId, trace.extractionId, trace.bootId, sample.sequence,
           sample.uptimeMs, sample.elapsedMs,
           sample.extractionElapsedMs ?? sample.elapsedMs, sample.phase,
-          sample.boilerTemperatureC, sample.activeTargetC,
+          sample.boilerTemperatureC, sample.steamTemperatureC,
+          sample.activeTargetC,
           sample.heaterActive === undefined ? null : sample.heaterActive ? 1 : 0,
           sample.netWeightDecigrams, sample.scaleAvailability,
           sample.pumpCommand, sample.derivedFlowGPerS, sample.gapStatus,
@@ -322,6 +324,10 @@ class SQLiteShotHistoryRepository implements ShotHistoryRepository {
           row.boiler_temperature_c === null
             ? null
             : Number(row.boiler_temperature_c),
+        steamTemperatureC:
+          row.steam_temperature_c === null
+            ? null
+            : Number(row.steam_temperature_c),
         derivedFlowGPerS:
           row.derived_flow_g_per_s === null
             ? null
@@ -438,6 +444,7 @@ class SQLiteShotHistoryRepository implements ShotHistoryRepository {
         extraction_elapsed_ms INTEGER NOT NULL,
         phase TEXT NOT NULL,
         boiler_temperature_c REAL,
+        steam_temperature_c REAL,
         active_target_c INTEGER NOT NULL,
         heater_active INTEGER,
         net_weight_decigrams INTEGER,
@@ -501,6 +508,12 @@ class SQLiteShotHistoryRepository implements ShotHistoryRepository {
     await migrateExtractionTraceSamples(database);
     await ensureColumn(
       database,
+      "extraction_trace_samples",
+      "steam_temperature_c",
+      "REAL",
+    );
+    await ensureColumn(
+      database,
       "extraction_traces",
       "selection_profile_json",
       "TEXT",
@@ -552,12 +565,13 @@ class SQLiteShotHistoryRepository implements ShotHistoryRepository {
              AND h.extraction_id = t.extraction_id;
         INSERT OR IGNORE INTO extraction_trace_samples (
           device_id, extraction_id, boot_id, sequence, uptime_ms, elapsed_ms,
-          extraction_elapsed_ms, phase, boiler_temperature_c, active_target_c,
+          extraction_elapsed_ms, phase, boiler_temperature_c, steam_temperature_c,
+          active_target_c,
           heater_active, net_weight_decigrams, scale_availability, pump_command,
           derived_flow_g_per_s, gap_status
         ) SELECT device_id, extraction_id, boot_id, sequence, uptime_ms,
                  elapsed_ms, MIN(elapsed_ms, 60000), phase,
-                 boiler_temperature_c, active_target_c, NULL,
+                 boiler_temperature_c, NULL, active_target_c, NULL,
                  net_weight_decigrams, scale_availability, pump_command,
                  derived_flow_g_per_s, gap_status
             FROM weighted_shot_trace_samples;
@@ -705,7 +719,7 @@ async function migrateExtractionTraceSamples(
   );
   if (temperature === undefined || temperature.notnull === 0) return;
 
-  // API v3 represents an unavailable temperature as null. Older app databases
+  // API v4 represents unavailable temperatures as null. Older app databases
   // incorrectly rejected that valid stream sample and stopped the whole graph.
   await database.withTransactionAsync(async () => {
     await database.execAsync(`
@@ -720,6 +734,7 @@ async function migrateExtractionTraceSamples(
         extraction_elapsed_ms INTEGER NOT NULL,
         phase TEXT NOT NULL,
         boiler_temperature_c REAL,
+        steam_temperature_c REAL,
         active_target_c INTEGER NOT NULL,
         heater_active INTEGER,
         net_weight_decigrams INTEGER,
@@ -729,8 +744,16 @@ async function migrateExtractionTraceSamples(
         gap_status TEXT NOT NULL,
         PRIMARY KEY(device_id, extraction_id, boot_id, sequence)
       );
-      INSERT INTO extraction_trace_samples_nullable_temperature
-        SELECT * FROM extraction_trace_samples;
+      INSERT INTO extraction_trace_samples_nullable_temperature (
+        device_id, extraction_id, boot_id, sequence, uptime_ms, elapsed_ms,
+        extraction_elapsed_ms, phase, boiler_temperature_c, steam_temperature_c,
+        active_target_c, heater_active, net_weight_decigrams, scale_availability,
+        pump_command, derived_flow_g_per_s, gap_status
+      ) SELECT device_id, extraction_id, boot_id, sequence, uptime_ms, elapsed_ms,
+        extraction_elapsed_ms, phase, boiler_temperature_c, NULL,
+        active_target_c, heater_active, net_weight_decigrams, scale_availability,
+        pump_command, derived_flow_g_per_s, gap_status
+        FROM extraction_trace_samples;
       DROP TABLE extraction_trace_samples;
       ALTER TABLE extraction_trace_samples_nullable_temperature
         RENAME TO extraction_trace_samples;

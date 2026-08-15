@@ -110,6 +110,7 @@ function liveTrace(netWeightDecigrams: number): StoredExtractionTrace {
     samples: [{
       activeTargetC: 93,
       boilerTemperatureC: 92,
+      steamTemperatureC: 114,
       derivedFlowGPerS: 1.2,
       elapsedMs: 1000,
       extractionElapsedMs: 1000,

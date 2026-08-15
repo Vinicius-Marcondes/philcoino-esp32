@@ -4,7 +4,7 @@ import {
   ExtractionTelemetryCursorSchema,
   HeaterSettingsRequestSchema,
   HealthResponseSchema,
-  MachineStateV3Schema,
+  MachineStateV4Schema,
   ModeRequestSchema,
   SettingsRequestSchema,
   StartCooldownRequestSchema,
@@ -15,12 +15,13 @@ import {
   type ExtractionTelemetryCursor,
   type ExtractionTelemetryPage,
   type HealthResponse,
-  type MachineStateV3,
+  type MachineStateV4,
   type ModeRequest,
   type SettingsRequest,
   type StartCooldownRequest,
   type StartExtractionRequest,
   type TemperatureCalibrationSessionRequest,
+  type TemperatureSensor,
   type UpdateTemperatureCalibrationCandidateRequest,
 } from "@philcoino/protocol";
 
@@ -101,20 +102,20 @@ export class DeviceApiClient {
     return this.request("/healthz", HealthResponseSchema, "GET", undefined, options);
   }
 
-  getState(options: RequestOptions = {}): Promise<MachineStateV3> {
-    return this.requestState("/api/v3/state", "GET", undefined, options);
+  getState(options: RequestOptions = {}): Promise<MachineStateV4> {
+    return this.requestState("/api/v4/state", "GET", undefined, options);
   }
 
   updateSettings(
     settings: SettingsRequest,
     options: RequestOptions = {},
-  ): Promise<MachineStateV3> {
+  ): Promise<MachineStateV4> {
     const parsed = SettingsRequestSchema.safeParse(settings);
     if (!parsed.success) {
       throw new ApiClientError("invalid-request", "The settings request is invalid.");
     }
     return this.requestState(
-      "/api/v3/settings",
+      "/api/v4/settings",
       "PATCH",
       parsed.data,
       options,
@@ -124,32 +125,32 @@ export class DeviceApiClient {
   updateTemperatureSettings(
     settings: Pick<SettingsRequest, "brewTargetC" | "steamTargetC">,
     options: RequestOptions = {},
-  ): Promise<MachineStateV3> {
+  ): Promise<MachineStateV4> {
     return this.updateSettings(settings, options);
   }
 
-  updateSteamControlSettings(
-    steamControl: NonNullable<SettingsRequest["steamControl"]>,
+  updateSteamReadyTimeout(
+    steamReadyTimeoutMs: NonNullable<SettingsRequest["steamReadyTimeoutMs"]>,
     options: RequestOptions = {},
-  ): Promise<MachineStateV3> {
-    return this.updateSettings({ steamControl }, options);
+  ): Promise<MachineStateV4> {
+    return this.updateSettings({ steamReadyTimeoutMs }, options);
   }
 
   setMode(
     request: ModeRequest,
     options: RequestOptions = {},
-  ): Promise<MachineStateV3> {
+  ): Promise<MachineStateV4> {
     const parsed = ModeRequestSchema.safeParse(request);
     if (!parsed.success) {
       throw new ApiClientError("invalid-request", "The mode request is invalid.");
     }
-    return this.requestState("/api/v3/mode", "PUT", parsed.data, options);
+    return this.requestState("/api/v4/mode", "PUT", parsed.data, options);
   }
 
   setHeaterEnabled(
     request: { enabled: boolean },
     options: RequestOptions = {},
-  ): Promise<MachineStateV3> {
+  ): Promise<MachineStateV4> {
     const parsed = HeaterSettingsRequestSchema.safeParse(request);
     if (!parsed.success) {
       throw new ApiClientError(
@@ -158,7 +159,7 @@ export class DeviceApiClient {
       );
     }
     return this.requestState(
-      "/api/v3/heater-permission",
+      "/api/v4/heater-permission",
       "PUT",
       parsed.data,
       options,
@@ -167,9 +168,9 @@ export class DeviceApiClient {
 
   dismissOverTemperature(
     options: RequestOptions = {},
-  ): Promise<MachineStateV3> {
+  ): Promise<MachineStateV4> {
     return this.requestState(
-      "/api/v3/faults/over-temperature/dismiss",
+      "/api/v4/faults/over-temperature/dismiss",
       "POST",
       undefined,
       options,
@@ -177,10 +178,11 @@ export class DeviceApiClient {
   }
 
   startTemperatureCalibration(
+    sensor: TemperatureSensor,
     options: RequestOptions = {},
-  ): Promise<MachineStateV3> {
+  ): Promise<MachineStateV4> {
     return this.requestState(
-      "/api/v3/temperature-calibrations/current",
+      `/api/v4/temperature-calibrations/${sensor}/current`,
       "POST",
       undefined,
       options,
@@ -188,9 +190,10 @@ export class DeviceApiClient {
   }
 
   updateTemperatureCalibrationCandidate(
+    sensor: TemperatureSensor,
     request: UpdateTemperatureCalibrationCandidateRequest,
     options: RequestOptions = {},
-  ): Promise<MachineStateV3> {
+  ): Promise<MachineStateV4> {
     const parsed =
       UpdateTemperatureCalibrationCandidateRequestSchema.safeParse(request);
     if (!parsed.success) {
@@ -200,7 +203,7 @@ export class DeviceApiClient {
       );
     }
     return this.requestState(
-      "/api/v3/temperature-calibrations/current",
+      `/api/v4/temperature-calibrations/${sensor}/current`,
       "PATCH",
       parsed.data,
       options,
@@ -208,31 +211,34 @@ export class DeviceApiClient {
   }
 
   saveTemperatureCalibration(
+    sensor: TemperatureSensor,
     request: TemperatureCalibrationSessionRequest,
     options: RequestOptions = {},
-  ): Promise<MachineStateV3> {
-    return this.temperatureCalibrationMutation("PUT", request, options);
+  ): Promise<MachineStateV4> {
+    return this.temperatureCalibrationMutation(sensor, "PUT", request, options);
   }
 
   cancelTemperatureCalibration(
+    sensor: TemperatureSensor,
     request: TemperatureCalibrationSessionRequest,
     options: RequestOptions = {},
-  ): Promise<MachineStateV3> {
-    return this.temperatureCalibrationMutation("DELETE", request, options);
+  ): Promise<MachineStateV4> {
+    return this.temperatureCalibrationMutation(sensor, "DELETE", request, options);
   }
 
   renewTemperatureCalibration(
+    sensor: TemperatureSensor,
     request: TemperatureCalibrationSessionRequest,
     options: RequestOptions = {},
-  ): Promise<MachineStateV3> {
-    return this.temperatureCalibrationMutation("POST", request, options, true);
+  ): Promise<MachineStateV4> {
+    return this.temperatureCalibrationMutation(sensor, "POST", request, options, true);
   }
 
   startScaleCalibration(
     options: RequestOptions = {},
-  ): Promise<MachineStateV3> {
+  ): Promise<MachineStateV4> {
     return this.requestState(
-      "/api/v3/scale-calibrations/current",
+      "/api/v4/scale-calibrations/current",
       "POST",
       undefined,
       options,
@@ -242,7 +248,7 @@ export class DeviceApiClient {
   completeScaleCalibration(
     request: CompleteScaleCalibrationRequest,
     options: RequestOptions = {},
-  ): Promise<MachineStateV3> {
+  ): Promise<MachineStateV4> {
     const parsed = CompleteScaleCalibrationRequestSchema.safeParse(request);
     if (!parsed.success) {
       throw new ApiClientError(
@@ -251,7 +257,7 @@ export class DeviceApiClient {
       );
     }
     return this.requestState(
-      "/api/v3/scale-calibrations/current",
+      "/api/v4/scale-calibrations/current",
       "PUT",
       parsed.data,
       options,
@@ -260,9 +266,9 @@ export class DeviceApiClient {
 
   cancelScaleCalibration(
     options: RequestOptions = {},
-  ): Promise<MachineStateV3> {
+  ): Promise<MachineStateV4> {
     return this.requestState(
-      "/api/v3/scale-calibrations/current",
+      "/api/v4/scale-calibrations/current",
       "DELETE",
       undefined,
       options,
@@ -271,9 +277,9 @@ export class DeviceApiClient {
 
   acknowledgeScaleWarning(
     options: RequestOptions = {},
-  ): Promise<MachineStateV3> {
+  ): Promise<MachineStateV4> {
     return this.requestState(
-      "/api/v3/scale/warnings/acknowledge",
+      "/api/v4/scale/warnings/acknowledge",
       "POST",
       undefined,
       options,
@@ -283,7 +289,7 @@ export class DeviceApiClient {
   startExtraction(
     request: StartExtractionRequest,
     options: RequestOptions = {},
-  ): Promise<MachineStateV3> {
+  ): Promise<MachineStateV4> {
     const parsed = StartExtractionRequestSchema.safeParse(request);
     if (!parsed.success) {
       throw new ApiClientError(
@@ -292,16 +298,16 @@ export class DeviceApiClient {
       );
     }
     return this.requestState(
-      "/api/v3/extractions",
+      "/api/v4/extractions",
       "POST",
       parsed.data,
       options,
     );
   }
 
-  stopExtraction(options: RequestOptions = {}): Promise<MachineStateV3> {
+  stopExtraction(options: RequestOptions = {}): Promise<MachineStateV4> {
     return this.requestState(
-      "/api/v3/extractions/current",
+      "/api/v4/extractions/current",
       "DELETE",
       undefined,
       options,
@@ -311,7 +317,7 @@ export class DeviceApiClient {
   startCooldown(
     request: StartCooldownRequest,
     options: RequestOptions = {},
-  ): Promise<MachineStateV3> {
+  ): Promise<MachineStateV4> {
     const parsed = StartCooldownRequestSchema.safeParse(request);
     if (!parsed.success) {
       throw new ApiClientError(
@@ -320,16 +326,16 @@ export class DeviceApiClient {
       );
     }
     return this.requestState(
-      "/api/v3/cooldowns",
+      "/api/v4/cooldowns",
       "POST",
       parsed.data,
       options,
     );
   }
 
-  stopCooldown(options: RequestOptions = {}): Promise<MachineStateV3> {
+  stopCooldown(options: RequestOptions = {}): Promise<MachineStateV4> {
     return this.requestState(
-      "/api/v3/cooldowns/current",
+      "/api/v4/cooldowns/current",
       "DELETE",
       undefined,
       options,
@@ -352,7 +358,7 @@ export class DeviceApiClient {
       cursor === undefined
         ? ""
         : `?extractionId=${encodeURIComponent(cursor.extractionId)}&bootId=${encodeURIComponent(cursor.bootId)}&afterSequence=${cursor.afterSequence}`;
-    const endpoint = `/api/v3/extractions/current/stream${query}`;
+    const endpoint = `/api/v4/extractions/current/stream${query}`;
     const abort = createRequestAbort(options.signal, this.timeoutMs);
     try {
       const response = await this.fetch(`${this.origin}${endpoint}`, {
@@ -407,11 +413,12 @@ export class DeviceApiClient {
   }
 
   private temperatureCalibrationMutation(
+    sensor: TemperatureSensor,
     method: "DELETE" | "POST" | "PUT",
     request: TemperatureCalibrationSessionRequest,
     options: RequestOptions,
     lease = false,
-  ): Promise<MachineStateV3> {
+  ): Promise<MachineStateV4> {
     const parsed = TemperatureCalibrationSessionRequestSchema.safeParse(request);
     if (!parsed.success) {
       throw new ApiClientError(
@@ -421,8 +428,8 @@ export class DeviceApiClient {
     }
     return this.requestState(
       lease
-        ? "/api/v3/temperature-calibrations/current/lease"
-        : "/api/v3/temperature-calibrations/current",
+        ? `/api/v4/temperature-calibrations/${sensor}/current/lease`
+        : `/api/v4/temperature-calibrations/${sensor}/current`,
       method,
       parsed.data,
       options,
@@ -434,10 +441,10 @@ export class DeviceApiClient {
     method: DeviceFetchRequestInit["method"],
     body: unknown,
     options: RequestOptions,
-  ): Promise<MachineStateV3> {
+  ): Promise<MachineStateV4> {
     const state = await this.request(
       path,
-      MachineStateV3Schema,
+      MachineStateV4Schema,
       method,
       body,
       options,
@@ -484,7 +491,7 @@ export class DeviceApiClient {
       if (!parsed.success) {
         throw new ApiClientError(
           "protocol",
-          "The device response does not match API v3.",
+          "The device response does not match API v4.",
           { endpoint: path, status: response.status },
         );
       }

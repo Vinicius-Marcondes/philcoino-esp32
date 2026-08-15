@@ -1,9 +1,7 @@
 import {
   BREW_TARGET_MIN_C,
-  MachineStateV3Schema,
+  MachineStateV4Schema,
   RAW_BOILER_OVER_TEMPERATURE_C,
-  STEAM_COMPENSATION_DECAY_DEFAULT_MS,
-  STEAM_COMPENSATION_INITIAL_DEFAULT_C,
   STEAM_TARGET_MIN_C,
   STEAM_READY_TIMEOUT_DEFAULT_MS,
   StartCooldownRequestSchema,
@@ -11,11 +9,12 @@ import {
   type DeviceResponse,
   type ApiErrorCode,
   type HealthResponse,
-  type MachineStateV3,
+  type MachineStateV4,
   type ModeRequest,
   type SettingsRequest,
   type StartExtractionRequest,
   type TemperatureCalibrationSessionRequest,
+  type TemperatureSensor,
   type UpdateTemperatureCalibrationCandidateRequest,
 } from "@philcoino/protocol";
 
@@ -27,7 +26,7 @@ const DEBUG_PIN = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 const DEBUG_TOKEN = "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB";
 
 export const debugDeviceIdentity: DeviceResponse = {
-  apiVersion: "3",
+  apiVersion: "4",
   deviceId: "philcoino-debug",
   firmwareVersion: "debug",
   model: "debug-device",
@@ -46,7 +45,7 @@ export class DebugDeviceApiClient
   implements DashboardStateClient, DashboardMutationClient
 {
   private revision = 0;
-  private snapshot: MachineStateV3 = createDebugSnapshot();
+  private snapshot: MachineStateV4 = createDebugSnapshot();
   private extractionKey: string | null = null;
   private cooldownKey: string | null = null;
 
@@ -60,7 +59,7 @@ export class DebugDeviceApiClient
     return debugDeviceIdentity;
   }
 
-  async getState(options: { signal?: AbortSignal } = {}): Promise<MachineStateV3> {
+  async getState(options: { signal?: AbortSignal } = {}): Promise<MachineStateV4> {
     throwIfAborted(options.signal);
     return this.snapshot;
   }
@@ -68,19 +67,15 @@ export class DebugDeviceApiClient
   async updateSettings(
     settings: SettingsRequest,
     options: { signal?: AbortSignal } = {},
-  ): Promise<MachineStateV3> {
+  ): Promise<MachineStateV4> {
     throwIfAborted(options.signal);
     const machine = this.snapshot.machine;
-    const steamSettings = {
-      ...machine.steamControl.settings,
-      ...settings.steamControl,
-    };
     const brewTargetC = settings.brewTargetC ?? machine.brewTargetC;
     const steamTargetC = settings.steamTargetC ?? machine.steamTargetC;
     if (
-      brewTargetC - this.snapshot.temperatureCalibration.savedOffsetC >
+      brewTargetC - this.snapshot.temperatureCalibrations.boiler.savedOffsetC >
         RAW_BOILER_OVER_TEMPERATURE_C ||
-      steamTargetC - this.snapshot.temperatureCalibration.savedOffsetC >
+      steamTargetC - this.snapshot.temperatureCalibrations.steam.savedOffsetC >
         RAW_BOILER_OVER_TEMPERATURE_C
     ) {
       throw httpError("temperature_target_unsafe", "The requested target is unsafe.", 400);
@@ -90,7 +85,8 @@ export class DebugDeviceApiClient
         ...machine,
         brewTargetC,
         steamTargetC,
-        steamControl: { ...machine.steamControl, settings: steamSettings },
+        steamReadyTimeoutMs:
+          settings.steamReadyTimeoutMs ?? machine.steamReadyTimeoutMs,
       },
     });
   }
@@ -98,21 +94,21 @@ export class DebugDeviceApiClient
   updateTemperatureSettings(
     settings: Pick<SettingsRequest, "brewTargetC" | "steamTargetC">,
     options: { signal?: AbortSignal } = {},
-  ): Promise<MachineStateV3> {
+  ): Promise<MachineStateV4> {
     return this.updateSettings(settings, options);
   }
 
-  updateSteamControlSettings(
-    steamControl: NonNullable<SettingsRequest["steamControl"]>,
+  updateSteamReadyTimeout(
+    steamReadyTimeoutMs: NonNullable<SettingsRequest["steamReadyTimeoutMs"]>,
     options: { signal?: AbortSignal } = {},
-  ): Promise<MachineStateV3> {
-    return this.updateSettings({ steamControl }, options);
+  ): Promise<MachineStateV4> {
+    return this.updateSettings({ steamReadyTimeoutMs }, options);
   }
 
   async setMode(
     request: ModeRequest,
     options: { signal?: AbortSignal } = {},
-  ): Promise<MachineStateV3> {
+  ): Promise<MachineStateV4> {
     throwIfAborted(options.signal);
     if (
       request.mode === "steam" &&
@@ -132,7 +128,7 @@ export class DebugDeviceApiClient
   async setHeaterEnabled(
     request: { enabled: boolean },
     options: { signal?: AbortSignal } = {},
-  ): Promise<MachineStateV3> {
+  ): Promise<MachineStateV4> {
     throwIfAborted(options.signal);
     return this.commit({
       machine: {
@@ -145,7 +141,7 @@ export class DebugDeviceApiClient
 
   async dismissOverTemperature(
     options: { signal?: AbortSignal } = {},
-  ): Promise<MachineStateV3> {
+  ): Promise<MachineStateV4> {
     throwIfAborted(options.signal);
     return this.commit();
   }
@@ -153,7 +149,7 @@ export class DebugDeviceApiClient
   async startExtraction(
     request: StartExtractionRequest,
     options: { signal?: AbortSignal } = {},
-  ): Promise<MachineStateV3> {
+  ): Promise<MachineStateV4> {
     throwIfAborted(options.signal);
     const parsed = StartExtractionRequestSchema.safeParse(request);
     if (!parsed.success) throw invalidRequest("The extraction request is invalid.");
@@ -186,7 +182,7 @@ export class DebugDeviceApiClient
           netWeightDecigrams: 0,
         }
       : null;
-    const extraction: MachineStateV3["extraction"] =
+    const extraction: MachineStateV4["extraction"] =
       selection.kind === "manual"
         ? {
             status: "running",
@@ -222,7 +218,7 @@ export class DebugDeviceApiClient
 
   async stopExtraction(
     options: { signal?: AbortSignal } = {},
-  ): Promise<MachineStateV3> {
+  ): Promise<MachineStateV4> {
     throwIfAborted(options.signal);
     const activeWeight = this.snapshot.scale.activeExtraction;
     this.extractionKey = null;
@@ -251,7 +247,7 @@ export class DebugDeviceApiClient
   async startCooldown(
     request: { idempotencyKey: string },
     options: { signal?: AbortSignal } = {},
-  ): Promise<MachineStateV3> {
+  ): Promise<MachineStateV4> {
     throwIfAborted(options.signal);
     const parsed = StartCooldownRequestSchema.safeParse(request);
     if (!parsed.success) throw invalidRequest("The cooldown request is invalid.");
@@ -280,7 +276,7 @@ export class DebugDeviceApiClient
 
   async stopCooldown(
     options: { signal?: AbortSignal } = {},
-  ): Promise<MachineStateV3> {
+  ): Promise<MachineStateV4> {
     throwIfAborted(options.signal);
     if (this.snapshot.cooldown.status !== "pumping") return this.commit();
     return this.commit({
@@ -326,85 +322,106 @@ export class DebugDeviceApiClient
     return this.commit({ scale: { ...this.snapshot.scale, warning: null } });
   }
 
-  async startTemperatureCalibration(options: { signal?: AbortSignal } = {}) {
+  async startTemperatureCalibration(sensor: TemperatureSensor, options: { signal?: AbortSignal } = {}) {
     throwIfAborted(options.signal);
-    if (this.snapshot.temperatureCalibration.status === "calibrating") {
+    if (Object.values(this.snapshot.temperatureCalibrations).some(
+      (calibration) => calibration.status === "calibrating",
+    )) {
       throw httpError("temperature_calibration_active", "Calibration is active.", 409);
     }
     return this.commit({
-      temperatureCalibration: {
-        ...temperatureCalibrationCommon(this.snapshot),
-        status: "calibrating",
-        calibrationId: "debug-temperature-calibration-0001",
-        candidateRawTargetC: 100,
-        offsetPreviewC: 0,
-        advisoryStableMs: 0,
-        sessionLeaseRemainingMs: 15_000,
-        previewSafeTargetBounds: safeBounds(),
+      temperatureCalibrations: {
+        ...this.snapshot.temperatureCalibrations,
+        [sensor]: {
+          ...temperatureCalibrationCommon(this.snapshot, sensor),
+          status: "calibrating",
+          calibrationId: `debug-${sensor}-temperature-calibration-0001`,
+          candidateRawTargetC: 100,
+          offsetPreviewC: 0,
+          advisoryStableMs: 0,
+          sessionLeaseRemainingMs: 15_000,
+          previewSafeTargetBounds: safeBounds(sensor),
+        },
       },
     });
   }
 
   updateTemperatureCalibrationCandidate(
+    sensor: TemperatureSensor,
     request: UpdateTemperatureCalibrationCandidateRequest,
     options: { signal?: AbortSignal } = {},
   ) {
     throwIfAborted(options.signal);
-    const active = this.requireCalibration(request.calibrationId);
+    const active = this.requireCalibration(sensor, request.calibrationId);
     const offsetPreviewC = 100 - request.candidateRawTargetC;
     return Promise.resolve(this.commitSync({
-      temperatureCalibration: {
-        ...active,
-        candidateRawTargetC: request.candidateRawTargetC,
-        offsetPreviewC,
-        sessionLeaseRemainingMs: 15_000,
-        previewSafeTargetBounds: safeBounds(offsetPreviewC),
+      temperatureCalibrations: {
+        ...this.snapshot.temperatureCalibrations,
+        [sensor]: {
+          ...active,
+          candidateRawTargetC: request.candidateRawTargetC,
+          offsetPreviewC,
+          sessionLeaseRemainingMs: 15_000,
+          previewSafeTargetBounds: safeBounds(sensor, offsetPreviewC),
+        },
       },
     }));
   }
 
   renewTemperatureCalibration(
+    sensor: TemperatureSensor,
     request: TemperatureCalibrationSessionRequest,
     options: { signal?: AbortSignal } = {},
   ) {
     throwIfAborted(options.signal);
-    const active = this.requireCalibration(request.calibrationId);
+    const active = this.requireCalibration(sensor, request.calibrationId);
     return Promise.resolve(this.commitSync({
-      temperatureCalibration: { ...active, sessionLeaseRemainingMs: 15_000 },
+      temperatureCalibrations: {
+        ...this.snapshot.temperatureCalibrations,
+        [sensor]: { ...active, sessionLeaseRemainingMs: 15_000 },
+      },
     }));
   }
 
   saveTemperatureCalibration(
+    sensor: TemperatureSensor,
     request: TemperatureCalibrationSessionRequest,
     options: { signal?: AbortSignal } = {},
   ) {
     throwIfAborted(options.signal);
-    const active = this.requireCalibration(request.calibrationId);
+    const active = this.requireCalibration(sensor, request.calibrationId);
     return Promise.resolve(this.commitSync({
-      temperatureCalibration: {
-        ...temperatureCalibrationCommon(this.snapshot, active.offsetPreviewC),
-        status: "calibrated",
+      temperatureCalibrations: {
+        ...this.snapshot.temperatureCalibrations,
+        [sensor]: {
+          ...temperatureCalibrationCommon(this.snapshot, sensor, active.offsetPreviewC),
+          status: "calibrated",
+        },
       },
     }));
   }
 
   cancelTemperatureCalibration(
+    sensor: TemperatureSensor,
     request: TemperatureCalibrationSessionRequest,
     options: { signal?: AbortSignal } = {},
   ) {
     throwIfAborted(options.signal);
-    this.requireCalibration(request.calibrationId);
+    this.requireCalibration(sensor, request.calibrationId);
     return Promise.resolve(this.commitSync({
-      temperatureCalibration: {
-        ...temperatureCalibrationCommon(this.snapshot),
-        status: "uncalibrated",
-        savedOffsetC: 0,
+      temperatureCalibrations: {
+        ...this.snapshot.temperatureCalibrations,
+        [sensor]: {
+          ...temperatureCalibrationCommon(this.snapshot, sensor),
+          status: "uncalibrated",
+          savedOffsetC: 0,
+        },
       },
     }));
   }
 
-  private requireCalibration(calibrationId: string) {
-    const calibration = this.snapshot.temperatureCalibration;
+  private requireCalibration(sensor: TemperatureSensor, calibrationId: string) {
+    const calibration = this.snapshot.temperatureCalibrations[sensor];
     if (calibration.status !== "calibrating") {
       throw httpError("temperature_calibration_inactive", "No calibration is active.", 409);
     }
@@ -415,18 +432,18 @@ export class DebugDeviceApiClient
   }
 
   private async commit(
-    changes: Partial<Pick<MachineStateV3, "machine" | "scale" | "temperatureCalibration" | "extraction" | "cooldown">> = {},
-  ): Promise<MachineStateV3> {
+    changes: Partial<Pick<MachineStateV4, "machine" | "scale" | "temperatureCalibrations" | "extraction" | "cooldown">> = {},
+  ): Promise<MachineStateV4> {
     return this.commitSync(changes);
   }
 
   private commitSync(
-    changes: Partial<Pick<MachineStateV3, "machine" | "scale" | "temperatureCalibration" | "extraction" | "cooldown">> = {},
-  ): MachineStateV3 {
+    changes: Partial<Pick<MachineStateV4, "machine" | "scale" | "temperatureCalibrations" | "extraction" | "cooldown">> = {},
+  ): MachineStateV4 {
     this.revision += 1;
     const extraction = changes.extraction ?? this.snapshot.extraction;
     const machine = changes.machine ?? this.snapshot.machine;
-    this.snapshot = MachineStateV3Schema.parse({
+    this.snapshot = MachineStateV4Schema.parse({
       ...this.snapshot,
       ...changes,
       machine,
@@ -449,10 +466,10 @@ export function createDebugDeviceApiClient(): DebugDeviceApiClient {
   return new DebugDeviceApiClient();
 }
 
-function createDebugSnapshot(): MachineStateV3 {
+function createDebugSnapshot(): MachineStateV4 {
   const machine = createDebugMachine();
-  return MachineStateV3Schema.parse({
-    apiVersion: "3",
+  return MachineStateV4Schema.parse({
+    apiVersion: "4",
     device: debugDeviceIdentity,
     bootId: "00000000000000000000000000000001",
     revision: 0,
@@ -468,10 +485,17 @@ function createDebugSnapshot(): MachineStateV3 {
       terminalExtraction: null,
       warning: null,
     },
-    temperatureCalibration: {
-      ...temperatureCalibrationCommonFromMachine(machine),
-      status: "uncalibrated",
-      savedOffsetC: 0,
+    temperatureCalibrations: {
+      boiler: {
+        ...temperatureCalibrationCommonFromMachine(machine, "boiler"),
+        status: "uncalibrated",
+        savedOffsetC: 0,
+      },
+      steam: {
+        ...temperatureCalibrationCommonFromMachine(machine, "steam"),
+        status: "uncalibrated",
+        savedOffsetC: 0,
+      },
     },
     extraction: idleExtraction(),
     compensation: { status: "inactive", phase: null },
@@ -488,21 +512,8 @@ function createDebugSnapshot(): MachineStateV3 {
   });
 }
 
-function createDebugMachine(overrides: Partial<MachineStateV3["machine"]> = {}) {
+function createDebugMachine(overrides: Partial<MachineStateV4["machine"]> = {}) {
   const activeMode = overrides.activeMode ?? "brew";
-  const steamControl = {
-    settings: overrides.steamControl?.settings ?? {
-      initialCompensationC: STEAM_COMPENSATION_INITIAL_DEFAULT_C,
-      decayDurationMs: STEAM_COMPENSATION_DECAY_DEFAULT_MS,
-      readyTimeoutMs: STEAM_READY_TIMEOUT_DEFAULT_MS,
-    },
-    compensationActive: activeMode === "steam",
-    appliedCompensationC:
-      activeMode === "steam" ? STEAM_COMPENSATION_INITIAL_DEFAULT_C : 0,
-    controlTemperatureC:
-      activeMode === "steam" ? STEAM_COMPENSATION_INITIAL_DEFAULT_C : null,
-    heatSoakElapsedMs: activeMode === "steam" ? 0 : null,
-  };
   return {
     status: "heating" as const,
     activeMode,
@@ -510,12 +521,17 @@ function createDebugMachine(overrides: Partial<MachineStateV3["machine"]> = {}) 
       overrides.boilerTemperatureC === undefined
         ? 0
         : overrides.boilerTemperatureC,
+    steamTemperatureC:
+      overrides.steamTemperatureC === undefined
+        ? 0
+        : overrides.steamTemperatureC,
     brewTargetC: overrides.brewTargetC ?? BREW_TARGET_MIN_C,
     steamTargetC: overrides.steamTargetC ?? STEAM_TARGET_MIN_C,
+    steamReadyTimeoutMs:
+      overrides.steamReadyTimeoutMs ?? STEAM_READY_TIMEOUT_DEFAULT_MS,
     heaterEnabled: overrides.heaterEnabled ?? true,
     heaterActive: false,
     steamTimeoutRemainingMs: activeMode === "steam" ? 0 : null,
-    steamControl,
     uptimeMs: overrides.uptimeMs ?? 0,
     fault: null,
   };
@@ -533,34 +549,40 @@ function idleExtraction() {
   };
 }
 
-function temperatureCalibrationCommon(snapshot: MachineStateV3, savedOffsetC = 0) {
-  return temperatureCalibrationCommonFromMachine(snapshot.machine, savedOffsetC);
+function temperatureCalibrationCommon(
+  snapshot: MachineStateV4,
+  sensor: TemperatureSensor,
+  savedOffsetC = snapshot.temperatureCalibrations[sensor].savedOffsetC,
+) {
+  return temperatureCalibrationCommonFromMachine(snapshot.machine, sensor, savedOffsetC);
 }
 
 function temperatureCalibrationCommonFromMachine(
-  machine: MachineStateV3["machine"],
+  machine: MachineStateV4["machine"],
+  sensor: TemperatureSensor,
   savedOffsetC = 0,
 ) {
+  const temperatureC = sensor === "boiler"
+    ? machine.boilerTemperatureC
+    : machine.steamTemperatureC;
   return {
+    sensor,
     savedOffsetC,
-    boilerTemperatureRawC:
-      machine.boilerTemperatureC === null
+    temperatureRawC:
+      temperatureC === null
         ? null
-        : machine.boilerTemperatureC - savedOffsetC,
-    boilerTemperatureC: machine.boilerTemperatureC,
+        : temperatureC - savedOffsetC,
+    temperatureC,
     heaterActive: machine.heaterActive,
     ready: machine.status === "ready",
-    safeTargetBounds: safeBounds(savedOffsetC),
+    safeTargetBounds: safeBounds(sensor, savedOffsetC),
   };
 }
 
-function safeBounds(offsetC = 0) {
-  return {
-    brewMinimumC: 85 as const,
-    brewMaximumC: Math.min(95, RAW_BOILER_OVER_TEMPERATURE_C + offsetC),
-    steamMinimumC: 110 as const,
-    steamMaximumC: Math.min(145, RAW_BOILER_OVER_TEMPERATURE_C + offsetC),
-  };
+function safeBounds(sensor: TemperatureSensor, offsetC = 0) {
+  return sensor === "boiler"
+    ? { minimumC: 85 as const, maximumC: Math.min(95, RAW_BOILER_OVER_TEMPERATURE_C + offsetC) }
+    : { minimumC: 110 as const, maximumC: Math.min(145, RAW_BOILER_OVER_TEMPERATURE_C + offsetC) };
 }
 
 function throwIfAborted(signal: AbortSignal | undefined): void {

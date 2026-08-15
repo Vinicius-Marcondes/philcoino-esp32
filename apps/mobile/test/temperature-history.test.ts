@@ -7,7 +7,7 @@ import {
   temperatureHistoryToCsv,
 } from "../src/history/temperature-history-csv";
 import { InMemoryTemperatureHistoryRepository } from "../src/history/temperature-history-repository";
-import { rebuildTemperatureHistoryV7Sql } from "../src/history/temperature-history-schema";
+import { rebuildTemperatureHistoryV8Sql } from "../src/history/temperature-history-schema";
 import {
   createTemperatureHistorySample,
   isTemperatureHistoryGap,
@@ -19,23 +19,14 @@ const machine: MachineState = {
   activeMode: "brew",
   brewTargetC: 93,
   boilerTemperatureC: 87.4,
+  steamTemperatureC: 112.6,
   fault: null,
   heaterEnabled: true,
   heaterActive: true,
   status: "heating",
   steamTargetC: 115,
+  steamReadyTimeoutMs: 300_000,
   steamTimeoutRemainingMs: null,
-  steamControl: {
-    settings: {
-      initialCompensationC: 12,
-      decayDurationMs: 720_000,
-      readyTimeoutMs: 300_000,
-    },
-    compensationActive: false,
-    appliedCompensationC: 0,
-    controlTemperatureC: null,
-    heatSoakElapsedMs: null,
-  },
   uptimeMs: 184_220,
 };
 
@@ -66,7 +57,7 @@ describe("local temperature history", () => {
         pumpCommand: "running",
         recordedAtMs,
         startsAfterHistoryGap: false,
-        steamControl: machine.steamControl,
+        steamTemperatureC: 112.6,
         steamTargetC: 115,
         uptimeMs: 184_220,
       });
@@ -103,7 +94,7 @@ describe("local temperature history", () => {
     })).toBe(true);
   });
 
-  test("v7 migration drops backfill provenance while preserving useful state", () => {
+  test("v8 migration adds dual nullable temperatures and drops obsolete metadata", () => {
     const database = new Database(":memory:");
     try {
       database.exec(`
@@ -111,6 +102,7 @@ describe("local temperature history", () => {
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           device_id TEXT NOT NULL, recorded_at_ms INTEGER NOT NULL,
           uptime_ms INTEGER NOT NULL, boiler_temperature_c REAL NOT NULL,
+          steam_temperature_c REAL,
           brew_target_c REAL NOT NULL, steam_target_c REAL NOT NULL,
           active_mode TEXT NOT NULL, active_target_c REAL NOT NULL,
           heater_enabled INTEGER NOT NULL, heater_active INTEGER NOT NULL,
@@ -120,18 +112,19 @@ describe("local temperature history", () => {
           controller_diagnostics_json TEXT
         );
         INSERT INTO temperature_history VALUES (
-          1, 'machine-1', 1000, 500, 91.5, 93, 115, 'brew', 93,
+          1, 'machine-1', 1000, 500, 91.5, NULL, 93, 115, 'brew', 93,
           1, 1, 0, 'off', 'heating', NULL, NULL, 1, 'legacy', 7, '{}'
         );
       `);
-      database.exec(rebuildTemperatureHistoryV7Sql());
+      database.exec(rebuildTemperatureHistoryV8Sql());
       const columns = database.query("PRAGMA table_info(temperature_history)")
         .all() as Array<{ name: string }>;
       expect(columns.some((column) => column.name.startsWith("source_"))).toBe(false);
       expect(columns.some((column) => column.name.includes("controller"))).toBe(false);
       expect(columns.some((column) => column.name === "pump_active")).toBe(false);
-      expect(database.query("SELECT boiler_temperature_c FROM temperature_history").get())
-        .toEqual({ boiler_temperature_c: 91.5 });
+      expect(columns.some((column) => column.name === "steam_control_json")).toBe(false);
+      expect(database.query("SELECT boiler_temperature_c, steam_temperature_c FROM temperature_history").get())
+        .toEqual({ boiler_temperature_c: 91.5, steam_temperature_c: null });
     } finally {
       database.close();
     }
@@ -165,6 +158,7 @@ function sample(
     activeMode: "brew",
     activeTargetC: 93,
     boilerTemperatureC: 92,
+    steamTemperatureC: 114,
     brewTargetC: 93,
     deviceId,
     faultCode: null,
@@ -174,7 +168,6 @@ function sample(
     pumpCommand: "off",
     recordedAtMs,
     startsAfterHistoryGap: false,
-    steamControl: machine.steamControl,
     steamTargetC: 115,
     uptimeMs,
   };

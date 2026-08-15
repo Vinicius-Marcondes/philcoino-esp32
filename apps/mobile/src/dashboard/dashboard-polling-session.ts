@@ -1,4 +1,4 @@
-import type { MachineStateV3 } from "@philcoino/protocol";
+import type { MachineStateV4 } from "@philcoino/protocol";
 
 import {
   connectingState,
@@ -11,7 +11,7 @@ export const DASHBOARD_POLL_INTERVAL_MS = 1_000;
 export const DASHBOARD_TRANSIENT_RETRY_DELAY_MS = 100;
 
 export interface DashboardStateClient {
-  getState(options?: { signal?: AbortSignal }): Promise<MachineStateV3>;
+  getState(options?: { signal?: AbortSignal }): Promise<MachineStateV4>;
 }
 
 interface PollingScheduler {
@@ -24,7 +24,7 @@ interface DashboardPollingSessionOptions {
   intervalMs?: number;
   onConnectionChange: (connection: ConnectionState) => void;
   onDeviceRestart?: () => void;
-  onSnapshotChange: (snapshot: MachineStateV3 | null) => void;
+  onSnapshotChange: (snapshot: MachineStateV4 | null) => void;
   scheduler?: PollingScheduler;
 }
 
@@ -40,7 +40,7 @@ export class DashboardPollingSession {
   private readonly onConnectionChange: (connection: ConnectionState) => void;
   private readonly onDeviceRestart: () => void;
   private readonly onSnapshotChange: (
-    snapshot: MachineStateV3 | null,
+    snapshot: MachineStateV4 | null,
   ) => void;
   private readonly scheduler: PollingScheduler;
 

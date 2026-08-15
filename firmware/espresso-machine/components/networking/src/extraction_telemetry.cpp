@@ -55,6 +55,8 @@ bool read_slot(const ExtractionTelemetrySlot& slot,
         slot.net_weight_decigrams.load(std::memory_order_relaxed);
     candidate.temperature_quarters_c =
         slot.temperature_quarters_c.load(std::memory_order_relaxed);
+    candidate.steam_temperature_quarters_c =
+        slot.steam_temperature_quarters_c.load(std::memory_order_relaxed);
     candidate.active_target_c =
         slot.active_target_c.load(std::memory_order_relaxed);
     candidate.flags = slot.flags.load(std::memory_order_relaxed);
@@ -301,6 +303,18 @@ bool ExtractionTelemetryBuffer::record(
   } else {
     sample.temperature_quarters_c = kUnavailableTemperature;
   }
+  if (machine.steam_temperature.status ==
+          peripherals::ThermocoupleStatus::kOk &&
+      std::isfinite(machine.steam_temperature.temperature_c)) {
+    const auto temperature = std::lround(
+        static_cast<double>(machine.steam_temperature.temperature_c) * 4.0);
+    sample.steam_temperature_quarters_c = static_cast<std::int16_t>(
+        std::clamp<long>(temperature,
+                         std::numeric_limits<std::int16_t>::min() + 1L,
+                         std::numeric_limits<std::int16_t>::max()));
+  } else {
+    sample.steam_temperature_quarters_c = kUnavailableTemperature;
+  }
   sample.active_target_c = static_cast<std::uint8_t>(machine.targets.brew_c);
   bool net_available = false;
   if (weighted_ && weight.extraction_id == extraction.extraction_id &&
@@ -347,6 +361,8 @@ bool ExtractionTelemetryBuffer::record(
                                   std::memory_order_relaxed);
   slot.temperature_quarters_c.store(sample.temperature_quarters_c,
                                     std::memory_order_relaxed);
+  slot.steam_temperature_quarters_c.store(
+      sample.steam_temperature_quarters_c, std::memory_order_relaxed);
   slot.active_target_c.store(sample.active_target_c,
                              std::memory_order_relaxed);
   slot.flags.store(sample.flags, std::memory_order_relaxed);
@@ -551,7 +567,7 @@ std::string serialize_extraction_telemetry_page(
     const std::string& device_id, const ExtractionTelemetryPage& page) {
   std::ostringstream output;
   output.imbue(std::locale::classic());
-  output << std::setprecision(6) << "{\"version\":1,\"deviceId\":\""
+  output << std::setprecision(6) << "{\"version\":2,\"deviceId\":\""
          << device_id << "\",\"extractionId\":\""
          << page.extraction_id.data() << "\",\"bootId\":\""
          << page.boot_id.data() << "\",\"capturedAtUptimeMs\":"
@@ -636,6 +652,12 @@ std::string serialize_extraction_telemetry_page(
       output << "null";
     } else {
       output << static_cast<double>(sample.temperature_quarters_c) / 4.0;
+    }
+    output << ",\"steamTemperatureC\":";
+    if (sample.steam_temperature_quarters_c == kUnavailableTemperature) {
+      output << "null";
+    } else {
+      output << static_cast<double>(sample.steam_temperature_quarters_c) / 4.0;
     }
     output << ",\"activeTargetC\":"
            << static_cast<unsigned>(sample.active_target_c)
